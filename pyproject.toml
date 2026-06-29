@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-review"
+version = "0.1.0"
+description = "CI-native multi-agent consensus code review for GitLab merge requests"
+readme = "ai-review/README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "jsonschema>=4.22",
+  "PyYAML>=6.0",
+  "python-gitlab>=4.7",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["ai-review/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["ai-review/tests"]
+pythonpath = ["ai-review/src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["ai_review"]

@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finding_batch.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "reviewer",
+    "adapter_status",
+    "model",
+    "started_at",
+    "completed_at",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": { "const": "finding_batch.v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "reviewer": { "type": "string", "minLength": 1 },
+    "adapter_status": { "$ref": "#/$defs/adapter_status" },
+    "model": { "type": "string", "minLength": 1 },
+    "started_at": { "type": "string", "minLength": 1 },
+    "completed_at": { "type": "string", "minLength": 1 },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "adapter_status": {
+      "enum": [
+        "success",
+        "skipped",
+        "timeout",
+        "model_error",
+        "schema_error",
+        "config_error",
+        "internal_error",
+        "budget_skipped"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["old_line", "new_line", "line_code"],
+      "properties": {
+        "old_line": { "type": ["integer", "null"], "minimum": 1 },
+        "new_line": { "type": ["integer", "null"], "minimum": 1 },
+        "line_code": { "type": ["string", "null"] }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "new_path",
+        "old_path",
+        "side",
+        "start",
+        "end",
+        "hunk_header",
+        "context_hash",
+        "symbol"
+      ],
+      "properties": {
+        "new_path": { "type": "string", "minLength": 1 },
+        "old_path": { "type": "string", "minLength": 1 },
+        "side": { "enum": ["new", "old", "unchanged"] },
+        "start": { "$ref": "#/$defs/line" },
+        "end": { "$ref": "#/$defs/line" },
+        "hunk_header": { "type": "string" },
+        "context_hash": { "$ref": "#/$defs/sha256" },
+        "symbol": { "type": ["string", "null"] }
+      }
+    },
+    "fingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title_fingerprint", "evidence_fingerprint"],
+      "properties": {
+        "title_fingerprint": { "$ref": "#/$defs/sha256" },
+        "evidence_fingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_finding_id",
+        "run_local_id",
+        "anchor",
+        "severity",
+        "category",
+        "title",
+        "body",
+        "evidence",
+        "suggestion",
+        "confidence",
+        "fingerprints",
+        "candidate_issue_signature"
+      ],
+      "properties": {
+        "source_finding_id": { "$ref": "#/$defs/sha256" },
+        "run_local_id": { "type": "string", "minLength": 1 },
+        "anchor": { "$ref": "#/$defs/anchor" },
+        "severity": { "enum": ["info", "minor", "major", "blocker"] },
+        "category": {
+          "enum": [
+            "security",
+            "correctness",
+            "performance",
+            "maintainability",
+            "style",
+            "test",
+            "other"
+          ]
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "suggestion": { "type": ["string", "null"] },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "fingerprints": { "$ref": "#/$defs/fingerprints" },
+        "candidate_issue_signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path_key",
+            "category",
+            "side",
+            "context_hash",
+            "title_fingerprint",
+            "symbol"
+          ],
+          "properties": {
+            "path_key": { "type": "string", "minLength": 1 },
+            "category": {
+              "enum": [
+                "security",
+                "correctness",
+                "performance",
+                "maintainability",
+                "style",
+                "test",
+                "other"
+              ]
+            },
+            "side": { "enum": ["new", "old", "unchanged"] },
+            "context_hash": { "$ref": "#/$defs/sha256" },
+            "title_fingerprint": { "$ref": "#/$defs/sha256" },
+            "symbol": { "type": ["string", "null"] }
+          }
+        }
+      }
+    }
+  }
+}

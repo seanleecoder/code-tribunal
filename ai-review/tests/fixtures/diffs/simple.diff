@@ -1,0 +1,12 @@
+diff --git a/src/foo.py b/src/foo.py
+index 1111111..2222222 100644
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,4 +1,7 @@
+ def extract_name(records):
++    value = records[0]["name"]
++    return value
++
+     if not records:
+         return None
+     return records[0]["name"]

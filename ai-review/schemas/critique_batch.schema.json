@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "critique_batch.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "critic", "adapter_status", "critiques"],
+  "properties": {
+    "schema_version": { "const": "critique_batch.v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "critic": { "type": "string", "minLength": 1 },
+    "adapter_status": {
+      "enum": [
+        "success",
+        "skipped",
+        "timeout",
+        "model_error",
+        "schema_error",
+        "config_error",
+        "internal_error",
+        "budget_skipped"
+      ]
+    },
+    "critiques": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_source_finding_id",
+          "critic",
+          "verdict",
+          "rationale",
+          "adjusted_severity",
+          "confidence"
+        ],
+        "properties": {
+          "target_source_finding_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "critic": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["agree", "dispute", "noise", "duplicate"] },
+          "rationale": { "type": "string" },
+          "adjusted_severity": {
+            "type": ["string", "null"],
+            "enum": ["info", "minor", "major", "blocker", null]
+          },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+        }
+      }
+    }
+  }
+}

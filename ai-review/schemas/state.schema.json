@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "state.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "state_schema_version",
+    "project_id",
+    "merge_request_iid",
+    "last_head_sha",
+    "state_note_id",
+    "written_by_pipeline_id",
+    "updated_at",
+    "records",
+    "state_hash"
+  ],
+  "properties": {
+    "state_schema_version": { "const": 1 },
+    "project_id": { "type": "string" },
+    "merge_request_iid": { "type": "string" },
+    "last_head_sha": { "type": "string" },
+    "state_note_id": { "type": ["integer", "null"], "minimum": 1 },
+    "written_by_pipeline_id": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue_id",
+          "aliases",
+          "discussion_id",
+          "root_note_id",
+          "jira_comment_id",
+          "status",
+          "last_seen_sha",
+          "first_seen_sha",
+          "anchor",
+          "last_posted_body_hash",
+          "last_decision",
+          "last_final_severity",
+          "created_by_pipeline_id",
+          "updated_by_pipeline_id",
+          "human_disposition",
+          "remap_status",
+          "last_matched_run_id"
+        ],
+        "properties": {
+          "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "aliases": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "candidate_issue_signatures",
+              "source_finding_ids",
+              "context_hashes",
+              "title_fingerprints",
+              "symbols"
+            ],
+            "properties": {
+              "candidate_issue_signatures": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "source_finding_ids": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "context_hashes": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "title_fingerprints": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "symbols": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "discussion_id": { "type": ["string", "null"] },
+          "root_note_id": { "type": ["integer", "null"], "minimum": 1 },
+          "jira_comment_id": { "type": ["string", "null"] },
+          "status": {
+            "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified", "superseded"]
+          },
+          "last_seen_sha": { "type": "string" },
+          "first_seen_sha": { "type": "string" },
+          "anchor": { "type": "object" },
+          "last_posted_body_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "last_decision": { "enum": ["surface", "fyi", "drop"] },
+          "last_final_severity": { "enum": ["info", "minor", "major", "blocker"] },
+          "created_by_pipeline_id": { "type": "string" },
+          "updated_by_pipeline_id": { "type": "string" },
+          "human_disposition": {
+            "type": ["string", "null"],
+            "enum": ["wontfix", "reopen", "resolve", null]
+          },
+          "remap_status": {
+            "enum": ["exact", "remapped", "missing", "ambiguous", "unanchored", "not_checked"]
+          },
+          "last_matched_run_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "state_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

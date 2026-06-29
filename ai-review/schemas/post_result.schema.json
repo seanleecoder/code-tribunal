@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "post_result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "head_sha",
+    "current_head_sha",
+    "created_discussions",
+    "updated_discussions",
+    "resolved_discussions",
+    "skipped_unchanged",
+    "stale_unverified",
+    "jira_comments_created",
+    "jira_comments_updated",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": { "const": "post_result.v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": [
+        "success",
+        "stale_head",
+        "failed",
+        "partial_failed",
+        "skipped_advisory",
+        "state_overflow"
+      ]
+    },
+    "head_sha": { "type": "string" },
+    "current_head_sha": { "type": "string" },
+    "created_discussions": { "type": "integer", "minimum": 0 },
+    "updated_discussions": { "type": "integer", "minimum": 0 },
+    "resolved_discussions": { "type": "integer", "minimum": 0 },
+    "skipped_unchanged": { "type": "integer", "minimum": 0 },
+    "stale_unverified": { "type": "integer", "minimum": 0 },
+    "jira_comments_created": { "type": "integer", "minimum": 0 },
+    "jira_comments_updated": { "type": "integer", "minimum": 0 },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

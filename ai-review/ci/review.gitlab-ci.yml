@@ -1,0 +1,182 @@
+stages:
+  - prepare
+  - review
+  - critique
+  - consensus
+  - post
+  - gate
+
+.ai_review_rules:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+prepare_ai_review:
+  stage: prepare
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/base:1.1
+  interruptible: true
+  variables:
+    GITLAB_READ_TOKEN: $GITLAB_READ_TOKEN
+  script:
+    - python -m ai_review.input_bundle prepare --config ai-review/config/review.yaml --out inputs
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - inputs/
+      - out/status/prepare.json
+
+.review_template:
+  stage: review
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/reviewer:1.1
+  interruptible: true
+  allow_failure: true
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+  script:
+    - ./ai-review/adapters/run_reviewer.sh "$REVIEWER" review
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - out/findings/
+      - out/status/
+
+review_claude:
+  extends: .review_template
+  variables:
+    REVIEWER: claude
+
+review_codex:
+  extends: .review_template
+  variables:
+    REVIEWER: codex
+
+review_gemini:
+  extends: .review_template
+  variables:
+    REVIEWER: gemini
+
+.critique_template:
+  stage: critique
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/reviewer:1.1
+  interruptible: true
+  allow_failure: true
+  rules:
+    - if: '$AI_REVIEW_CRITIQUE_ENABLED == "true"'
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+    - job: review_claude
+      artifacts: true
+      optional: true
+    - job: review_codex
+      artifacts: true
+      optional: true
+    - job: review_gemini
+      artifacts: true
+      optional: true
+  script:
+    - ./ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - out/critiques/
+      - out/status/
+
+critique_claude:
+  extends: .critique_template
+  variables:
+    REVIEWER: claude
+
+critique_codex:
+  extends: .critique_template
+  variables:
+    REVIEWER: codex
+
+critique_gemini:
+  extends: .critique_template
+  variables:
+    REVIEWER: gemini
+
+consensus_ai_review:
+  stage: consensus
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/base:1.1
+  interruptible: true
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+    - job: review_claude
+      artifacts: true
+      optional: true
+    - job: review_codex
+      artifacts: true
+      optional: true
+    - job: review_gemini
+      artifacts: true
+      optional: true
+    - job: critique_claude
+      artifacts: true
+      optional: true
+    - job: critique_codex
+      artifacts: true
+      optional: true
+    - job: critique_gemini
+      artifacts: true
+      optional: true
+  script:
+    - python -m ai_review.consensus --config ai-review/config/review.yaml --inputs inputs --out out/consensus/consensus.json
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - out/consensus/
+      - out/status/consensus.json
+
+post_ai_review:
+  stage: post
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/base:1.1
+  interruptible: false
+  resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
+  variables:
+    GITLAB_WRITE_TOKEN: $GITLAB_WRITE_TOKEN
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+    - job: consensus_ai_review
+      artifacts: true
+  script:
+    - python -m ai_review.post --config ai-review/config/review.yaml --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - out/post/
+      - out/status/post.json
+
+ai_review_gate:
+  stage: gate
+  extends: .ai_review_rules
+  image: registry.example.com/ai-review/base:1.1
+  interruptible: false
+  needs:
+    - job: consensus_ai_review
+      artifacts: true
+    - job: post_ai_review
+      artifacts: true
+  script:
+    - python -m ai_review.gate --config ai-review/config/review.yaml --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - out/gate/
+      - out/status/gate.json

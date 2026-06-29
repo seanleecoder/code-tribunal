@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "adapter_status.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reviewer",
+    "stage",
+    "status",
+    "started_at",
+    "completed_at",
+    "duration_ms",
+    "error_class",
+    "error_message_redacted",
+    "output_file"
+  ],
+  "properties": {
+    "schema_version": { "const": "adapter_status.v1" },
+    "reviewer": { "type": "string", "minLength": 1 },
+    "stage": { "enum": ["review", "critique", "respond"] },
+    "status": {
+      "enum": [
+        "success",
+        "skipped",
+        "timeout",
+        "model_error",
+        "schema_error",
+        "config_error",
+        "internal_error",
+        "budget_skipped"
+      ]
+    },
+    "started_at": { "type": "string", "minLength": 1 },
+    "completed_at": { "type": "string", "minLength": 1 },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "error_class": { "type": ["string", "null"] },
+    "error_message_redacted": { "type": ["string", "null"] },
+    "output_file": { "type": "string", "minLength": 1 }
+  }
+}

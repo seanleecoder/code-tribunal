@@ -1,0 +1,152 @@
+schema_version: review_config.v1
+
+reviewers:
+  claude:
+    enabled: true
+    adapter: adapters/claude.sh
+    model: claude-sonnet-4-6
+    timeout_seconds: 900
+    max_turns: 4
+    max_findings: 50
+    credential_variable: ANTHROPIC_API_KEY
+    cli_version: "pinned-by-image"
+  codex:
+    enabled: true
+    adapter: adapters/codex.sh
+    model: gpt-5.2-codex
+    timeout_seconds: 900
+    max_findings: 50
+    credential_variable: CODEX_API_KEY
+    cli_version: "pinned-by-image"
+  gemini:
+    enabled: true
+    adapter: adapters/gemini.sh
+    model: gemini-3-pro
+    timeout_seconds: 900
+    max_findings: 50
+    credential_variable: GEMINI_API_KEY
+    cli_version: "pinned-by-image"
+
+panel:
+  expected_reviewers: 3
+  min_successful_reviewers_for_blocking: 2
+  min_successful_reviewers_for_resolution: 2
+  quorum:
+    mode: absolute
+    votes_required: 2
+  degraded_behavior:
+    successful_reviewers_0: fail_pipeline_infra
+    successful_reviewers_1: advisory_only
+    successful_reviewers_2: blocking_allowed_with_2_of_2
+    successful_reviewers_3: blocking_allowed_with_2_of_3
+
+severity_order:
+  - info
+  - minor
+  - major
+  - blocker
+
+categories:
+  - security
+  - correctness
+  - performance
+  - maintainability
+  - style
+  - test
+  - other
+
+severity_policy:
+  single_reviewer_blocker:
+    categories: [security, correctness]
+    post: true
+    block_merge: false
+    human_ack_recommended: true
+  quorum_blocker:
+    post: true
+    block_merge: true
+  majority_noise:
+    decision: drop
+
+critique:
+  enabled: false
+  rounds: 0
+  max_rounds: 1
+  blind_reviewer_identity: true
+  can_add_quorum_votes: false
+  allow_advisory_escalation: false
+
+posting:
+  mode: gitlab_discussions
+  v1_inline_sides: [new]
+  inline_multiline: false
+  fallback_to_summary_comment: true
+  marker_version: ai-review:v1
+  update_existing_threads: true
+  fyi_mode: summary_comment
+  stale_head_guard: true
+  post_lock_resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
+
+merge_gate:
+  enabled: true
+  mechanism: ci_job_failure
+  required_project_setting: pipelines_must_succeed
+  stale_head_behavior: pass_noop
+
+state:
+  backend: gitlab_mr_state_note
+  marker_version: ai-review-state:v1
+  recover_from_discussion_markers: true
+  checksum_required: true
+  retention:
+    keep_open: true
+    keep_wontfix: true
+    keep_resolved_runs: 5
+    keep_superseded_runs: 2
+    max_records: 200
+    max_state_bytes: 50000
+    overflow_behavior: fail_closed
+
+jira:
+  enabled: false
+  deployment: cloud
+  issue_key_patterns:
+    - "[A-Z][A-Z0-9]+-[0-9]+"
+  auth:
+    cloud:
+      email_variable: JIRA_EMAIL
+      api_token_variable: JIRA_API_TOKEN
+      base_url_variable: JIRA_BASE_URL
+  comments:
+    enabled: true
+    idempotent_marker: ai-review-jira:v1
+  transitions:
+    enabled: false
+    on_first_post: null
+    on_blocker: null
+    dry_run: true
+
+limits:
+  max_diff_bytes: 250000
+  max_files: 200
+  max_findings_per_reviewer: 50
+  max_posted_surface_findings: 25
+  max_fyi_findings: 50
+  max_prompt_bytes: 500000
+
+budget:
+  per_job_usd_max: 2.00
+  per_mr_usd_max: 12.00
+  per_project_daily_usd_max: 100.00
+  max_concurrent_mrs: 4
+  max_concurrent_model_jobs: 12
+  backend: none
+  on_budget_exceeded: advisory_skip
+
+security:
+  reviewers_can_run_shell: false
+  reviewers_can_modify_files: false
+  reviewers_have_gitlab_token: false
+  reviewers_have_jira_token: false
+  network_egress: provider_api_only
+  allow_external_fork_secrets: false
+  redact_logs: true

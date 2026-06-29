@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gate_result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "status", "block_merge", "reason"],
+  "properties": {
+    "schema_version": { "const": "gate_result.v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": [
+        "passed",
+        "failed_blocking_findings",
+        "passed_stale_head",
+        "skipped_disabled"
+      ]
+    },
+    "block_merge": { "type": "boolean" },
+    "reason": { "type": "string", "minLength": 1 }
+  }
+}
