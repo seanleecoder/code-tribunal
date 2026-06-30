@@ -161,6 +161,7 @@ def post_consensus(
         "stale_unverified": 0,
         "jira_comments_created": 0,
         "jira_comments_updated": 0,
+        "posted_discussions": [],
         "warnings": [],
     }
     if config.get("posting", {}).get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
@@ -198,6 +199,14 @@ def post_consensus(
                 body,
             )
             result["updated_discussions"] += 1
+            result["posted_discussions"].append(
+                {
+                    "issue_id": group["issue_id"],
+                    "action": "updated",
+                    "discussion_id": str(existing["discussion_id"]),
+                    "root_note_id": int(existing["root_note_id"]),
+                }
+            )
             continue
         if dry_run:
             result["created_discussions"] += 1
@@ -209,7 +218,15 @@ def post_consensus(
             position,
         )
         result["created_discussions"] += 1
-        root_note_id_from_discussion(discussion)
+        root_note_id = root_note_id_from_discussion(discussion)
+        result["posted_discussions"].append(
+            {
+                "issue_id": group["issue_id"],
+                "action": "created",
+                "discussion_id": str(discussion["id"]),
+                "root_note_id": root_note_id,
+            }
+        )
     return result
 
 

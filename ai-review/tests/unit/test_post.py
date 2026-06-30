@@ -108,6 +108,29 @@ class PostTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["posted_discussions"], [])
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_records_created_discussion_reference(self) -> None:
+        client = FakePostClient("head")
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._manifest("head"),
+            self._consensus(),
+        )
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(
+            result["posted_discussions"],
+            [
+                {
+                    "issue_id": "a" * 64,
+                    "action": "created",
+                    "discussion_id": "discussion",
+                    "root_note_id": 123,
+                }
+            ],
+        )
         validate_instance(result, "post_result.schema.json")
 
     def test_post_existing_marker_skips_unchanged(self) -> None:
@@ -139,6 +162,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["updated_discussions"], 0)
         self.assertEqual(result["skipped_unchanged"], 1)
+        self.assertEqual(result["posted_discussions"], [])
         self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")

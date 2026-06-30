@@ -16,6 +16,7 @@
     "stale_unverified",
     "jira_comments_created",
     "jira_comments_updated",
+    "posted_discussions",
     "warnings"
   ],
   "properties": {
@@ -40,6 +41,20 @@
     "stale_unverified": { "type": "integer", "minimum": 0 },
     "jira_comments_created": { "type": "integer", "minimum": 0 },
     "jira_comments_updated": { "type": "integer", "minimum": 0 },
+    "posted_discussions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_id", "action", "discussion_id", "root_note_id"],
+        "properties": {
+          "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "action": { "enum": ["created", "updated"] },
+          "discussion_id": { "type": "string", "minLength": 1 },
+          "root_note_id": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
     "warnings": {
       "type": "array",
       "items": { "type": "string" }

@@ -36,6 +36,6 @@ The local harness writes only under `.ai-review-local/` unless `LOCAL_OUT` is
 overridden. Provider CLIs are not required for Phase 0 validation; the adapter
 uses a deterministic local reviewer when `AI_REVIEW_LOCAL_MOCK=1`.
 
-The GitLab CI template includes the v1.1 `post` and `gate` stages. Full Phase 1
-acceptance still requires a private GitLab MR smoke test with `Pipelines must
-succeed` enabled and separate `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` values.
+The GitLab CI template includes the v1.1 `post` and `gate` stages. Track
+private GitLab MR smoke evidence and Phase 1 acceptance status in
+`PHASE_1_ACCEPTANCE.md`.
