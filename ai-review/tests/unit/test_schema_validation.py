@@ -204,6 +204,7 @@ class SchemaValidationTests(unittest.TestCase):
                         "evidence": ["records[0]"],
                         "suggestion": None,
                         "confidence": 0.8,
+                        "extra_model_note": "ignored",
                         "fingerprints": {
                             "title_fingerprint": "0" * 64,
                             "evidence_fingerprint": "0" * 64,
@@ -232,6 +233,7 @@ class SchemaValidationTests(unittest.TestCase):
             self.assertEqual(signature["category"], "correctness")
             self.assertEqual(signature["side"], "new")
             self.assertEqual(signature["symbol"], "f")
+            self.assertNotIn("extra_model_note", finalized["findings"][0])
             validate_instance(finalized, "finding_batch.schema.json")
 
 

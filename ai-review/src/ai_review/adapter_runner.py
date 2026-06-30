@@ -97,6 +97,138 @@ def _write_empty(
     write_canonical_json(output_dir / output_file, batch)
 
 
+def _json_preview(value: str, *, limit: int = 500) -> str:
+    compact = " ".join(value.strip().split())
+    if len(compact) > limit:
+        return compact[:limit] + "...[truncated]"
+    return compact
+
+
+def _extract_json_text(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    if stripped.startswith("{"):
+        return stripped
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end > start:
+        return stripped[start : end + 1]
+    return stripped
+
+
+def _extract_text_parts(content: Any) -> list[str]:
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    parts = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+            parts.append(str(item["text"]))
+    return parts
+
+
+def _load_stream_json(stdout: str) -> dict[str, Any]:
+    assistant_parts = []
+    result_text = ""
+    event_types = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json_loads_no_duplicates(stripped)
+        except Exception as exc:
+            raise SchemaValidationError(
+                f"adapter stream contained non-JSON line: {exc}; preview={_json_preview(stripped)!r}"
+            ) from exc
+        if not isinstance(event, dict):
+            continue
+        event_types.append(str(event.get("type", "unknown")))
+        if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
+            assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
+        if isinstance(event.get("result"), str) and event["result"].strip():
+            result_text = str(event["result"])
+        if event.get("is_error") is True:
+            raise SchemaValidationError(
+                f"Claude Code stream returned an error: {_json_preview(str(event.get('result', '')))!r}"
+            )
+
+    text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
+    if not text:
+        raise SchemaValidationError(
+            "Claude Code stream did not contain reviewer JSON; "
+            f"event_types={event_types}; preview={_json_preview(stdout)!r}"
+        )
+    try:
+        raw = json_loads_no_duplicates(_extract_json_text(text))
+    except Exception as exc:
+        raise SchemaValidationError(
+            f"Claude Code stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise SchemaValidationError("Claude Code stream result root must be an object")
+    return raw
+
+
+def _load_adapter_json(stdout: str) -> dict[str, Any]:
+    try:
+        raw = json_loads_no_duplicates(_extract_json_text(stdout))
+    except Exception as exc:
+        if "\n" in stdout.strip():
+            return _load_stream_json(stdout)
+        raise SchemaValidationError(
+            f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise SchemaValidationError("adapter output root must be an object")
+
+    if "findings" not in raw and isinstance(raw.get("result"), str):
+        if raw.get("is_error") is True:
+            raise SchemaValidationError(
+                f"Claude Code returned an error result: {_json_preview(str(raw.get('result', '')))!r}"
+            )
+        if raw["result"].strip():
+            try:
+                unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))
+            except Exception as exc:
+                raise SchemaValidationError(
+                    "Claude Code result was not reviewer JSON: "
+                    f"{exc}; preview={_json_preview(str(raw['result']))!r}"
+                ) from exc
+            if not isinstance(unwrapped, dict):
+                raise SchemaValidationError("Claude Code result root must be an object")
+            raw = unwrapped
+        else:
+            raise SchemaValidationError("Claude Code result was empty")
+
+    return raw
+
+
+def _write_parse_debug(output_dir: Path, reviewer: str, stdout: str, stderr: str) -> None:
+    debug_path = output_dir / "status" / f"{reviewer}-parse-debug.txt"
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+    debug_path.write_text(
+        "\n".join(
+            [
+                "stdout_preview:",
+                redact_text(_json_preview(stdout, limit=4000)),
+                "",
+                "stderr_preview:",
+                redact_text(_json_preview(stderr, limit=4000)),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -172,9 +304,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             return 0
 
         try:
-            raw = json_loads_no_duplicates(result.stdout)
-            if not isinstance(raw, dict):
-                raise SchemaValidationError("adapter output root must be an object")
+            raw = _load_adapter_json(result.stdout)
             if stage == "review":
                 finalized = finalize_finding_batch(
                     raw,
@@ -191,6 +321,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             else:
                 finalized = raw
         except Exception as exc:
+            _write_parse_debug(output_dir, reviewer, result.stdout, result.stderr)
             _write_empty(
                 output_dir,
                 output_file,

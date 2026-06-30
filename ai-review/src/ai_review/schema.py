@@ -251,9 +251,21 @@ def finalize_finding_batch(
 
     diff_text = _load_diff(input_dir)
     findings = []
+    finding_keys = {
+        "anchor",
+        "severity",
+        "category",
+        "title",
+        "body",
+        "evidence",
+        "suggestion",
+        "confidence",
+    }
     for index, finding in enumerate(batch.get("findings", []), start=1):
-        normalized = dict(finding)
+        normalized = {key: finding[key] for key in finding_keys if key in finding}
         normalized["run_local_id"] = str(normalized.get("run_local_id") or f"{reviewer}-{index:04d}")
+        normalized.setdefault("evidence", [])
+        normalized.setdefault("suggestion", None)
         anchor = dict(normalized["anchor"])
         anchor["new_path"] = str(anchor["new_path"])
         anchor["old_path"] = str(anchor["old_path"])
