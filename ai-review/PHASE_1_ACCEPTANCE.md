@@ -5,9 +5,8 @@ live GitLab-only checks separate from local automated coverage.
 
 ## Current Status
 
-Status: core GitLab MR smoke verified; Phase 1 acceptance pending project
-setting changes and one clean rerun with the `post_result` discussion reference
-fix.
+Status: core GitLab MR smoke verified; Phase 1 acceptance pending one clean
+rerun with the `post_result` discussion reference fix.
 
 Upstream commit under validation: `4d83600 Support real Claude reviewer output`
 with prerequisite backport `bc57be6 Backport AI review smoke fixes`.
@@ -76,12 +75,10 @@ Verified against private GitLab MR `burda_style/head!3122`:
 Confirm these against the private GitLab MR smoke run before marking Phase 1
 accepted:
 
-- [ ] The MR project has `Pipelines must succeed` enabled. GitLab project
-  metadata for project `6` showed `only_allow_merge_if_pipeline_succeeds=false`
-  during the 2026-06-30 smoke audit.
-- [ ] The pipeline uses separate `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN`
-  values. Both hidden masked variables exist; their values still require owner
-  confirmation.
+- [x] The MR project has `Pipelines must succeed` enabled. It was enabled after
+  the 2026-06-30 smoke audit.
+- [x] The pipeline uses separate `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN`
+  values. Confirmed by project owner.
 - [x] `prepare_ai_review`, `review_claude`, `consensus_ai_review`,
   `post_ai_review`, and `ai_review_gate` all ran from the same MR pipeline.
 - [x] `review_claude` invoked the real Claude Code CLI through OpenRouter, not
