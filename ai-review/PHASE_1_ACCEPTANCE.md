@@ -5,8 +5,8 @@ live GitLab-only checks separate from local automated coverage.
 
 ## Current Status
 
-Status: core GitLab MR smoke verified; Phase 1 acceptance pending one clean
-rerun with the `post_result` discussion reference fix.
+Status: clean GitLab MR smoke verified; Phase 1 acceptance pending same-head
+idempotency, manual/web pipeline, and final secret audit checks.
 
 Upstream commit under validation: `4d83600 Support real Claude reviewer output`
 with prerequisite backport `bc57be6 Backport AI review smoke fixes`.
@@ -18,8 +18,8 @@ Downstream smoke context:
 - Source branch: `ai-review-smoke-throw-away`
 - Target branch: `ai-review-poc-throw-away`
 - Merge request: `burda_style/head!3122`
-- Latest smoke pipeline: `178188`
-- Latest smoke SHA: `b7cb6cb738a4b919bd1ee00242faa92c19919e96`
+- Latest smoke pipeline: `178198`
+- Latest smoke SHA: `053cb41577632e2e9becb488ce7443416849c02e`
 - Smoke commit series includes `63ad47a5c Run AI review smoke with OpenRouter Claude`,
   `aa270e67e Prefer OpenRouter token for Claude Code`, and
   `d086dcf3f Read Claude Code stream output`.
@@ -50,23 +50,26 @@ Verified in this repository on 2026-06-30:
 
 Verified against private GitLab MR `burda_style/head!3122`:
 
-- Pipeline `178188` ran on source branch `ai-review-smoke-throw-away` at
-  `b7cb6cb738a4b919bd1ee00242faa92c19919e96`.
+- Pipeline `178198` ran on source branch `ai-review-smoke-throw-away` at
+  `053cb41577632e2e9becb488ce7443416849c02e`.
 - The AI review job chain succeeded:
-  - `prepare_ai_review`: job `2513767`
-  - `review_claude`: job `2513768`
-  - `consensus_ai_review`: job `2513769`
-  - `post_ai_review`: job `2513770`
-  - `ai_review_gate`: job `2513771`
-- The overall pipeline ended `canceled` after unrelated app/build/e2e jobs were
-  canceled; the AI review jobs above had already completed successfully.
+  - `prepare_ai_review`: job `2513987`
+  - `review_claude`: job `2513988`
+  - `consensus_ai_review`: job `2513995`
+  - `post_ai_review`: job `2513996`
+  - `ai_review_gate`: job `2513997`
+- The overall pipeline ended `manual` because unrelated app jobs were waiting
+  for manual action; the AI review jobs above had already completed
+  successfully.
 - `review_claude` installed and invoked Claude Code CLI `2.1.197`.
 - `consensus.json` had `panel_status=full`, `successful_reviewers=["claude"]`,
   one surfaced correctness finding, and `block_merge=false`.
-- `post_result.json` had `status=success`, `created_discussions=1`, and matching
-  `head_sha` / `current_head_sha`.
+- `post_result.json` had `status=success`, `created_discussions=1`, matching
+  `head_sha` / `current_head_sha`, and one `posted_discussions` entry with
+  `discussion_id=6f278eaf319c168d1f94a4e17a90002c14e0d5b6` and
+  `root_note_id=165912`.
 - The MR contains an AI review `DiffNote` on `src/foo.py` line 2 with an
-  `ai-review:v1` marker from run `gl-178188-2513767`.
+  `ai-review:v1` marker from run `gl-178198-2513987`.
 - `gate_result.json` had `status=passed`, `reason=no_blocking_consensus`, and
   `block_merge=false`.
 
@@ -85,9 +88,7 @@ accepted:
   the local mock path.
 - [x] The MR pipeline posted a real inline discussion on the expected added
   line.
-- [ ] The post result stores both `discussion_id` and `root_note_id`. This was
-  missing from pipeline `178188`; the local code now records these references
-  and needs one clean GitLab rerun.
+- [x] The post result stores both `discussion_id` and `root_note_id`.
 - [ ] Re-running the same head did not create a duplicate discussion.
 - [ ] A manual or web pipeline worked with injected `AI_FLOW_INPUT`.
 - [ ] No provider key, GitLab token, or Jira token appeared in job logs or
