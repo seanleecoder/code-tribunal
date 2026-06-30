@@ -34,6 +34,10 @@ prepare_ai_review:
   image: registry.example.com/ai-review/reviewer:1.1
   interruptible: true
   allow_failure: true
+  variables:
+    AI_REVIEW_CONFIG: ai-review/config/review.yaml
+    AI_REVIEW_INPUT_DIR: inputs
+    AI_REVIEW_OUTPUT_DIR: out
   needs:
     - job: prepare_ai_review
       artifacts: true
@@ -67,6 +71,10 @@ review_gemini:
   image: registry.example.com/ai-review/reviewer:1.1
   interruptible: true
   allow_failure: true
+  variables:
+    AI_REVIEW_CONFIG: ai-review/config/review.yaml
+    AI_REVIEW_INPUT_DIR: inputs
+    AI_REVIEW_OUTPUT_DIR: out
   rules:
     - if: '$AI_REVIEW_CRITIQUE_ENABLED == "true"'
   needs:

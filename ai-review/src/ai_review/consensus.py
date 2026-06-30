@@ -286,9 +286,9 @@ def cli(argv: list[str] | None = None) -> int:
         batches.append(load_json_file(path))
     consensus = build_consensus(manifest, batches, config)
     validate_instance(consensus, "consensus.schema.json")
+    write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":
         return 3
-    write_canonical_json(args.out, consensus)
     return 0
 
 
