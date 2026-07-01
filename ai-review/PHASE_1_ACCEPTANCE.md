@@ -5,8 +5,9 @@ live GitLab-only checks separate from local automated coverage.
 
 ## Current Status
 
-Status: clean GitLab MR smoke verified; Phase 1 acceptance pending same-head
-idempotency, manual/web pipeline, and final secret audit checks.
+Status: clean GitLab MR smoke verified; Phase 1 acceptance pending
+duplicate-thread policy confirmation, manual/web pipeline, and final job-log
+secret audit checks.
 
 Upstream commit under validation: `4d83600 Support real Claude reviewer output`
 with prerequisite backport `bc57be6 Backport AI review smoke fixes`.
@@ -18,11 +19,13 @@ Downstream smoke context:
 - Source branch: `ai-review-smoke-throw-away`
 - Target branch: `ai-review-poc-throw-away`
 - Merge request: `burda_style/head!3122`
-- Latest smoke pipeline: `178198`
-- Latest smoke SHA: `053cb41577632e2e9becb488ce7443416849c02e`
+- Latest smoke pipeline: `178478`
+- Latest smoke SHA: `699223c15f0d2271fac8c75432ad581e590e99c3`
 - Smoke commit series includes `63ad47a5c Run AI review smoke with OpenRouter Claude`,
   `aa270e67e Prefer OpenRouter token for Claude Code`, and
   `d086dcf3f Read Claude Code stream output`.
+- Continuation smoke includes `ba0a87c31 Record AI review post discussion
+  references` and `699223c15 Add AI review phase 1 smoke marker`.
 - Reviewer path: Claude Code CLI via OpenRouter.
 - Downstream model config: `anthropic/claude-haiku-4.5`.
 - Downstream `review_claude` configured `AI_REVIEW_REQUIRE_REAL_CLAUDE=1`,
@@ -73,6 +76,30 @@ Verified against private GitLab MR `burda_style/head!3122`:
 - `gate_result.json` had `status=passed`, `reason=no_blocking_consensus`, and
   `block_merge=false`.
 
+Verified from downloaded GitLab artifacts for continuation pipeline `178478`
+on 2026-07-01:
+
+- Pipeline `178478` ran on source branch `ai-review-smoke-throw-away` at
+  `699223c15f0d2271fac8c75432ad581e590e99c3`.
+- `manifest.json` recorded target branch `ai-review-poc-throw-away`, base SHA
+  `48f797a7dc92c4a16c5fd3e3113201cc0c880263`, and run
+  `gl-178478-2517606`.
+- `review_claude` succeeded with model `anthropic/claude-haiku-4.5`.
+- `consensus.json` had `panel_status=full`, `successful_reviewers=["claude"]`,
+  one surfaced correctness finding, and `block_merge=false`.
+- `post_result.json` had `status=success`, `created_discussions=0`,
+  `updated_discussions=0`, matching `head_sha` / `current_head_sha`, and no
+  `posted_discussions` entries. It also warned that summary fallback was
+  required for a multiline anchor.
+- `gate_result.json` had `status=passed`, `reason=no_blocking_consensus`, and
+  `block_merge=false`.
+- A generated-artifact scan excluding `inputs/repo_snapshot/` found no
+  provider, GitLab, or Jira secret value patterns across 13 generated files.
+  A broader scan of the repo snapshot found only existing static source-tree
+  matches: a redaction-test fixture and Firebase Google API keys.
+- `PYTHONPATH=src python3 -m unittest discover -s tests` passed in the
+  downstream `ai-review` package: 39 tests.
+
 ## Human Confirmation Needed
 
 Confirm these against the private GitLab MR smoke run before marking Phase 1
@@ -89,8 +116,9 @@ accepted:
 - [x] The MR pipeline posted a real inline discussion on the expected added
   line.
 - [x] The post result stores both `discussion_id` and `root_note_id`.
-- [ ] Re-running the same head must not create duplicate threads for the same
-  semantic issue.
+- [x] Re-running the same head must not create duplicate threads for the same
+  semantic issue. Continuation pipeline `178478` produced
+  `created_discussions=0` and no `posted_discussions` entries.
 - [ ] Multiple AI review threads on the same line are acceptable when they
   describe distinct issues.
 - [ ] The observed two comments are not automatically duplicates; under the
@@ -98,8 +126,8 @@ accepted:
   handling can remain separate threads.
 - [ ] A manual or web pipeline worked with injected `AI_FLOW_INPUT`.
 - [ ] No provider key, GitLab token, or Jira token appeared in job logs or
-  persisted artifacts. The AI review traces and JSON artifacts need a final
-  human security pass after the clean rerun.
+  persisted artifacts. Generated artifacts were scanned clean on 2026-07-01;
+  GitLab job logs still need a final human security pass.
 
 After these checks are confirmed, change the status above to:
 
