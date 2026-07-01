@@ -38,6 +38,8 @@ prepare_ai_review:
     AI_REVIEW_CONFIG: ai-review/config/review.yaml
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
+    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   needs:
     - job: prepare_ai_review
       artifacts: true
@@ -54,6 +56,9 @@ review_claude:
   extends: .review_template
   variables:
     REVIEWER: claude
+    AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+    AI_REVIEW_LOCAL_MOCK: "0"
+    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 review_codex:
   extends: .review_template

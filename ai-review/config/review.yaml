@@ -13,18 +13,18 @@ reviewers:
   codex:
     enabled: true
     adapter: adapters/codex.sh
-    model: gpt-5.2-codex
+    model: openai/gpt-5.4-mini
     timeout_seconds: 900
     max_findings: 50
-    credential_variable: CODEX_API_KEY
+    credential_variable: OPENROUTER_API_KEY
     cli_version: "pinned-by-image"
   gemini:
     enabled: true
     adapter: adapters/gemini.sh
-    model: gemini-3-pro
+    model: google/gemini-3.5-flash
     timeout_seconds: 900
     max_findings: 50
-    credential_variable: GEMINI_API_KEY
+    credential_variable: OPENROUTER_API_KEY
     cli_version: "pinned-by-image"
 
 panel:
