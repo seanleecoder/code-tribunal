@@ -113,6 +113,22 @@ def _validate_subset(instance: Any, schema: dict[str, Any], root: dict[str, Any]
     if "$ref" in schema:
         _validate_subset(instance, _resolve_ref(schema, root), root, path)
         return
+    for subschema in schema.get("allOf", []):
+        if not isinstance(subschema, dict):
+            raise SchemaValidationError(f"{path}: allOf entry is not an object")
+        _validate_subset(instance, subschema, root, path)
+    if_schema = schema.get("if")
+    if isinstance(if_schema, dict):
+        try:
+            _validate_subset(instance, if_schema, root, path)
+        except SchemaValidationError:
+            else_schema = schema.get("else")
+            if isinstance(else_schema, dict):
+                _validate_subset(instance, else_schema, root, path)
+        else:
+            then_schema = schema.get("then")
+            if isinstance(then_schema, dict):
+                _validate_subset(instance, then_schema, root, path)
     if "const" in schema and instance != schema["const"]:
         raise SchemaValidationError(f"{path}: expected const {schema['const']!r}")
     if "enum" in schema and instance not in schema["enum"]:

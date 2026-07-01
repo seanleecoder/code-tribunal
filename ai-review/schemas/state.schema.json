@@ -29,6 +29,7 @@
         "additionalProperties": false,
         "required": [
           "issue_id",
+          "category",
           "aliases",
           "discussion_id",
           "root_note_id",
@@ -48,6 +49,17 @@
         ],
         "properties": {
           "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "category": {
+            "enum": [
+              "security",
+              "correctness",
+              "performance",
+              "maintainability",
+              "style",
+              "test",
+              "other"
+            ]
+          },
           "aliases": {
             "type": "object",
             "additionalProperties": false,

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .anchors import title_fingerprint
 from .canonical import canonical_json, sha256_hex
 from .config import load_config
 from .gitlab_client import (
@@ -15,6 +16,7 @@ from .gitlab_client import (
     build_position,
     root_note_id_from_discussion,
 )
+from .memory import find_matching_record
 from .schema import load_json_file, write_canonical_json
 
 MARKER_RE = re.compile(
@@ -271,6 +273,86 @@ def discussion_markers(discussions: list[dict[str, Any]]) -> dict[str, dict[str,
             "body_hash": discussion.marker["body_hash"],
         }
     return markers
+
+
+def _line_from_position(position: dict[str, Any], prefix: str | None = None) -> dict[str, Any]:
+    if prefix is None:
+        return {
+            "old_line": position.get("old_line"),
+            "new_line": position.get("new_line"),
+            "line_code": None,
+        }
+    return {
+        "old_line": position.get(f"{prefix}_old_line"),
+        "new_line": position.get(f"{prefix}_new_line"),
+        "line_code": None,
+    }
+
+
+def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
+    side = position_side(position)
+    if side is None:
+        return None
+    line_range = position.get("line_range")
+    if isinstance(line_range, dict) and isinstance(line_range.get("start"), dict):
+        start = _line_from_position(line_range["start"])
+        end = _line_from_position(line_range.get("end", line_range["start"]))
+    else:
+        start = _line_from_position(position)
+        end = dict(start)
+    return {
+        "new_path": position.get("new_path") or position.get("old_path") or "",
+        "old_path": position.get("old_path") or position.get("new_path") or "",
+        "side": side,
+        "start": start,
+        "end": end,
+        "hunk_header": "",
+        "context_hash": "",
+        "symbol": None,
+    }
+
+
+def state_from_existing_discussions(
+    existing_discussions: list[ExistingReviewDiscussion],
+    *,
+    exclude_discussion_ids: set[Any] | None = None,
+    current_head_sha: str | None = None,
+) -> dict[str, Any]:
+    excluded = exclude_discussion_ids or set()
+    records: list[dict[str, Any]] = []
+    for discussion in existing_discussions:
+        if discussion.resolved or discussion.discussion_id in excluded:
+            continue
+        if discussion.discussion_id is None or discussion.root_note_id is None:
+            continue
+        if (
+            current_head_sha is not None
+            and isinstance(discussion.position, dict)
+            and discussion.position.get("head_sha") not in {None, current_head_sha}
+        ):
+            continue
+        anchor = _anchor_from_position(discussion.position or {})
+        title_fp = title_fingerprint(discussion.title) if discussion.title else None
+        records.append(
+            {
+                "issue_id": discussion.marker["issue_id"],
+                "category": discussion.category or "",
+                "title": discussion.title,
+                "aliases": {
+                    "candidate_issue_signatures": [],
+                    "source_finding_ids": [],
+                    "context_hashes": [],
+                    "title_fingerprints": [title_fp] if title_fp else [],
+                    "symbols": [],
+                },
+                "discussion_id": str(discussion.discussion_id),
+                "root_note_id": discussion.root_note_id,
+                "status": "open",
+                "anchor": anchor or {},
+                "last_posted_body_hash": discussion.marker["body_hash"],
+            }
+        )
+    return {"state_schema_version": 1, "records": records}
 
 
 def normalize_issue_text(text: str) -> str:
@@ -574,14 +656,6 @@ def post_consensus(
         else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
-    existing_markers: dict[str, dict[str, Any]] = {
-        discussion.marker["issue_id"]: {
-            "discussion_id": discussion.discussion_id,
-            "root_note_id": discussion.root_note_id,
-            "body_hash": discussion.marker["body_hash"],
-        }
-        for discussion in existing_discussions
-    }
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
     # back to the summary comment (unsupported side / multiline), and FYI findings.
@@ -623,15 +697,35 @@ def post_consensus(
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
+        position = build_position(anchor, version, multiline=inline_multiline)
+        existing_state = state_from_existing_discussions(
+            existing_discussions,
+            exclude_discussion_ids=used_discussion_ids,
+            current_head_sha=manifest["head_sha"],
+        )
+        state_match = find_matching_record(group, existing_state)
+        if state_match.status == "ambiguous":
+            result["warnings"].append(
+                f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
+                "skipped inline creation"
+            )
+            summary_fallback_groups.append(group)
+            continue
+
+        post_group = group
+        existing: dict[str, Any] | None = None
+        if state_match.status == "matched" and state_match.record is not None:
+            existing = state_match.record
+            if existing["issue_id"] != group.get("issue_id"):
+                post_group = dict(group, issue_id=existing["issue_id"])
+
         body, body_hash = render_body(
-            group,
+            post_group,
             len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
         )
-        position = build_position(anchor, version, multiline=inline_multiline)
-        existing = existing_markers.get(group["issue_id"])
         if existing is not None:
-            if existing.get("body_hash") == body_hash:
+            if existing.get("last_posted_body_hash") == body_hash:
                 result["skipped_unchanged"] += 1
                 continue
             client.update_discussion_note(
@@ -645,32 +739,10 @@ def post_consensus(
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
-                    "issue_id": group["issue_id"],
+                    "issue_id": post_group["issue_id"],
                     "action": "updated",
                     "discussion_id": str(existing["discussion_id"]),
                     "root_note_id": int(existing["root_note_id"]),
-                }
-            )
-            continue
-        fallback = find_same_issue_fallback(
-            existing_discussions, group, position, used_discussion_ids
-        )
-        if fallback is not None:
-            client.update_discussion_note(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                str(fallback.discussion_id),
-                int(fallback.root_note_id),
-                body,
-            )
-            used_discussion_ids.add(fallback.discussion_id)
-            result["updated_discussions"] += 1
-            result["posted_discussions"].append(
-                {
-                    "issue_id": group["issue_id"],
-                    "action": "updated",
-                    "discussion_id": str(fallback.discussion_id),
-                    "root_note_id": int(fallback.root_note_id),
                 }
             )
             continue
@@ -692,14 +764,14 @@ def post_consensus(
             root_note_id = root_note_id_from_discussion(discussion)
         except GitLabApiError as exc:
             result["warnings"].append(
-                f"create_discussion for {group['issue_id']} returned no root note: {exc}"
+                f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
             )
             continue
         result["created_discussions"] += 1
         used_discussion_ids.add(discussion["id"])
         result["posted_discussions"].append(
             {
-                "issue_id": group["issue_id"],
+                "issue_id": post_group["issue_id"],
                 "action": "created",
                 "discussion_id": str(discussion["id"]),
                 "root_note_id": root_note_id,

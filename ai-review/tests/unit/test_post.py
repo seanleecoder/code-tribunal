@@ -265,7 +265,7 @@ class PostTests(unittest.TestCase):
         )
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_fallback_updates_same_anchor_category_and_issue_text_with_changed_id(
+    def test_post_state_match_updates_same_anchor_category_and_title_with_changed_id(
         self,
     ) -> None:
         client = FakePostClient("head")
@@ -279,6 +279,7 @@ class PostTests(unittest.TestCase):
                 discussion_id="semantic-match",
             )
         ]
+        consensus["groups"][0]["body"] = "Updated Body"
         result = post_consensus(
             client,  # type: ignore[arg-type]
             {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
@@ -290,14 +291,14 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 1)
         self.assertIn(
-            f"issue_id={consensus['groups'][0]['issue_id']}",
+            f"issue_id={existing_group['issue_id']}",
             client.updated_notes[0]["body"],
         )
         self.assertEqual(
             result["posted_discussions"],
             [
                 {
-                    "issue_id": consensus["groups"][0]["issue_id"],
+                    "issue_id": existing_group["issue_id"],
                     "action": "updated",
                     "discussion_id": "semantic-match",
                     "root_note_id": 123,
@@ -332,7 +333,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_fallback_creates_when_multiple_candidates_match(self) -> None:
+    def test_post_state_match_does_not_create_when_multiple_candidates_match(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
         first_group = copy.deepcopy(consensus["groups"][0])
@@ -358,10 +359,14 @@ class PostTests(unittest.TestCase):
             self._manifest("head"),
             consensus,
         )
-        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(client.created, 1)
+        self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
+        self.assertTrue(
+            any("ambiguous existing discussion match" in item for item in result["warnings"])
+        )
+        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
         validate_instance(result, "post_result.schema.json")
 
     def test_post_fallback_requires_position_and_matching_head_sha(self) -> None:
@@ -394,7 +399,7 @@ class PostTests(unittest.TestCase):
         return {"posting": base, "limits": limits}
 
     def test_post_fallback_does_not_overwrite_same_discussion_twice(self) -> None:
-        # Bug #1: two surface groups whose semantic fallback both resolve to one
+        # Bug #1: two surface groups whose recovered state match both resolve to one
         # existing discussion must not both update (overwrite) that same note.
         client = FakePostClient("head")
         consensus = self._consensus()
@@ -405,6 +410,7 @@ class PostTests(unittest.TestCase):
         consensus["groups"] = [group_a, group_b]
         existing_group = copy.deepcopy(group_a)
         existing_group["issue_id"] = "c" * 64
+        group_a["body"] = "Updated Body A"
         client.discussions = [
             self._existing_discussion(
                 existing_group, position=self._position(), discussion_id="shared"
@@ -421,6 +427,59 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.updated, 1)
         self.assertEqual(client.created, 1)
         validate_instance(result, "post_result.schema.json")
+
+    def test_post_run_to_run_upsert_reuses_existing_discussion_with_reduced_panel(self) -> None:
+        class StatefulClient(FakePostClient):
+            def create_discussion(  # type: ignore[no-untyped-def]
+                self, project_id, mr_iid, body, position
+            ):
+                self.created += 1
+                discussion_id = f"discussion-{self.created}"
+                note_id = 200 + self.created
+                self.discussions.append(
+                    {
+                        "id": discussion_id,
+                        "notes": [{"id": note_id, "body": body, "position": position}],
+                    }
+                )
+                return {"id": discussion_id, "notes": [{"id": note_id}]}
+
+        client = StatefulClient("head")
+        first = self._consensus()
+        first_group = first["groups"][0]
+        first_group["contributing_reviewers"] = ["claude", "codex"]
+        first_group["source_finding_ids"] = ["b" * 64, "c" * 64]
+        first_group["vote_count"] = 2
+
+        first_result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            first,
+        )
+        self.assertEqual(first_result["created_discussions"], 1)
+
+        second = self._consensus()
+        second_group = second["groups"][0]
+        second_group["issue_id"] = "d" * 64
+        second_group["contributing_reviewers"] = ["claude"]
+        second_group["source_finding_ids"] = ["b" * 64]
+        second_group["vote_count"] = 1
+
+        second_result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            second,
+        )
+
+        self.assertEqual(second_result["created_discussions"], 0)
+        self.assertEqual(second_result["updated_discussions"], 1)
+        self.assertEqual(client.created, 1)
+        self.assertEqual(client.updated, 1)
+        self.assertEqual(second_result["posted_discussions"][0]["discussion_id"], "discussion-1")
+        self.assertEqual(second_result["posted_discussions"][0]["issue_id"], "a" * 64)
+        validate_instance(second_result, "post_result.schema.json")
 
     def test_post_unsupported_side_falls_back_to_summary_and_is_idempotent(self) -> None:
         # Bug #2: a side=old surface finding must be posted to the MR summary comment,

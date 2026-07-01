@@ -7,6 +7,7 @@ from typing import Any
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import enabled_reviewers, load_config
+from .memory import find_matching_record
 from .post import render_body
 from .schema import load_json_file, validate_instance, write_canonical_json
 
@@ -112,6 +113,27 @@ def issue_id_for_group(findings: list[dict[str, Any]]) -> str:
     )
 
 
+def _group_anchor_path(group: dict[str, Any]) -> str:
+    anchor = group.get("representative_anchor")
+    if not isinstance(anchor, dict):
+        return ""
+    return anchor_path_key(anchor)
+
+
+def _group_source_hash(group: dict[str, Any]) -> str:
+    return sha256_hex(canonical_json(sorted(group.get("source_finding_ids", []))))
+
+
+def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
+    issue_id = group.get("issue_id")
+    title = str(group.get("title", ""))
+    path = _group_anchor_path(group)
+    source_hash = _group_source_hash(group)
+    if isinstance(issue_id, str):
+        return (0, issue_id, title, path, source_hash)
+    return (1, title, path, source_hash, "")
+
+
 def group_findings(findings: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     ordered = sorted(findings, key=lambda item: item["source_finding_id"])
     uf = UnionFind(len(ordered))
@@ -176,6 +198,7 @@ def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     config: dict[str, Any],
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     enabled = sorted(enabled_reviewers(config))
     successful = sorted(batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success")
@@ -249,12 +272,32 @@ def build_consensus(
                     "precedence": None,
                 },
             }
+            state_match = find_matching_record(group, state)
+            if state_match.status == "matched" and state_match.record is not None:
+                group["issue_id"] = state_match.record["issue_id"]
+                group["issue_id_source"] = "matched_state"
+                group["state_match"] = {
+                    "status": "matched",
+                    "matched_issue_id": state_match.record["issue_id"],
+                    "precedence": state_match.precedence,
+                }
+            elif state_match.status == "ambiguous":
+                group["issue_id"] = None
+                group["issue_id_source"] = "ambiguous_unassigned"
+                group["decision"] = "fyi"
+                group["block_merge"] = False
+                group["human_ack_recommended"] = False
+                group["state_match"] = {
+                    "status": "ambiguous",
+                    "matched_issue_id": None,
+                    "precedence": state_match.precedence,
+                }
             group["_candidate_issue_signature_hashes"] = candidate_signature_hashes
             _body, body_hash = render_body(group, len(successful), manifest["run_id"])
             group["body_hash"] = body_hash
             del group["_candidate_issue_signature_hashes"]
             groups.append(group)
-    groups = sorted(groups, key=lambda group: group["issue_id"])
+    groups = sorted(groups, key=_group_sort_key)
     return {
         "schema_version": "consensus.v1",
         "run_id": manifest["run_id"],
@@ -280,6 +323,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--findings-dir", default="out/findings")
+    parser.add_argument("--state")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     config = load_config(args.config)
@@ -288,7 +332,8 @@ def cli(argv: list[str] | None = None) -> int:
     batches = []
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))
-    consensus = build_consensus(manifest, batches, config)
+    state = load_json_file(args.state) if args.state else None
+    consensus = build_consensus(manifest, batches, config, state=state)
     validate_instance(consensus, "consensus.schema.json")
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":

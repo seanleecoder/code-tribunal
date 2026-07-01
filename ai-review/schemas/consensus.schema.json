@@ -59,6 +59,28 @@
     "group": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["issue_id_source"],
+            "properties": {
+              "issue_id_source": { "const": "ambiguous_unassigned" }
+            }
+          },
+          "then": {
+            "properties": {
+              "issue_id": { "type": "null" },
+              "decision": { "const": "fyi" },
+              "block_merge": { "const": false }
+            }
+          },
+          "else": {
+            "properties": {
+              "issue_id": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      ],
       "required": [
         "issue_id",
         "issue_id_source",
@@ -82,7 +104,10 @@
         "state_match"
       ],
       "properties": {
-        "issue_id": { "$ref": "#/$defs/sha256" },
+        "issue_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "issue_id_source": {
           "enum": ["matched_state", "new_signature", "ambiguous_unassigned"]
         },
