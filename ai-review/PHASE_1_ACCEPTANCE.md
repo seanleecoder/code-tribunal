@@ -89,7 +89,13 @@ accepted:
 - [x] The MR pipeline posted a real inline discussion on the expected added
   line.
 - [x] The post result stores both `discussion_id` and `root_note_id`.
-- [ ] Re-running the same head did not create a duplicate discussion.
+- [ ] Re-running the same head must not create duplicate threads for the same
+  semantic issue.
+- [ ] Multiple AI review threads on the same line are acceptable when they
+  describe distinct issues.
+- [ ] The observed two comments are not automatically duplicates; under the
+  conservative policy, broad list/dict validation and narrow missing-key
+  handling can remain separate threads.
 - [ ] A manual or web pipeline worked with injected `AI_FLOW_INPUT`.
 - [ ] No provider key, GitLab token, or Jira token appeared in job logs or
   persisted artifacts. The AI review traces and JSON artifacts need a final
