@@ -152,7 +152,11 @@ def decision_for_group(
     severity = max((str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value])
     category = str(findings[0]["category"])
     single_policy = config["severity_policy"]["single_reviewer_blocker"]
-    votes_required = int(config["panel"]["quorum"]["votes_required"])
+    # quorum is only required (and validated) when >1 reviewer is enabled; a valid
+    # single-reviewer config may omit it, so default to a quorum that one reviewer
+    # cannot reach — routing findings through the single-reviewer/fyi policy instead.
+    quorum = config.get("panel", {}).get("quorum", {})
+    votes_required = int(quorum.get("votes_required", 2)) if isinstance(quorum, dict) else 2
     single_reviewer_blocker = (
         severity == "blocker" and len(reviewers) == 1 and category in set(single_policy["categories"])
     )

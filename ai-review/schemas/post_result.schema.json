@@ -58,6 +58,17 @@
     "warnings": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "summary_comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "note_id", "surface_findings", "fyi_findings"],
+      "properties": {
+        "action": { "enum": ["none", "created", "updated", "unchanged"] },
+        "note_id": { "type": ["integer", "null"], "minimum": 1 },
+        "surface_findings": { "type": "integer", "minimum": 0 },
+        "fyi_findings": { "type": "integer", "minimum": 0 }
+      }
     }
   }
 }

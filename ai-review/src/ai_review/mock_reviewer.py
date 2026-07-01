@@ -3,21 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import gitlab_line_code
+from .anchors import HUNK_RE, gitlab_line_code, strip_diff_prefix
 from .schema import now_iso
-
-HUNK_RE = re.compile(r"@@ -(?P<old>\d+)(?:,\d+)? \+(?P<new>\d+)(?:,\d+)? @@")
-
-
-def _strip_path(path: str) -> str:
-    if path.startswith("a/") or path.startswith("b/"):
-        return path[2:]
-    return path
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
@@ -29,10 +20,10 @@ def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
 
     for raw_line in diff_text.splitlines():
         if raw_line.startswith("--- "):
-            old_path = _strip_path(raw_line[4:].strip())
+            old_path = strip_diff_prefix(raw_line[4:].strip())
             continue
         if raw_line.startswith("+++ "):
-            new_path = _strip_path(raw_line[4:].strip())
+            new_path = strip_diff_prefix(raw_line[4:].strip())
             continue
         hunk_match = HUNK_RE.match(raw_line)
         if hunk_match:

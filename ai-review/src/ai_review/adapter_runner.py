@@ -257,6 +257,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
         env["AI_REVIEW_MODEL"] = model
         env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
         env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+        if reviewer_config.get("max_turns") is not None:
+            env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
 
         if stage == "review":
             rendered = render_review_prompt(input_dir, config_path, reviewer)
@@ -306,6 +308,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             raw = _load_adapter_json(result.stdout)
             if stage == "review":
+                max_findings = reviewer_config.get("max_findings")
                 finalized = finalize_finding_batch(
                     raw,
                     reviewer=reviewer,
@@ -313,6 +316,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     run_id=run_id,
                     started_at=started_at,
                     input_dir=input_dir,
+                    max_findings=int(max_findings) if max_findings is not None else None,
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":

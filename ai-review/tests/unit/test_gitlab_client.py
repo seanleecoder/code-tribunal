@@ -102,6 +102,20 @@ class GitLabClientTests(unittest.TestCase):
     def test_root_note_id_from_discussion(self) -> None:
         self.assertEqual(root_note_id_from_discussion({"notes": [{"id": 123}]}), 123)
 
+    def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
+        # Bug #8: a 204/empty /changes response makes _request return None; fetch_mr_diff
+        # must degrade to an empty diff instead of raising AttributeError.
+        class EmptyChangesSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                response = FakeResponse(None, status_code=204)
+                response.text = ""
+                return response
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=EmptyChangesSession()
+        )
+        self.assertEqual(client.fetch_mr_diff("group/project", 1), "\n")
+
 
 if __name__ == "__main__":
     unittest.main()

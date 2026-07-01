@@ -138,8 +138,9 @@ class GitLabClient:
             "GET",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/changes",
         )
+        change_list = changes.get("changes", []) if isinstance(changes, dict) else []
         chunks: list[str] = []
-        for change in changes.get("changes", []):
+        for change in change_list:
             old_path = change.get("old_path") or change.get("new_path")
             new_path = change.get("new_path") or change.get("old_path")
             chunks.append(f"diff --git a/{old_path} b/{new_path}")
@@ -227,5 +228,18 @@ class GitLabClient:
         return self._request(
             "POST",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
+            json={"body": body},
+        )
+
+    def update_mr_note(
+        self,
+        project_id_or_path: str | int,
+        merge_request_iid: str | int,
+        note_id: int,
+        body: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes/{note_id}",
             json={"body": body},
         )

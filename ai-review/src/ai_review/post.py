@@ -9,7 +9,12 @@ from typing import Any
 
 from .canonical import canonical_json, sha256_hex
 from .config import load_config
-from .gitlab_client import GitLabClient, build_position, root_note_id_from_discussion
+from .gitlab_client import (
+    GitLabApiError,
+    GitLabClient,
+    build_position,
+    root_note_id_from_discussion,
+)
 from .schema import load_json_file, write_canonical_json
 
 MARKER_RE = re.compile(
@@ -17,8 +22,13 @@ MARKER_RE = re.compile(
     r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})\s+"
     r"source=(?P<source_hash>[a-f0-9]{64})\s*-->"
 )
+SUMMARY_MARKER_RE = re.compile(
+    r"<!--\s*ai-review-summary:v1\s+run_id=(?P<run_id>[^\s]+)\s+"
+    r"body_hash=(?P<body_hash>[a-f0-9]{64})\s*-->"
+)
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
 TEXT_TOKEN_RE = re.compile(r"[a-z0-9]+")
+SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
 FAILURE_KEYWORDS = {
     "attributeerror",
     "csrf",
@@ -374,11 +384,15 @@ def find_same_issue_fallback(
     existing_discussions: list[ExistingReviewDiscussion],
     group: dict[str, Any],
     position: dict[str, Any],
+    used_discussion_ids: set[Any] | None = None,
 ) -> ExistingReviewDiscussion | None:
+    used = used_discussion_ids or set()
     candidates: list[ExistingReviewDiscussion] = []
     category = str(group.get("category", "")).strip().lower()
     for discussion in existing_discussions:
         if discussion.resolved or discussion.position is None:
+            continue
+        if discussion.discussion_id in used:
             continue
         if str(discussion.category or "").strip().lower() != category:
             continue
@@ -390,6 +404,120 @@ def find_same_issue_fallback(
     if len(candidates) != 1:
         return None
     return candidates[0]
+
+
+def _summary_line(group: dict[str, Any]) -> str:
+    anchor = group.get("representative_anchor", {}) or {}
+    path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
+    severity = str(group.get("final_severity", "")).upper()
+    category = str(group.get("category", ""))
+    title = sanitize_model_text(str(group.get("title", "")), max_length=200)
+    return f"- {severity} {category}: {title} — {path}"
+
+
+def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        groups,
+        key=lambda group: (
+            -SEVERITY_RANK.get(str(group.get("final_severity")), -1),
+            str(group.get("issue_id", "")),
+        ),
+    )
+
+
+def render_summary_body(
+    run_id: str,
+    fallback_groups: list[dict[str, Any]],
+    fyi_groups: list[dict[str, Any]],
+    max_fyi: int,
+) -> tuple[str, str]:
+    lines = ["**AI review summary**", ""]
+    fallback_sorted = _sort_groups(fallback_groups)
+    if fallback_sorted:
+        lines.append(f"Findings not posted inline ({len(fallback_sorted)}):")
+        lines.extend(_summary_line(group) for group in fallback_sorted)
+        lines.append("")
+    fyi_sorted = _sort_groups(fyi_groups)
+    if fyi_sorted:
+        shown = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
+        lines.append(f"Advisory (FYI) findings ({len(fyi_sorted)}):")
+        lines.extend(_summary_line(group) for group in shown)
+        remaining = len(fyi_sorted) - len(shown)
+        if remaining > 0:
+            lines.append(f"…and {remaining} more advisory findings")
+        lines.append("")
+    body_without_marker = "\n".join(lines).rstrip()
+    body_hash = sha256_hex(body_without_marker)
+    marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={body_hash} -->"
+    return body_without_marker + "\n\n" + marker, body_hash
+
+
+def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | None:
+    for discussion in discussions:
+        notes = discussion.get("notes")
+        if not isinstance(notes, list) or not notes:
+            continue
+        root = notes[0]
+        if not isinstance(root, dict):
+            continue
+        body = root.get("body")
+        if not isinstance(body, str):
+            continue
+        match = SUMMARY_MARKER_RE.search(body)
+        if match is None:
+            continue
+        note_id = root.get("id")
+        if not isinstance(note_id, int):
+            continue
+        return note_id, match.group("body_hash")
+    return None
+
+
+def _note_id_from_response(response: Any) -> int | None:
+    if isinstance(response, dict) and isinstance(response.get("id"), int):
+        return response["id"]
+    return None
+
+
+def upsert_summary_comment(
+    client: GitLabClient,
+    manifest: dict[str, Any],
+    run_id: str,
+    raw_discussions: list[dict[str, Any]],
+    fallback_groups: list[dict[str, Any]],
+    fyi_groups: list[dict[str, Any]],
+    max_fyi: int,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    summary = {
+        "action": "none",
+        "note_id": None,
+        "surface_findings": len(fallback_groups),
+        "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
+    }
+    if not fallback_groups and not fyi_groups:
+        return summary
+    body, body_hash = render_summary_body(run_id, fallback_groups, fyi_groups, max_fyi)
+    if dry_run:
+        summary["action"] = "created"
+        return summary
+    existing = find_summary_note(raw_discussions)
+    if existing is None:
+        response = client.create_mr_note(
+            manifest["project_id"], manifest["merge_request_iid"], body
+        )
+        summary["action"] = "created"
+        summary["note_id"] = _note_id_from_response(response)
+        return summary
+    note_id, existing_hash = existing
+    summary["note_id"] = note_id
+    if existing_hash == body_hash:
+        summary["action"] = "unchanged"
+        return summary
+    client.update_mr_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
+    summary["action"] = "updated"
+    return summary
 
 
 def post_consensus(
@@ -419,24 +547,33 @@ def post_consensus(
         "jira_comments_updated": 0,
         "posted_discussions": [],
         "warnings": [],
+        "summary_comment": {
+            "action": "none",
+            "note_id": None,
+            "surface_findings": 0,
+            "fyi_findings": 0,
+        },
     }
-    if (
-        config.get("posting", {}).get("stale_head_guard", True)
-        and current_head_sha != manifest["head_sha"]
-    ):
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
         result["status"] = "stale_head"
         return result
 
     version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    inline_multiline = bool(config.get("posting", {}).get("inline_multiline", False))
-    inline_sides = set(config.get("posting", {}).get("v1_inline_sides", ["new"]))
-    existing_discussions = (
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+
+    raw_discussions = (
         []
         if dry_run
-        else index_ai_review_discussions(
-            client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
-        )
+        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
     )
+    existing_discussions = index_ai_review_discussions(raw_discussions)
     existing_markers: dict[str, dict[str, Any]] = {
         discussion.marker["issue_id"]: {
             "discussion_id": discussion.discussion_id,
@@ -445,18 +582,47 @@ def post_consensus(
         }
         for discussion in existing_discussions
     }
+
+    # Classify groups: inline-postable surface findings, surface findings that must fall
+    # back to the summary comment (unsupported side / multiline), and FYI findings.
+    inline_candidates: list[dict[str, Any]] = []
+    summary_fallback_groups: list[dict[str, Any]] = []
+    fyi_groups: list[dict[str, Any]] = []
     for group in consensus.get("groups", []):
-        if group.get("decision") != "surface":
+        decision = group.get("decision")
+        if decision == "fyi":
+            fyi_groups.append(group)
+            continue
+        if decision != "surface":
             continue
         anchor = group["representative_anchor"]
         if anchor.get("side") not in inline_sides:
             result["warnings"].append(
                 f"summary fallback required for unsupported side: {anchor.get('side')}"
             )
+            summary_fallback_groups.append(group)
             continue
         if anchor.get("start") != anchor.get("end") and not inline_multiline:
             result["warnings"].append("summary fallback required for multiline anchor")
+            summary_fallback_groups.append(group)
             continue
+        inline_candidates.append(group)
+
+    # Enforce the inline surface cap; highest-severity findings keep the inline slots and
+    # any overflow is redirected to the summary comment rather than dropped.
+    inline_candidates = _sort_groups(inline_candidates)
+    if len(inline_candidates) > max_surface:
+        overflow = inline_candidates[max_surface:]
+        inline_candidates = inline_candidates[:max_surface]
+        for group in overflow:
+            result["warnings"].append(
+                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
+            )
+            summary_fallback_groups.append(group)
+
+    used_discussion_ids: set[Any] = set()
+    for group in inline_candidates:
+        anchor = group["representative_anchor"]
         body, body_hash = render_body(
             group,
             len(consensus.get("successful_reviewers", [])),
@@ -475,6 +641,7 @@ def post_consensus(
                 int(existing["root_note_id"]),
                 body,
             )
+            used_discussion_ids.add(existing["discussion_id"])
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
@@ -485,7 +652,9 @@ def post_consensus(
                 }
             )
             continue
-        fallback = find_same_issue_fallback(existing_discussions, group, position)
+        fallback = find_same_issue_fallback(
+            existing_discussions, group, position, used_discussion_ids
+        )
         if fallback is not None:
             client.update_discussion_note(
                 manifest["project_id"],
@@ -494,6 +663,7 @@ def post_consensus(
                 int(fallback.root_note_id),
                 body,
             )
+            used_discussion_ids.add(fallback.discussion_id)
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
@@ -513,8 +683,20 @@ def post_consensus(
             body,
             position,
         )
+        if not isinstance(discussion, dict) or discussion.get("id") is None:
+            result["warnings"].append(
+                f"create_discussion for {group['issue_id']} returned no response body; skipped"
+            )
+            continue
+        try:
+            root_note_id = root_note_id_from_discussion(discussion)
+        except GitLabApiError as exc:
+            result["warnings"].append(
+                f"create_discussion for {group['issue_id']} returned no root note: {exc}"
+            )
+            continue
         result["created_discussions"] += 1
-        root_note_id = root_note_id_from_discussion(discussion)
+        used_discussion_ids.add(discussion["id"])
         result["posted_discussions"].append(
             {
                 "issue_id": group["issue_id"],
@@ -523,6 +705,19 @@ def post_consensus(
                 "root_note_id": root_note_id,
             }
         )
+
+    fallback_to_post = summary_fallback_groups if fallback_to_summary else []
+    fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
+    result["summary_comment"] = upsert_summary_comment(
+        client,
+        manifest,
+        consensus["run_id"],
+        raw_discussions,
+        fallback_to_post,
+        fyi_to_post,
+        max_fyi,
+        dry_run=dry_run,
+    )
     return result
 
 
