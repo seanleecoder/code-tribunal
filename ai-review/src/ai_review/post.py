@@ -9,7 +9,12 @@ from typing import Any
 
 from .canonical import canonical_json, sha256_hex
 from .config import load_config
-from .gitlab_client import GitLabClient, build_position, root_note_id_from_discussion
+from .gitlab_client import (
+    GitLabApiError,
+    GitLabClient,
+    build_position,
+    root_note_id_from_discussion,
+)
 from .schema import load_json_file, write_canonical_json
 
 MARKER_RE = re.compile(
@@ -678,8 +683,19 @@ def post_consensus(
             body,
             position,
         )
+        if not isinstance(discussion, dict) or discussion.get("id") is None:
+            result["warnings"].append(
+                f"create_discussion for {group['issue_id']} returned no response body; skipped"
+            )
+            continue
+        try:
+            root_note_id = root_note_id_from_discussion(discussion)
+        except GitLabApiError as exc:
+            result["warnings"].append(
+                f"create_discussion for {group['issue_id']} returned no root note: {exc}"
+            )
+            continue
         result["created_discussions"] += 1
-        root_note_id = root_note_id_from_discussion(discussion)
         used_discussion_ids.add(discussion["id"])
         result["posted_discussions"].append(
             {

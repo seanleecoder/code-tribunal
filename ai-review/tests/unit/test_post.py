@@ -545,6 +545,25 @@ class PostTests(unittest.TestCase):
         self.assertIn("10 more advisory findings", client.mr_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_create_discussion_none_response_is_skipped(self) -> None:
+        # Bug #7: create_discussion returning None (204/empty) must not crash the post
+        # stage or leave an inconsistent count; the group is skipped with a warning.
+        class NoneCreateClient(FakePostClient):
+            def create_discussion(self, project_id, mr_iid, body, position):  # type: ignore[no-untyped-def]
+                return None
+
+        client = NoneCreateClient("head")
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["posted_discussions"], [])
+        self.assertTrue(any("no response body" in warning for warning in result["warnings"]))
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_fallback_ignores_resolved_discussion(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()

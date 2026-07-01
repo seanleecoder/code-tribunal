@@ -25,6 +25,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     raw = load_json_file(args.input)
     if args.stage == "review":
+        if args.input_dir is None:
+            sys.stderr.write(
+                "validate_output: --input-dir not provided; context hashes cannot be "
+                "recomputed from the diff and findings with unresolvable anchors will be "
+                "dropped. Pass --input-dir to normalize against the merge request diff.\n"
+            )
         finalized = finalize_finding_batch(
             raw,
             reviewer=args.reviewer,

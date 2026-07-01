@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from .anchors import (
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
+from .redact import redact_text
 
 
 class SchemaValidationError(ValueError):
@@ -286,38 +288,59 @@ def finalize_finding_batch(
         "suggestion",
         "confidence",
     }
+    dropped = 0
     for index, finding in enumerate(raw_findings, start=1):
-        normalized = {key: finding[key] for key in finding_keys if key in finding}
-        normalized["run_local_id"] = str(normalized.get("run_local_id") or f"{reviewer}-{index:04d}")
-        normalized.setdefault("evidence", [])
-        normalized.setdefault("suggestion", None)
-        anchor = dict(normalized["anchor"])
-        anchor["new_path"] = str(anchor["new_path"])
-        anchor["old_path"] = str(anchor["old_path"])
-        anchor = add_line_codes(anchor)
-        if diff_text is not None:
-            anchor["context_hash"] = context_hash_from_unified_diff(diff_text, anchor)
-        elif not is_sha256(anchor.get("context_hash")):
-            anchor["context_hash"] = context_hash_from_unified_diff(str(anchor.get("hunk_header", "")), anchor)
-        normalized["anchor"] = anchor
-        title_fp = title_fingerprint(str(normalized["title"]))
-        evidence_fp = evidence_fingerprint(first_evidence_or_body(normalized))
-        normalized["fingerprints"] = {
-            "title_fingerprint": title_fp,
-            "evidence_fingerprint": evidence_fp,
-        }
-        normalized["source_finding_id"] = compute_source_finding_id(
-            reviewer,
-            anchor,
-            str(normalized["category"]),
-            title_fp,
-        )
-        normalized["candidate_issue_signature"] = candidate_issue_signature(
-            anchor,
-            str(normalized["category"]),
-            title_fp,
-        )
+        try:
+            normalized = {key: finding[key] for key in finding_keys if key in finding}
+            normalized["run_local_id"] = str(
+                normalized.get("run_local_id") or f"{reviewer}-{index:04d}"
+            )
+            normalized.setdefault("evidence", [])
+            normalized.setdefault("suggestion", None)
+            anchor = dict(normalized["anchor"])
+            anchor["new_path"] = str(anchor["new_path"])
+            anchor["old_path"] = str(anchor["old_path"])
+            anchor = add_line_codes(anchor)
+            if diff_text is not None:
+                anchor["context_hash"] = context_hash_from_unified_diff(diff_text, anchor)
+            elif not is_sha256(anchor.get("context_hash")):
+                anchor["context_hash"] = context_hash_from_unified_diff(
+                    str(anchor.get("hunk_header", "")), anchor
+                )
+            normalized["anchor"] = anchor
+            title_fp = title_fingerprint(str(normalized["title"]))
+            evidence_fp = evidence_fingerprint(first_evidence_or_body(normalized))
+            normalized["fingerprints"] = {
+                "title_fingerprint": title_fp,
+                "evidence_fingerprint": evidence_fp,
+            }
+            normalized["source_finding_id"] = compute_source_finding_id(
+                reviewer,
+                anchor,
+                str(normalized["category"]),
+                title_fp,
+            )
+            normalized["candidate_issue_signature"] = candidate_issue_signature(
+                anchor,
+                str(normalized["category"]),
+                title_fp,
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            # A single finding with an unresolvable/malformed anchor must not discard the
+            # whole batch — drop just that finding and keep the valid ones.
+            dropped += 1
+            sys.stderr.write(
+                redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n")
+            )
+            continue
         findings.append(normalized)
+    if dropped:
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {reviewer} kept {len(findings)} finding(s), "
+                f"dropped {dropped} with unresolvable anchors\n"
+            )
+        )
 
     finalized = {
         "schema_version": "finding_batch.v1",

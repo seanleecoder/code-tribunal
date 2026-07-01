@@ -59,6 +59,30 @@ class VotingTests(unittest.TestCase):
         )
         self.assertEqual((decision, block, ack, severity), ("fyi", False, False, "blocker"))
 
+    def _single_reviewer_config(self) -> dict[str, object]:
+        # A valid single-reviewer config may legitimately omit panel.quorum.
+        config = self._config()
+        config["panel"] = {"min_successful_reviewers_for_blocking": 1}
+        return config
+
+    def test_single_reviewer_without_quorum_does_not_raise(self) -> None:
+        # Bug #9: decision_for_group used to read panel.quorum.votes_required
+        # unconditionally, raising KeyError on valid single-reviewer configs.
+        decision, block, ack, severity = decision_for_group(
+            [{"reviewer": "a", "severity": "blocker", "category": "correctness"}],
+            self._single_reviewer_config(),
+            "full",
+        )
+        self.assertEqual((decision, block, ack, severity), ("surface", False, True, "blocker"))
+
+    def test_single_reviewer_non_blocker_without_quorum_is_fyi(self) -> None:
+        decision, block, ack, severity = decision_for_group(
+            [{"reviewer": "a", "severity": "minor", "category": "style"}],
+            self._single_reviewer_config(),
+            "full",
+        )
+        self.assertEqual((decision, block, ack, severity), ("fyi", False, False, "minor"))
+
 
 if __name__ == "__main__":
     unittest.main()
