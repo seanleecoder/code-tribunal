@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -231,23 +232,68 @@ def _load_diff(input_dir: str | Path | None) -> str | None:
     return diff_path.read_text(encoding="utf-8")
 
 
-def _cap_findings(raw_findings: list[Any], max_findings: int) -> list[Any]:
-    """Keep the highest-severity, then highest-confidence findings within the cap.
+def _confidence_rank(finding: Any) -> float:
+    if not isinstance(finding, dict):
+        return float("-inf")
+    confidence = finding.get("confidence")
+    if (
+        isinstance(confidence, int | float)
+        and not isinstance(confidence, bool)
+        and math.isfinite(float(confidence))
+        and 0.0 <= float(confidence) <= 1.0
+    ):
+        return float(confidence)
+    return float("-inf")
+
+
+def _severity_rank(finding: Any) -> int:
+    if not isinstance(finding, dict):
+        return -1
+    return _SEVERITY_RANK.get(str(finding.get("severity")), -1)
+
+
+def _rank_findings_for_cap(
+    raw_findings: list[Any], max_findings: int | None
+) -> list[tuple[int, Any]]:
+    """Rank candidates for capped processing without trusting adapter payload shape.
 
     A verbose or prompt-injected model can emit thousands of findings; the per-reviewer
-    ``max_findings`` cap bounds how many are processed while ensuring blockers survive.
+    ``max_findings`` cap bounds how many are finalized while ensuring blockers survive.
     """
-    if max_findings < 0 or len(raw_findings) <= max_findings:
-        return list(raw_findings)
-    ordered = sorted(
-        enumerate(raw_findings),
-        key=lambda item: (
-            -_SEVERITY_RANK.get(str(item[1].get("severity")), -1),
-            -float(item[1].get("confidence", 0.0) or 0.0),
-            item[0],
-        ),
+    indexed = list(enumerate(raw_findings, start=1))
+    if max_findings is None or max_findings < 0:
+        return indexed
+    return sorted(
+        indexed,
+        key=lambda item: (-_severity_rank(item[1]), -_confidence_rank(item[1]), item[0]),
     )
-    return [finding for _index, finding in ordered[:max_findings]]
+
+
+def _validate_finalized_finding(
+    finding: dict[str, Any],
+    *,
+    batch: dict[str, Any],
+    reviewer: str,
+    model: str,
+    run_id: str,
+    started_at: str,
+) -> None:
+    confidence = finding.get("confidence")
+    if isinstance(confidence, float) and not math.isfinite(confidence):
+        raise SchemaValidationError("confidence must be finite")
+    validate_instance(
+        {
+            "schema_version": "finding_batch.v1",
+            "run_id": str(batch.get("run_id") or run_id),
+            "reviewer": reviewer,
+            "adapter_status": "success",
+            "model": model,
+            "started_at": str(batch.get("started_at") or started_at),
+            "completed_at": str(batch.get("completed_at") or now_iso()),
+            "findings": [finding],
+        },
+        "finding_batch.schema.json",
+    )
 
 
 def finalize_finding_batch(
@@ -275,8 +321,7 @@ def finalize_finding_batch(
 
     diff_text = _load_diff(input_dir)
     raw_findings = batch.get("findings", [])
-    if max_findings is not None:
-        raw_findings = _cap_findings(raw_findings, max_findings)
+    ranked_findings = _rank_findings_for_cap(raw_findings, max_findings)
     findings = []
     finding_keys = {
         "anchor",
@@ -289,7 +334,13 @@ def finalize_finding_batch(
         "confidence",
     }
     dropped = 0
-    for index, finding in enumerate(raw_findings, start=1):
+    for index, finding in ranked_findings:
+        if (
+            max_findings is not None
+            and max_findings >= 0
+            and len(findings) >= max_findings
+        ):
+            break
         try:
             normalized = {key: finding[key] for key in finding_keys if key in finding}
             normalized["run_local_id"] = str(
@@ -325,7 +376,15 @@ def finalize_finding_batch(
                 str(normalized["category"]),
                 title_fp,
             )
-        except (ValueError, KeyError, TypeError) as exc:
+            _validate_finalized_finding(
+                normalized,
+                batch=batch,
+                reviewer=reviewer,
+                model=model,
+                run_id=run_id,
+                started_at=started_at,
+            )
+        except (SchemaValidationError, ValueError, KeyError, TypeError) as exc:
             # A single finding with an unresolvable/malformed anchor must not discard the
             # whole batch — drop just that finding and keep the valid ones.
             dropped += 1
