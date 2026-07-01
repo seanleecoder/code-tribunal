@@ -8,8 +8,9 @@ explicitly deferred by the project owner in favor of moving to Phase 2; see
 
 ## Current Status
 
-Status: Phase 2 implemented and locally verified; real-GitLab OpenRouter
-smoke evidence pending.
+Status: Phase 2 happy-path accepted by private GitLab MR smoke on
+2026-07-01; the remaining degradation/config-only matrix was intentionally
+skipped by owner request.
 
 Codex and Gemini now run for real through OpenRouter's OpenAI-compatible
 chat-completions API (`ai_review.openrouter_reviewer`), alongside the
@@ -24,7 +25,7 @@ existing Claude-via-OpenRouter path from Phase 1:
 
 ## Locally Verified
 
-- `make test`: 100 tests pass, including new coverage for:
+- `make test` / unittest discovery: 102 tests pass, including new coverage for:
   - `openrouter_reviewer`: request payload shape, success parsing, HTTP
     error / missing key / network error / malformed response envelope all
     return nonzero with redacted stderr and no leaked credentials, the
@@ -52,27 +53,66 @@ existing Claude-via-OpenRouter path from Phase 1:
   with `panel_status=full`, `successful_reviewers=[claude, codex, gemini]`,
   and `block_merge=false` (single non-blocking mock finding).
 
-## Human Confirmation Needed
+## Private GitLab Smoke Findings
 
-Confirm these against a real private GitLab MR before marking Phase 2
-accepted:
+Smoke target:
 
-- [ ] `review_claude`, `review_codex`, and `review_gemini` run concurrently
-  in the same pipeline (no serialization via `resource_group`).
-- [ ] Real OpenRouter calls succeed for `openai/gpt-5.4-mini` and
-  `google/gemini-3.5-flash` and each produces a schema-valid finding batch.
-- [ ] Disabling a reviewer (`enabled: false` in `config/review.yaml`)
-  requires no code change and yields `adapter_status=skipped`.
-- [ ] Killing one real reviewer job (e.g. temporarily revoking its ability
-  to call OpenRouter) yields a `degraded` panel with a valid consensus
-  artifact, not a pipeline failure.
-- [ ] Disabling two of three reviewers yields `panel_status=advisory_only`
-  and `block_merge=false` even for a blocker-severity finding.
-- [ ] Disabling all three reviewers yields `panel_status=failed` and
-  `consensus_ai_review` fails before `post_ai_review` runs.
-- [ ] No provider key (including `OPENROUTER_API_KEY`), GitLab token, or
-  Jira token appears in job logs or persisted artifacts for the codex/gemini
-  jobs.
+- Downstream repository: `burda_style/head`
+- Merge request: `!3122`
+- Source branch: `ai-review-smoke-throw-away`
+- Target branch: `ai-review-poc-throw-away`
+
+Local downstream validation before pushing:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ai-review/src python3 -m unittest
+  discover -s ai-review/tests -p 'test_*.py'`: 102 tests passed.
+- Local mock fan-out for `claude`, `codex`, and `gemini` produced three
+  schema-valid `finding_batch.v1` artifacts and a schema-valid
+  `consensus.v1` artifact with `panel_status=full`.
+
+Real GitLab/OpenRouter results:
+
+- Commit `a7514c2fc` (`Upgrade AI review smoke to phase 2`) created MR
+  pipeline `178560`, but `prepare_ai_review` failed before fan-out with
+  `GitLab API GET /projects/6/merge_requests/3122/versions failed: 401`.
+- Root cause: the CI template explicitly self-assigned masked variables as
+  `GITLAB_READ_TOKEN: $GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN:
+  $GITLAB_WRITE_TOKEN`. In the real GitLab MR pipeline this broke API
+  authentication. The fix is to let project/group variables inherit
+  naturally.
+- Commit `5c0b4446f` (`Let AI review GitLab tokens inherit from project
+  variables`) fixed the token wiring.
+- MR pipeline `178562` then ran the full AI review chain successfully:
+  `prepare_ai_review`, `review_claude`, `review_codex`, `review_gemini`,
+  `consensus_ai_review`, `post_ai_review`, and `ai_review_gate` all
+  succeeded. The broader project pipeline was later marked `canceled` by
+  unrelated non-AI jobs, but the AI review jobs completed green.
+- Downloaded job artifacts from pipeline `178562` showed:
+  - `review_claude`: `adapter_status=success`,
+    `model=anthropic/claude-haiku-4.5`, `finding_count=0`.
+  - `review_codex`: `adapter_status=success`,
+    `model=openai/gpt-5.4-mini`, `finding_count=3`.
+  - `review_gemini`: `adapter_status=success`,
+    `model=google/gemini-3.5-flash`, `finding_count=4`.
+  - `consensus_ai_review`: `panel_status=full`,
+    `successful_reviewers=[claude, codex, gemini]`,
+    `failed_reviewers=[]`, `group_count=5`, `block_merge=false`.
+
+## Matrix Checks Skipped
+
+The remaining real-pipeline matrix was intentionally skipped by owner request
+after the happy-path smoke passed:
+
+- Config-only reviewer disable producing `adapter_status=skipped`.
+- One invalid/failed reviewer producing `panel_status=degraded`.
+- Two invalid/failed reviewers producing `panel_status=advisory_only` and
+  `block_merge=false`.
+- Three invalid/failed reviewers producing `panel_status=failed` and a
+  nonzero `consensus_ai_review` before `post_ai_review`.
+- Full downloaded-artifact and job-log secret audit.
+
+These behaviors remain covered by local/unit tests listed above, but they were
+not re-exercised in the private GitLab/OpenRouter smoke matrix.
 
 ## Operational Notes
 
@@ -81,12 +121,9 @@ accepted:
   and no `resource_group`, so a GitLab Runner with at least 3 concurrent
   job slots is required for true parallelism; with fewer slots the jobs
   queue but still produce correct (just serialized) results.
+- Do not self-assign masked GitLab CI variables in job-level `variables`
+  blocks, for example `GITLAB_READ_TOKEN: $GITLAB_READ_TOKEN`. The private
+  smoke showed this can produce 401s from the GitLab API in MR pipelines.
 - `budget.backend: none` (current default) makes the pre-model budget check
   a no-op; `budget_skipped` only becomes reachable in production once a real
   budget backend is implemented in `budget.py`.
-
-After the human checks above are confirmed, change the status above to:
-
-```text
-Status: Phase 2 accepted by private GitLab MR smoke on <date>.
-```

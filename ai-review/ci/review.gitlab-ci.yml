@@ -17,8 +17,6 @@ prepare_ai_review:
   extends: .ai_review_rules
   image: registry.example.com/ai-review/base:1.1
   interruptible: true
-  variables:
-    GITLAB_READ_TOKEN: $GITLAB_READ_TOKEN
   script:
     - python -m ai_review.input_bundle prepare --config ai-review/config/review.yaml --out inputs
   artifacts:
@@ -159,8 +157,6 @@ post_ai_review:
   image: registry.example.com/ai-review/base:1.1
   interruptible: false
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
-  variables:
-    GITLAB_WRITE_TOKEN: $GITLAB_WRITE_TOKEN
   needs:
     - job: prepare_ai_review
       artifacts: true
