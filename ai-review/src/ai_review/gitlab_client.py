@@ -229,3 +229,16 @@ class GitLabClient:
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
             json={"body": body},
         )
+
+    def update_mr_note(
+        self,
+        project_id_or_path: str | int,
+        merge_request_iid: str | int,
+        note_id: int,
+        body: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes/{note_id}",
+            json={"body": body},
+        )

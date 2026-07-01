@@ -34,6 +34,8 @@ ADAPTER_STATUSES = {
     "budget_skipped",
 }
 
+_SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
+
 
 def schema_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "schemas"
@@ -227,6 +229,25 @@ def _load_diff(input_dir: str | Path | None) -> str | None:
     return diff_path.read_text(encoding="utf-8")
 
 
+def _cap_findings(raw_findings: list[Any], max_findings: int) -> list[Any]:
+    """Keep the highest-severity, then highest-confidence findings within the cap.
+
+    A verbose or prompt-injected model can emit thousands of findings; the per-reviewer
+    ``max_findings`` cap bounds how many are processed while ensuring blockers survive.
+    """
+    if max_findings < 0 or len(raw_findings) <= max_findings:
+        return list(raw_findings)
+    ordered = sorted(
+        enumerate(raw_findings),
+        key=lambda item: (
+            -_SEVERITY_RANK.get(str(item[1].get("severity")), -1),
+            -float(item[1].get("confidence", 0.0) or 0.0),
+            item[0],
+        ),
+    )
+    return [finding for _index, finding in ordered[:max_findings]]
+
+
 def finalize_finding_batch(
     batch: dict[str, Any],
     *,
@@ -235,6 +256,7 @@ def finalize_finding_batch(
     run_id: str,
     started_at: str,
     input_dir: str | Path | None = None,
+    max_findings: int | None = None,
 ) -> dict[str, Any]:
     status = batch.get("adapter_status", "success")
     if status != "success":
@@ -250,6 +272,9 @@ def finalize_finding_batch(
         return finalized
 
     diff_text = _load_diff(input_dir)
+    raw_findings = batch.get("findings", [])
+    if max_findings is not None:
+        raw_findings = _cap_findings(raw_findings, max_findings)
     findings = []
     finding_keys = {
         "anchor",
@@ -261,7 +286,7 @@ def finalize_finding_batch(
         "suggestion",
         "confidence",
     }
-    for index, finding in enumerate(batch.get("findings", []), start=1):
+    for index, finding in enumerate(raw_findings, start=1):
         normalized = {key: finding[key] for key in finding_keys if key in finding}
         normalized["run_local_id"] = str(normalized.get("run_local_id") or f"{reviewer}-{index:04d}")
         normalized.setdefault("evidence", [])

@@ -6,8 +6,35 @@ import shutil
 from pathlib import Path
 
 from .canonical import sha256_hex
+from .config import load_config
 from .gitlab_client import GitLabClient
 from .schema import now_iso, write_canonical_json
+
+
+class BundleError(RuntimeError):
+    pass
+
+
+def _enforce_diff_limits(diff_text: str, config: dict) -> None:
+    """Reject oversized diffs before they are sent to reviewer models.
+
+    Mirrors the ``max_prompt_bytes`` guard in prompt_render: a diff that exceeds
+    ``limits.max_diff_bytes`` or ``limits.max_files`` is rejected early rather than
+    inflating token cost or timing out the reviewer adapters downstream.
+    """
+    limits = config.get("limits", {}) if isinstance(config, dict) else {}
+    max_diff_bytes = int(limits.get("max_diff_bytes", 250000))
+    max_files = int(limits.get("max_files", 200))
+    diff_bytes = len(diff_text.encode("utf-8"))
+    if diff_bytes > max_diff_bytes:
+        raise BundleError(
+            f"diff is {diff_bytes} bytes, exceeds limits.max_diff_bytes ({max_diff_bytes})"
+        )
+    file_count = sum(1 for line in diff_text.splitlines() if line.startswith("diff --git "))
+    if file_count > max_files:
+        raise BundleError(
+            f"diff touches {file_count} files, exceeds limits.max_files ({max_files})"
+        )
 
 
 def _file_sha256(path: Path) -> str:
@@ -34,6 +61,7 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    _enforce_diff_limits(diff_path.read_text(encoding="utf-8"), load_config(config_path))
     shutil.copy2(diff_path, out_path / "mr.diff")
     shutil.copy2(config_path, out_path / "config.review.yaml")
 
@@ -89,6 +117,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
     version = client.fetch_latest_mr_version(project_id, mr_iid)
     diff_text = client.fetch_mr_diff(project_id, mr_iid)
+    _enforce_diff_limits(diff_text, load_config(config))
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
     config_path = Path(config)
