@@ -8,6 +8,7 @@ from pathlib import Path
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
+_ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -68,9 +69,15 @@ class GitLabCiTemplateTests(unittest.TestCase):
             r'image:\s+"\$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_([0-9a-f]{40})"',
             text,
         )
+        trusted_sha = re.search(
+            r'AI_REVIEW_TRUSTED_IMAGE_SHA:\s+"([0-9a-f]{40})"',
+            text,
+        )
         self.assertEqual(len(base_images), 4)
         self.assertEqual(len(reviewer_images), 2)
         self.assertEqual(set(base_images), set(reviewer_images))
+        self.assertIsNotNone(trusted_sha)
+        self.assertEqual(set(base_images + reviewer_images), {trusted_sha.group(1)})
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
         text = "\n".join(
@@ -128,6 +135,15 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         self.assertEqual(variables["REVIEWER"], "opencode")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
+
+    def test_acceptance_doc_names_sanitized_opencode_workspace(self) -> None:
+        text = _ACCEPTANCE_DOC.read_text(encoding="utf-8")
+
+        self.assertIn("opencode --pure run", text)
+        self.assertIn("opencode-review-root", text)
+        self.assertIn("temporary OpenCode review root must not expose bundle-root files", text)
+        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR"', text)
+        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"', text)
 
 
 if __name__ == "__main__":

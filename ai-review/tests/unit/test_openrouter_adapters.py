@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import stat
 import tempfile
 import unittest
@@ -42,6 +43,29 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
     def _write_inputs(self, input_dir: Path) -> None:
         input_dir.mkdir(parents=True, exist_ok=True)
         (input_dir / "mr.diff").write_text("", encoding="utf-8")
+        (input_dir / "config.review.yaml").write_text("reviewers: {}\n", encoding="utf-8")
+        (input_dir / "rules").mkdir()
+        (input_dir / "rules" / "rule.md").write_text("bundle rule\n", encoding="utf-8")
+        (input_dir / "prompts").mkdir()
+        (input_dir / "prompts" / "review.md").write_text("bundle prompt\n", encoding="utf-8")
+        (input_dir / ".opencode").mkdir()
+        (input_dir / ".opencode" / "agent.md").write_text("bundle agent\n", encoding="utf-8")
+        repo_snapshot = input_dir / "repo_snapshot"
+        repo_snapshot.mkdir()
+        (repo_snapshot / "src").mkdir()
+        (repo_snapshot / "src" / "reviewed.py").write_text("print('review me')\n", encoding="utf-8")
+        (repo_snapshot / "README.md").write_text("# Reviewed project\n", encoding="utf-8")
+        (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
+        (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
+        (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
+        (repo_snapshot / ".opencode").mkdir()
+        (repo_snapshot / ".opencode" / "plugin.js").write_text("module.exports = {}\n", encoding="utf-8")
+        (repo_snapshot / "nested").mkdir()
+        (repo_snapshot / "nested" / ".opencode").mkdir()
+        (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
+            "nested agent\n",
+            encoding="utf-8",
+        )
         write_canonical_json(
             input_dir / "manifest.json",
             {
@@ -136,7 +160,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self,
         reviewer: str,
         cli_name: str,
-    ) -> tuple[dict[str, object], str, str]:
+    ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -188,7 +212,22 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 cli_env = cli_env_path.read_text(encoding="utf-8")
                 key_seen = cli_key_path.read_text(encoding="utf-8").strip()
                 self.assertEqual(key_seen, "sk-or-v1-test")
-                return batch, cli_args, cli_env
+                meta: dict[str, object] = {
+                    "input_dir": str(input_dir),
+                    "repo_snapshot_dir": str(input_dir / "repo_snapshot"),
+                    "selected_dir": "",
+                    "workspace_entries": set(),
+                }
+                if cli_name == "opencode":
+                    argv = shlex.split(cli_args)
+                    selected_dir = Path(argv[argv.index("--dir") + 1])
+                    workspace_entries = {
+                        f"{path.relative_to(selected_dir)}{'/' if path.is_dir() else ''}"
+                        for path in selected_dir.rglob("*")
+                    }
+                    meta["selected_dir"] = str(selected_dir)
+                    meta["workspace_entries"] = workspace_entries
+                return batch, cli_args, cli_env, meta
             finally:
                 for key, value in previous.items():
                     if value is None:
@@ -197,7 +236,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                         os.environ[key] = value
 
     def test_codex_real_path_invokes_codex_cli(self) -> None:
-        batch, cli_args, _cli_env = self._run_with_fake_cli("codex", "codex")
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli("codex", "codex")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
@@ -212,20 +251,35 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("--output-schema ai-review/schemas/finding_batch.schema.json", cli_args)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
-        batch, cli_args, cli_env = self._run_with_fake_cli("opencode", "opencode")
+        batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
-        self.assertIn("/opencode run", cli_args)
+        self.assertIn("/opencode --pure run", cli_args)
         self.assertIn("--model openrouter/google/gemini-3.5-flash", cli_args)
         self.assertIn("--agent ai-reviewer", cli_args)
         self.assertIn("--format json", cli_args)
         self.assertIn("--dir ", cli_args)
-        self.assertRegex(cli_args, r"--dir \S*repo_snapshot")
+        self.assertRegex(cli_args, r"--dir \S*/out/\.tmp/opencode-review-root\.\d+(\s|$)")
+        self.assertNotRegex(cli_args, r"--dir \S*repo_snapshot")
+        self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
+        self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
+        self.assertEqual(
+            meta["workspace_entries"],
+            {"README.md", "nested/", "src/", "src/reviewed.py"},
+        )
         self.assertNotIn(" exec ", cli_args)
         self.assertNotIn("--output-format", cli_args)
         self.assertNotIn("--base-url", cli_args)
         self.assertNotIn(" -o ", cli_args)
+        self.assertIn("OPENCODE_DISABLE_AUTOUPDATE=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_DEFAULT_PLUGINS=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_LSP_DOWNLOAD=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1", cli_env)
+        self.assertIn("OPENCODE_DISABLE_MODELS_FETCH=1", cli_env)
+        self.assertIn("OPENCODE_CONFIG_DIR=", cli_env)
         self.assertIn("OPENCODE_CONFIG_CONTENT=", cli_env)
         self.assertIn('"openrouter"', cli_env)
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
@@ -246,7 +300,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
         for reviewer, cli_name in (("codex", "codex"), ("opencode", "opencode")):
             with self.subTest(reviewer=reviewer):
-                _batch, _cli_args, cli_env = self._run_with_fake_cli(reviewer, cli_name)
+                _batch, _cli_args, cli_env, _meta = self._run_with_fake_cli(reviewer, cli_name)
 
                 self.assertIn("OPENROUTER_API_KEY=sk-or-v1-test", cli_env)
                 for forbidden in (

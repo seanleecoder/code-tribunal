@@ -70,15 +70,27 @@ OpenRouter/Codex wire mode must be proven by smoke evidence before acceptance.
 OpenCode must run in controlled non-interactive mode with mock disabled and
 with the least privilege settings that match the review-only use case:
 
-- `opencode run`
+- `opencode --pure run`
 - `--model openrouter/google/gemini-3.5-flash`
 - `--agent ai-reviewer`
 - `--format json`
-- `--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"` (source files live under
-  `repo_snapshot/`; the bundle root itself does not hold the reviewed tree)
+- `--dir "$AI_REVIEW_OUTPUT_DIR/.tmp/opencode-review-root.<pid>"`, where the
+  temporary review root is populated from `$AI_REVIEW_INPUT_DIR/repo_snapshot`
+  before OpenCode starts.
+- The temporary OpenCode review root must not expose bundle-root files such as
+  `manifest.json`, `prior_decisions.json`, `config.review.yaml`, `rules/`, or
+  `prompts/`.
+- The temporary OpenCode review root must remove OpenCode project controls from
+  the copied source tree before invocation: root `opencode.json`,
+  `opencode.jsonc`, `tui.json`, and any `.opencode/` directories.
 - isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
   `OPENCODE_CONFIG_DIR`, and `OPENCODE_CONFIG_CONTENT`
   with read/glob/grep allowed and bash/edit/write/web/search/task/skill denied.
+- OpenCode environment hardening must include `OPENCODE_DISABLE_AUTOUPDATE`,
+  `OPENCODE_DISABLE_DEFAULT_PLUGINS`, `OPENCODE_DISABLE_LSP_DOWNLOAD`,
+  `OPENCODE_DISABLE_CLAUDE_CODE`, `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT`,
+  `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`, and
+  `OPENCODE_DISABLE_MODELS_FETCH`.
 
 Reviewer jobs that carry provider secrets must not trust MR-controlled adapter
 code, reviewer config, or wrapper edits. Those inputs should come from the
@@ -235,3 +247,13 @@ were intentionally skipped by owner request for the superseded path.
   `https://developers.openai.com/codex/environment-variables`
 - OpenRouter quickstart:
   `https://openrouter.ai/docs/quickstart`
+- OpenCode CLI docs:
+  `https://opencode.ai/docs/cli/`
+  - Verification source for `opencode run`, `--dir`, `--format`, global
+    `--pure`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, and the
+    `OPENCODE_DISABLE_*` environment variables used by the adapter.
+- OpenCode config docs:
+  `https://opencode.ai/docs/config/`
+  - Verification source for merged config precedence, project-root
+    `opencode.json` / `tui.json` loading, `.opencode` directory loading, custom
+    config directory behavior, and inline `OPENCODE_CONFIG_CONTENT` precedence.
