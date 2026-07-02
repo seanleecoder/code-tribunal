@@ -47,7 +47,7 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
-    "AI_REVIEW_REQUIRE_REAL_ANTIGRAVITY",
+    "AI_REVIEW_REQUIRE_REAL_OPENCODE",
 }
 
 _PROVIDER_ENDPOINT_ENV = {
@@ -168,12 +168,19 @@ def _extract_json_text(value: str) -> str:
 def _extract_text_parts(content: Any) -> list[str]:
     if isinstance(content, str):
         return [content]
+    if isinstance(content, dict):
+        parts = []
+        if isinstance(content.get("text"), str):
+            parts.append(str(content["text"]))
+        for key in ("content", "result", "parts", "part", "message"):
+            if key in content:
+                parts.extend(_extract_text_parts(content[key]))
+        return parts
     if not isinstance(content, list):
         return []
     parts = []
     for item in content:
-        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-            parts.append(str(item["text"]))
+        parts.extend(_extract_text_parts(item))
     return parts
 
 
@@ -196,27 +203,34 @@ def _load_stream_json(stdout: str) -> dict[str, Any]:
         event_types.append(str(event.get("type", "unknown")))
         if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
+        if str(event.get("type", "")).startswith("message") and isinstance(
+            event.get("message"), dict
+        ):
+            if event["message"].get("role") == "assistant":
+                assistant_parts.extend(_extract_text_parts(event["message"]))
+        if str(event.get("type", "")).startswith("message") and isinstance(event.get("part"), dict):
+            assistant_parts.extend(_extract_text_parts(event["part"]))
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
         if event.get("is_error") is True:
             raise SchemaValidationError(
-                f"Claude Code stream returned an error: {_json_preview(str(event.get('result', '')))!r}"
+                f"adapter JSON stream returned an error: {_json_preview(str(event.get('result', '')))!r}"
             )
 
     text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
     if not text:
         raise SchemaValidationError(
-            "Claude Code stream did not contain reviewer JSON; "
+            "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
         )
     try:
         raw = json_loads_no_duplicates(_extract_json_text(text))
     except Exception as exc:
         raise SchemaValidationError(
-            f"Claude Code stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
+            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
         ) from exc
     if not isinstance(raw, dict):
-        raise SchemaValidationError("Claude Code stream result root must be an object")
+        raise SchemaValidationError("adapter JSON stream result root must be an object")
     return raw
 
 
@@ -317,6 +331,7 @@ def _build_adapter_env(
     env["AI_REVIEW_MODEL"] = model
     env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
     env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10))
     if reviewer_config.get("max_turns") is not None:
         env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
     if prompt_tmp is not None:
@@ -325,14 +340,14 @@ def _build_adapter_env(
 
 
 def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
-    if reviewer not in {"codex", "antigravity"}:
+    if reviewer not in {"codex", "opencode"}:
         return None
     base_url = os.environ.get("OPENROUTER_BASE_URL")
     if base_url is not None and base_url != _OPENROUTER_BASE_URL:
         return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
     expected_models = {
         "codex": "openai/gpt-5.4-mini",
-        "antigravity": "google/gemini-3.5-flash",
+        "opencode": "google/gemini-3.5-flash",
     }
     expected = expected_models[reviewer]
     if model != expected:

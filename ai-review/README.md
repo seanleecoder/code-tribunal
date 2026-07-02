@@ -42,7 +42,7 @@ private GitLab MR smoke evidence and Phase 1 acceptance status in
 
 ## Phase 2: CLI reviewers via OpenRouter
 
-Claude, Codex (`openai/gpt-5.4-mini`), and Antigravity
+Claude, Codex (`openai/gpt-5.4-mini`), and OpenCode
 (`google/gemini-3.5-flash`) run through their provider CLIs configured for
 OpenRouter, sharing the same `OPENROUTER_API_KEY`.
 
@@ -50,7 +50,7 @@ Local mock run (no key required):
 
 ```sh
 make review-local REVIEWER=codex
-make review-local REVIEWER=antigravity
+make review-local REVIEWER=opencode
 ```
 
 Local run against the real OpenRouter API:
@@ -65,7 +65,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1 \
 Required CI project variables:
 
 - `OPENROUTER_API_KEY` — masked project variable, shared by `review_claude`,
-  `review_codex`, and `review_antigravity`.
+  `review_codex`, and `review_opencode`.
 - `OPENROUTER_BASE_URL` — defaults to `https://openrouter.ai/api/v1` in the CI
   template; only override for a non-default OpenRouter deployment.
 - `ANTHROPIC_BASE_URL` — set by the CI template for `review_claude` to
@@ -75,6 +75,15 @@ Required CI project variables:
 Secret-bearing reviewer jobs must use adapter code and reviewer config from
 the trusted review image/repository, not from MR-controlled code. Runtime
 endpoint/model checks and environment isolation are defense in depth.
+
+Trusted images are built from `ci/build-images.gitlab-ci.yml` on protected refs
+only and are pushed to the project registry with immutable tags:
+`$CI_REGISTRY_IMAGE:ai_review_base_1_1_<protected_build_sha>` and
+`$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_<protected_build_sha>`. The reviewer
+image preflight probes `claude --version`, `codex --version`, and
+`opencode --version`, then validates local mock fan-out and consensus. Do not run
+private MR smoke against `registry.example.com/...` or images that install CLIs
+inside the smoke job.
 
 The three `review_*` jobs run in parallel against the same immutable input
 bundle and have no `resource_group`, so they are never serialized by GitLab.

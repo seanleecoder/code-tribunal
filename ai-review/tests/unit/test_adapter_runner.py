@@ -125,6 +125,22 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(loaded, {"findings": []})
 
+    def test_loads_opencode_stream_json_assistant_part(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "session.created", "sessionID": "s"}),
+                json.dumps(
+                    {
+                        "type": "message.updated",
+                        "message": {"role": "assistant"},
+                        "part": {"type": "text", "text": '{"findings":[]}'},
+                    }
+                ),
+            ]
+        )
+        loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+
 
 class MaxTurnsEnvTests(unittest.TestCase):
     def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:

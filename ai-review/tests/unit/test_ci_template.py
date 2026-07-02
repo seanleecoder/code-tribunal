@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
 
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
+_BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
+_REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -53,6 +56,54 @@ def _effective_variables(template: dict[str, dict[str, str]], job_name: str) -> 
 
 
 class GitLabCiTemplateTests(unittest.TestCase):
+    def test_template_uses_immutable_project_registry_images(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertNotIn("registry.example.com", text)
+        base_images = re.findall(
+            r'image:\s+"\$CI_REGISTRY_IMAGE:ai_review_base_1_1_([0-9a-f]{40})"',
+            text,
+        )
+        reviewer_images = re.findall(
+            r'image:\s+"\$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_([0-9a-f]{40})"',
+            text,
+        )
+        self.assertEqual(len(base_images), 4)
+        self.assertEqual(len(reviewer_images), 2)
+        self.assertEqual(set(base_images), set(reviewer_images))
+
+    def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
+        text = "\n".join(
+            [
+                _CI_TEMPLATE.read_text(encoding="utf-8"),
+                _BUILD_TEMPLATE.read_text(encoding="utf-8"),
+                _REVIEWER_DOCKERFILE.read_text(encoding="utf-8"),
+            ]
+        )
+
+        self.assertNotIn("review_antigravity", text)
+        self.assertNotIn("critique_antigravity", text)
+        self.assertNotIn("antigravity", text)
+        self.assertNotRegex(text, r"\bagy\b")
+        self.assertIn("review_opencode", text)
+        self.assertIn("critique_opencode", text)
+        self.assertIn("opencode --version", text)
+
+    def test_secret_bearing_jobs_use_trusted_image_code_and_config(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml", text)
+        self.assertIn("PYTHONPATH: /opt/ai-review/src", text)
+        self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
+        self.assertNotIn("./ai-review/adapters/run_reviewer.sh", text)
+        self.assertNotIn("AI_REVIEW_CONFIG: ai-review/config/review.yaml", text)
+
+    def test_template_does_not_self_assign_masked_secrets(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        for secret in ("OPENROUTER_API_KEY", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
+            self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
+
     def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
         variables = _effective_variables(_template_variables(), "review_claude")
 
@@ -66,11 +117,17 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_cli_openrouter_jobs_keep_shared_endpoint_and_require_real_cli(self) -> None:
         template = _template_variables()
 
-        for reviewer in ("codex", "antigravity"):
+        for reviewer in ("codex", "opencode"):
             variables = _effective_variables(template, f"review_{reviewer}")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
+
+    def test_opencode_requires_real_opencode_cli(self) -> None:
+        variables = _effective_variables(_template_variables(), "review_opencode")
+
+        self.assertEqual(variables["REVIEWER"], "opencode")
+        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
 
 
 if __name__ == "__main__":

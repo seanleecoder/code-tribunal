@@ -17,12 +17,12 @@ CLI path:
 
 - `claude`: Claude Code CLI through OpenRouter.
 - `codex`: Codex CLI through OpenRouter.
-- `antigravity`: Antigravity CLI through OpenRouter.
+- `opencode`: OpenCode CLI through OpenRouter.
 
-The previous `gemini` reviewer identity is superseded by `antigravity`.
-Acceptance evidence must therefore use `review_antigravity`,
-`out/findings/antigravity.json`, `out/status/antigravity.json`, and
-`successful_reviewers=[claude, codex, antigravity]`.
+The previous `gemini` and `antigravity` reviewer identities are superseded by
+`opencode`. Acceptance evidence must therefore use `review_opencode`,
+`out/findings/opencode.json`, `out/status/opencode.json`, and
+`successful_reviewers=[claude, codex, opencode]`.
 
 All three reviewers continue to share one masked `OPENROUTER_API_KEY` project
 CI variable. `OPENROUTER_BASE_URL` defaults to
@@ -30,18 +30,18 @@ CI variable. `OPENROUTER_BASE_URL` defaults to
 
 ## Required Implementation Shape
 
-- `reviewers.antigravity` replaces `reviewers.gemini` in
+- `reviewers.opencode` replaces `reviewers.antigravity` in
   `config/review.yaml`; panel size stays 3.
 - CI jobs and needs use `review_claude`, `review_codex`, and
-  `review_antigravity`; critique jobs follow the same naming if critique is
+  `review_opencode`; critique jobs follow the same naming if critique is
   enabled later.
 - `adapters/codex.sh` invokes `codex exec` rather than
   `ai_review.openrouter_reviewer`.
-- `adapters/antigravity.sh` invokes the Antigravity CLI rather than
+- `adapters/opencode.sh` invokes the OpenCode CLI rather than
   `ai_review.openrouter_reviewer`.
 - The Python direct OpenRouter reviewer may remain as a fallback/test utility,
   but it cannot satisfy revised Phase 2 real-smoke acceptance for `codex` or
-  `antigravity`.
+  `opencode`.
 
 Codex CLI must run in controlled non-interactive mode with mock disabled and
 with the least privilege settings that match the review-only use case:
@@ -67,32 +67,63 @@ required mode. Codex supports custom providers that speak Chat Completions or
 Responses, but Chat Completions support is deprecated in Codex, so the exact
 OpenRouter/Codex wire mode must be proven by smoke evidence before acceptance.
 
-Antigravity CLI flags are not accepted by assumption. The reviewer image must
-record the exact installed command, version, OpenRouter environment variables,
-and JSON-output flags that pass the local CLI smoke.
+OpenCode must run in controlled non-interactive mode with mock disabled and
+with the least privilege settings that match the review-only use case:
+
+- `opencode run`
+- `--model openrouter/google/gemini-3.5-flash`
+- `--agent ai-reviewer`
+- `--format json`
+- `--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"` (source files live under
+  `repo_snapshot/`; the bundle root itself does not hold the reviewed tree)
+- isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `OPENCODE_CONFIG_DIR`, and `OPENCODE_CONFIG_CONTENT`
+  with read/glob/grep allowed and bash/edit/write/web/search/task/skill denied.
 
 Reviewer jobs that carry provider secrets must not trust MR-controlled adapter
 code, reviewer config, or wrapper edits. Those inputs should come from the
 trusted review image/repository; the in-repo endpoint/model validation and
-allowlisted environment are defense in depth. Codex and Antigravity jobs must
+allowlisted environment are defense in depth. Codex and OpenCode jobs must
 scrub GitLab/Jira tokens, unrelated provider keys, shell history variables, and
 persisted CLI auth/session paths from reviewer subprocesses by default.
 
+## OpenCode Rollout Ordering (Trusted Image Pin)
+
+Because `review_*`/`critique_*` jobs load `adapters/` and `config/review.yaml`
+from the baked trusted image (pinned by immutable commit SHA in
+`ci/review.gitlab-ci.yml`, not from MR-controlled code), OpenCode does not exist
+in the review path until a new trusted image is built. Enabling
+`reviewers.opencode` therefore requires a two-phase rollout:
+
+1. Merge the image-build changes (`images/reviewer.Dockerfile`,
+   `ci/build-images.gitlab-ci.yml`, `config/review.yaml`, `adapters/`, and
+   `src/`) to a protected branch so `build-images.gitlab-ci.yml` produces new
+   base and reviewer images at the new commit SHA, with `opencode-ai` installed
+   and `reviewers.opencode` baked into the image config.
+2. Land a follow-up commit that bumps all six image tags in
+   `ci/review.gitlab-ci.yml` (four `ai_review_base_1_1_<sha>` and two
+   `ai_review_reviewer_1_1_<sha>`) and `AI_REVIEW_TRUSTED_IMAGE_SHA` to that new
+   SHA.
+
+Until the pin is bumped in step 2, the pinned image lacks the `opencode` adapter
+and config entry, so `review_opencode` reports failure. Do not treat `opencode`
+as a blocking reviewer before the pin bump has landed.
+
 ## Revised Acceptance Checklist
 
-- [x] `reviewers.antigravity` is configured and `reviewers.gemini` is removed
+- [x] `reviewers.opencode` is configured and `reviewers.antigravity` is removed
       from the active Phase 2 panel.
-- [x] `review_antigravity` replaces `review_gemini` in CI job names,
+- [x] `review_opencode` replaces `review_antigravity` in CI job names,
       consensus needs, and artifact expectations.
-- [ ] `claude --version`, `codex --version`, and `antigravity --version` pass
+- [ ] `claude --version`, `codex --version`, and `opencode --version` pass
       in the reviewer image.
 - [ ] A trivial no-finding prompt through each real CLI produces schema-valid
       `finding_batch.v1` JSON with `AI_REVIEW_LOCAL_MOCK=0`.
-- [x] Local mock fan-out for `claude`, `codex`, and `antigravity` produces
+- [x] Local mock fan-out for `claude`, `codex`, and `opencode` produces
       schema-valid finding artifacts and a schema-valid `consensus.v1` with
       `panel_status=full`.
 - [ ] Private GitLab MR smoke runs `prepare_ai_review`, `review_claude`,
-      `review_codex`, `review_antigravity`, `consensus_ai_review`,
+      `review_codex`, `review_opencode`, `consensus_ai_review`,
       `post_ai_review`, and `ai_review_gate` in one pipeline.
 - [ ] Downloaded smoke artifacts show all three reviewer statuses as
       `adapter_status=success` and consensus as `panel_status=full`.

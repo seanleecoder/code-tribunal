@@ -1,0 +1,140 @@
+stages:
+  - image_build
+  - image_preflight
+  - image_smoke
+
+variables:
+  AI_REVIEW_IMAGE_VERSION: "1_1"
+  AI_REVIEW_CLAUDE_NPM_PACKAGE: "@anthropic-ai/claude-code"
+  AI_REVIEW_CODEX_NPM_PACKAGE: "@openai/codex"
+  AI_REVIEW_OPENCODE_NPM_PACKAGE: "opencode-ai"
+  AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_$CI_COMMIT_SHA"
+  AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_$CI_COMMIT_SHA"
+
+.ai_review_protected_image_rules:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+
+.ai_review_kaniko:
+  extends: .ai_review_protected_image_rules
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - |
+      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}\n' \
+        "$CI_REGISTRY" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" \
+        > /kaniko/.docker/config.json
+
+build_ai_review_base_image:
+  extends: .ai_review_kaniko
+  stage: image_build
+  script:
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/ai-review/images/base.Dockerfile" \
+        --destination "$AI_REVIEW_BASE_IMAGE" \
+        --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
+        --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+
+build_ai_review_reviewer_image:
+  extends: .ai_review_kaniko
+  stage: image_build
+  needs:
+    - job: build_ai_review_base_image
+  script:
+    - test -n "$AI_REVIEW_CLAUDE_VERSION"
+    - test -n "$AI_REVIEW_CODEX_VERSION"
+    - test -n "$AI_REVIEW_OPENCODE_VERSION"
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/ai-review/images/reviewer.Dockerfile" \
+        --destination "$AI_REVIEW_REVIEWER_IMAGE" \
+        --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_IMAGE" \
+        --build-arg "CLAUDE_VERSION=$AI_REVIEW_CLAUDE_VERSION" \
+        --build-arg "CODEX_VERSION=$AI_REVIEW_CODEX_VERSION" \
+        --build-arg "OPENCODE_VERSION=$AI_REVIEW_OPENCODE_VERSION" \
+        --build-arg "CLAUDE_NPM_PACKAGE=$AI_REVIEW_CLAUDE_NPM_PACKAGE" \
+        --build-arg "CODEX_NPM_PACKAGE=$AI_REVIEW_CODEX_NPM_PACKAGE" \
+        --build-arg "OPENCODE_NPM_PACKAGE=$AI_REVIEW_OPENCODE_NPM_PACKAGE" \
+        --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
+        --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+
+preflight_ai_review_reviewer_image:
+  extends: .ai_review_protected_image_rules
+  stage: image_preflight
+  image: "$AI_REVIEW_REVIEWER_IMAGE"
+  needs:
+    - job: build_ai_review_reviewer_image
+  variables:
+    PYTHONPATH: /opt/ai-review/src
+    AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
+    AI_REVIEW_INPUT_DIR: /tmp/ai-review-preflight/inputs
+    AI_REVIEW_OUTPUT_DIR: /tmp/ai-review-preflight/out
+    AI_REVIEW_LOCAL_MOCK: "1"
+  script:
+    - python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+    - python -m compileall -q /opt/ai-review/src
+    - claude --version
+    - codex --version
+    - opencode --version
+    - rm -rf /tmp/ai-review-preflight
+    - |
+      python -m ai_review.input_bundle local \
+        --config "$AI_REVIEW_CONFIG" \
+        --diff /opt/ai-review/tests/fixtures/diffs/simple.diff \
+        --repo /opt/ai-review/tests/fixtures/repos/simple \
+        --out "$AI_REVIEW_INPUT_DIR"
+    - /opt/ai-review/adapters/run_reviewer.sh claude review
+    - /opt/ai-review/adapters/run_reviewer.sh codex review
+    - /opt/ai-review/adapters/run_reviewer.sh opencode review
+    - python -m ai_review.schema validate --schema finding_batch.schema.json --input "$AI_REVIEW_OUTPUT_DIR/findings/claude.json"
+    - python -m ai_review.schema validate --schema finding_batch.schema.json --input "$AI_REVIEW_OUTPUT_DIR/findings/codex.json"
+    - python -m ai_review.schema validate --schema finding_batch.schema.json --input "$AI_REVIEW_OUTPUT_DIR/findings/opencode.json"
+    - |
+      python -m ai_review.consensus \
+        --config "$AI_REVIEW_CONFIG" \
+        --inputs "$AI_REVIEW_INPUT_DIR" \
+        --findings-dir "$AI_REVIEW_OUTPUT_DIR/findings" \
+        --out "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
+    - python -m ai_review.schema validate --schema consensus.schema.json --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
+
+smoke_ai_review_opencode_real:
+  stage: image_smoke
+  image: "$AI_REVIEW_REVIEWER_IMAGE"
+  needs:
+    - job: build_ai_review_reviewer_image
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+      when: manual
+  allow_failure: true
+  variables:
+    PYTHONPATH: /opt/ai-review/src
+    AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
+    AI_REVIEW_INPUT_DIR: /tmp/ai-review-opencode-real/inputs
+    AI_REVIEW_OUTPUT_DIR: out/opencode-real-smoke
+    AI_REVIEW_LOCAL_MOCK: "0"
+    AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+    AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+  script:
+    - test -n "$OPENROUTER_API_KEY"
+    - rm -rf /tmp/ai-review-opencode-real
+    - rm -rf out/opencode-real-smoke
+    - |
+      python -m ai_review.input_bundle local \
+        --config "$AI_REVIEW_CONFIG" \
+        --diff /opt/ai-review/tests/fixtures/diffs/simple.diff \
+        --repo /opt/ai-review/tests/fixtures/repos/simple \
+        --out "$AI_REVIEW_INPUT_DIR"
+    - /opt/ai-review/adapters/run_reviewer.sh opencode review
+    - python -m ai_review.schema validate --schema finding_batch.schema.json --input "$AI_REVIEW_OUTPUT_DIR/findings/opencode.json"
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - out/opencode-real-smoke/findings/opencode.json
+      - out/opencode-real-smoke/status/opencode.json

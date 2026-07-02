@@ -18,9 +18,9 @@ reviewers:
     max_findings: 50
     credential_variable: OPENROUTER_API_KEY
     cli_version: "pinned-by-image"
-  antigravity:
+  opencode:
     enabled: true
-    adapter: adapters/antigravity.sh
+    adapter: adapters/opencode.sh
     model: google/gemini-3.5-flash
     timeout_seconds: 900
     max_findings: 50

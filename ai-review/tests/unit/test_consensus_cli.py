@@ -54,7 +54,7 @@ class ConsensusCliTests(unittest.TestCase):
             consensus = load_json_file(out_path)
             self.assertEqual(consensus["panel_status"], "failed")
             self.assertEqual(consensus["successful_reviewers"], [])
-            self.assertEqual(consensus["failed_reviewers"], ["antigravity", "claude", "codex"])
+            self.assertEqual(consensus["failed_reviewers"], ["claude", "codex", "opencode"])
 
 
 if __name__ == "__main__":
