@@ -127,6 +127,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         for reviewer in ("codex", "opencode"):
             variables = _effective_variables(template, f"review_{reviewer}")
             self.assertEqual(variables["REVIEWER"], reviewer)
+            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
@@ -134,6 +135,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         variables = _effective_variables(_template_variables(), "review_opencode")
 
         self.assertEqual(variables["REVIEWER"], "opencode")
+        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
+        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
 
     def test_acceptance_doc_names_sanitized_opencode_workspace(self) -> None:

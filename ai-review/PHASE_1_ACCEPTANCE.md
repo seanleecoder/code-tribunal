@@ -139,7 +139,7 @@ Status: Phase 1 accepted by private GitLab MR smoke on 2026-06-30.
 
 Start Phase 2 after Phase 1 acceptance is confirmed:
 
-- Enable parallel `review_claude`, `review_codex`, and `review_gemini` jobs
+- Enable parallel `review_claude`, `review_codex`, and `review_opencode` jobs
   against the same immutable input bundle.
 - Verify reviewer enable/disable is config-only.
 - Verify one killed reviewer yields a degraded but valid consensus artifact.

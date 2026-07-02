@@ -157,8 +157,8 @@ Status: Phase 2 accepted by private GitLab MR smoke with CLI-backed OpenRouter r
 
 ## Superseded Direct OpenRouter Evidence
 
-The following evidence remains useful regression history, but it no longer
-satisfies the revised CLI-backed acceptance target.
+The following evidence remains useful regression history, but it is superseded
+and does not satisfy the revised CLI-backed `opencode` acceptance target.
 
 Earlier status: Phase 2 happy-path accepted by private GitLab MR smoke on
 2026-07-01; the remaining degradation/config-only matrix was intentionally
