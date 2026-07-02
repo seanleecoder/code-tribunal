@@ -7,7 +7,7 @@ stages:
   - gate
 
 variables:
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "9d6a784c86ba16029c6406677052a6de46f64173"
+  AI_REVIEW_TRUSTED_IMAGE_SHA: "3c484052e41cbe99b45339f4f4afccf72538e5b7"
   AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
@@ -21,7 +21,7 @@ variables:
 prepare_ai_review:
   stage: prepare
   extends: .ai_review_rules
-  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: true
   script:
     - python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
@@ -38,7 +38,7 @@ prepare_ai_review:
   # Secret-bearing reviewer jobs must run adapter code and reviewer config from
   # the trusted review image/repository, not from MR-controlled code. Runtime
   # endpoint/model validation is defense in depth, not the trust boundary.
-  image: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: true
   allow_failure: true
   variables:
@@ -80,7 +80,7 @@ review_opencode:
 .critique_template:
   stage: critique
   extends: .ai_review_rules
-  image: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: true
   allow_failure: true
   variables:
@@ -127,7 +127,7 @@ critique_opencode:
 consensus_ai_review:
   stage: consensus
   extends: .ai_review_rules
-  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: true
   needs:
     - job: prepare_ai_review
@@ -162,7 +162,7 @@ consensus_ai_review:
 post_ai_review:
   stage: post
   extends: .ai_review_rules
-  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: false
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
   needs:
@@ -182,7 +182,7 @@ post_ai_review:
 ai_review_gate:
   stage: gate
   extends: .ai_review_rules
-  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_9d6a784c86ba16029c6406677052a6de46f64173"
+  image: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
   interruptible: false
   needs:
     - job: consensus_ai_review

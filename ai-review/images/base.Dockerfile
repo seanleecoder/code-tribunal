@@ -20,11 +20,13 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 COPY ai-review/adapters /opt/ai-review/adapters
 COPY ai-review/ci /opt/ai-review/ci
 COPY ai-review/config /opt/ai-review/config
+COPY ai-review/images /opt/ai-review/images
 COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src /opt/ai-review/src
 COPY ai-review/tests /opt/ai-review/tests
+COPY ai-review/PHASE_2_ACCEPTANCE.md /opt/ai-review/PHASE_2_ACCEPTANCE.md
 COPY ai-review/README.md /opt/ai-review/README.md
 
 RUN chmod +x /opt/ai-review/adapters/*.sh \
