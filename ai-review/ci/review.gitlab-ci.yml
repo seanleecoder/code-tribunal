@@ -29,6 +29,9 @@ prepare_ai_review:
 .review_template:
   stage: review
   extends: .ai_review_rules
+  # Secret-bearing reviewer jobs must run adapter code and reviewer config from
+  # the trusted review image/repository, not from MR-controlled code. Runtime
+  # endpoint/model validation is defense in depth, not the trust boundary.
   image: registry.example.com/ai-review/reviewer:1.1
   interruptible: true
   allow_failure: true
@@ -63,10 +66,10 @@ review_codex:
   variables:
     REVIEWER: codex
 
-review_gemini:
+review_antigravity:
   extends: .review_template
   variables:
-    REVIEWER: gemini
+    REVIEWER: antigravity
 
 .critique_template:
   stage: critique
@@ -89,7 +92,7 @@ review_gemini:
     - job: review_codex
       artifacts: true
       optional: true
-    - job: review_gemini
+    - job: review_antigravity
       artifacts: true
       optional: true
   script:
@@ -111,10 +114,10 @@ critique_codex:
   variables:
     REVIEWER: codex
 
-critique_gemini:
+critique_antigravity:
   extends: .critique_template
   variables:
-    REVIEWER: gemini
+    REVIEWER: antigravity
 
 consensus_ai_review:
   stage: consensus
@@ -130,7 +133,7 @@ consensus_ai_review:
     - job: review_codex
       artifacts: true
       optional: true
-    - job: review_gemini
+    - job: review_antigravity
       artifacts: true
       optional: true
     - job: critique_claude
@@ -139,7 +142,7 @@ consensus_ai_review:
     - job: critique_codex
       artifacts: true
       optional: true
-    - job: critique_gemini
+    - job: critique_antigravity
       artifacts: true
       optional: true
   script:

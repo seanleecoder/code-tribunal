@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CODEX:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
+REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_ANTIGRAVITY:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
 
 if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
   exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
@@ -12,14 +12,14 @@ if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrout
   exit 2
 fi
 
-if [ "${AI_REVIEW_MODEL:-}" != "openai/gpt-5.4-mini" ]; then
-  echo "codex model must be openai/gpt-5.4-mini" >&2
+if [ "${AI_REVIEW_MODEL:-}" != "google/gemini-3.5-flash" ]; then
+  echo "antigravity model must be google/gemini-3.5-flash" >&2
   exit 2
 fi
 
-if ! command -v codex >/dev/null 2>&1; then
+if ! command -v antigravity >/dev/null 2>&1; then
   if [ "$REQUIRE_REAL" = "1" ]; then
-    echo "codex CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
+    echo "antigravity CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
     exit 127
   fi
   exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
@@ -41,25 +41,23 @@ fi
 BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
 RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
-CODEX_HOME_DIR="$TMP_DIR/codex-home"
-mkdir -p "$TMP_DIR" "$CODEX_HOME_DIR"
+ANTIGRAVITY_HOME_DIR="$TMP_DIR/antigravity-home"
+mkdir -p "$TMP_DIR" "$ANTIGRAVITY_HOME_DIR"
 
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
   TMPDIR="${TMPDIR:-/tmp}" \
+  ANTIGRAVITY_API_KEY="$OPENROUTER_API_KEY" \
   OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
-  CODEX_HOME="$CODEX_HOME_DIR" \
-  codex exec \
+  ANTIGRAVITY_HOME="$ANTIGRAVITY_HOME_DIR" \
+  antigravity exec \
   --ephemeral \
   --ignore-user-config \
   --ignore-rules \
   --sandbox read-only \
-  --ask-for-approval never \
   --model "$AI_REVIEW_MODEL" \
-  --config 'model_provider="openrouter"' \
-  --config "model_providers.openrouter.base_url=\"$BASE_URL\"" \
-  --config 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"' \
-  --output-schema ai-review/schemas/raw_finding_batch.schema.json \
+  --base-url "$BASE_URL" \
+  --output-format json \
   -o "$RAW_OUT" \
   - < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
 

@@ -40,17 +40,17 @@ The GitLab CI template includes the v1.1 `post` and `gate` stages. Track
 private GitLab MR smoke evidence and Phase 1 acceptance status in
 `PHASE_1_ACCEPTANCE.md`.
 
-## Phase 2: Codex and Gemini via OpenRouter
+## Phase 2: CLI reviewers via OpenRouter
 
-Codex (`openai/gpt-5.4-mini`) and Gemini (`google/gemini-3.5-flash`) run through
-OpenRouter's OpenAI-compatible chat-completions API, sharing the same
-`OPENROUTER_API_KEY` that the Claude reviewer already uses.
+Claude, Codex (`openai/gpt-5.4-mini`), and Antigravity
+(`google/gemini-3.5-flash`) run through their provider CLIs configured for
+OpenRouter, sharing the same `OPENROUTER_API_KEY`.
 
 Local mock run (no key required):
 
 ```sh
 make review-local REVIEWER=codex
-make review-local REVIEWER=gemini
+make review-local REVIEWER=antigravity
 ```
 
 Local run against the real OpenRouter API:
@@ -65,12 +65,16 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1 \
 Required CI project variables:
 
 - `OPENROUTER_API_KEY` — masked project variable, shared by `review_claude`,
-  `review_codex`, and `review_gemini`.
+  `review_codex`, and `review_antigravity`.
 - `OPENROUTER_BASE_URL` — defaults to `https://openrouter.ai/api/v1` in the CI
   template; only override for a non-default OpenRouter deployment.
 - `ANTHROPIC_BASE_URL` — set by the CI template for `review_claude` to
   `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY`
   into `ANTHROPIC_AUTH_TOKEN` when this points at OpenRouter.
+
+Secret-bearing reviewer jobs must use adapter code and reviewer config from
+the trusted review image/repository, not from MR-controlled code. Runtime
+endpoint/model checks and environment isolation are defense in depth.
 
 The three `review_*` jobs run in parallel against the same immutable input
 bundle and have no `resource_group`, so they are never serialized by GitLab.

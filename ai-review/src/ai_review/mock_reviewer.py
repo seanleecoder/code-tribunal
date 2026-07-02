@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import HUNK_RE, gitlab_line_code, strip_diff_prefix
-from .schema import now_iso
+from .anchors import HUNK_RE, strip_diff_prefix
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
@@ -54,17 +53,12 @@ def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
 
 
 def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
-    started = now_iso()
-    manifest = json.loads((input_dir / "manifest.json").read_text(encoding="utf-8"))
     diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
     candidate = _find_indexing_candidate(diff_text)
     findings: list[dict[str, Any]] = []
     if candidate is not None:
-        line_code = gitlab_line_code(candidate["new_path"], None, candidate["new_line"])
         findings.append(
             {
-                "source_finding_id": "0" * 64,
-                "run_local_id": f"{reviewer}-0001",
                 "anchor": {
                     "new_path": candidate["new_path"],
                     "old_path": candidate["old_path"],
@@ -72,12 +66,12 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
                     "start": {
                         "old_line": None,
                         "new_line": candidate["new_line"],
-                        "line_code": line_code,
+                        "line_code": None,
                     },
                     "end": {
                         "old_line": None,
                         "new_line": candidate["new_line"],
-                        "line_code": line_code,
+                        "line_code": None,
                     },
                     "hunk_header": candidate["hunk_header"],
                     "context_hash": "0" * 64,
@@ -92,22 +86,9 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
                 ],
                 "suggestion": None,
                 "confidence": 0.82,
-                "fingerprints": {
-                    "title_fingerprint": "0" * 64,
-                    "evidence_fingerprint": "0" * 64,
-                },
             }
         )
-    return {
-        "schema_version": "finding_batch.v1",
-        "run_id": manifest["run_id"],
-        "reviewer": reviewer,
-        "adapter_status": "success",
-        "model": "local-mock",
-        "started_at": started,
-        "completed_at": now_iso(),
-        "findings": findings,
-    }
+    return {"findings": findings}
 
 
 def critique_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:

@@ -128,13 +128,16 @@ class PanelDegradationTests(unittest.TestCase):
             root = Path(tmp)
             batches = {
                 reviewer: _success_batch(reviewer, root)
-                for reviewer in ("claude", "codex", "gemini")
+                for reviewer in ("claude", "codex", "antigravity")
             }
             code, consensus = self._run_consensus(root, batches)
 
             self.assertEqual(code, 0)
             self.assertEqual(consensus["panel_status"], "full")
-            self.assertEqual(consensus["successful_reviewers"], ["claude", "codex", "gemini"])
+            self.assertEqual(
+                consensus["successful_reviewers"],
+                ["antigravity", "claude", "codex"],
+            )
             self.assertEqual(consensus["failed_reviewers"], [])
             self.assertEqual(len(consensus["groups"]), 1)
             group = consensus["groups"][0]
@@ -149,14 +152,14 @@ class PanelDegradationTests(unittest.TestCase):
             batches = {
                 "claude": _success_batch("claude", root),
                 "codex": _success_batch("codex", root),
-                "gemini": _error_batch("gemini", "model_error"),
+                "antigravity": _error_batch("antigravity", "model_error"),
             }
             code, consensus = self._run_consensus(root, batches)
 
             self.assertEqual(code, 0)
             self.assertEqual(consensus["panel_status"], "degraded")
             self.assertEqual(consensus["successful_reviewers"], ["claude", "codex"])
-            self.assertEqual(consensus["failed_reviewers"], ["gemini"])
+            self.assertEqual(consensus["failed_reviewers"], ["antigravity"])
             self.assertEqual(len(consensus["groups"]), 1)
             group = consensus["groups"][0]
             self.assertEqual(group["vote_count"], 2)
@@ -169,14 +172,14 @@ class PanelDegradationTests(unittest.TestCase):
             batches = {
                 "claude": _success_batch("claude", root),
                 "codex": _error_batch("codex", "model_error"),
-                "gemini": _error_batch("gemini", "timeout"),
+                "antigravity": _error_batch("antigravity", "timeout"),
             }
             code, consensus = self._run_consensus(root, batches)
 
             self.assertEqual(code, 0)
             self.assertEqual(consensus["panel_status"], "advisory_only")
             self.assertEqual(consensus["successful_reviewers"], ["claude"])
-            self.assertEqual(consensus["failed_reviewers"], ["codex", "gemini"])
+            self.assertEqual(consensus["failed_reviewers"], ["antigravity", "codex"])
             for group in consensus["groups"]:
                 self.assertFalse(group["block_merge"])
             self.assertFalse(consensus["summary"]["block_merge"])
@@ -187,14 +190,14 @@ class PanelDegradationTests(unittest.TestCase):
             batches = {
                 "claude": _error_batch("claude", "model_error"),
                 "codex": _error_batch("codex", "schema_error"),
-                "gemini": _error_batch("gemini", "timeout"),
+                "antigravity": _error_batch("antigravity", "timeout"),
             }
             code, consensus = self._run_consensus(root, batches)
 
             self.assertEqual(code, 3)
             self.assertEqual(consensus["panel_status"], "failed")
             self.assertEqual(consensus["successful_reviewers"], [])
-            self.assertEqual(consensus["failed_reviewers"], ["claude", "codex", "gemini"])
+            self.assertEqual(consensus["failed_reviewers"], ["antigravity", "claude", "codex"])
             self.assertEqual(consensus["groups"], [])
 
 

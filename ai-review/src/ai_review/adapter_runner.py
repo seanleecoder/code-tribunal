@@ -25,6 +25,36 @@ from .schema import (
     write_canonical_json,
 )
 
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+_ADAPTER_RUNTIME_ENV = {
+    "PATH",
+    "PYTHON",
+    "PYTHONPATH",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+}
+
+_AI_REVIEW_ADAPTER_CONTROLS = {
+    "AI_REVIEW_LOCAL_MOCK",
+    "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
+    "AI_REVIEW_REQUIRE_REAL_CLAUDE",
+    "AI_REVIEW_REQUIRE_REAL_CODEX",
+    "AI_REVIEW_REQUIRE_REAL_ANTIGRAVITY",
+}
+
+_PROVIDER_ENDPOINT_ENV = {
+    "OPENROUTER_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+}
+
 
 def _manifest_run_id(input_dir: Path) -> str:
     manifest_path = input_dir / "manifest.json"
@@ -242,6 +272,74 @@ def _write_parse_debug(output_dir: Path, reviewer: str, stdout: str, stderr: str
     )
 
 
+def _build_adapter_env(
+    *,
+    reviewer: str,
+    stage: str,
+    model: str,
+    input_dir: Path,
+    output_dir: Path,
+    reviewer_config: dict[str, Any],
+    prompt_tmp: Path | None,
+) -> dict[str, str]:
+    env = {
+        key: value
+        for key in _ADAPTER_RUNTIME_ENV
+        if (value := os.environ.get(key)) is not None
+    }
+    env.update(
+        {
+            key: value
+            for key in _AI_REVIEW_ADAPTER_CONTROLS
+            if (value := os.environ.get(key)) is not None
+        }
+    )
+    env.update(
+        {
+            key: value
+            for key in _PROVIDER_ENDPOINT_ENV
+            if (value := os.environ.get(key)) is not None
+        }
+    )
+
+    credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
+    if credential_variable and (credential := os.environ.get(credential_variable)) is not None:
+        env[credential_variable] = credential
+
+    anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
+    if "openrouter.ai" in anthropic_base_url and (
+        openrouter_key := os.environ.get("OPENROUTER_API_KEY")
+    ) is not None:
+        env["OPENROUTER_API_KEY"] = openrouter_key
+
+    env["AI_REVIEW_REVIEWER"] = reviewer
+    env["AI_REVIEW_STAGE"] = stage
+    env["AI_REVIEW_MODEL"] = model
+    env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+    env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+    if reviewer_config.get("max_turns") is not None:
+        env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
+    if prompt_tmp is not None:
+        env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
+    return env
+
+
+def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
+    if reviewer not in {"codex", "antigravity"}:
+        return None
+    base_url = os.environ.get("OPENROUTER_BASE_URL")
+    if base_url is not None and base_url != _OPENROUTER_BASE_URL:
+        return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
+    expected_models = {
+        "codex": "openai/gpt-5.4-mini",
+        "antigravity": "google/gemini-3.5-flash",
+    }
+    expected = expected_models[reviewer]
+    if model != expected:
+        return f"{reviewer} model must be {expected}"
+    return None
+
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -260,6 +358,30 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if reviewer_config.get("enabled") is not True:
             _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
             _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            return 0
+
+        if (validation_error := _cli_reviewer_validation_error(reviewer, model)) is not None:
+            _write_empty(
+                output_dir,
+                output_file,
+                reviewer,
+                stage,
+                "model_error",
+                run_id,
+                model,
+                started_at,
+            )
+            _write_status(
+                output_dir,
+                reviewer,
+                stage,
+                "model_error",
+                started_at,
+                started_monotonic,
+                output_file,
+                error_class="ReviewerConfigValidation",
+                error_message=validation_error,
+            )
             return 0
 
         budget_backend = str(config.get("budget", {}).get("backend", "none"))
@@ -291,14 +413,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         adapter_path = resolve_adapter_path(config_path, str(reviewer_config["adapter"]))
         prompt_tmp: Path | None = None
-        env = os.environ.copy()
-        env["AI_REVIEW_REVIEWER"] = reviewer
-        env["AI_REVIEW_STAGE"] = stage
-        env["AI_REVIEW_MODEL"] = model
-        env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
-        env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
-        if reviewer_config.get("max_turns") is not None:
-            env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
 
         if stage == "review":
             rendered = render_review_prompt(input_dir, config_path, reviewer)
@@ -306,7 +420,16 @@ def run_adapter(reviewer: str, stage: str) -> int:
             tmp_dir.mkdir(parents=True, exist_ok=True)
             prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
             prompt_tmp.write_text(rendered, encoding="utf-8")
-            env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
+
+        env = _build_adapter_env(
+            reviewer=reviewer,
+            stage=stage,
+            model=model,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            reviewer_config=reviewer_config,
+            prompt_tmp=prompt_tmp,
+        )
 
         timeout_seconds = max(1, int(reviewer_config.get("timeout_seconds", 60)) - 5)
         result = subprocess.run(
@@ -348,6 +471,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             raw = _load_adapter_json(result.stdout)
             if stage == "review":
+                validate_instance(raw, "raw_finding_batch.schema.json")
                 max_findings = reviewer_config.get("max_findings")
                 finalized = finalize_finding_batch(
                     raw,

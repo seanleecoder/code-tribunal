@@ -63,10 +63,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
-    def test_openrouter_jobs_keep_shared_openai_compatible_endpoint(self) -> None:
+    def test_cli_openrouter_jobs_keep_shared_endpoint_and_require_real_cli(self) -> None:
         template = _template_variables()
 
-        for reviewer in ("codex", "gemini"):
+        for reviewer in ("codex", "antigravity"):
             variables = _effective_variables(template, f"review_{reviewer}")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")

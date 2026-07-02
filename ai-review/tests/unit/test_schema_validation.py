@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ai_review.adapter_runner import run_adapter
 from ai_review.schema import (
+    SchemaValidationError,
     empty_finding_batch,
     finalize_finding_batch,
     load_json_file,
@@ -18,6 +19,13 @@ from ai_review.schema import (
 
 
 class SchemaValidationTests(unittest.TestCase):
+    def test_empty_raw_finding_batch_validates_only_against_raw_schema(self) -> None:
+        raw = {"findings": []}
+
+        validate_instance(raw, "raw_finding_batch.schema.json")
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(raw, "finding_batch.schema.json")
+
     def test_empty_finding_batch_validates(self) -> None:
         started = now_iso()
         batch = empty_finding_batch(

@@ -11,9 +11,9 @@ from ai_review.schema import SchemaValidationError, validate_instance
 def _config() -> dict:
     return {
         "reviewers": {
+            "antigravity": {"enabled": True},
             "claude": {"enabled": True},
             "codex": {"enabled": True},
-            "gemini": {"enabled": True},
         },
         "panel": {
             "min_successful_reviewers_for_blocking": 2,
@@ -139,9 +139,9 @@ def _record(
 class ConsensusStateMatchingTests(unittest.TestCase):
     def _batches(self) -> list[dict]:
         return [
+            _batch("antigravity", _finding("antigravity", "3" * 64, "major")),
             _batch("claude", _finding("claude", "1" * 64, "blocker")),
             _batch("codex", _finding("codex", "2" * 64, "major")),
-            _batch("gemini", _finding("gemini", "3" * 64, "major")),
         ]
 
     def test_three_reviewers_collapse_to_one_group(self) -> None:
@@ -202,7 +202,7 @@ class ConsensusStateMatchingTests(unittest.TestCase):
             symbol="shared_a",
         )
         ambiguous_nine = _finding(
-            "gemini",
+            "antigravity",
             "9" * 64,
             title="Shared ambiguous issue",
             path="src/shared.py",
@@ -258,7 +258,7 @@ class ConsensusStateMatchingTests(unittest.TestCase):
             [
                 _batch("codex", ambiguous_two),
                 _batch("claude", assigned),
-                _batch("gemini", ambiguous_nine),
+                _batch("antigravity", ambiguous_nine),
             ],
             _config(),
             state=state,
