@@ -97,6 +97,7 @@
         "critique_noise_count",
         "contributing_reviewers",
         "source_finding_ids",
+        "candidate_issue_signature_hashes",
         "critique_summary",
         "representative_anchor",
         "all_anchors",
@@ -127,6 +128,10 @@
           "items": { "type": "string" }
         },
         "source_finding_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "candidate_issue_signature_hashes": {
           "type": "array",
           "items": { "$ref": "#/$defs/sha256" }
         },

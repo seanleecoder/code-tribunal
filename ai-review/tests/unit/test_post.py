@@ -4,7 +4,9 @@ import copy
 import unittest
 from typing import Any
 
+from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import MergeRequestVersion
+from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
 from ai_review.post import post_consensus, render_body, source_hash
 from ai_review.schema import validate_instance
 
@@ -18,6 +20,7 @@ class FakePostClient:
         self.updated_notes: list[dict[str, Any]] = []
         self.mr_notes: list[dict[str, Any]] = []
         self.updated_mr_notes: list[dict[str, Any]] = []
+        self.created_positions: list[dict[str, Any]] = []
 
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
@@ -33,6 +36,7 @@ class FakePostClient:
         position: dict[str, Any],
     ) -> dict[str, Any]:
         self.created += 1
+        self.created_positions.append(position)
         return {"id": "discussion", "notes": [{"id": 123}]}
 
     def list_mr_discussions(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
@@ -68,6 +72,26 @@ class FakePostClient:
                 if note.get("id") == note_id:
                     note["body"] = body
         return {"id": note_id, "body": body}
+
+
+class StatePostClient(FakePostClient):
+    def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
+        super().__init__(current_head_sha)
+        self.resolve_calls: list[dict[str, Any]] = []
+        self.mr_notes = [{"id": 1, "body": encode_state_note(state)}]
+
+    def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+        return list(self.mr_notes)
+
+    def resolve_discussion(
+        self,
+        project_id: str,
+        mr_iid: str,
+        discussion_id: str,
+        resolved: bool = True,
+    ) -> dict[str, Any]:
+        self.resolve_calls.append({"discussion_id": discussion_id, "resolved": resolved})
+        return {"id": discussion_id, "resolved": resolved}
 
 
 class PostTests(unittest.TestCase):
@@ -119,6 +143,71 @@ class PostTests(unittest.TestCase):
             "new_path": "src/foo.py",
             "new_line": 2,
         }
+
+    def _state_config(self) -> dict[str, Any]:
+        return {
+            "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
+            "panel": {"min_successful_reviewers_for_resolution": 1},
+            "state": {
+                "backend": "gitlab_mr_state_note",
+                "checksum_required": True,
+                "recover_from_discussion_markers": True,
+                "retention": {"max_records": 200, "max_state_bytes": 50000},
+            },
+        }
+
+    def _state_record(
+        self,
+        group: dict[str, Any],
+        *,
+        issue_id: str | None = None,
+        discussion_id: str = "existing-discussion",
+        anchor: dict[str, Any] | None = None,
+        source_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "issue_id": issue_id or group["issue_id"],
+            "category": group["category"],
+            "title": group["title"],
+            "aliases": {
+                "candidate_issue_signatures": [],
+                "source_finding_ids": source_ids
+                if source_ids is not None
+                else list(group.get("source_finding_ids", [])),
+                "context_hashes": [],
+                "title_fingerprints": [],
+                "symbols": [],
+            },
+            "discussion_id": discussion_id,
+            "root_note_id": 123,
+            "jira_comment_id": None,
+            "status": "open",
+            "last_seen_sha": "old-head",
+            "first_seen_sha": "old-head",
+            "anchor": anchor if anchor is not None else copy.deepcopy(group["representative_anchor"]),
+            "last_posted_body_hash": "0" * 64,
+            "last_decision": "surface",
+            "last_final_severity": "major",
+            "created_by_pipeline_id": "old",
+            "updated_by_pipeline_id": "old",
+            "human_disposition": None,
+            "remap_status": "not_checked",
+            "last_matched_run_id": "gl-1-1",
+        }
+
+    def _state_with_records(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        return attach_state_hash(
+            {
+                "state_schema_version": 1,
+                "project_id": "1",
+                "merge_request_iid": "2",
+                "last_head_sha": "old-head",
+                "state_note_id": None,
+                "written_by_pipeline_id": "old",
+                "updated_at": "2026-06-29T00:00:00Z",
+                "records": records,
+            }
+        )
 
     def _existing_discussion(
         self,
@@ -645,6 +734,287 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["updated_discussions"], 0)
         self.assertEqual(client.created, 1)
         self.assertEqual(client.updated, 0)
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_state_overflow_fails_closed_before_mutation(self) -> None:
+        client = FakePostClient("head")
+        client.list_mr_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {
+                "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
+                "state": {
+                    "backend": "gitlab_mr_state_note",
+                    "checksum_required": True,
+                    "recover_from_discussion_markers": True,
+                    "retention": {"max_records": 0, "max_state_bytes": 50000},
+                },
+            },
+            self._manifest("head"),
+            self._consensus(),
+        )
+        self.assertEqual(result["status"], "state_overflow")
+        self.assertEqual(client.created, 0)
+        self.assertEqual(client.updated, 0)
+        self.assertEqual(client.mr_notes, [])
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_writes_persisted_state_note(self) -> None:
+        class StateClient(FakePostClient):
+            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+                return list(self.mr_notes)
+
+            def resolve_discussion(
+                self,
+                project_id: str,
+                mr_iid: str,
+                discussion_id: str,
+                resolved: bool = True,
+            ) -> dict[str, Any]:
+                return {"id": discussion_id, "resolved": resolved}
+
+        client = StateClient("head")
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {
+                "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
+                "panel": {"min_successful_reviewers_for_resolution": 2},
+                "state": {
+                    "backend": "gitlab_mr_state_note",
+                    "checksum_required": True,
+                    "recover_from_discussion_markers": True,
+                    "retention": {"max_records": 200, "max_state_bytes": 50000},
+                },
+            },
+            self._manifest("head"),
+            self._consensus(),
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(len(client.updated_mr_notes), 1)
+        state = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        validate_instance(state, "state.schema.json")
+        self.assertEqual(state["records"][0]["discussion_id"], "discussion")
+        self.assertEqual(state["records"][0]["status"], "open")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_state_match_changed_issue_id_does_not_auto_resolve_prior_record(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        previous_id = "c" * 64
+        state = self._state_with_records(
+            [self._state_record(group, issue_id=previous_id, discussion_id="semantic-match")]
+        )
+        client = StatePostClient("head", state)
+        group["body"] = "Updated body"
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+        )
+
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(client.resolve_calls, [])
+        self.assertIn(f"issue_id={previous_id}", client.updated_notes[0]["body"])
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["issue_id"], previous_id)
+        self.assertEqual(state_after["records"][0]["status"], "open")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_ambiguous_match_protects_candidates_from_resolution(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        shared_source = list(group["source_finding_ids"])
+        records = [
+            self._state_record(
+                group,
+                issue_id="c" * 64,
+                discussion_id="first",
+                source_ids=shared_source,
+            ),
+            self._state_record(
+                group,
+                issue_id="d" * 64,
+                discussion_id="second",
+                source_ids=shared_source,
+            ),
+        ]
+        client = StatePostClient("head", self._state_with_records(records))
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(client.resolve_calls, [])
+        self.assertTrue(any("ambiguous existing record match" in item for item in result["warnings"]))
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual({record["status"] for record in state_after["records"]}, {"stale"})
+        self.assertEqual(
+            {record["remap_status"] for record in state_after["records"]},
+            {"ambiguous"},
+        )
+        validate_instance(result, "post_result.schema.json")
+
+    def _single_line_diff(self, new_line: int, text: str = "target") -> str:
+        return "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                f"@@ -1,0 +{new_line},1 @@",
+                f"+{text}",
+            ]
+        )
+
+    def _anchor_with_context(self, line: int, diff_text: str) -> dict[str, Any]:
+        anchor = {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": None, "new_line": line, "line_code": None},
+            "end": {"old_line": None, "new_line": line, "line_code": None},
+            "hunk_header": f"@@ -1,0 +{line},1 @@",
+            "context_hash": "",
+            "symbol": None,
+        }
+        anchor["context_hash"] = context_hash_from_unified_diff(diff_text, anchor)
+        return anchor
+
+    def test_post_exact_remap_updates_existing_discussion(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        diff_text = self._single_line_diff(2)
+        anchor = self._anchor_with_context(2, diff_text)
+        state = self._state_with_records([self._state_record(group, anchor=anchor)])
+        client = StatePostClient("head", state)
+        group["body"] = "Updated body"
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text=diff_text,
+        )
+
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(result["created_discussions"], 0)
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["remap_status"], "exact")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_remapped_anchor_creates_at_remapped_position(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        old_diff = self._single_line_diff(2)
+        current_diff = self._single_line_diff(4)
+        anchor = self._anchor_with_context(2, old_diff)
+        state = self._state_with_records([self._state_record(group, anchor=anchor)])
+        client = StatePostClient("head", state)
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text=current_diff,
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(client.created_positions[0]["new_line"], 4)
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["anchor"]["start"]["new_line"], 4)
+        self.assertEqual(state_after["records"][0]["remap_status"], "remapped")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_missing_remap_falls_back_without_resolving(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        old_diff = self._single_line_diff(2)
+        anchor = self._anchor_with_context(2, old_diff)
+        state = self._state_with_records([self._state_record(group, anchor=anchor)])
+        client = StatePostClient("head", state)
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text=self._single_line_diff(2, "different"),
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
+        self.assertEqual(client.resolve_calls, [])
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "stale_unverified")
+        self.assertEqual(state_after["records"][0]["remap_status"], "missing")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_ambiguous_remap_marks_stale_without_mutation(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
+            f"+tail-{index}" for index in range(6)
+        ]
+        old_diff = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,1 +10,13 @@",
+                *block,
+            ]
+        )
+        ambiguous_diff = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,1 +30,13 @@",
+                *block,
+                "@@ -20,1 +70,13 @@",
+                *block,
+            ]
+        )
+        anchor = {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": None, "new_line": 16, "line_code": None},
+            "end": {"old_line": None, "new_line": 16, "line_code": None},
+            "hunk_header": "@@ -1,1 +10,13 @@",
+            "context_hash": "",
+            "symbol": None,
+        }
+        anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
+        state = self._state_with_records([self._state_record(group, anchor=anchor)])
+        client = StatePostClient("head", state)
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text=ambiguous_diff,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertTrue(any("ambiguous remap" in item for item in result["warnings"]))
+        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "stale")
+        self.assertEqual(state_after["records"][0]["remap_status"], "ambiguous")
         validate_instance(result, "post_result.schema.json")
 
 

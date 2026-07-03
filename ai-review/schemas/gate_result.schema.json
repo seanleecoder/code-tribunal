@@ -11,6 +11,7 @@
       "enum": [
         "passed",
         "failed_blocking_findings",
+        "failed_post_result",
         "passed_stale_head",
         "skipped_disabled"
       ]

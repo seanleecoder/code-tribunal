@@ -236,6 +236,106 @@ def context_hash_from_unified_diff(diff_text: str, anchor: dict[str, Any], *, wi
     raise ValueError("anchor does not map to the unified diff")
 
 
+def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> dict[str, Any]:
+    expected_hash = anchor.get("context_hash")
+    if not is_sha256(expected_hash):
+        return {"status": "missing", "anchor": None}
+    try:
+        if context_hash_from_unified_diff(diff_text, anchor, window=window) == expected_hash:
+            return {"status": "exact", "anchor": anchor}
+    except ValueError:
+        pass
+
+    side = str(anchor.get("side"))
+    matches: list[dict[str, Any]] = []
+    old_path: str | None = None
+    new_path: str | None = None
+    old_line: int | None = None
+    new_line: int | None = None
+    hunk_header = ""
+    lines_for_file: list[DiffLine] = []
+
+    def scan_file() -> None:
+        if not old_path or not new_path:
+            return
+        side_lines = [line for line in lines_for_file if _line_belongs_to_side(side, line)]
+        for index, line in enumerate(side_lines):
+            start = max(index - window, 0)
+            end = min(index + window, len(side_lines) - 1)
+            line_texts = [item.text for item in side_lines[start : end + 1]]
+            # Context hashes include the original path. That lets a renamed file remap
+            # by content while still comparing the historical alias deterministically.
+            if compute_context_hash(anchor_path_key(anchor), side, line_texts) != expected_hash:
+                continue
+            remapped = dict(anchor)
+            remapped["old_path"] = old_path
+            remapped["new_path"] = new_path
+            remapped["hunk_header"] = line.hunk_header
+            remapped["start"] = {
+                "old_line": line.old_line,
+                "new_line": line.new_line,
+                "line_code": None,
+            }
+            remapped["end"] = dict(remapped["start"])
+            remapped["context_hash"] = expected_hash
+            matches.append(add_line_codes(remapped))
+
+    for raw_line in diff_text.splitlines():
+        parsed_paths = _parse_diff_paths(raw_line)
+        if parsed_paths:
+            scan_file()
+            old_path, new_path = parsed_paths
+            old_line = None
+            new_line = None
+            hunk_header = ""
+            lines_for_file = []
+            continue
+        if raw_line.startswith("--- "):
+            old_path = strip_diff_prefix(raw_line[4:].strip())
+            continue
+        if raw_line.startswith("+++ "):
+            new_path = strip_diff_prefix(raw_line[4:].strip())
+            continue
+        hunk_match = HUNK_RE.match(raw_line)
+        if hunk_match:
+            old_line = int(hunk_match.group("old"))
+            new_line = int(hunk_match.group("new"))
+            hunk_header = raw_line
+            continue
+        if old_line is None or new_line is None or not hunk_header:
+            continue
+        if raw_line.startswith("\\"):
+            continue
+        prefix = raw_line[:1]
+        text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
+        if prefix == "+":
+            lines_for_file.append(DiffLine(None, new_line, text, hunk_header))
+            new_line += 1
+        elif prefix == "-":
+            lines_for_file.append(DiffLine(old_line, None, text, hunk_header))
+            old_line += 1
+        else:
+            lines_for_file.append(DiffLine(old_line, new_line, text, hunk_header))
+            old_line += 1
+            new_line += 1
+    scan_file()
+    unique = {
+        (
+            match.get("old_path"),
+            match.get("new_path"),
+            match.get("side"),
+            match.get("start", {}).get("old_line"),
+            match.get("start", {}).get("new_line"),
+        ): match
+        for match in matches
+    }
+    if not unique:
+        return {"status": "missing", "anchor": None}
+    if len(unique) > 1:
+        return {"status": "ambiguous", "anchor": None}
+    return {"status": "remapped", "anchor": next(iter(unique.values()))}
+
+
 def first_evidence_or_body(finding: dict[str, Any]) -> str:
     evidence = finding.get("evidence") or []
     if evidence:

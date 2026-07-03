@@ -49,6 +49,7 @@
         ],
         "properties": {
           "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "title": { "type": "string" },
           "category": {
             "enum": [
               "security",
@@ -117,6 +118,10 @@
           "last_matched_run_id": { "type": ["string", "null"] }
         }
       }
+    },
+    "run_history": {
+      "type": "array",
+      "items": { "type": "object" }
     },
     "state_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
   }

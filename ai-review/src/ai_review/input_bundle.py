@@ -8,6 +8,12 @@ from pathlib import Path
 from .canonical import sha256_hex
 from .config import load_config
 from .gitlab_client import GitLabClient
+from .memory import (
+    empty_state,
+    newest_valid_state_from_notes,
+    prior_decisions_from_state,
+    state_aliases_from_state,
+)
 from .schema import now_iso, write_canonical_json
 
 
@@ -80,6 +86,7 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
         "open": [],
     }
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions)
+    write_canonical_json(out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []})
 
     diff_sha = _file_sha256(diff_path)
     manifest = {
@@ -114,10 +121,11 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         raise SystemExit(
             "prepare requires CI_API_V4_URL, CI_PROJECT_ID, CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
         )
+    config_dict = load_config(config)
     client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
     version = client.fetch_latest_mr_version(project_id, mr_iid)
     diff_text = client.fetch_mr_diff(project_id, mr_iid)
-    _enforce_diff_limits(diff_text, load_config(config))
+    _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
     config_path = Path(config)
@@ -135,10 +143,6 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         return set(names) & ignore_names
 
     shutil.copytree(Path.cwd(), snapshot_dir, dirs_exist_ok=True, ignore=ignore)
-    write_canonical_json(
-        out_path / "prior_decisions.json",
-        {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
-    )
     diff_sha = sha256_hex(diff_text)
     manifest = {
         "schema_version": "input_manifest.v1",
@@ -157,6 +161,30 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         "rules_sha256": _directory_sha256(source_rules),
         "created_at": now_iso(),
     }
+    state = empty_state(
+        project_id=str(project_id),
+        merge_request_iid=str(mr_iid),
+        head_sha=version.head_sha,
+        pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
+    )
+    state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
+    if state_config.get("backend") == "gitlab_mr_state_note":
+        try:
+            notes = client.list_mr_notes(project_id, mr_iid)
+            loaded, warnings = newest_valid_state_from_notes(
+                notes,
+                checksum_required=bool(state_config.get("checksum_required", True)),
+            )
+            if loaded is not None:
+                state = loaded
+            for warning in warnings:
+                print(f"ai-review prepare: {warning}")
+        except Exception as exc:
+            if state_config.get("overflow_behavior") == "fail_closed":
+                raise
+            print(f"ai-review prepare: state load failed: {exc}")
+    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
+    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
     write_canonical_json(out_path / "manifest.json", manifest)
     return out_path
 

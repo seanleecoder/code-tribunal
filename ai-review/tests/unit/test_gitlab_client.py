@@ -44,6 +44,8 @@ class FakeSession:
                     },
                 ]
             )
+        if url.endswith("/notes"):
+            return FakeResponse([])
         if "/merge_requests/" in url and method == "GET":
             return FakeResponse({"sha": "head"})
         return FakeResponse({"id": "discussion", "notes": [{"id": 123}]})
@@ -101,6 +103,21 @@ class GitLabClientTests(unittest.TestCase):
 
     def test_root_note_id_from_discussion(self) -> None:
         self.assertEqual(root_note_id_from_discussion({"notes": [{"id": 123}]}), 123)
+
+    def test_gitlab_state_and_resolution_methods(self) -> None:
+        session = FakeSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client.list_mr_notes("group/project", 1)
+        client.resolve_discussion("group/project", 1, "discussion", False)
+        client.current_user()
+        client.project_member_access_level("group/project", 99)
+        methods = [call[0] for call in session.calls]
+        self.assertIn("GET", methods)
+        self.assertIn("PUT", methods)
+        self.assertTrue(any("/notes" in call[1] for call in session.calls))
+        self.assertTrue(
+            any(call[2].get("json", {}).get("resolved") is False for call in session.calls)
+        )
 
     def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
         # Bug #8: a 204/empty /changes response makes _request return None; fetch_mr_diff

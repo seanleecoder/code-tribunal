@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "state_aliases.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "records"],
+  "properties": {
+    "schema_version": { "const": "state_aliases.v1" },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_id", "category", "status", "aliases", "anchor"],
+        "properties": {
+          "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "category": { "type": "string" },
+          "status": { "type": "string" },
+          "aliases": { "type": "object" },
+          "anchor": { "type": "object" }
+        }
+      }
+    }
+  }
+}

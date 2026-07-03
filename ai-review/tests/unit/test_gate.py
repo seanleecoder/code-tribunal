@@ -41,6 +41,18 @@ class GateTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "skipped_disabled")
 
+    def test_gate_fails_closed_for_post_failures(self) -> None:
+        for status in ("failed", "partial_failed", "state_overflow"):
+            with self.subTest(status=status):
+                result, exit_code = evaluate_gate(
+                    self._config(),
+                    self._consensus(False),
+                    {"status": status},
+                )
+                self.assertEqual(exit_code, 7)
+                self.assertEqual(result["status"], "failed_post_result")
+                validate_instance(result, "gate_result.schema.json")
+
 
 if __name__ == "__main__":
     unittest.main()

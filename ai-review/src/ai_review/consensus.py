@@ -7,7 +7,7 @@ from typing import Any
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import enabled_reviewers, load_config
-from .memory import find_matching_record
+from .memory import find_matching_record, state_from_aliases
 from .post import render_body
 from .schema import load_json_file, validate_instance, write_canonical_json
 
@@ -252,6 +252,7 @@ def build_consensus(
                 "critique_noise_count": 0,
                 "contributing_reviewers": contributing,
                 "source_finding_ids": source_ids,
+                "candidate_issue_signature_hashes": candidate_signature_hashes,
                 "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
                 "representative_anchor": representative["anchor"],
                 "all_anchors": [finding["anchor"] for finding in findings],
@@ -292,10 +293,8 @@ def build_consensus(
                     "matched_issue_id": None,
                     "precedence": state_match.precedence,
                 }
-            group["_candidate_issue_signature_hashes"] = candidate_signature_hashes
             _body, body_hash = render_body(group, len(successful), manifest["run_id"])
             group["body_hash"] = body_hash
-            del group["_candidate_issue_signature_hashes"]
             groups.append(group)
     groups = sorted(groups, key=_group_sort_key)
     return {
@@ -333,6 +332,10 @@ def cli(argv: list[str] | None = None) -> int:
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))
     state = load_json_file(args.state) if args.state else None
+    if state is None:
+        aliases_path = inputs / "state_aliases.json"
+        if aliases_path.exists():
+            state = state_from_aliases(load_json_file(aliases_path))
     consensus = build_consensus(manifest, batches, config, state=state)
     validate_instance(consensus, "consensus.schema.json")
     write_canonical_json(args.out, consensus)

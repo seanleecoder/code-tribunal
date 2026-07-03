@@ -26,12 +26,13 @@ def _line_range_type(anchor: dict[str, Any]) -> str:
 
 def _line_range_endpoint(anchor: dict[str, Any], key: str) -> dict[str, Any]:
     line = anchor[key]
+    path = anchor["old_path"] if anchor["side"] == "old" else anchor["new_path"]
     return {
         "type": _line_range_type(anchor),
         "old_line": line.get("old_line"),
         "new_line": line.get("new_line"),
         "line_code": line.get("line_code")
-        or gitlab_line_code(anchor["new_path"], line.get("old_line"), line.get("new_line")),
+        or gitlab_line_code(path, line.get("old_line"), line.get("new_line")),
     }
 
 
@@ -211,13 +212,27 @@ class GitLabClient:
         project_id_or_path: str | int,
         merge_request_iid: str | int,
         discussion_id: str,
+        resolved: bool = True,
     ) -> dict[str, Any]:
         return self._request(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}"
             f"/discussions/{discussion_id}",
-            json={"resolved": True},
+            json={"resolved": resolved},
         )
+
+    def list_mr_notes(
+        self,
+        project_id_or_path: str | int,
+        merge_request_iid: str | int,
+    ) -> list[dict[str, Any]]:
+        notes = self._request(
+            "GET",
+            f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
+        )
+        if not isinstance(notes, list):
+            raise GitLabApiError("GitLab notes response was not a list")
+        return notes
 
     def create_mr_note(
         self,
@@ -243,3 +258,23 @@ class GitLabClient:
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes/{note_id}",
             json={"body": body},
         )
+
+    def current_user(self) -> dict[str, Any]:
+        user = self._request("GET", "/user")
+        if not isinstance(user, dict):
+            raise GitLabApiError("GitLab current user response was not an object")
+        return user
+
+    def project_member_access_level(
+        self,
+        project_id_or_path: str | int,
+        user_id: str | int,
+    ) -> int | None:
+        member = self._request(
+            "GET",
+            f"/projects/{self._project(project_id_or_path)}/members/all/{user_id}",
+        )
+        if not isinstance(member, dict):
+            return None
+        access_level = member.get("access_level")
+        return int(access_level) if isinstance(access_level, int) else None

@@ -27,6 +27,16 @@ def evaluate_gate(config: dict, consensus: dict, post_result: dict) -> tuple[dic
         }
         return result, 0
 
+    if post_result.get("status") in {"failed", "partial_failed", "state_overflow"}:
+        result = {
+            "schema_version": "gate_result.v1",
+            "run_id": consensus["run_id"],
+            "status": "failed_post_result",
+            "block_merge": True,
+            "reason": str(post_result.get("status")),
+        }
+        return result, 7
+
     if consensus.get("summary", {}).get("block_merge") is True:
         result = {
             "schema_version": "gate_result.v1",

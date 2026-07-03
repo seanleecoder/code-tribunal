@@ -77,8 +77,8 @@ critique:
 
 posting:
   mode: gitlab_discussions
-  v1_inline_sides: [new]
-  inline_multiline: false
+  v1_inline_sides: [new, old, unchanged]
+  inline_multiline: true
   fallback_to_summary_comment: true
   marker_version: ai-review:v1
   update_existing_threads: true
