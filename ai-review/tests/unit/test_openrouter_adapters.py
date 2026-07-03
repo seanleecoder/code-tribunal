@@ -18,9 +18,11 @@ _ENV_KEYS = [
     "AI_REVIEW_CONFIG",
     "AI_REVIEW_LOCAL_MOCK",
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
+    "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
     "OPENROUTER_API_KEY",
     "OPENROUTER_BASE_URL",
+    "ANTHROPIC_BASE_URL",
     "PATH",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
@@ -126,6 +128,19 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
 
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name
+        if name == "claude":
+            cli.write_text(
+                "#!/bin/sh\n"
+                "args=\"$*\"\n"
+                "mkdir -p \"$AI_REVIEW_OUTPUT_DIR\"\n"
+                "printf '%s\\n' \"$0 $args\" > \"$AI_REVIEW_OUTPUT_DIR/claude.args\"\n"
+                "env | sort > \"$AI_REVIEW_OUTPUT_DIR/claude.env\"\n"
+                "cat > \"$AI_REVIEW_OUTPUT_DIR/claude.stdin\"\n"
+                "printf '{\"findings\":[]}'\n",
+                encoding="utf-8",
+            )
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+            return
         cli.write_text(
             "#!/bin/sh\n"
             "args=\"$*\"\n"
@@ -245,10 +260,50 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", cli_args)
         self.assertIn("--ignore-rules", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
-        self.assertIn("--ask-for-approval never", cli_args)
+        self.assertNotIn("--ask-for-approval", cli_args)
         self.assertIn("model_provider=\"openrouter\"", cli_args)
+        self.assertIn("model_providers.openrouter.name=\"OpenRouter\"", cli_args)
         self.assertIn("--output-schema ai-review/schemas/raw_finding_batch.schema.json", cli_args)
         self.assertNotIn("--output-schema ai-review/schemas/finding_batch.schema.json", cli_args)
+
+    def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "claude")
+            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
+            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
+            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
+            os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            try:
+                self.assertEqual(run_adapter("claude", "review"), 0)
+                batch = load_json_file(output_dir / "findings" / "claude.json")
+                cli_args = (output_dir / "claude.args").read_text(encoding="utf-8")
+                stdin = (output_dir / "claude.stdin").read_text(encoding="utf-8")
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["reviewer"], "claude")
+        self.assertIn("/claude -p ", cli_args)
+        self.assertIn("--output-format stream-json", cli_args)
+        self.assertIn("--tools Read,Grep,Glob", cli_args)
+        self.assertNotIn("bundle prompt", cli_args)
+        self.assertIn("bundle prompt", stdin)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")

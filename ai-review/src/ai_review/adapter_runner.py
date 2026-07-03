@@ -210,6 +210,8 @@ def _load_stream_json(stdout: str) -> dict[str, Any]:
                 assistant_parts.extend(_extract_text_parts(event["message"]))
         if str(event.get("type", "")).startswith("message") and isinstance(event.get("part"), dict):
             assistant_parts.extend(_extract_text_parts(event["part"]))
+        if event.get("type") == "text":
+            assistant_parts.extend(_extract_text_parts(event))
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
         if event.get("is_error") is True:
@@ -486,7 +488,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             raw = _load_adapter_json(result.stdout)
             if stage == "review":
-                validate_instance(raw, "raw_finding_batch.schema.json")
+                if not isinstance(raw.get("findings"), list):
+                    raise SchemaValidationError("adapter output findings must be an array")
                 max_findings = reviewer_config.get("max_findings")
                 finalized = finalize_finding_batch(
                     raw,

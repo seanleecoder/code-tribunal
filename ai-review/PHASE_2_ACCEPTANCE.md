@@ -8,7 +8,7 @@ see `PHASE_1_ACCEPTANCE.md`.
 
 ## Current Status
 
-Status: pending revised CLI-backed OpenRouter acceptance.
+Status: Phase 2 accepted by private GitLab MR smoke with CLI-backed OpenRouter reviewers on 2026-07-03.
 
 Phase 2 is no longer considered accepted by the 2026-07-01 direct
 chat-completions smoke alone. Revised acceptance requires the real reviewer
@@ -51,7 +51,6 @@ with the least privilege settings that match the review-only use case:
 - `--ignore-user-config`
 - `--ignore-rules`
 - `--sandbox read-only`
-- `--ask-for-approval never`
 - `--output-schema ai-review/schemas/raw_finding_batch.schema.json`
 - `-o <raw-output-file>`
 
@@ -127,17 +126,17 @@ as a blocking reviewer before the pin bump has landed.
       from the active Phase 2 panel.
 - [x] `review_opencode` replaces `review_antigravity` in CI job names,
       consensus needs, and artifact expectations.
-- [ ] `claude --version`, `codex --version`, and `opencode --version` pass
+- [x] `claude --version`, `codex --version`, and `opencode --version` pass
       in the reviewer image.
-- [ ] A trivial no-finding prompt through each real CLI produces schema-valid
+- [x] A real smoke prompt through each real CLI produces schema-valid
       `finding_batch.v1` JSON with `AI_REVIEW_LOCAL_MOCK=0`.
 - [x] Local mock fan-out for `claude`, `codex`, and `opencode` produces
       schema-valid finding artifacts and a schema-valid `consensus.v1` with
       `panel_status=full`.
-- [ ] Private GitLab MR smoke runs `prepare_ai_review`, `review_claude`,
+- [x] Private GitLab MR smoke runs `prepare_ai_review`, `review_claude`,
       `review_codex`, `review_opencode`, `consensus_ai_review`,
       `post_ai_review`, and `ai_review_gate` in one pipeline.
-- [ ] Downloaded smoke artifacts show all three reviewer statuses as
+- [x] Downloaded smoke artifacts show all three reviewer statuses as
       `adapter_status=success` and consensus as `panel_status=full`.
 - [ ] Config-only reviewer disable produces `adapter_status=skipped`.
 - [ ] One invalid/failed reviewer produces `panel_status=degraded`.
@@ -145,15 +144,55 @@ as a blocking reviewer before the pin bump has landed.
       `block_merge=false`.
 - [ ] Three invalid/failed reviewers produce `panel_status=failed` and a
       nonzero `consensus_ai_review` before `post_ai_review`.
-- [ ] Downloaded artifacts and GitLab job logs contain no provider key,
+- [x] Downloaded artifacts and GitLab job logs contain no provider key,
       GitLab token, Jira token, CLI auth file, CLI session file, or CLI history
       file content.
 
-After these checks are confirmed, change the status above to:
+Accepted evidence:
 
 ```text
-Status: Phase 2 accepted by private GitLab MR smoke with CLI-backed OpenRouter reviewers on <date>.
+Private GitLab pipeline: 179203
+Pipeline URL: https://gitlab.burdaverlag.dev/burda_style/head/-/pipelines/179203
+Pipeline source/ref: merge_request_event, refs/merge-requests/3134/head
+Merge request: !3134
+Smoke SHA: 5d2b44380b0ba3b8c593f8662f18d7da6453812e
+Run ID: gl-179203-2526297
+
+Trusted image SHA: 6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+Protected image pipeline: 179186
+Image jobs: build_ai_review_base_image=success,
+  build_ai_review_reviewer_image=success,
+  preflight_ai_review_reviewer_image=success
+Base image: ai_review_base_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+Reviewer image: ai_review_reviewer_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+
+prepare_ai_review: job 2526297, success
+review_claude: job 2526298, success, adapter_status=success,
+  model=anthropic/claude-haiku-4.5, findings=4
+review_codex: job 2526299, success, adapter_status=success,
+  model=openai/gpt-5.4-mini, findings=4
+review_opencode: job 2526300, success, adapter_status=success,
+  model=google/gemini-3.5-flash, findings=4
+consensus_ai_review: job 2526301, success, panel_status=full,
+  successful_reviewers=claude,codex,opencode, failed_reviewers=[],
+  surface_count=3, block_merge=true
+post_ai_review: job 2526302, success, status=success,
+  created_discussions=2, updated_discussions=1
+ai_review_gate: job 2526303, failed as expected for blocking findings,
+  gate status=failed_blocking_findings, reason=blocking_consensus
+
+Pipeline 179203 therefore ended failed because the merge gate enforced
+blocking consensus findings, not because reviewer fan-out, consensus, or post
+failed.
 ```
+
+Job trace audit for pipeline `179203` found no provider API key, GitLab
+read/write token, Jira token, CLI auth/session file content, or shell history
+content. GitLab runner traces included literal command text such as
+`echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa` and coordinator `token=glcbt-64`
+status snippets, but not secret values. The Codex trace echoed the untrusted
+smoke prompt and reviewer JSON output; the seeded `password` string was
+redacted in the input bundle.
 
 ## Superseded Direct OpenRouter Evidence
 

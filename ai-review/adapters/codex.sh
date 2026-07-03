@@ -54,9 +54,9 @@ env -i \
   --ignore-user-config \
   --ignore-rules \
   --sandbox read-only \
-  --ask-for-approval never \
   --model "$AI_REVIEW_MODEL" \
   --config 'model_provider="openrouter"' \
+  --config 'model_providers.openrouter.name="OpenRouter"' \
   --config "model_providers.openrouter.base_url=\"$BASE_URL\"" \
   --config 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"' \
   --output-schema ai-review/schemas/raw_finding_batch.schema.json \

@@ -36,4 +36,4 @@ claude -p \
   --verbose \
   --tools "Read,Grep,Glob" \
   --max-turns "${AI_REVIEW_MAX_TURNS:-${MAX_TURNS:-4}}" \
-  "$(cat "$AI_REVIEW_RENDERED_PROMPT")"
+  < "$AI_REVIEW_RENDERED_PROMPT"

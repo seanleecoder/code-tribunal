@@ -413,7 +413,7 @@ def finalize_finding_batch(
         sys.stderr.write(
             redact_text(
                 f"ai-review: {reviewer} kept {len(findings)} finding(s), "
-                f"dropped {dropped} with unresolvable anchors\n"
+                f"dropped {dropped} malformed/unresolvable finding(s)\n"
             )
         )
 

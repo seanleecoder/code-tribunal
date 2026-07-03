@@ -141,6 +141,16 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(loaded, {"findings": []})
 
+    def test_loads_opencode_stream_json_text_event(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "s"}),
+                json.dumps({"type": "text", "text": '{"findings":[]}'}),
+            ]
+        )
+        loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+
 
 class MaxTurnsEnvTests(unittest.TestCase):
     def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:
@@ -356,6 +366,59 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertTrue(
                 (paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists()
             )
+
+    def test_review_drops_malformed_finding_without_schema_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            paths["input_dir"].joinpath("mr.diff").write_text(
+                "\n".join(
+                    [
+                        "diff --git a/src/foo.py b/src/foo.py",
+                        "--- a/src/foo.py",
+                        "+++ b/src/foo.py",
+                        "@@ -1,1 +1,3 @@",
+                        " def f():",
+                        "+    return records[0]",
+                        "+    return records[1]",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            good_finding = {
+                "anchor": {
+                    "new_path": "src/foo.py",
+                    "old_path": "src/foo.py",
+                    "side": "new",
+                    "start": {"old_line": None, "new_line": 2, "line_code": None},
+                    "end": {"old_line": None, "new_line": 2, "line_code": None},
+                    "hunk_header": "@@ -1,1 +1,3 @@",
+                    "context_hash": "0" * 64,
+                    "symbol": None,
+                },
+                "severity": "major",
+                "category": "correctness",
+                "title": "Validate before indexing",
+                "body": "records[0] is used without a guard.",
+                "evidence": ["records[0]"],
+                "suggestion": None,
+                "confidence": 0.8,
+            }
+            bad_finding = dict(good_finding)
+            bad_finding["title"] = "Bad evidence item"
+            bad_finding["evidence"] = [None]
+            config_path = _write_reviewer_config(paths["config_dir"], "mixed")
+            raw = json.dumps({"findings": [bad_finding, good_finding]})
+            _write_adapter(paths["adapter_dir"], "mixed", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("mixed", "review"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "mixed.json")
+            self.assertEqual(batch["adapter_status"], "success")
+            self.assertEqual([finding["title"] for finding in batch["findings"]], ["Validate before indexing"])
+            status = load_json_file(paths["output_dir"] / "status" / "mixed.json")
+            self.assertEqual(status["status"], "success")
+            self.assertFalse((paths["output_dir"] / "status" / "mixed-parse-debug.txt").exists())
 
     def test_status_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
