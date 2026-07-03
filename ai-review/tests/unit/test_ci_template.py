@@ -9,6 +9,7 @@ _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.ym
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
+_CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -52,6 +53,14 @@ def _template_variables() -> dict[str, dict[str, str]]:
 
 def _effective_variables(template: dict[str, dict[str, str]], job_name: str) -> dict[str, str]:
     template_variables = template[".review_template"]
+    reviewer_variables = template[job_name]
+    return {**template_variables, **reviewer_variables}
+
+
+def _effective_critique_variables(
+    template: dict[str, dict[str, str]], job_name: str
+) -> dict[str, str]:
+    template_variables = template[".critique_template"]
     reviewer_variables = template[job_name]
     return {**template_variables, **reviewer_variables}
 
@@ -138,6 +147,39 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
+
+    def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
+        template = _template_variables()
+
+        claude = _effective_critique_variables(template, "critique_claude")
+        self.assertEqual(claude["REVIEWER"], "claude")
+        self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
+        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
+        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
+        self.assertEqual(claude["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
+
+        for reviewer in ("codex", "opencode"):
+            variables = _effective_critique_variables(template, f"critique_{reviewer}")
+            self.assertEqual(variables["REVIEWER"], reviewer)
+            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
+            self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
+            self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
+        opencode = _effective_critique_variables(template, "critique_opencode")
+        self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
+
+    def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn("out/critiques/", text)
+        self.assertIn("out/pooled_findings/", text)
+        self.assertIn("--critiques-dir out/critiques", text)
+
+    def test_codex_critique_uses_critique_schema(self) -> None:
+        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
+
+        self.assertIn("raw_finding_batch.schema.json", text)
+        self.assertIn("critique_batch.schema.json", text)
+        self.assertIn('"$OUTPUT_SCHEMA"', text)
 
     def test_acceptance_doc_names_sanitized_opencode_workspace(self) -> None:
         text = _ACCEPTANCE_DOC.read_text(encoding="utf-8")

@@ -43,7 +43,7 @@ private GitLab MR smoke evidence and Phase 1 acceptance status in
 ## Phase 2: CLI reviewers via OpenRouter
 
 Claude, Codex (`openai/gpt-5.4-mini`), and OpenCode
-(`google/gemini-3.5-flash`) run through their provider CLIs configured for
+(`google/gemini-3.1-flash-lite`) run through their provider CLIs configured for
 OpenRouter, sharing the same `OPENROUTER_API_KEY`.
 
 Local mock run (no key required):

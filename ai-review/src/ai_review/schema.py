@@ -213,6 +213,41 @@ def empty_critique_batch(
     }
 
 
+def finalize_critique_batch(
+    batch: dict[str, Any],
+    *,
+    critic: str,
+    run_id: str,
+) -> dict[str, Any]:
+    status = str(batch.get("adapter_status", "success"))
+    if status != "success":
+        finalized = empty_critique_batch(
+            critic,
+            status if status in ADAPTER_STATUSES else "schema_error",
+            run_id=run_id,
+            started_at=now_iso(),
+        )
+        validate_instance(finalized, "critique_batch.schema.json")
+        return finalized
+
+    critiques = []
+    for critique in batch.get("critiques", []):
+        if not isinstance(critique, dict):
+            raise SchemaValidationError("critique entries must be objects")
+        normalized = dict(critique)
+        normalized["critic"] = critic
+        critiques.append(normalized)
+    finalized = {
+        "schema_version": "critique_batch.v1",
+        "run_id": run_id,
+        "critic": critic,
+        "adapter_status": "success",
+        "critiques": critiques,
+    }
+    validate_instance(finalized, "critique_batch.schema.json")
+    return finalized
+
+
 def adapter_status_artifact(
     reviewer: str,
     stage: str,

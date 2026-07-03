@@ -256,6 +256,7 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
     for path in [config_dir, adapter_dir, prompt_dir, rules_dir, input_dir]:
         path.mkdir(parents=True, exist_ok=True)
     (prompt_dir / "review.md").write_text("Return JSON only.", encoding="utf-8")
+    (prompt_dir / "critique.md").write_text("Return critique JSON only.", encoding="utf-8")
     (rules_dir / "README.md").write_text("rules", encoding="utf-8")
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
     write_canonical_json(
@@ -506,6 +507,96 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "disabled_reviewer.json")
             self.assertEqual(status["status"], "skipped")
             self.assertFalse(sentinel.exists())
+
+    def test_disabled_critique_skips_without_running_adapter_and_uses_stage_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "critic")
+            sentinel = paths["output_dir"] / "adapter_ran.txt"
+            _write_adapter(
+                paths["adapter_dir"],
+                "critic",
+                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"critiques":[]}}\'\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("critic", "critique"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "critiques" / "critic.json")
+            self.assertEqual(batch["adapter_status"], "skipped")
+            status = load_json_file(paths["output_dir"] / "status" / "critique-critic.json")
+            self.assertEqual(status["stage"], "critique")
+            self.assertEqual(status["status"], "skipped")
+            self.assertFalse((paths["output_dir"] / "status" / "critic.json").exists())
+            self.assertFalse(sentinel.exists())
+
+    def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = paths["config_dir"] / "review.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "schema_version: review_config.v1",
+                        "reviewers:",
+                        "  critic:",
+                        "    enabled: true",
+                        "    adapter: adapters/critic.sh",
+                        "    model: critic-model",
+                        "    timeout_seconds: 30",
+                        "    max_findings: 50",
+                        "    credential_variable: CRITIC_KEY",
+                        *_CONFIG_TAIL[:25],
+                        "critique:",
+                        "  enabled: true",
+                        "  rounds: 1",
+                        "  max_rounds: 1",
+                        "  blind_reviewer_identity: true",
+                        "  can_add_quorum_votes: false",
+                        "  allow_advisory_escalation: false",
+                        "  allow_severity_downgrade: false",
+                        *_CONFIG_TAIL[32:],
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            write_canonical_json(
+                paths["output_dir"] / "findings" / "author.json",
+                {
+                    "schema_version": "finding_batch.v1",
+                    "run_id": "local-test",
+                    "reviewer": "author",
+                    "adapter_status": "success",
+                    "model": "model",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "findings": [
+                        {
+                            "source_finding_id": "1" * 64,
+                            "title": "Preserve this finding",
+                        }
+                    ],
+                },
+            )
+            _write_adapter(
+                paths["adapter_dir"],
+                "critic",
+                "#!/bin/sh\n"
+                'test -f "$AI_REVIEW_RENDERED_PROMPT"\n'
+                'grep -q POOLED_FINDINGS_JSON "$AI_REVIEW_RENDERED_PROMPT"\n'
+                'printf \'{"critic":"spoofed","critiques":[]}\'\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("critic", "critique"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "critiques" / "critic.json")
+            self.assertEqual(batch["adapter_status"], "success")
+            self.assertEqual(batch["critic"], "critic")
+            pooled = load_json_file(paths["output_dir"] / "pooled_findings" / "critic.json")
+            self.assertEqual(pooled["findings"][0]["source_finding_id"], "1" * 64)
+            status = load_json_file(paths["output_dir"] / "status" / "critique-critic.json")
+            self.assertEqual(status["status"], "success")
 
 
 if __name__ == "__main__":

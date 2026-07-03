@@ -311,7 +311,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
         self.assertIn("/opencode --pure run", cli_args)
-        self.assertIn("--model openrouter/google/gemini-3.5-flash", cli_args)
+        self.assertIn("--model openrouter/google/gemini-3.1-flash-lite", cli_args)
         self.assertIn("--agent ai-reviewer", cli_args)
         self.assertIn("--format json", cli_args)
         self.assertIn("--dir ", cli_args)
@@ -340,7 +340,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
         self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
         self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn('"google/gemini-3.5-flash"', cli_env)
+        self.assertIn('"google/gemini-3.1-flash-lite"', cli_env)
         self.assertIn('"*": "deny"', cli_env)
         self.assertIn('"read": "allow"', cli_env)
         self.assertIn('"glob": "allow"', cli_env)
@@ -401,7 +401,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     )
                 else:
                     config_text = config_text.replace(
-                        "model: google/gemini-3.5-flash",
+                        "model: google/gemini-3.1-flash-lite",
                         f"model: {model}",
                     )
             config_path = config_dir / "review.yaml"
@@ -439,6 +439,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         for reviewer, model in (
             ("codex", "openai/other"),
             ("opencode", "google/other"),
+            ("opencode", "google/" + "gemini-3.5-flash"),
         ):
             with self.subTest(reviewer=reviewer):
                 batch = self._run_invalid_cli_config(reviewer, model=model)

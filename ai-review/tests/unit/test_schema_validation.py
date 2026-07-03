@@ -9,7 +9,9 @@ from pathlib import Path
 from ai_review.adapter_runner import run_adapter
 from ai_review.schema import (
     SchemaValidationError,
+    empty_critique_batch,
     empty_finding_batch,
+    finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
     now_iso,
@@ -37,6 +39,63 @@ class SchemaValidationTests(unittest.TestCase):
             completed_at=started,
         )
         validate_instance(batch, "finding_batch.schema.json")
+
+    def test_empty_critique_batch_validates(self) -> None:
+        batch = empty_critique_batch(
+            "codex",
+            "success",
+            run_id="local",
+            started_at=now_iso(),
+        )
+
+        validate_instance(batch, "critique_batch.schema.json")
+
+    def test_critique_batch_accepts_optional_duplicate_target(self) -> None:
+        batch = empty_critique_batch(
+            "codex",
+            "success",
+            run_id="local",
+            started_at=now_iso(),
+        )
+        batch["critiques"] = [
+            {
+                "target_source_finding_id": "1" * 64,
+                "critic": "codex",
+                "verdict": "duplicate",
+                "duplicate_of_source_finding_id": "2" * 64,
+                "rationale": "same issue",
+                "adjusted_severity": None,
+                "confidence": 0.7,
+            }
+        ]
+
+        validate_instance(batch, "critique_batch.schema.json")
+
+    def test_finalize_critique_batch_binds_top_level_and_per_critique_identity(self) -> None:
+        finalized = finalize_critique_batch(
+            {
+                "critic": "spoofed",
+                "critiques": [
+                    {
+                        "target_source_finding_id": "1" * 64,
+                        "critic": "spoofed",
+                        "verdict": "agree",
+                        "rationale": "same finding",
+                        "adjusted_severity": None,
+                        "confidence": 0.7,
+                    }
+                ],
+            },
+            critic="codex",
+            run_id="local",
+        )
+
+        self.assertEqual(finalized["schema_version"], "critique_batch.v1")
+        self.assertEqual(finalized["run_id"], "local")
+        self.assertEqual(finalized["critic"], "codex")
+        self.assertEqual(finalized["adapter_status"], "success")
+        self.assertEqual(finalized["critiques"][0]["critic"], "codex")
+        validate_instance(finalized, "critique_batch.schema.json")
 
     def test_malformed_adapter_output_becomes_schema_error_empty_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

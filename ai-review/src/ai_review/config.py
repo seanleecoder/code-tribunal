@@ -178,7 +178,14 @@ def validate_config(config: dict[str, Any]) -> None:
         missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
-    critique = config.get("critique", {})
+    critique = config.setdefault("critique", {})
+    critique.setdefault("enabled", False)
+    critique.setdefault("rounds", 0)
+    critique.setdefault("max_rounds", 1)
+    critique.setdefault("blind_reviewer_identity", True)
+    critique.setdefault("can_add_quorum_votes", False)
+    critique.setdefault("allow_advisory_escalation", False)
+    critique.setdefault("allow_severity_downgrade", False)
     rounds = critique.get("rounds")
     if rounds not in {0, 1}:
         raise ConfigError("critique.rounds must be 0 or 1 for v1")

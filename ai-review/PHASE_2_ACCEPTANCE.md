@@ -70,7 +70,7 @@ OpenCode must run in controlled non-interactive mode with mock disabled and
 with the least privilege settings that match the review-only use case:
 
 - `opencode --pure run`
-- `--model openrouter/google/gemini-3.5-flash`
+- `--model openrouter/google/gemini-3.1-flash-lite`
 - `--agent ai-reviewer`
 - `--format json`
 - `--dir "$AI_REVIEW_OUTPUT_DIR/.tmp/opencode-review-root.<pid>"`, where the
@@ -172,7 +172,7 @@ review_claude: job 2526298, success, adapter_status=success,
 review_codex: job 2526299, success, adapter_status=success,
   model=openai/gpt-5.4-mini, findings=4
 review_opencode: job 2526300, success, adapter_status=success,
-  model=google/gemini-3.5-flash, findings=4
+  model=google/gemini-3.1-flash-lite, findings=4
 consensus_ai_review: job 2526301, success, panel_status=full,
   successful_reviewers=claude,codex,opencode, failed_reviewers=[],
   surface_count=3, block_merge=true
@@ -208,7 +208,7 @@ OpenAI-compatible chat-completions API (`ai_review.openrouter_reviewer`),
 alongside the existing Claude-via-OpenRouter CLI path from Phase 1:
 
 - `codex` reviewer model: `openai/gpt-5.4-mini`
-- `gemini` reviewer model: `google/gemini-3.5-flash`
+- `gemini` reviewer model: `google/gemini-3.1-flash-lite`
 - All three reviewers (`claude`, `codex`, `gemini`) shared one
   `OPENROUTER_API_KEY` project CI variable.
 - `OPENROUTER_BASE_URL` defaulted to `https://openrouter.ai/api/v1`.

@@ -40,6 +40,10 @@
           },
           "critic": { "type": "string", "minLength": 1 },
           "verdict": { "enum": ["agree", "dispute", "noise", "duplicate"] },
+          "duplicate_of_source_finding_id": {
+            "type": ["string", "null"],
+            "pattern": "^[a-f0-9]{64}$"
+          },
           "rationale": { "type": "string" },
           "adjusted_severity": {
             "type": ["string", "null"],

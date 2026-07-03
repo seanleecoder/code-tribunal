@@ -86,6 +86,9 @@ review_opencode:
   variables:
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
+    AI_REVIEW_LOCAL_MOCK: "0"
+    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   rules:
     - if: '$AI_REVIEW_CRITIQUE_ENABLED == "true"'
   needs:
@@ -107,12 +110,15 @@ review_opencode:
     expire_in: 7 days
     paths:
       - out/critiques/
+      - out/pooled_findings/
       - out/status/
 
 critique_claude:
   extends: .critique_template
   variables:
     REVIEWER: claude
+    AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 critique_codex:
   extends: .critique_template
@@ -123,6 +129,7 @@ critique_opencode:
   extends: .critique_template
   variables:
     REVIEWER: opencode
+    AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
 consensus_ai_review:
   stage: consensus
@@ -151,7 +158,7 @@ consensus_ai_review:
       artifacts: true
       optional: true
   script:
-    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --out out/consensus/consensus.json
+    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --out out/consensus/consensus.json
   artifacts:
     when: always
     expire_in: 30 days

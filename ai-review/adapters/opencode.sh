@@ -12,8 +12,8 @@ if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrout
   exit 2
 fi
 
-if [ "${AI_REVIEW_MODEL:-}" != "google/gemini-3.5-flash" ]; then
-  echo "opencode model must be google/gemini-3.5-flash" >&2
+if [ "${AI_REVIEW_MODEL:-}" != "google/gemini-3.1-flash-lite" ]; then
+  echo "opencode model must be google/gemini-3.1-flash-lite" >&2
   exit 2
 fi
 
@@ -75,7 +75,7 @@ OPENCODE_CONFIG_JSON='{
         "baseURL": "https://openrouter.ai/api/v1"
       },
       "models": {
-        "google/gemini-3.5-flash": {}
+        "google/gemini-3.1-flash-lite": {}
       }
     }
   },
@@ -83,7 +83,7 @@ OPENCODE_CONFIG_JSON='{
   "agent": {
     "ai-reviewer": {
       "description": "Read-only AI code reviewer",
-      "model": "openrouter/google/gemini-3.5-flash",
+      "model": "openrouter/google/gemini-3.1-flash-lite",
       "permission": {
         "*": "deny",
         "read": "allow",

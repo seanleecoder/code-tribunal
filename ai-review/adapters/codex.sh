@@ -42,6 +42,10 @@ BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
 RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
 CODEX_HOME_DIR="$TMP_DIR/codex-home"
+OUTPUT_SCHEMA="ai-review/schemas/raw_finding_batch.schema.json"
+if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
+  OUTPUT_SCHEMA="ai-review/schemas/critique_batch.schema.json"
+fi
 mkdir -p "$TMP_DIR" "$CODEX_HOME_DIR"
 
 env -i \
@@ -59,7 +63,7 @@ env -i \
   --config 'model_providers.openrouter.name="OpenRouter"' \
   --config "model_providers.openrouter.base_url=\"$BASE_URL\"" \
   --config 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"' \
-  --output-schema ai-review/schemas/raw_finding_batch.schema.json \
+  --output-schema "$OUTPUT_SCHEMA" \
   -o "$RAW_OUT" \
   - < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
 

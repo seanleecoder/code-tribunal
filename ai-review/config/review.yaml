@@ -21,7 +21,7 @@ reviewers:
   opencode:
     enabled: true
     adapter: adapters/opencode.sh
-    model: google/gemini-3.5-flash
+    model: google/gemini-3.1-flash-lite
     timeout_seconds: 900
     max_findings: 50
     credential_variable: OPENROUTER_API_KEY
@@ -74,6 +74,7 @@ critique:
   blind_reviewer_identity: true
   can_add_quorum_votes: false
   allow_advisory_escalation: false
+  allow_severity_downgrade: false
 
 posting:
   mode: gitlab_discussions

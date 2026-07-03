@@ -11,13 +11,14 @@ from typing import Any
 from . import budget
 from .config import ConfigError, load_config, resolve_adapter_path
 from .canonical import json_loads_no_duplicates
-from .prompt_render import render_review_prompt
+from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
     SchemaValidationError,
     adapter_status_artifact,
     empty_critique_batch,
     empty_finding_batch,
+    finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
     now_iso,
@@ -85,6 +86,14 @@ def _output_file(stage: str, reviewer: str) -> Path:
     return Path("responses") / f"{reviewer}.json"
 
 
+def _status_stem(stage: str, reviewer: str) -> str:
+    if stage == "critique":
+        return f"critique-{reviewer}"
+    if stage == "respond":
+        return f"respond-{reviewer}"
+    return reviewer
+
+
 def _write_status(
     output_dir: Path,
     reviewer: str,
@@ -110,7 +119,7 @@ def _write_status(
         error_message_redacted=redact_text(error_message) if error_message else None,
     )
     validate_instance(artifact, "adapter_status.schema.json")
-    write_canonical_json(output_dir / "status" / f"{reviewer}.json", artifact)
+    write_canonical_json(output_dir / "status" / f"{_status_stem(stage, reviewer)}.json", artifact)
 
 
 def _write_empty(
@@ -270,8 +279,10 @@ def _load_adapter_json(stdout: str) -> dict[str, Any]:
     return raw
 
 
-def _write_parse_debug(output_dir: Path, reviewer: str, stdout: str, stderr: str) -> None:
-    debug_path = output_dir / "status" / f"{reviewer}-parse-debug.txt"
+def _write_parse_debug(
+    output_dir: Path, reviewer: str, stage: str, stdout: str, stderr: str
+) -> None:
+    debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-parse-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(
         "\n".join(
@@ -349,7 +360,7 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
         return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
     expected_models = {
         "codex": "openai/gpt-5.4-mini",
-        "opencode": "google/gemini-3.5-flash",
+        "opencode": "google/gemini-3.1-flash-lite",
     }
     expected = expected_models[reviewer]
     if model != expected:
@@ -373,6 +384,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
             raise ConfigError(f"unknown reviewer: {reviewer}")
         model = str(reviewer_config.get("model", "unknown-model"))
         if reviewer_config.get("enabled") is not True:
+            _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
+            _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            return 0
+
+        critique_config = config.get("critique", {})
+        if stage == "critique" and (
+            critique_config.get("enabled") is not True
+            or int(critique_config.get("rounds", 0)) == 0
+        ):
             _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
             _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
             return 0
@@ -435,6 +455,19 @@ def run_adapter(reviewer: str, stage: str) -> int:
             rendered = render_review_prompt(input_dir, config_path, reviewer)
             tmp_dir = output_dir / ".tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)
+            prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
+            prompt_tmp.write_text(rendered, encoding="utf-8")
+        elif stage == "critique":
+            tmp_dir = output_dir / ".tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            pooled_out = output_dir / "pooled_findings" / f"{reviewer}.json"
+            rendered = render_critique_prompt(
+                input_dir,
+                config_path,
+                reviewer,
+                output_dir / "findings",
+                pooled_findings_out=pooled_out,
+            )
             prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
             prompt_tmp.write_text(rendered, encoding="utf-8")
 
@@ -502,12 +535,16 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
-                finalized = raw
+                finalized = finalize_critique_batch(
+                    raw,
+                    critic=reviewer,
+                    run_id=run_id,
+                )
                 validate_instance(finalized, "critique_batch.schema.json")
             else:
                 finalized = raw
         except Exception as exc:
-            _write_parse_debug(output_dir, reviewer, result.stdout, result.stderr)
+            _write_parse_debug(output_dir, reviewer, stage, result.stdout, result.stderr)
             _write_empty(
                 output_dir,
                 output_file,
