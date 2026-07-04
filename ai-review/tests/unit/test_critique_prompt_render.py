@@ -158,6 +158,21 @@ class CritiquePromptRenderTests(unittest.TestCase):
             self.assertEqual(audit["findings"][0]["source_finding_id"], "1" * 64)
             self.assertEqual(audit["findings"][0]["reviewer"], "reviewer_A")
 
+    def test_repository_critique_prompt_requires_verdict_per_finding(self) -> None:
+        prompt = (Path(__file__).resolve().parents[2] / "prompts" / "critique.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Return a critique object for every finding", prompt)
+        self.assertIn("source_finding_id exactly as target_source_finding_id", prompt)
+        self.assertIn("agree", prompt)
+        self.assertIn("dispute", prompt)
+        self.assertIn("noise", prompt)
+        self.assertIn("duplicate", prompt)
+        self.assertIn("confidence", prompt)
+        self.assertIn("schema_version", prompt)
+        self.assertIn("adapter_status to success", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

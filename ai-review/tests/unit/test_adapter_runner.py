@@ -94,6 +94,68 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(loaded, {"findings": []})
 
+    def test_extracts_object_after_bracketed_preamble(self) -> None:
+        loaded = _load_adapter_json('[draft 1]\n{"findings":[]}', stage="review")
+        self.assertEqual(loaded, {"findings": []})
+
+    def test_unwraps_fenced_claude_code_critique_array_result(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": (
+                    "```json\n"
+                    "[{\"target_source_finding_id\":\"" + "1" * 64 + "\", "
+                    "\"critic\":\"claude\",\"verdict\":\"agree\","
+                    "\"adjusted_severity\":null,\"rationale\":\"valid\"}]\n"
+                    "```"
+                ),
+            }
+        )
+        loaded = _load_adapter_json(stdout)
+        self.assertEqual(len(loaded["critiques"]), 1)
+        self.assertEqual(loaded["critiques"][0]["verdict"], "agree")
+
+    def test_loads_empty_critique_array_for_critique_stage(self) -> None:
+        loaded = _load_adapter_json("[]", stage="critique")
+        self.assertEqual(loaded, {"critiques": []})
+
+    def test_rejects_empty_review_array_for_review_stage(self) -> None:
+        with self.assertRaisesRegex(SchemaValidationError, "root must be an object"):
+            _load_adapter_json("[]", stage="review")
+
+    def test_loads_critique_array_before_unrelated_trailing_bracket(self) -> None:
+        stdout = (
+            "[{\"target_source_finding_id\":\"" + "3" * 64 + "\", "
+            "\"critic\":\"claude\",\"verdict\":\"agree\","
+            "\"adjusted_severity\":null,\"rationale\":\"valid\"}]"
+            "\ntrailing note ]"
+        )
+        loaded = _load_adapter_json(stdout, stage="critique")
+        self.assertEqual(len(loaded["critiques"]), 1)
+        self.assertEqual(loaded["critiques"][0]["target_source_finding_id"], "3" * 64)
+
+    def test_loads_opencode_stream_critique_array(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "s"}),
+                json.dumps(
+                    {
+                        "type": "text",
+                        "text": (
+                            "[{\"target_source_finding_id\":\"" + "2" * 64 + "\", "
+                            "\"critic\":\"opencode\",\"verdict\":\"noise\","
+                            "\"adjusted_severity\":null,\"rationale\":\"too vague\"}]"
+                        ),
+                    }
+                ),
+            ]
+        )
+        loaded = _load_adapter_json(stdout)
+        self.assertEqual(len(loaded["critiques"]), 1)
+        self.assertEqual(loaded["critiques"][0]["critic"], "opencode")
+
     def test_empty_claude_code_result_fails(self) -> None:
         stdout = json.dumps(
             {

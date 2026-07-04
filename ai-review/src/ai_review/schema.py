@@ -236,6 +236,10 @@ def finalize_critique_batch(
             raise SchemaValidationError("critique entries must be objects")
         normalized = dict(critique)
         normalized["critic"] = critic
+        if "duplicate_of_source_finding_id" not in normalized:
+            normalized["duplicate_of_source_finding_id"] = None
+        if "confidence" not in normalized:
+            normalized["confidence"] = 1.0
         critiques.append(normalized)
     finalized = {
         "schema_version": "critique_batch.v1",

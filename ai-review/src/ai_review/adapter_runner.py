@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -165,13 +166,41 @@ def _extract_json_text(value: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
-    if stripped.startswith("{"):
-        return stripped
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start >= 0 and end > start:
-        return stripped[start : end + 1]
+
+    decoder = json.JSONDecoder()
+    candidates: list[tuple[int, str, str]] = []
+    for start, char in enumerate(stripped):
+        if char not in "{[":
+            continue
+        try:
+            _decoded, end = decoder.raw_decode(stripped[start:])
+        except json.JSONDecodeError:
+            continue
+        trailing = stripped[start + end :].lstrip()
+        if trailing.startswith(("]", "}", ",")):
+            continue
+        candidates.append((start, char, stripped[start : start + end]))
+    if candidates:
+        candidates.sort(key=lambda item: item[0])
+        if candidates[0][0] == 0:
+            return candidates[0][2]
+        object_candidates = [candidate for candidate in candidates if candidate[1] == "{"]
+        if object_candidates:
+            return object_candidates[0][2]
+        return candidates[0][2]
     return stripped
+
+
+def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        if stage == "critique":
+            return {"critiques": raw}
+        if stage is None and all(isinstance(item, dict) for item in raw):
+            if not raw or any("target_source_finding_id" in item or "verdict" in item for item in raw):
+                return {"critiques": raw}
+    raise SchemaValidationError("adapter output root must be an object")
 
 
 def _extract_text_parts(content: Any) -> list[str]:
@@ -193,7 +222,7 @@ def _extract_text_parts(content: Any) -> list[str]:
     return parts
 
 
-def _load_stream_json(stdout: str) -> dict[str, Any]:
+def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     assistant_parts = []
     result_text = ""
     event_types = []
@@ -240,22 +269,26 @@ def _load_stream_json(stdout: str) -> dict[str, Any]:
         raise SchemaValidationError(
             f"adapter JSON stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
         ) from exc
-    if not isinstance(raw, dict):
-        raise SchemaValidationError("adapter JSON stream result root must be an object")
-    return raw
+    return _coerce_adapter_root(raw, stage=stage)
 
 
-def _load_adapter_json(stdout: str) -> dict[str, Any]:
+def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     try:
         raw = json_loads_no_duplicates(_extract_json_text(stdout))
     except Exception as exc:
         if "\n" in stdout.strip():
-            return _load_stream_json(stdout)
+            return _load_stream_json(stdout, stage=stage)
         raise SchemaValidationError(
             f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
-    if not isinstance(raw, dict):
-        raise SchemaValidationError("adapter output root must be an object")
+    raw = _coerce_adapter_root(raw, stage=stage)
+    if (
+        "\n" in stdout.strip()
+        and "findings" not in raw
+        and "critiques" not in raw
+        and not isinstance(raw.get("result"), str)
+    ):
+        return _load_stream_json(stdout, stage=stage)
 
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw.get("is_error") is True:
@@ -270,9 +303,7 @@ def _load_adapter_json(stdout: str) -> dict[str, Any]:
                     "Claude Code result was not reviewer JSON: "
                     f"{exc}; preview={_json_preview(str(raw['result']))!r}"
                 ) from exc
-            if not isinstance(unwrapped, dict):
-                raise SchemaValidationError("Claude Code result root must be an object")
-            raw = unwrapped
+            raw = _coerce_adapter_root(unwrapped, stage=stage)
         else:
             raise SchemaValidationError("Claude Code result was empty")
 
@@ -519,7 +550,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             return 0
 
         try:
-            raw = _load_adapter_json(result.stdout)
+            raw = _load_adapter_json(result.stdout, stage=stage)
             if stage == "review":
                 if not isinstance(raw.get("findings"), list):
                     raise SchemaValidationError("adapter output findings must be an array")

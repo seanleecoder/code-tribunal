@@ -230,6 +230,32 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0})
         validate_instance(consensus, "consensus.schema.json")
 
+    def test_finalized_failed_critique_batch_does_not_affect_counts_or_majority(self) -> None:
+        source_id = "1" * 64
+        failed = finalize_critique_batch(
+            _critique_batch("codex", [_critique("codex", source_id, "noise")], status="model_error"),
+            critic="codex",
+            run_id="run",
+        )
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[
+                failed,
+                _critique_batch("opencode", [_critique("opencode", source_id, "noise")]),
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(failed["adapter_status"], "model_error")
+        self.assertEqual(failed["critiques"], [])
+        self.assertEqual(group["critique_noise_count"], 1)
+        self.assertEqual(group["critique_support_count"], 0)
+        self.assertEqual(group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 1, "duplicate": 0})
+        self.assertEqual(group["decision"], "drop")
+        validate_instance(consensus, "consensus.schema.json")
+
     def test_self_critique_exclusion_uses_finalized_critic_identity(self) -> None:
         source_id = "1" * 64
         spoofed = finalize_critique_batch(
