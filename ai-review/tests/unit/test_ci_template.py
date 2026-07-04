@@ -223,6 +223,25 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text = dockerfile.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
 
+    def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
+        text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertNotIn("<<'NODE'", text)
+        self.assertNotRegex(text, r"(?m)^NODE$")
+        self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/claude", text)
+        self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/codex", text)
+        self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/opencode", text)
+        self.assertIn("RUN node -e", text)
+        self.assertIn("fs.symlinkSync(relativeTarget, link)", text)
+        self.assertIn('manifest.name.replace(/^@[^/]+\\//, "")', text)
+        self.assertIn("/[\\\\/]/.test(name)", text)
+        self.assertIn("fs.chmodSync(targetPath, 0o755)", text)
+        self.assertIn("stat.isDirectory()", text)
+        self.assertIn("process.argv.slice(1)", text)
+        self.assertIn("claude --version", text)
+        self.assertIn("codex --version", text)
+        self.assertIn("opencode --version", text)
+
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
         text = "\n".join(
             [
