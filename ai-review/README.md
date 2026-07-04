@@ -1,6 +1,6 @@
 # AI Review
 
-Phase 0 plus local Phase 1 scaffolding for the v1.1 multi-agent consensus review spec in
+Phase 0 plus local Phase 1 scaffolding for the v1.0 multi-agent consensus review spec in
 `../specs/ai-review-implementation-ready-spec.md`.
 
 ## Local Phase 0 Harness
@@ -36,7 +36,7 @@ The local harness writes only under `.ai-review-local/` unless `LOCAL_OUT` is
 overridden. Provider CLIs are not required for Phase 0 validation; the adapter
 uses a deterministic local reviewer when `AI_REVIEW_LOCAL_MOCK=1`.
 
-The GitLab CI template includes the v1.1 `post` and `gate` stages. Track
+The GitLab CI template includes the v1.0 `post` and `gate` stages. Track
 private GitLab MR smoke evidence and Phase 1 acceptance status in
 `PHASE_1_ACCEPTANCE.md`.
 
@@ -76,14 +76,40 @@ Secret-bearing reviewer jobs must use adapter code and reviewer config from
 the trusted review image/repository, not from MR-controlled code. Runtime
 endpoint/model checks and environment isolation are defense in depth.
 
-Trusted images are built from `ci/build-images.gitlab-ci.yml` on protected refs
-only and are pushed to the project registry with immutable tags:
-`$CI_REGISTRY_IMAGE:ai_review_base_1_1_<protected_build_sha>` and
-`$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_<protected_build_sha>`. The reviewer
+Private trusted images can still be built from `ci/build-images.gitlab-ci.yml`
+on protected refs and pushed to the project registry with immutable tags:
+`$CI_REGISTRY_IMAGE:ai_review_base_1_0_<protected_build_sha>` and
+`$CI_REGISTRY_IMAGE:ai_review_reviewer_1_0_<protected_build_sha>`.
+
+Public trusted images are published by
+`.github/workflows/publish-ai-review-images.yml` to GHCR:
+`ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-<commit-sha>` and
+`ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-<commit-sha>`.
+The publish job pushes the exact preflighted Docker image artifact instead of
+rebuilding. The workflow never publishes `latest` or a bare `1.0` tag. GitLab
+consumers must pin the public images by digest through the top-level
+`AI_REVIEW_BASE_IMAGE` and `AI_REVIEW_REVIEWER_IMAGE` variables in
+`ci/review.gitlab-ci.yml`; `AI_REVIEW_TRUSTED_IMAGE_SHA` records the source
+commit that produced those digests.
+
+Until the first public GHCR publish succeeds, `ci/review.gitlab-ci.yml` keeps
+temporary Phase 5.5 bootstrap refs to the last known-good private immutable
+images. Replace those refs with public GHCR digest refs as soon as the workflow
+summary provides real image digests.
+
+Before the first public publish, set these GitHub repository variables to the
+exact CLI versions already validated in the private Phase 5 image:
+`AI_REVIEW_CLAUDE_VERSION`, `AI_REVIEW_CODEX_VERSION`, and
+`AI_REVIEW_OPENCODE_VERSION`. The workflow keeps the package defaults as
+`@anthropic-ai/claude-code`, `@openai/codex`, and `opencode-ai`.
+
+After the first successful main/manual workflow run, change both GHCR packages
+to public once in package settings, verify anonymous pulls by digest, then bump
+`AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and
+`AI_REVIEW_TRUSTED_IMAGE_SHA` together from the workflow summary. The reviewer
 image preflight probes `claude --version`, `codex --version`, and
-`opencode --version`, then validates local mock fan-out and consensus. Do not run
-private MR smoke against `registry.example.com/...` or images that install CLIs
-inside the smoke job.
+`opencode --version`, then validates local mock fan-out and consensus. Do not
+run MR smoke against images that install CLIs inside the smoke job.
 
 The three `review_*` jobs run in parallel against the same immutable input
 bundle and have no `resource_group`, so they are never serialized by GitLab.

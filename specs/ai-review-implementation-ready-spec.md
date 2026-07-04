@@ -1,6 +1,6 @@
 # Multi-Agent Consensus Code Review - Implementation-Ready Build Spec
 
-Version: 1.1  
+Version: 1.0
 Verified: 2026-06-29  
 Target platform: GitLab merge requests, optional Jira Cloud integration in v1, Jira Data Center deferred unless explicitly needed
 
@@ -10,7 +10,7 @@ Build a CI-native review system for GitLab merge requests where multiple indepen
 
 This document is normative. A coding agent should implement it phase by phase. Any behavior not explicitly defined must fail closed, emit structured diagnostics, and avoid side effects.
 
-## 2. Review-pass changes incorporated in v1.1
+## 2. Review-pass changes incorporated in v1.0
 
 This revision addresses the latest review findings and makes the spec safer to hand to a coding agent.
 
@@ -101,6 +101,7 @@ The coding agent must build in this order.
 ### Tier 2: add after Tier 1 is stable
 
 - Phase 5: cross-critique.
+- Phase 5.5: public AI Review image distribution.
 - Phase 6: triggers, thread replies, Jira Cloud summary comments.
 - Project-level budget/semaphore backend if runner concurrency alone is insufficient.
 
@@ -2062,6 +2063,14 @@ stages:
   - post
   - gate
 
+variables:
+  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:<base-image-digest>
+  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:<reviewer-image-digest>
+  AI_REVIEW_TRUSTED_IMAGE_SHA: <source-commit-sha>
+  AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
+  AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
+  PYTHONPATH: /opt/ai-review/src
+
 .ai_review_rules:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -2071,12 +2080,10 @@ stages:
 prepare_ai_review:
   stage: prepare
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/base:1.1
+  image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
-  variables:
-    GITLAB_READ_TOKEN: $GITLAB_READ_TOKEN
   script:
-    - python -m ai_review.input_bundle prepare --config ai-review/config/review.yaml --out inputs
+    - python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
   artifacts:
     when: always
     expire_in: 7 days
@@ -2087,14 +2094,14 @@ prepare_ai_review:
 .review_template:
   stage: review
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/reviewer:1.1
+  image: "$AI_REVIEW_REVIEWER_IMAGE"
   interruptible: true
   allow_failure: true
   needs:
     - job: prepare_ai_review
       artifacts: true
   script:
-    - ./ai-review/adapters/run_reviewer.sh "$REVIEWER" review
+    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
   artifacts:
     when: always
     expire_in: 7 days
@@ -2112,15 +2119,15 @@ review_codex:
   variables:
     REVIEWER: codex
 
-review_gemini:
+review_opencode:
   extends: .review_template
   variables:
-    REVIEWER: gemini
+    REVIEWER: opencode
 
 .critique_template:
   stage: critique
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/reviewer:1.1
+  image: "$AI_REVIEW_REVIEWER_IMAGE"
   interruptible: true
   allow_failure: true
   rules:
@@ -2134,11 +2141,11 @@ review_gemini:
     - job: review_codex
       artifacts: true
       optional: true
-    - job: review_gemini
+    - job: review_opencode
       artifacts: true
       optional: true
   script:
-    - ./ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
+    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
   artifacts:
     when: always
     expire_in: 7 days
@@ -2156,15 +2163,15 @@ critique_codex:
   variables:
     REVIEWER: codex
 
-critique_gemini:
+critique_opencode:
   extends: .critique_template
   variables:
-    REVIEWER: gemini
+    REVIEWER: opencode
 
 consensus_ai_review:
   stage: consensus
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/base:1.1
+  image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
   needs:
     - job: prepare_ai_review
@@ -2175,7 +2182,7 @@ consensus_ai_review:
     - job: review_codex
       artifacts: true
       optional: true
-    - job: review_gemini
+    - job: review_opencode
       artifacts: true
       optional: true
     - job: critique_claude
@@ -2184,11 +2191,11 @@ consensus_ai_review:
     - job: critique_codex
       artifacts: true
       optional: true
-    - job: critique_gemini
+    - job: critique_opencode
       artifacts: true
       optional: true
   script:
-    - python -m ai_review.consensus --config ai-review/config/review.yaml --inputs inputs --out out/consensus/consensus.json
+    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --out out/consensus/consensus.json
   artifacts:
     when: always
     expire_in: 30 days
@@ -2199,18 +2206,16 @@ consensus_ai_review:
 post_ai_review:
   stage: post
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/base:1.1
+  image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
-  variables:
-    GITLAB_WRITE_TOKEN: $GITLAB_WRITE_TOKEN
   needs:
     - job: prepare_ai_review
       artifacts: true
     - job: consensus_ai_review
       artifacts: true
   script:
-    - python -m ai_review.post --config ai-review/config/review.yaml --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+    - python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
   artifacts:
     when: always
     expire_in: 30 days
@@ -2221,7 +2226,7 @@ post_ai_review:
 ai_review_gate:
   stage: gate
   extends: .ai_review_rules
-  image: registry.example.com/ai-review/base:1.1
+  image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
   needs:
     - job: consensus_ai_review
@@ -2229,7 +2234,7 @@ ai_review_gate:
     - job: post_ai_review
       artifacts: true
   script:
-    - python -m ai_review.gate --config ai-review/config/review.yaml --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
+    - python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
   artifacts:
     when: always
     expire_in: 30 days
@@ -2385,6 +2390,37 @@ Acceptance:
 - `critique.rounds=0` exactly matches Phase 3 behavior.
 - Failed critique jobs do not fail consensus.
 - No critic sees peer critiques from the same round.
+
+### Phase 5.5 - Public AI Review image distribution
+
+Deliverables:
+
+- GitHub Actions workflow that builds `linux/amd64` base and reviewer images.
+- PR preflight path that builds and validates without publishing.
+- Main/manual publish path that pushes immutable public GHCR tags:
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-<commit-sha>` and
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-<commit-sha>`.
+- Publish pushes the exact Docker image artifact that passed preflight, not a
+  second rebuild.
+- No moving `latest` tag and no bare `1.0` tag.
+- GitLab consumer template uses public GHCR image digests through
+  `AI_REVIEW_BASE_IMAGE` and `AI_REVIEW_REVIEWER_IMAGE`.
+- `AI_REVIEW_TRUSTED_IMAGE_SHA` records the source commit that produced those
+  published digests.
+
+Acceptance:
+
+- GitHub repository variables pin `AI_REVIEW_CLAUDE_VERSION`,
+  `AI_REVIEW_CODEX_VERSION`, and `AI_REVIEW_OPENCODE_VERSION`.
+- Publisher uses `GITHUB_TOKEN` with read contents, package write,
+  attestation write, and OIDC token permissions.
+- Preflight runs unit tests, compileall, provider CLI version probes, local mock
+  fan-out, and consensus schema validation.
+- Published images have provenance attestations.
+- GHCR packages are made public once after first publish.
+- Anonymous clean-environment pulls by digest succeed.
+- A non-Burda GitLab MR smoke pulls public GHCR digest images without registry
+  credentials and reaches Phase 5 behavior.
 
 ### Phase 6 - Triggers, Jira Cloud, and replies
 

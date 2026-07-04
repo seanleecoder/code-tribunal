@@ -7,7 +7,14 @@ from pathlib import Path
 
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
+_PUBLISH_WORKFLOW = (
+    Path(__file__).resolve().parents[3]
+    / ".github"
+    / "workflows"
+    / "publish-ai-review-images.yml"
+)
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
+_IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 
@@ -65,28 +72,156 @@ def _effective_critique_variables(
     return {**template_variables, **reviewer_variables}
 
 
+def _workflow_job(text: str, job_name: str) -> str:
+    match = re.search(rf"(?ms)^  {re.escape(job_name)}:\n.*?(?=^  [\w-]+:\n|\Z)", text)
+    if match is None:
+        raise AssertionError(f"Workflow job not found: {job_name}")
+    return match.group(0)
+
+
 class GitLabCiTemplateTests(unittest.TestCase):
-    def test_template_uses_immutable_project_registry_images(self) -> None:
+    def test_template_uses_top_level_immutable_image_variables(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertNotIn("registry.example.com", text)
-        base_images = re.findall(
-            r'image:\s+"\$CI_REGISTRY_IMAGE:ai_review_base_1_1_([0-9a-f]{40})"',
+        self.assertNotRegex(text, r"0{40,64}")
+
+        base_public = re.search(
+            r'AI_REVIEW_BASE_IMAGE:\s+"'
+            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-base@sha256:([0-9a-f]{64})"',
             text,
         )
-        reviewer_images = re.findall(
-            r'image:\s+"\$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_([0-9a-f]{40})"',
+        reviewer_public = re.search(
+            r'AI_REVIEW_REVIEWER_IMAGE:\s+"'
+            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:([0-9a-f]{64})"',
+            text,
+        )
+        base_bootstrap = re.search(
+            r'AI_REVIEW_BASE_IMAGE:\s+"'
+            r'\$CI_REGISTRY_IMAGE:ai_review_base_1_1_([0-9a-f]{40})"',
+            text,
+        )
+        reviewer_bootstrap = re.search(
+            r'AI_REVIEW_REVIEWER_IMAGE:\s+"'
+            r'\$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_([0-9a-f]{40})"',
             text,
         )
         trusted_sha = re.search(
             r'AI_REVIEW_TRUSTED_IMAGE_SHA:\s+"([0-9a-f]{40})"',
             text,
         )
-        self.assertEqual(len(base_images), 4)
-        self.assertEqual(len(reviewer_images), 2)
-        self.assertEqual(set(base_images), set(reviewer_images))
         self.assertIsNotNone(trusted_sha)
-        self.assertEqual(set(base_images + reviewer_images), {trusted_sha.group(1)})
+
+        if base_public or reviewer_public:
+            self.assertIsNotNone(base_public)
+            self.assertIsNotNone(reviewer_public)
+        else:
+            self.assertIsNotNone(base_bootstrap)
+            self.assertIsNotNone(reviewer_bootstrap)
+            self.assertEqual(base_bootstrap.group(1), trusted_sha.group(1))
+            self.assertEqual(reviewer_bootstrap.group(1), trusted_sha.group(1))
+
+        self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 4)
+        self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 2)
+
+    def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
+        if not _PUBLISH_WORKFLOW.exists():
+            self.skipTest("GitHub publish workflow is not present in this checkout")
+
+        text = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        build_preflight = _workflow_job(text, "build-preflight")
+        publish = _workflow_job(text, "publish")
+
+        self.assertIn("pull_request:", text)
+        self.assertIn("branches: [main]", text)
+        self.assertIn("workflow_dispatch:", text)
+        workflow_header = text.split("\njobs:", 1)[0]
+        self.assertIn("permissions:\n  contents: read", workflow_header)
+        self.assertNotIn("packages: write", workflow_header)
+        self.assertNotIn("attestations: write", workflow_header)
+        self.assertNotIn("id-token: write", workflow_header)
+        self.assertRegex(
+            text,
+            r"(?ms)^  build-preflight:\n.*?^\s+permissions:\n\s+contents: read\n",
+        )
+        self.assertRegex(
+            text,
+            r"(?ms)^  publish:\n.*?^\s+if: github\.event_name != 'pull_request' "
+            r"&& github\.ref == 'refs/heads/main'\n.*?^\s+permissions:\n"
+            r"\s+contents: read\n\s+packages: write\n\s+attestations: write\n"
+            r"\s+id-token: write\n",
+        )
+        self.assertIn("packages: write", text)
+        self.assertIn("attestations: write", text)
+        self.assertIn("id-token: write", text)
+        self.assertIn("GITHUB_TOKEN", text)
+        self.assertIn("ghcr.io", text)
+        self.assertIn("seanleecoder/code-tribunal", text)
+        self.assertIn('IMAGE_VERSION: "1.0"', text)
+        self.assertIn("AI_REVIEW_CLAUDE_VERSION: ${{ vars.AI_REVIEW_CLAUDE_VERSION }}", text)
+        self.assertIn("AI_REVIEW_CODEX_VERSION: ${{ vars.AI_REVIEW_CODEX_VERSION }}", text)
+        self.assertIn("AI_REVIEW_OPENCODE_VERSION: ${{ vars.AI_REVIEW_OPENCODE_VERSION }}", text)
+        self.assertIn("github.event_name != 'pull_request'", text)
+        self.assertIn("github.ref == 'refs/heads/main'", text)
+        self.assertIn("actions/upload-artifact@v4", build_preflight)
+        self.assertIn("docker save", build_preflight)
+        self.assertIn("actions/download-artifact@v4", publish)
+        self.assertIn("docker load", publish)
+        self.assertIn("docker image inspect \"$AI_REVIEW_BASE_TAG\"", publish)
+        self.assertIn("docker image inspect \"$AI_REVIEW_REVIEWER_TAG\"", publish)
+        self.assertIn("docker push", publish)
+        self.assertIn("docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}'", publish)
+        self.assertIn("sha256:[0-9a-f]{64}", text)
+        self.assertNotIn("base_push_output", text)
+        self.assertNotIn("reviewer_push_output", text)
+        self.assertNotIn("sed -n 's/.*digest:", text)
+        self.assertIn("actions/attest@v4", text)
+        self.assertNotIn(":latest", text)
+        self.assertNotRegex(text, r":1\.0(?:\s|\"|$)")
+
+        for preflight in (
+            "python -m unittest discover",
+            "python -m compileall",
+            "claude --version",
+            "codex --version",
+            "opencode --version",
+            "AI_REVIEW_LOCAL_MOCK=1",
+            'run_reviewer.sh "$reviewer" review',
+            "consensus.schema.json",
+        ):
+            self.assertIn(preflight, build_preflight)
+            self.assertNotIn(preflight, publish)
+
+        for forbidden_publish_command in (
+            "docker build",
+            "docker run --rm",
+            "Validate pinned CLI versions",
+        ):
+            self.assertNotIn(forbidden_publish_command, publish)
+
+        for forbidden_secret in ("OPENROUTER_API_KEY", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
+            self.assertNotIn(forbidden_secret, text)
+
+    def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
+        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn('AI_REVIEW_IMAGE_VERSION: "1_0"', text)
+        self.assertIn("Public GHCR tags use semantic \"1.0-<sha>\"", text)
+        self.assertIn(
+            'AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:'
+            'ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',
+            text,
+        )
+        self.assertIn(
+            'AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:'
+            'ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',
+            text,
+        )
+
+    def test_image_dockerfiles_do_not_copy_github_metadata(self) -> None:
+        for dockerfile in _IMAGE_DOCKERFILES:
+            text = dockerfile.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
         text = "\n".join(

@@ -4,12 +4,13 @@ stages:
   - image_smoke
 
 variables:
-  AI_REVIEW_IMAGE_VERSION: "1_1"
+  # Private GitLab registry tag slug. Public GHCR tags use semantic "1.0-<sha>".
+  AI_REVIEW_IMAGE_VERSION: "1_0"
   AI_REVIEW_CLAUDE_NPM_PACKAGE: "@anthropic-ai/claude-code"
   AI_REVIEW_CODEX_NPM_PACKAGE: "@openai/codex"
   AI_REVIEW_OPENCODE_NPM_PACKAGE: "opencode-ai"
-  AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_$CI_COMMIT_SHA"
-  AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_$CI_COMMIT_SHA"
+  AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
+  AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
 
 .ai_review_protected_image_rules:
   rules:

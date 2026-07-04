@@ -1,0 +1,257 @@
+name: Publish AI Review Images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: seanleecoder/code-tribunal
+  IMAGE_VERSION: "1.0"
+  AI_REVIEW_CLAUDE_NPM_PACKAGE: "@anthropic-ai/claude-code"
+  AI_REVIEW_CODEX_NPM_PACKAGE: "@openai/codex"
+  AI_REVIEW_OPENCODE_NPM_PACKAGE: "opencode-ai"
+  AI_REVIEW_CLAUDE_VERSION: ${{ vars.AI_REVIEW_CLAUDE_VERSION }}
+  AI_REVIEW_CODEX_VERSION: ${{ vars.AI_REVIEW_CODEX_VERSION }}
+  AI_REVIEW_OPENCODE_VERSION: ${{ vars.AI_REVIEW_OPENCODE_VERSION }}
+
+jobs:
+  build-preflight:
+    name: Build and preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate pinned CLI versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for var in AI_REVIEW_CLAUDE_VERSION AI_REVIEW_CODEX_VERSION AI_REVIEW_OPENCODE_VERSION; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var must be set as a GitHub repository variable"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Define image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-base"
+          reviewer_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-reviewer"
+          image_tag="${IMAGE_VERSION}-${GITHUB_SHA}"
+          {
+            echo "AI_REVIEW_BASE_IMAGE=${base_image}"
+            echo "AI_REVIEW_REVIEWER_IMAGE=${reviewer_image}"
+            echo "AI_REVIEW_IMAGE_TAG=${image_tag}"
+            echo "AI_REVIEW_BASE_TAG=${base_image}:${image_tag}"
+            echo "AI_REVIEW_REVIEWER_TAG=${reviewer_image}:${image_tag}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform linux/amd64 \
+            --file ai-review/images/base.Dockerfile \
+            --tag "$AI_REVIEW_BASE_TAG" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            .
+
+      - name: Build reviewer image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform linux/amd64 \
+            --file ai-review/images/reviewer.Dockerfile \
+            --tag "$AI_REVIEW_REVIEWER_TAG" \
+            --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_TAG" \
+            --build-arg "CLAUDE_VERSION=$AI_REVIEW_CLAUDE_VERSION" \
+            --build-arg "CODEX_VERSION=$AI_REVIEW_CODEX_VERSION" \
+            --build-arg "OPENCODE_VERSION=$AI_REVIEW_OPENCODE_VERSION" \
+            --build-arg "CLAUDE_NPM_PACKAGE=$AI_REVIEW_CLAUDE_NPM_PACKAGE" \
+            --build-arg "CODEX_NPM_PACKAGE=$AI_REVIEW_CODEX_NPM_PACKAGE" \
+            --build-arg "OPENCODE_NPM_PACKAGE=$AI_REVIEW_OPENCODE_NPM_PACKAGE" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            .
+
+      - name: Preflight base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm "$AI_REVIEW_BASE_TAG" \
+            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+          docker run --rm "$AI_REVIEW_BASE_TAG" \
+            python -m compileall -q /opt/ai-review/src
+
+      - name: Preflight reviewer image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm "$AI_REVIEW_REVIEWER_TAG" sh -euxc '
+            claude --version
+            codex --version
+            opencode --version
+            rm -rf /tmp/ai-review-preflight
+            export PYTHONPATH=/opt/ai-review/src
+            export AI_REVIEW_CONFIG=/opt/ai-review/config/review.yaml
+            export AI_REVIEW_INPUT_DIR=/tmp/ai-review-preflight/inputs
+            export AI_REVIEW_OUTPUT_DIR=/tmp/ai-review-preflight/out
+            export AI_REVIEW_LOCAL_MOCK=1
+            python -m ai_review.input_bundle local \
+              --config "$AI_REVIEW_CONFIG" \
+              --diff /opt/ai-review/tests/fixtures/diffs/simple.diff \
+              --repo /opt/ai-review/tests/fixtures/repos/simple \
+              --out "$AI_REVIEW_INPUT_DIR"
+            for reviewer in claude codex opencode; do
+              /opt/ai-review/adapters/run_reviewer.sh "$reviewer" review
+              python -m ai_review.schema validate \
+                --schema finding_batch.schema.json \
+                --input "$AI_REVIEW_OUTPUT_DIR/findings/$reviewer.json"
+            done
+            python -m ai_review.consensus \
+              --config "$AI_REVIEW_CONFIG" \
+              --inputs "$AI_REVIEW_INPUT_DIR" \
+              --findings-dir "$AI_REVIEW_OUTPUT_DIR/findings" \
+              --out "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
+            python -m ai_review.schema validate \
+              --schema consensus.schema.json \
+              --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
+          '
+
+      - name: Save preflighted image artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p image-artifacts
+          docker save "$AI_REVIEW_BASE_TAG" "$AI_REVIEW_REVIEWER_TAG" \
+            | gzip -c > image-artifacts/ai-review-images.tar.gz
+
+      - name: Upload preflighted image artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-images
+          path: image-artifacts/ai-review-images.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Report preflight-only run
+        if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+        run: echo "Built and preflighted images only; publishing is restricted to main."
+
+  publish:
+    name: Publish and attest
+    runs-on: ubuntu-latest
+    needs: build-preflight
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Define image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-base"
+          reviewer_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-reviewer"
+          image_tag="${IMAGE_VERSION}-${GITHUB_SHA}"
+          {
+            echo "AI_REVIEW_BASE_IMAGE=${base_image}"
+            echo "AI_REVIEW_REVIEWER_IMAGE=${reviewer_image}"
+            echo "AI_REVIEW_IMAGE_TAG=${image_tag}"
+            echo "AI_REVIEW_BASE_TAG=${base_image}:${image_tag}"
+            echo "AI_REVIEW_REVIEWER_TAG=${reviewer_image}:${image_tag}"
+          } >> "$GITHUB_ENV"
+
+      - name: Download preflighted image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-review-images
+          path: image-artifacts
+
+      - name: Load preflighted images
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip -dc image-artifacts/ai-review-images.tar.gz | docker load
+          docker image inspect "$AI_REVIEW_BASE_TAG" >/dev/null
+          docker image inspect "$AI_REVIEW_REVIEWER_TAG" >/dev/null
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Push images and inspect digests
+        id: push-images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "$AI_REVIEW_BASE_TAG"
+          docker push "$AI_REVIEW_REVIEWER_TAG"
+
+          base_digest="$(
+            docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$AI_REVIEW_BASE_TAG" \
+              | awk -F@ -v image="$AI_REVIEW_BASE_IMAGE" '$1 == image { print $2; exit }'
+          )"
+          reviewer_digest="$(
+            docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$AI_REVIEW_REVIEWER_TAG" \
+              | awk -F@ -v image="$AI_REVIEW_REVIEWER_IMAGE" '$1 == image { print $2; exit }'
+          )"
+
+          for digest in "$base_digest" "$reviewer_digest"; do
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid image digest from docker inspect: $digest"
+              exit 1
+            fi
+          done
+
+          {
+            echo "base_digest=$base_digest"
+            echo "reviewer_digest=$reviewer_digest"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## AI Review Images"
+            echo
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- Base tag: \`$AI_REVIEW_BASE_TAG\`"
+            echo "- Base digest: \`$base_digest\`"
+            echo "- Reviewer tag: \`$AI_REVIEW_REVIEWER_TAG\`"
+            echo "- Reviewer digest: \`$reviewer_digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest base image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.AI_REVIEW_BASE_IMAGE }}
+          subject-digest: ${{ steps.push-images.outputs.base_digest }}
+          push-to-registry: true
+
+      - name: Attest reviewer image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.AI_REVIEW_REVIEWER_IMAGE }}
+          subject-digest: ${{ steps.push-images.outputs.reviewer_digest }}
+          push-to-registry: true
