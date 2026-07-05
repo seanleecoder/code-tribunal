@@ -44,9 +44,9 @@ Record the accepted local run here after it is executed:
 Local unit run: 2026-07-03, 134 tests passed
 Command: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ai-review/src python3 -m unittest discover -s ai-review/tests -p 'test_*.py'
 Result: OK
-Compile check: PYTHONPYCACHEPREFIX=/tmp/ai-review-compile-burda python3 -m compileall -q ai-review/src
+Compile check: PYTHONPYCACHEPREFIX=/tmp/ai-review-compile-downstream python3 -m compileall -q ai-review/src
 Compile result: OK
-Mock fan-out: /tmp/ai-review-mock-fanout-burda
+Mock fan-out: /tmp/ai-review-mock-fanout-downstream
 Mock fan-out result: finding_batch schemas valid for claude, codex, and opencode; consensus schema valid; panel_status=full; successful_reviewers=claude,codex,opencode
 ```
 
@@ -58,16 +58,16 @@ Record these values only from a live GitLab MR pipeline for
 ```text
 First live evidence date: 2026-07-03
 Pipeline ID: 179203
-Pipeline URL: https://gitlab.burdaverlag.dev/burda_style/head/-/pipelines/179203
+Pipeline URL: https://gitlab.example.internal/example-org/downstream-app/-/pipelines/179203
 Pipeline source/ref: merge_request_event, refs/merge-requests/3134/head
 Merge request: !3134
 Smoke SHA: 5d2b44380b0ba3b8c593f8662f18d7da6453812e
 Run ID: gl-179203-2526297
 
 Reviewer image: ai_review_reviewer_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
-Reviewer image digest: registry.burdaverlag.dev/burda_style/head@sha256:db5e50189d41471223ae7c47d166635438b1d26cc723b55cca8a43a0b2f32f30
+Reviewer image digest: registry.example.internal/example-org/downstream-app@sha256:db5e50189d41471223ae7c47d166635438b1d26cc723b55cca8a43a0b2f32f30
 Base image: ai_review_base_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
-Base image digest: registry.burdaverlag.dev/burda_style/head@sha256:ea773050d54822bf1ec22829a236d1545b08d2fe52bada7caa93b8f34860362a
+Base image digest: registry.example.internal/example-org/downstream-app@sha256:ea773050d54822bf1ec22829a236d1545b08d2fe52bada7caa93b8f34860362a
 Protected image pipeline: 179186
 Protected image jobs: build_ai_review_base_image=success,
   build_ai_review_reviewer_image=success,

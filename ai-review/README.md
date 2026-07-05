@@ -99,7 +99,7 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 
 ### Bootstrap Refs & GHCR Cutover Sequence
 
-1. **Bootstrap State**: Until the first public GHCR publish succeeds, [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) keeps temporary Phase 5.5 bootstrap refs to the last known-good private immutable images.
+1. **Bootstrap State**: The first public GHCR publish has succeeded and is verified (see [PHASE_5_5_ACCEPTANCE.md](PHASE_5_5_ACCEPTANCE.md)), but [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) has not yet been cut over — it still keeps temporary Phase 5.5 bootstrap refs to the last known-good private immutable images until that cutover lands.
 2. **CLI Version Pinning**: Before the first public publish, set repository variables to the exact CLI versions validated during phase testing: `AI_REVIEW_CLAUDE_VERSION`, `AI_REVIEW_CODEX_VERSION`, and `AI_REVIEW_OPENCODE_VERSION`. Package defaults remain `@anthropic-ai/claude-code`, `@openai/codex`, and `opencode-ai`.
 3. **Public Registry Change**: After the workflow runs on `main`, change both GHCR packages to public in package settings, verify anonymous pulls by digest, then bump `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and `AI_REVIEW_TRUSTED_IMAGE_SHA` together from the workflow summary.
 4. **Preflight Audit**: The reviewer image preflight probes `claude --version`, `codex --version`, and `opencode --version`, then validates local mock fan-out and consensus calculation. Do not run MR smoke against images that install CLIs inside the smoke job.
@@ -133,3 +133,5 @@ The system development and validation is documented across 6 milestone acceptanc
 - [Phase 4 Acceptance Evidence](PHASE_4_ACCEPTANCE.md): Anchor drift, state hashing & revision matching.
 - [Phase 5 Acceptance Evidence](PHASE_5_ACCEPTANCE.md): Multi-agent blind cross-examination (critique).
 - [Phase 5.5 Acceptance Evidence](PHASE_5_5_ACCEPTANCE.md): Public GHCR image publishing & preflight verification.
+
+For a concrete, artifact-backed walkthrough of every stage on one real pipeline run, see [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).

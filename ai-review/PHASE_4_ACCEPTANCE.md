@@ -15,7 +15,7 @@ Branch: `ai-review-poc-throw-away`
 
 - Unit tests: `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ai-review/src python3 -m unittest discover -s ai-review/tests -p 'test_*.py'`
   - Result: pass, 155 tests.
-- Compile check: `PYTHONPYCACHEPREFIX=/tmp/ai-review-compile-burda python3 -m compileall -q ai-review/src`
+- Compile check: `PYTHONPYCACHEPREFIX=/tmp/ai-review-compile-downstream python3 -m compileall -q ai-review/src`
   - Result: pass.
 - Active model grep: `rg "gemini-3\\.5-flash" ai-review`
   - Result: only historical Phase 2 acceptance evidence remains.
@@ -25,10 +25,10 @@ Branch: `ai-review-poc-throw-away`
 ## Implementation Notes
 
 - Phase 4 state-note persistence, state aliases, conservative post planning, and anchor remapping code/tests were synced into this checkout.
-- Burda CI branch rules for `ai-review-*` and the existing trusted image SHA were preserved during sync.
-- Burda Claude reviewer config remains `anthropic/claude-haiku-4.5`.
+- Downstream CI branch rules for `ai-review-*` and the existing trusted image SHA were preserved during sync.
+- Downstream Claude reviewer config remains `anthropic/claude-haiku-4.5`.
 - OpenCode active config/tests/docs now use `google/gemini-3.1-flash-lite`.
-- Trusted image observed in drift gate trace: `registry.burdaverlag.dev/burda_style/head:ai_review_base_1_1_f4723dd31834d53c4ba4395ea8fb1cdd54e3f913`.
+- Trusted image observed in drift gate trace: `registry.example.internal/example-org/downstream-app:ai_review_base_1_1_f4723dd31834d53c4ba4395ea8fb1cdd54e3f913`.
 
 ## Baseline MR Smoke
 

@@ -2419,7 +2419,7 @@ Acceptance:
 - Published images have provenance attestations.
 - GHCR packages are made public once after first publish.
 - Anonymous clean-environment pulls by digest succeed.
-- A non-Burda GitLab MR smoke pulls public GHCR digest images without registry
+- A external GitLab MR smoke pulls public GHCR digest images without registry
   credentials and reaches Phase 5 behavior.
 
 ### Phase 6 - Triggers, Jira Cloud, and replies

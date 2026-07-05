@@ -15,10 +15,10 @@ with prerequisite backport `bc57be6 Backport AI review smoke fixes`.
 Downstream smoke context:
 
 - Date: 2026-06-30
-- Repo path: `/Users/d503597/Repos/Burda/head`
+- Repo path: `~/Repos/example-org/downstream-app`
 - Source branch: `ai-review-smoke-throw-away`
 - Target branch: `ai-review-poc-throw-away`
-- Merge request: `burda_style/head!3122`
+- Merge request: `example-org/downstream-app!3122`
 - Latest smoke pipeline: `178478`
 - Latest smoke SHA: `699223c15f0d2271fac8c75432ad581e590e99c3`
 - Smoke commit series includes `63ad47a5c Run AI review smoke with OpenRouter Claude`,
@@ -51,7 +51,7 @@ Verified in this repository on 2026-06-30:
     stale-head pass-through.
   - Failed panels still write a consensus artifact.
 
-Verified against private GitLab MR `burda_style/head!3122`:
+Verified against private GitLab MR `example-org/downstream-app!3122`:
 
 - Pipeline `178198` ran on source branch `ai-review-smoke-throw-away` at
   `053cb41577632e2e9becb488ce7443416849c02e`.

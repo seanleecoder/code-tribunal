@@ -203,13 +203,13 @@ severity_policy:
 
 # Optional multi-agent cross-examination phase (critique)
 critique:
-  enabled: false
-  rounds: 0 # Current critique round count
+  enabled: true
+  rounds: 1 # Current critique round count
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: false # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: false # Permit reviewers to lower finding severity during critique upon agreement
+  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
+  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
@@ -412,7 +412,7 @@ To integrate Code Tribunal into downstream projects:
    ```
 
 2. **Image Variables & Cutover State**:
-   `ai-review/ci/review.gitlab-ci.yml` currently references temporary private bootstrap image tags while Phase 5.5 public GHCR image publishing is finalized:
+   `ai-review/ci/review.gitlab-ci.yml` currently still references temporary private bootstrap image tags, even though public GHCR images are now published and verified (see [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)) — the cutover to the published digests below just hasn't landed yet:
    ```yaml
    variables:
      AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
@@ -469,8 +469,14 @@ The system was implemented and validated across 6 milestone phases:
 | **Phase 2** | CLI Reviewers via OpenRouter | Parallel fan-out (`claude`, `codex`, `opencode`) via OpenRouter ([ai-review/PHASE_2_ACCEPTANCE.md](ai-review/PHASE_2_ACCEPTANCE.md)). | Accepted |
 | **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/PHASE_3_ACCEPTANCE.md](ai-review/PHASE_3_ACCEPTANCE.md)). | Accepted |
 | **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/PHASE_4_ACCEPTANCE.md](ai-review/PHASE_4_ACCEPTANCE.md)). | Accepted |
-| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/PHASE_5_ACCEPTANCE.md](ai-review/PHASE_5_ACCEPTANCE.md)). | Accepted |
-| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). | Ready (Pending First Public GHCR Publish) |
+| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/PHASE_5_ACCEPTANCE.md](ai-review/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
+| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, and anonymous pull-by-digest are verified; the GitLab CI cutover to the published digests is still pending. | Accepted (GHCR Publish Verified; GitLab Cutover Pending) |
+
+---
+
+## Worked Example
+
+[ai-review/EXAMPLE_PIPELINE_WALKTHROUGH.md](ai-review/EXAMPLE_PIPELINE_WALKTHROUGH.md) walks through one complete real GitLab CI pipeline run stage by stage — the exact findings each of the three reviewers emitted, how blind cross-examination scored each other's findings, how the consensus engine grouped and voted on them (including a non-obvious rule where a group's own contributing reviewers are excluded from its critique tally), and why the merge gate failed. Useful as a concrete reference for what actually flows through `out/findings/`, `out/critiques/`, and `out/consensus/consensus.json` on a real run.
 
 ---
 
@@ -494,6 +500,7 @@ code-tribunal/
     ├── PHASE_4_ACCEPTANCE.md                  # Phase 4 acceptance record
     ├── PHASE_5_ACCEPTANCE.md                  # Phase 5 acceptance record
     ├── PHASE_5_5_ACCEPTANCE.md                # Phase 5.5 acceptance record
+    ├── EXAMPLE_PIPELINE_WALKTHROUGH.md        # Worked example: one real pipeline run, stage by stage
     ├── adapters/                              # Shell wrappers for model CLI tools
     │   ├── run_reviewer.sh                    # Reviewer execution dispatcher & env isolation
     │   ├── claude.sh                          # Claude Code CLI wrapper script

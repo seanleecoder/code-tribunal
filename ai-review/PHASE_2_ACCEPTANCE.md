@@ -152,7 +152,7 @@ Accepted evidence:
 
 ```text
 Private GitLab pipeline: 179203
-Pipeline URL: https://gitlab.burdaverlag.dev/burda_style/head/-/pipelines/179203
+Pipeline URL: https://gitlab.example.internal/example-org/downstream-app/-/pipelines/179203
 Pipeline source/ref: merge_request_event, refs/merge-requests/3134/head
 Merge request: !3134
 Smoke SHA: 5d2b44380b0ba3b8c593f8662f18d7da6453812e
@@ -228,7 +228,7 @@ Locally verified on that path:
 
 Private GitLab smoke target:
 
-- Downstream repository: `burda_style/head`
+- Downstream repository: `example-org/downstream-app`
 - Merge request: `!3122`
 - Source branch: `ai-review-smoke-throw-away`
 - Target branch: `ai-review-poc-throw-away`
