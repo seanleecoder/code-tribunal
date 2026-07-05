@@ -34,7 +34,7 @@ flowchart TD
     MR[GitLab Merge Request Event] --> Prepare[Stage 1: prepare\nBuild Immutable Input Bundle]
     Prepare -->|input_bundle/| Reviewers[Stage 2: review\nParallel Reviewer Fan-Out]
 
-    subgraph Reviewer Panel (Isolated Containers)
+    subgraph Panel ["Reviewer Panel (Isolated Containers)"]
         Claude[review_claude\nClaude Sonnet 4.6\nclaude-code CLI]
         Codex[review_codex\nGPT-5.4-mini\ncodex exec CLI]
         OpenCode[review_opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
@@ -48,7 +48,7 @@ flowchart TD
     Codex -->|out/findings/codex.json| Critique
     OpenCode -->|out/findings/opencode.json| Critique
 
-    subgraph Critique Phase (Optional Phase 5)
+    subgraph CritiqueStage ["Critique Phase (Optional Phase 5)"]
         Critique[Stage 3: critique\nBlind Cross-Examination]
     end
 
