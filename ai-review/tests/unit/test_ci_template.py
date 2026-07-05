@@ -88,12 +88,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         base_public = re.search(
             r'AI_REVIEW_BASE_IMAGE:\s+"'
-            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-base@sha256:([0-9a-f]{64})"',
+            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-base(?::[^@"]+)?@sha256:([0-9a-f]{64})"',
             text,
         )
         reviewer_public = re.search(
             r'AI_REVIEW_REVIEWER_IMAGE:\s+"'
-            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:([0-9a-f]{64})"',
+            r'ghcr\.io/seanleecoder/code-tribunal/ai-review-reviewer(?::[^@"]+)?@sha256:([0-9a-f]{64})"',
             text,
         )
         base_bootstrap = re.search(
