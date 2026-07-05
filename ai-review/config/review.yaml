@@ -1,51 +1,56 @@
-schema_version: review_config.v1
+schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
 
+# Configured LLM reviewer backends
 reviewers:
   claude:
     enabled: true
-    adapter: adapters/claude.sh
-    model: claude-haiku-4.5
-    timeout_seconds: 900
-    max_turns: 4
-    max_findings: 50
-    credential_variable: ANTHROPIC_API_KEY
-    cli_version: "pinned-by-image"
+    adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
+    model: claude-haiku-4.5 # Model identifier passed to CLI adapter
+    timeout_seconds: 900 # Execution timeout per reviewer job
+    max_turns: 4 # Max multi-turn agentic turns permitted
+    max_findings: 50 # Cap on raw findings emitted before consensus filtering
+    credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token
+    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
   codex:
     enabled: true
-    adapter: adapters/codex.sh
-    model: openai/gpt-5.4-mini
-    timeout_seconds: 900
-    max_findings: 50
-    credential_variable: OPENROUTER_API_KEY
-    cli_version: "pinned-by-image"
+    adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
+    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter
+    timeout_seconds: 900 # Execution timeout per reviewer job
+    max_findings: 50 # Cap on raw findings emitted before consensus filtering
+    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
+    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
   opencode:
     enabled: true
-    adapter: adapters/opencode.sh
-    model: google/gemini-3.1-flash-lite
-    timeout_seconds: 900
-    max_findings: 50
-    credential_variable: OPENROUTER_API_KEY
-    cli_version: "pinned-by-image"
+    adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
+    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter
+    timeout_seconds: 900 # Execution timeout per reviewer job
+    max_findings: 50 # Cap on raw findings emitted before consensus filtering
+    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
+    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
 
+# Panel voting and consensus aggregation rules
 panel:
-  expected_reviewers: 3
-  min_successful_reviewers_for_blocking: 2
-  min_successful_reviewers_for_resolution: 2
+  expected_reviewers: 3 # Number of configured reviewers expected to execute
+  min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
+  min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
   quorum:
-    mode: absolute
-    votes_required: 2
+    mode: absolute # Voting calculation scheme (unused / reserved in schema)
+    votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
+  # Declarative degradation policy schema (unused / reserved in code; runtime logic uses min_successful_reviewers_for_blocking)
   degraded_behavior:
     successful_reviewers_0: fail_pipeline_infra
     successful_reviewers_1: advisory_only
     successful_reviewers_2: blocking_allowed_with_2_of_2
     successful_reviewers_3: blocking_allowed_with_2_of_3
 
+# Priority order of finding severities (lowest to highest)
 severity_order:
   - info
   - minor
   - major
   - blocker
 
+# Allowed classification domains for review findings
 categories:
   - security
   - correctness
@@ -55,99 +60,109 @@ categories:
   - test
   - other
 
+# Severity rules governing MR merge blocking and consensus requirements
 severity_policy:
   single_reviewer_blocker:
-    categories: [security, correctness]
+    categories: [security, correctness] # Finding categories eligible for single-reviewer blocker reporting
     post: true
-    block_merge: false
-    human_ack_recommended: true
+    block_merge: false # Require consensus quorum to block merge; single-reviewer blockers act as advisory flags
+    human_ack_recommended: true # Flag finding for human reviewer acknowledgment
   quorum_blocker:
     post: true
-    block_merge: true
+    block_merge: true # Block MR merge when consensus quorum agrees on a blocker finding
+  # Reserved schema section for majority noise handling (unused / reserved in schema)
   majority_noise:
     decision: drop
 
+# Optional multi-agent cross-examination phase (critique)
 critique:
   enabled: false
-  rounds: 0
-  max_rounds: 1
-  blind_reviewer_identity: true
-  can_add_quorum_votes: false
-  allow_advisory_escalation: false
-  allow_severity_downgrade: false
+  rounds: 0 # Current critique round count
+  max_rounds: 1 # Max critique iteration rounds allowed
+  blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
+  can_add_quorum_votes: false # Must be false in v1 schema
+  allow_advisory_escalation: false # Permit critique phase to escalate advisory findings to blocking status
+  allow_severity_downgrade: false # Permit reviewers to lower finding severity during critique upon agreement
 
+# Placement and formatting rules for MR inline comments & summaries
 posting:
-  mode: gitlab_discussions
-  v1_inline_sides: [new, old, unchanged]
-  inline_multiline: true
-  fallback_to_summary_comment: true
-  marker_version: ai-review:v1
-  update_existing_threads: true
-  fyi_mode: summary_comment
-  stale_head_guard: true
-  post_lock_resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
+  mode: gitlab_discussions # Integration backend target for discussions
+  v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
+  inline_multiline: true # Support multiline diff range comments
+  fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
+  marker_version: ai-review:v1 # Bot comment header tag to track existing threads across runs
+  update_existing_threads: true # Update existing bot comments on re-run instead of creating duplicates
+  fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
+  stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
+  post_lock_resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}" # GitLab lock group pattern to prevent concurrent posting race conditions
 
+# Merge gating integration rules
 merge_gate:
   enabled: true
-  mechanism: ci_job_failure
-  required_project_setting: pipelines_must_succeed
-  stale_head_behavior: pass_noop
+  mechanism: ci_job_failure # Enforce merge block by failing the CI pipeline job (declarative spec)
+  required_project_setting: pipelines_must_succeed # Prerequisite GitLab project merge request setting (declarative spec)
+  stale_head_behavior: pass_noop # Reserved schema field (unused / reserved in schema)
 
+# Persistent state management across pipeline runs
 state:
-  backend: gitlab_mr_state_note
-  marker_version: ai-review-state:v1
-  recover_from_discussion_markers: true
-  checksum_required: true
+  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR)
+  marker_version: ai-review-state:v1 # State note payload version identifier
+  recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
+  checksum_required: true # Require SHA256 integrity check on state note content
   retention:
-    keep_open: true
-    keep_wontfix: true
-    keep_resolved_runs: 5
-    keep_superseded_runs: 2
-    max_records: 200
-    max_state_bytes: 50000
-    overflow_behavior: fail_closed
+    keep_open: true # Preserve state records for open findings
+    keep_wontfix: true # Preserve state records marked as won't fix
+    keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
+    keep_superseded_runs: 2 # Retention depth for superseded run records
+    max_records: 200 # Max state entry count
+    max_state_bytes: 50000 # Max byte size for state payload note
+    overflow_behavior: fail_closed # Fail pipeline if state payload exceeds size/record limits
 
+# Optional Jira integration specification (unused / reserved for future Jira integration)
 jira:
   enabled: false
-  deployment: cloud
+  deployment: cloud # Jira deployment model ('cloud' or 'server')
   issue_key_patterns:
-    - "[A-Z][A-Z0-9]+-[0-9]+"
+    - "[A-Z][A-Z0-9]+-[0-9]+" # Regex pattern to detect Jira issue keys in branch names or PR metadata
   auth:
     cloud:
-      email_variable: JIRA_EMAIL
-      api_token_variable: JIRA_API_TOKEN
-      base_url_variable: JIRA_BASE_URL
+      email_variable: JIRA_EMAIL # Environment variable for Jira service account email
+      api_token_variable: JIRA_API_TOKEN # Environment variable for Jira API token
+      base_url_variable: JIRA_BASE_URL # Environment variable for Jira base URL
   comments:
     enabled: true
-    idempotent_marker: ai-review-jira:v1
+    idempotent_marker: ai-review-jira:v1 # Header tag for Jira comments to prevent duplicate posting
   transitions:
     enabled: false
-    on_first_post: null
-    on_blocker: null
-    dry_run: true
+    on_first_post: null # Jira status name for initial finding post transition
+    on_blocker: null # Jira status name for blocker finding transition
+    dry_run: true # Log transitions without executing live Jira API updates
 
+# Safety limits for diff size, findings, and prompts
 limits:
-  max_diff_bytes: 250000
-  max_files: 200
-  max_findings_per_reviewer: 50
-  max_posted_surface_findings: 25
-  max_fyi_findings: 50
-  max_prompt_bytes: 500000
+  max_diff_bytes: 250000 # Max git diff payload size in bytes accepted for review
+  max_files: 200 # Max number of changed files analyzed per review run
+  max_findings_per_reviewer: 50 # Hard limit on findings per reviewer
+  max_posted_surface_findings: 25 # Limit on inline posted comments to prevent MR thread spam
+  max_fyi_findings: 50 # Cap on non-blocking findings in MR summary comment
+  max_prompt_bytes: 500000 # Max prompt payload size in bytes sent to model APIs
 
+# Cost ceiling and concurrency controls
 budget:
-  per_job_usd_max: 2.00
-  per_mr_usd_max: 12.00
-  per_project_daily_usd_max: 100.00
-  max_concurrent_mrs: 4
-  max_concurrent_model_jobs: 12
-  backend: none
-  on_budget_exceeded: advisory_skip
+  per_job_usd_max: 2.00 # Max API spend limit per single CI job (declarative spec)
+  per_mr_usd_max: 12.00 # Max cumulative spend limit per Merge Request (declarative spec)
+  per_project_daily_usd_max: 100.00 # Daily project-wide spend ceiling (declarative spec)
+  max_concurrent_mrs: 4 # Concurrency limit on active MR reviews (declarative spec)
+  max_concurrent_model_jobs: 12 # Concurrency limit on parallel LLM calls (declarative spec)
+  backend: none # Spend tracking backend ('none' disables budget check in adapter runner)
+  on_budget_exceeded: advisory_skip # Reserved schema field for budget overrun behavior (unused / reserved in schema)
 
+# Security and sandbox configuration (declarative container/pipeline security specification)
 security:
-  reviewers_can_run_shell: false
-  reviewers_can_modify_files: false
-  reviewers_have_gitlab_token: false
-  reviewers_have_jira_token: false
-  network_egress: provider_api_only
-  allow_external_fork_secrets: false
-  redact_logs: true
+  reviewers_can_run_shell: false # Restrict reviewers from executing shell commands
+  reviewers_can_modify_files: false # Restrict reviewers from editing repository files
+  reviewers_have_gitlab_token: false # Restrict exposing GitLab API tokens to reviewer processes
+  reviewers_have_jira_token: false # Restrict exposing Jira tokens to reviewer processes
+  network_egress: provider_api_only # Reserved schema field for container network egress boundary (unused / reserved in schema)
+  allow_external_fork_secrets: false # Block secret environment variables on external fork pipelines
+  redact_logs: true # Redact sensitive keys and tokens from CI execution logs
