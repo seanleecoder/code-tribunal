@@ -12,6 +12,12 @@ from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
+_MODEL_OVERRIDE_KEYS = (
+    "AI_REVIEW_CLAUDE_MODEL",
+    "AI_REVIEW_CODEX_MODEL",
+    "AI_REVIEW_OPENCODE_MODEL",
+)
+
 _ENV_KEYS = [
     "AI_REVIEW_INPUT_DIR",
     "AI_REVIEW_OUTPUT_DIR",
@@ -20,6 +26,9 @@ _ENV_KEYS = [
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+    "AI_REVIEW_CLAUDE_MODEL",
+    "AI_REVIEW_CODEX_MODEL",
+    "AI_REVIEW_OPENCODE_MODEL",
     "OPENROUTER_API_KEY",
     "OPENROUTER_BASE_URL",
     "ANTHROPIC_BASE_URL",
@@ -175,6 +184,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self,
         reviewer: str,
         cli_name: str,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -208,6 +218,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["OPENCODE_CONFIG_CONTENT"] = '{"host":true}'
             os.environ["XDG_CONFIG_HOME"] = "/tmp/host-xdg-config"
             os.environ["XDG_DATA_HOME"] = "/tmp/host-xdg-data"
+            for key in _MODEL_OVERRIDE_KEYS:
+                os.environ.pop(key, None)
+            for key, value in (extra_env or {}).items():
+                os.environ[key] = value
             try:
                 self.assertEqual(run_adapter(reviewer, "review"), 0)
                 batch = load_json_file(output_dir / "findings" / f"{reviewer}.json")
@@ -381,7 +395,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         reviewer: str,
         *,
         base_url: str = "https://openrouter.ai/api/v1",
-        model: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -394,17 +408,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             self._write_inputs(input_dir)
             self._write_fake_cli(bin_dir, reviewer)
             config_text = _REPO_CONFIG.read_text(encoding="utf-8")
-            if model is not None:
-                if reviewer == "codex":
-                    config_text = config_text.replace(
-                        "model: openai/gpt-5.4-mini",
-                        f"model: {model}",
-                    )
-                else:
-                    config_text = config_text.replace(
-                        "model: google/gemini-3.1-flash-lite",
-                        f"model: {model}",
-                    )
             config_path = config_dir / "review.yaml"
             config_path.write_text(config_text, encoding="utf-8")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
@@ -417,6 +420,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = base_url
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            for key in _MODEL_OVERRIDE_KEYS:
+                os.environ.pop(key, None)
+            for key, value in (extra_env or {}).items():
+                os.environ[key] = value
             try:
                 self.assertEqual(run_adapter(reviewer, "review"), 0)
                 self.assertFalse((output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists())
@@ -436,14 +443,53 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
 
         self.assertEqual(batch["adapter_status"], "model_error")
 
-    def test_invalid_cli_reviewer_model_is_model_error_without_cli_invocation(self) -> None:
-        for reviewer, model in (
-            ("codex", "openai/other"),
-            ("opencode", "google/other"),
-            ("opencode", "google/" + "gemini-3.5-flash"),
-        ):
+    def test_codex_model_override_reaches_cli(self) -> None:
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+            "codex",
+            "codex",
+            extra_env={"AI_REVIEW_CODEX_MODEL": "openai/custom-model"},
+        )
+
+        # The model pin is gone: a non-default model is accepted (adapter runs)
+        # and the override flows through to the CLI's --model flag.
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("--model openai/custom-model", cli_args)
+        self.assertNotIn("openai/gpt-5.4-mini", cli_args)
+
+    def test_opencode_model_override_reaches_cli_and_config(self) -> None:
+        batch, cli_args, cli_env, _meta = self._run_with_fake_cli(
+            "opencode",
+            "opencode",
+            extra_env={"AI_REVIEW_OPENCODE_MODEL": "google/custom-model"},
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("--model openrouter/google/custom-model", cli_args)
+        # The generated opencode config JSON reflects the overridden model.
+        self.assertIn('"google/custom-model"', cli_env)
+        self.assertIn('"openrouter/google/custom-model"', cli_env)
+        self.assertNotIn("gemini-3.1-flash-lite", cli_env)
+
+    def test_openrouter_variant_model_is_accepted(self) -> None:
+        # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+            "codex",
+            "codex",
+            extra_env={"AI_REVIEW_CODEX_MODEL": "openai/gpt-5.4-mini:free"},
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("--model openai/gpt-5.4-mini:free", cli_args)
+
+    def test_invalid_model_format_is_model_error_without_cli_invocation(self) -> None:
+        # A model override with shell/JSON-unsafe characters (quote + space) must be
+        # rejected before the adapter — and the opencode config JSON — ever runs.
+        for reviewer in ("codex", "opencode", "claude"):
             with self.subTest(reviewer=reviewer):
-                batch = self._run_invalid_cli_config(reviewer, model=model)
+                batch = self._run_invalid_cli_config(
+                    reviewer,
+                    extra_env={f"AI_REVIEW_{reviewer.upper()}_MODEL": 'evil" model'},
+                )
                 self.assertEqual(batch["adapter_status"], "model_error")
 
 

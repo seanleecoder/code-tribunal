@@ -12,8 +12,10 @@ if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrout
   exit 2
 fi
 
-if [ "${AI_REVIEW_MODEL:-}" != "openai/gpt-5.4-mini" ]; then
-  echo "codex model must be openai/gpt-5.4-mini" >&2
+# Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_CODEX_MODEL
+# override) and is not pinned here; the OpenRouter endpoint above remains fixed.
+if [ -z "${AI_REVIEW_MODEL:-}" ]; then
+  echo "AI_REVIEW_MODEL is required for the $AI_REVIEW_REVIEWER reviewer" >&2
   exit 2
 fi
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
-from .config import enabled_reviewers, load_config
+from .config import effective_config_summary, enabled_reviewers, load_config
 from .memory import find_matching_record, state_from_aliases
 from .post import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
@@ -564,6 +564,23 @@ def build_consensus(
     }
 
 
+def _warn_on_effective_config_divergence(config: dict[str, Any], manifest: dict[str, Any]) -> None:
+    """Prepare records the effective config into the manifest; consensus reloads the
+    config independently from its own env. If the two disagree, the override vars were
+    not scoped identically across jobs. Warn loudly (non-fatal) — consensus's own
+    loaded config remains authoritative for the decision."""
+    recorded = manifest.get("effective_config") if isinstance(manifest, dict) else None
+    if not isinstance(recorded, dict):
+        return
+    current = effective_config_summary(config)
+    if current != recorded:
+        print(
+            "ai-review consensus: WARNING effective config differs from the prepare "
+            "manifest — AI_REVIEW_* override variables are not scoped identically "
+            f"across jobs. manifest={recorded} consensus={current}"
+        )
+
+
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -576,6 +593,7 @@ def cli(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     inputs = Path(args.inputs)
     manifest = load_json_file(inputs / "manifest.json")
+    _warn_on_effective_config_divergence(config, manifest)
     batches = []
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))

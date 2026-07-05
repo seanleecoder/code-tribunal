@@ -15,6 +15,11 @@ variables:
   AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
+  # Single source of truth for critique: this exact variable gates BOTH the
+  # critique job-creation rule below and config's critique.enabled (via
+  # apply_env_overrides). Default matches review.yaml; set "false" to disable.
+  # Must be exactly "true"/"false" — any other value fails the pipeline loudly.
+  AI_REVIEW_CRITIQUE_ENABLED: "true"
 
 .ai_review_rules:
   rules:
@@ -24,7 +29,19 @@ variables:
 
 prepare_ai_review:
   stage: prepare
-  extends: .ai_review_rules
+  # Entry job for the whole flow: every other job `needs` it, so gating the
+  # trigger here gates the entire review. Defaults to auto-run on MRs; set the
+  # project/pipeline variable AI_REVIEW_MANUAL="true" to require a human to
+  # start the review (non-blocking: un-played leaves the MR mergeable, and the
+  # gate still runs once triggered). Use allow_failure: false instead if the
+  # review must be mandatory-but-manual (every MR blocked awaiting a click).
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $AI_REVIEW_MANUAL == "true"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
   script:
