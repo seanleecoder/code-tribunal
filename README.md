@@ -13,7 +13,7 @@ It orchestrates a panel of independent LLM reviewer models via provider CLIs (**
 
 ## Key Features
 
-- **Multi-Agent Consensus Panel**: Combines independent model reviewers (**Anthropic Claude Sonnet 4.6**, **OpenAI GPT-5.4-mini**, and **Google Gemini 3.1 Flash Lite**) to eliminate single-model hallucination and bias.
+- **Multi-Agent Consensus Panel**: Combines independent model reviewers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, and **Google Gemini 3.1 Flash Lite**) to eliminate single-model hallucination and bias.
 - **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), rebuttals (`disagree`), duplicate markers (`duplicate`), or unverifiable flags (`unverifiable`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
 - **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with restricted network egress (provider API endpoints only), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
@@ -35,7 +35,7 @@ flowchart TD
     Prepare -->|input_bundle/| Reviewers[Stage 2: review\nParallel Reviewer Fan-Out]
 
     subgraph Panel ["Reviewer Panel (Isolated Containers)"]
-        Claude[review_claude\nClaude Sonnet 4.6\nclaude-code CLI]
+        Claude[review_claude\nClaude Haiku 4.5\nclaude-code CLI]
         Codex[review_codex\nGPT-5.4-mini\ncodex exec CLI]
         OpenCode[review_opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
     end
@@ -131,7 +131,7 @@ reviewers:
   claude:
     enabled: true
     adapter: adapters/claude.sh
-    model: claude-sonnet-4-6
+    model: claude-haiku-4.5
     timeout_seconds: 900
     max_turns: 4
     max_findings: 50

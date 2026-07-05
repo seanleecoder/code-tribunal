@@ -4,7 +4,7 @@ reviewers:
   claude:
     enabled: true
     adapter: adapters/claude.sh
-    model: claude-sonnet-4-6
+    model: claude-haiku-4.5
     timeout_seconds: 900
     max_turns: 4
     max_findings: 50

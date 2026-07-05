@@ -253,7 +253,7 @@ reviewers:
   claude:
     enabled: true
     adapter: adapters/claude.sh
-    model: claude-sonnet-4-6
+    model: claude-haiku-4.5
     timeout_seconds: 900
     max_turns: 4
     max_findings: 50
@@ -642,7 +642,7 @@ Root object:
   "run_id": "gl-123-456",
   "reviewer": "claude",
   "adapter_status": "success",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-haiku-4.5",
   "started_at": "2026-06-29T00:00:00Z",
   "completed_at": "2026-06-29T00:10:00Z",
   "findings": []

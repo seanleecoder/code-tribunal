@@ -62,7 +62,7 @@ The local harness writes output files strictly under `.ai-review-local/` unless 
 
 ## CLI Reviewers & OpenRouter Configuration
 
-Reviewer models (**Claude Sonnet 4.6**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter:
+Reviewer models (**Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter:
 
 ### Required CI Project Variables
 
