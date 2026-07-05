@@ -412,14 +412,14 @@ To integrate Code Tribunal into downstream projects:
    ```
 
 2. **Image Variables & Cutover State**:
-   `ai-review/ci/review.gitlab-ci.yml` currently still references temporary private bootstrap image tags, even though public GHCR images are now published and verified (see [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)) — the cutover to the published digests below just hasn't landed yet:
+   `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
    ```yaml
    variables:
-     AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
-     AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7"
-     AI_REVIEW_TRUSTED_IMAGE_SHA: "3c484052e41cbe99b45339f4f4afccf72538e5b7"
+     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:00caceacc7e86c59007cf4fd1b6dfd81bfe615122a6667e874c23b90ac8bde66"
+     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:8006f10aab52783697c474a4a5c51e0253b16fa1dd432f98b09dbb2100318fd5"
+     AI_REVIEW_TRUSTED_IMAGE_SHA: "f7f149089b85516c004e31255e6e57ac461ffed7"
    ```
-   **GHCR Cutover Procedure**: After [.github/workflows/publish-ai-review-images.yml](.github/workflows/publish-ai-review-images.yml) runs on `main` and publishes public images, update these 3 variables together in `ai-review/ci/review.gitlab-ci.yml` to use the immutable GHCR `@sha256:` digest refs provided in the workflow summary:
+   **GHCR Cutover Procedure**: When [.github/workflows/publish-ai-review-images.yml](.github/workflows/publish-ai-review-images.yml) runs on `main` and publishes a newer commit, update these 3 variables together in `ai-review/ci/review.gitlab-ci.yml` to use the new immutable GHCR `@sha256:` digest refs provided in the workflow summary:
    ```yaml
    variables:
      AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-<sha>@sha256:<digest>"
@@ -470,7 +470,7 @@ The system was implemented and validated across 6 milestone phases:
 | **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/PHASE_3_ACCEPTANCE.md](ai-review/PHASE_3_ACCEPTANCE.md)). | Accepted |
 | **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/PHASE_4_ACCEPTANCE.md](ai-review/PHASE_4_ACCEPTANCE.md)). | Accepted |
 | **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/PHASE_5_ACCEPTANCE.md](ai-review/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
-| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, and anonymous pull-by-digest are verified; the GitLab CI cutover to the published digests is still pending. | Accepted (GHCR Publish Verified; GitLab Cutover Pending) |
+| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, anonymous pull-by-digest, and the GitLab CI cutover to the published digests are all verified. | Accepted |
 
 ---
 

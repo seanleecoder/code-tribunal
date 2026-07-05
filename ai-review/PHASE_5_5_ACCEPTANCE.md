@@ -28,7 +28,7 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
 
 ## Downstream Smoke
 
-- Status: still pending — this is the one item this pass could not close.
-- `ai-review/ci/review.gitlab-ci.yml` still pins `AI_REVIEW_BASE_IMAGE` / `AI_REVIEW_REVIEWER_IMAGE` to the private bootstrap registry image (`ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7`, `AI_REVIEW_TRUSTED_IMAGE_SHA=3c484052e41cbe99b45339f4f4afccf72538e5b7`), not the new GHCR digests above — the GHCR Cutover Procedure step 3 in the root [README.md](../README.md#gitlab-ci-integration-guide--image-pinning) has not been performed yet. Pipeline `179684` (see [PHASE_5_ACCEPTANCE.md](PHASE_5_ACCEPTANCE.md)) still ran on the private bootstrap image.
-- External GitLab MR smoke: pending until the cutover variables are bumped to the GHCR digests confirmed above.
-- Expected result once cut over: GitLab runners pull the public GHCR digest images without registry credentials and the AI Review jobs reach the same Phase 5 behavior.
+- Status: cutover complete.
+- `ai-review/ci/review.gitlab-ci.yml` now pins `AI_REVIEW_BASE_IMAGE` / `AI_REVIEW_REVIEWER_IMAGE` to the public GHCR digests above (`AI_REVIEW_TRUSTED_IMAGE_SHA=f7f149089b85516c004e31255e6e57ac461ffed7`), replacing the private bootstrap registry image (`ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7`) — the GHCR Cutover Procedure step 3 in the root [README.md](../README.md#gitlab-ci-integration-guide--image-pinning) has been performed. Both digests were re-verified with an anonymous, unauthenticated `ghcr.io/token` pull immediately before the cutover landed.
+- External GitLab MR smoke: still outstanding — requires a live GitLab runner/project to trigger a pipeline against the new digests; not something this environment can execute. Pipeline `179684` (see [PHASE_5_ACCEPTANCE.md](PHASE_5_ACCEPTANCE.md)) still ran on the private bootstrap image and has not been re-run.
+- Expected result once that MR smoke runs: GitLab runners pull the public GHCR digest images without registry credentials and the AI Review jobs reach the same Phase 5 behavior.
