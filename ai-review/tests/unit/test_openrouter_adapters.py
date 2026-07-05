@@ -263,8 +263,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("--ask-for-approval", cli_args)
         self.assertIn("model_provider=\"openrouter\"", cli_args)
         self.assertIn("model_providers.openrouter.name=\"OpenRouter\"", cli_args)
-        self.assertIn("--output-schema ai-review/schemas/raw_finding_batch.schema.json", cli_args)
-        self.assertNotIn("--output-schema ai-review/schemas/finding_batch.schema.json", cli_args)
+        self.assertIn("schemas/raw_finding_batch.schema.json", cli_args)
+        self.assertIn("--output-schema ", cli_args)
+        self.assertNotIn("schemas/finding_batch.schema.json", cli_args)
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
