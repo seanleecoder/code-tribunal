@@ -76,13 +76,13 @@ severity_policy:
 
 # Optional multi-agent cross-examination phase (critique)
 critique:
-  enabled: false
-  rounds: 0 # Current critique round count
+  enabled: true
+  rounds: 1 # Current critique round count
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: false # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: false # Permit reviewers to lower finding severity during critique upon agreement
+  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
+  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
