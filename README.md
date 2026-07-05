@@ -82,7 +82,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 - Status reports are saved to `out/status/<reviewer>.json`.
 
 ### 3. `critique` (Blind Cross-Examination - Optional)
-- Active when `critique.enabled: true`. Executes `critique_claude`, `critique_codex`, and `critique_opencode`.
+- Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes `critique_claude`, `critique_codex`, and `critique_opencode`. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
 - Reviewers evaluate peer findings, producing agreement (`agree`), rebuttal (`disagree`), duplicate (`duplicate`), or unverifiable (`unverifiable`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
@@ -97,6 +97,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
   - `fyi_findings`: Non-blocking informational items.
   - `block_merge`: Boolean indicating whether merge must be blocked.
 - Outputs `out/consensus/consensus.json` conforming to [ai-review/schemas/consensus.schema.json](ai-review/schemas/consensus.schema.json).
+- For a full walkthrough of the "LLMs propose, deterministic Python decides" model — how differently-shaped reviewer output is normalized and how the vote/severity/critique logic reaches a reproducible decision — see [ai-review/CONSENSUS.md](ai-review/CONSENSUS.md).
 
 ### 5. `post` (Idempotent Upsert & State Persistence)
 - Executed by `python -m ai_review.post`.
@@ -441,6 +442,43 @@ To integrate Code Tribunal into downstream projects:
 4. **Required GitLab Project Settings**:
    - Enable **Pipelines must succeed** (Settings -> General -> Merge requests).
    - Ensure Merge Request Pipelines are enabled (`rules: if: '$CI_PIPELINE_SOURCE == "merge_request_event"'`).
+   - By default the review flow **auto-runs** on every merge request. To require a human to start it instead, set `AI_REVIEW_MANUAL="true"` (see below) — note that with a non-blocking manual trigger, an un-started review leaves the MR mergeable, so "Pipelines must succeed" only enforces the gate once a review has been triggered.
+
+### Runtime Environment Overrides
+
+The reviewer models and most operational toggles live in the image-baked
+[`config/review.yaml`](ai-review/config/review.yaml), but the following can be
+changed **at runtime via project/pipeline CI/CD variables without rebuilding the
+image**. Set them as project-level variables so every job in the pipeline sees a
+consistent view (the values are read when the config is loaded, and are recorded
+under `effective_config` in `inputs/manifest.json` for audit).
+
+| Variable | Overrides | Notes |
+|---|---|---|
+| `AI_REVIEW_CLAUDE_MODEL` | `reviewers.claude.model` | Any provider model id; no rebuild needed. Must match `[A-Za-z0-9._:/-]` (covers OpenRouter `:free`/`:nitro` variants); other characters are rejected as a `model_error`. |
+| `AI_REVIEW_CODEX_MODEL` | `reviewers.codex.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
+| `AI_REVIEW_OPENCODE_MODEL` | `reviewers.opencode.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
+| `AI_REVIEW_<REVIEWER>_ENABLED` | `reviewers.<name>.enabled` | Strict `true`/`false`. Disabling below `panel.min_successful_reviewers_for_blocking` fails validation loudly. |
+| `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled` **and** critique job creation | The CI template sets this to `"true"` by default and the critique-job rule keys off the exact same variable, so config behavior and CI job-creation stay in lock-step. |
+| `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
+| `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |
+
+All boolean variables above must be **exactly `true` or `false`** (lowercase, no
+surrounding whitespace) — a byte-for-byte match of GitLab's `== "true"` rule. Any
+other value (`TRUE`, `1`, `yes`, `" true "`, a typo like `flase`) fails the pipeline
+loudly rather than silently no-op'ing or diverging from CI job-creation.
+
+> **Notes:**
+> - These variables are read at runtime, but the *code that reads them* ships inside
+>   the container image. A given image build must already contain this logic; after
+>   that, changing the values above needs no further rebuild. Deeper policy
+>   (`panel.quorum`, `severity_policy`, budgets) intentionally stays in the
+>   version-pinned `review.yaml` — override the whole file via `AI_REVIEW_CONFIG` if
+>   you need to change it.
+> - Set these as **project-level** CI/CD variables so every job in the pipeline sees
+>   the same value. The prepare stage records the effective config into
+>   `inputs/manifest.json`, and the consensus stage re-derives it and **warns** if its
+>   own view disagrees — a signal that a variable was scoped to only some jobs.
 
 ---
 

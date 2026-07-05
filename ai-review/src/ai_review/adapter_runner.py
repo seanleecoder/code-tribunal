@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -383,19 +384,29 @@ def _build_adapter_env(
     return env
 
 
+# Allows provider/slug ids plus OpenRouter `:variant` suffixes (e.g. `…:free`,
+# `:nitro`, `:online`). Still blocks quotes, backslashes, whitespace, braces and `$`
+# so a model override cannot break out of the shell `--model` arg or the opencode
+# config JSON.
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+
+
 def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
+    # The model is intentionally not pinned to a specific id (operators may override
+    # it via AI_REVIEW_<REVIEWER>_MODEL without rebuilding the image), but it IS
+    # format-checked for every reviewer: the value flows into shell `--model` args
+    # and, for opencode, is interpolated into a generated JSON config, so a value
+    # containing quotes/backslashes/whitespace could corrupt or inject config.
+    # Rejecting here writes a clean model_error and the adapter is never spawned.
+    if not _MODEL_ID_RE.match(model or ""):
+        return f"model id has unsupported characters: {model!r}"
+    # The OpenRouter endpoint remains a hard exfiltration boundary for the CLI
+    # reviewers and must stay the canonical host.
     if reviewer not in {"codex", "opencode"}:
         return None
     base_url = os.environ.get("OPENROUTER_BASE_URL")
     if base_url is not None and base_url != _OPENROUTER_BASE_URL:
         return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
-    expected_models = {
-        "codex": "openai/gpt-5.4-mini",
-        "opencode": "google/gemini-3.1-flash-lite",
-    }
-    expected = expected_models[reviewer]
-    if model != expected:
-        return f"{reviewer} model must be {expected}"
     return None
 
 

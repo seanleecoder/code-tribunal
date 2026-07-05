@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from .canonical import sha256_hex
-from .config import load_config
+from .config import effective_config_summary, load_config
 from .gitlab_client import GitLabClient
 from .memory import (
     empty_state,
@@ -67,7 +67,8 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    _enforce_diff_limits(diff_path.read_text(encoding="utf-8"), load_config(config_path))
+    config_dict = load_config(config_path)
+    _enforce_diff_limits(diff_path.read_text(encoding="utf-8"), config_dict)
     shutil.copy2(diff_path, out_path / "mr.diff")
     shutil.copy2(config_path, out_path / "config.review.yaml")
 
@@ -104,6 +105,7 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
         "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
         "config_sha256": _file_sha256(config_path),
         "rules_sha256": _directory_sha256(source_rules),
+        "effective_config": effective_config_summary(config_dict),
         "created_at": now_iso(),
     }
     write_canonical_json(out_path / "manifest.json", manifest)
@@ -159,6 +161,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
         "config_sha256": _file_sha256(config_path),
         "rules_sha256": _directory_sha256(source_rules),
+        "effective_config": effective_config_summary(config_dict),
         "created_at": now_iso(),
     }
     state = empty_state(

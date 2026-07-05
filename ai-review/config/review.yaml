@@ -1,28 +1,32 @@
 schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
 
-# Configured LLM reviewer backends
+# Configured LLM reviewer backends.
+# Per-reviewer `model` and `enabled` can be overridden at runtime without a
+# rebuild via AI_REVIEW_<REVIEWER>_MODEL / AI_REVIEW_<REVIEWER>_ENABLED
+# (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See README "Runtime
+# Environment Overrides".
 reviewers:
   claude:
-    enabled: true
+    enabled: true # Override: AI_REVIEW_CLAUDE_ENABLED
     adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
-    model: claude-haiku-4.5 # Model identifier passed to CLI adapter
+    model: claude-haiku-4.5 # Model identifier passed to CLI adapter (override: AI_REVIEW_CLAUDE_MODEL)
     timeout_seconds: 900 # Execution timeout per reviewer job
     max_turns: 4 # Max multi-turn agentic turns permitted
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token
     cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
   codex:
-    enabled: true
+    enabled: true # Override: AI_REVIEW_CODEX_ENABLED
     adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
-    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter
+    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
     timeout_seconds: 900 # Execution timeout per reviewer job
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
     cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
   opencode:
-    enabled: true
+    enabled: true # Override: AI_REVIEW_OPENCODE_ENABLED
     adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
-    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter
+    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
     timeout_seconds: 900 # Execution timeout per reviewer job
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
@@ -76,8 +80,8 @@ severity_policy:
 
 # Optional multi-agent cross-examination phase (critique)
 critique:
-  enabled: true
-  rounds: 1 # Current critique round count
+  enabled: true # Override: AI_REVIEW_CRITIQUE_ENABLED (strict true/false; same var gates the CI critique jobs, default "true" in the CI template — single source of truth)
+  rounds: 1 # Current critique round count (must be 1 for critique to affect consensus)
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
@@ -98,7 +102,7 @@ posting:
 
 # Merge gating integration rules
 merge_gate:
-  enabled: true
+  enabled: true # Override: AI_REVIEW_MERGE_GATE_ENABLED (set false for advisory, non-blocking mode)
   mechanism: ci_job_failure # Enforce merge block by failing the CI pipeline job (declarative spec)
   required_project_setting: pipelines_must_succeed # Prerequisite GitLab project merge request setting (declarative spec)
   stale_head_behavior: pass_noop # Reserved schema field (unused / reserved in schema)

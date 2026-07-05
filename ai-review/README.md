@@ -46,6 +46,8 @@ make validate-local
 make consensus-local
 ```
 
+For how the deterministic consensus engine turns differently-shaped reviewer output into a reproducible decision, see [CONSENSUS.md](CONSENSUS.md).
+
 ### 3. Run Test Suites & Code Checks
 
 ```bash
@@ -62,13 +64,23 @@ The local harness writes output files strictly under `.ai-review-local/` unless 
 
 ## CLI Reviewers & OpenRouter Configuration
 
-Reviewer models (**Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter:
+Reviewer models (default **Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter:
 
 ### Required CI Project Variables
 
 - `OPENROUTER_API_KEY`: Masked project variable, shared by `review_claude`, `review_codex`, and `review_opencode`.
-- `OPENROUTER_BASE_URL`: Defaults to `https://openrouter.ai/api/v1` in the CI template; only override for a non-default OpenRouter deployment.
+- `OPENROUTER_BASE_URL`: Defaults to `https://openrouter.ai/api/v1` in the CI template; only override for a non-default OpenRouter deployment. This endpoint remains a **hard boundary** for the Codex/OpenCode adapters even though the model is no longer pinned.
 - `ANTHROPIC_BASE_URL`: Set by the CI template for `review_claude` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` when pointing at OpenRouter.
+
+### Runtime Overrides (no rebuild)
+
+The per-reviewer model is supplied via `AI_REVIEW_MODEL` (resolved from config, or an
+`AI_REVIEW_<REVIEWER>_MODEL` override) and is **no longer hard-pinned** in the adapters
+— set `AI_REVIEW_CLAUDE_MODEL`, `AI_REVIEW_CODEX_MODEL`, or `AI_REVIEW_OPENCODE_MODEL`
+to change a model at runtime. Reviewer enablement, critique, and the merge gate are
+likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
+`AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
+[README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
 
 ### Running Local Adapter Against Real OpenRouter API
 

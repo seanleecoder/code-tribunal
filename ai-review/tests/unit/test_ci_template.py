@@ -124,6 +124,29 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 4)
         self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 2)
 
+    def test_prepare_job_supports_manual_trigger_variable(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
+        self.assertIsNotNone(match, "prepare_ai_review job block not found")
+        prepare_block = match.group(1)
+        # Default stays auto-run on MRs; AI_REVIEW_MANUAL="true" opts into a
+        # non-blocking manual trigger gated at the single entry job.
+        manual_idx = prepare_block.find('$AI_REVIEW_MANUAL == "true"')
+        when_idx = prepare_block.find("when: manual")
+        allow_idx = prepare_block.find("allow_failure: true")
+        # The plain auto rule (no && $AI_REVIEW_MANUAL) — note the closing quote+newline.
+        plain_rule = "- if: '$CI_PIPELINE_SOURCE == \"merge_request_event\"'\n"
+        plain_rule_idx = prepare_block.find(plain_rule)
+        self.assertNotEqual(manual_idx, -1, "manual trigger condition missing")
+        self.assertNotEqual(when_idx, -1, "when: manual missing")
+        self.assertNotEqual(allow_idx, -1, "allow_failure: true missing")
+        self.assertNotEqual(plain_rule_idx, -1, "plain merge_request_event rule missing")
+        # GitLab rules are first-match: the manual rule and its when:/allow_failure
+        # must precede the plain auto rule, or manual mode would never take effect.
+        self.assertLess(manual_idx, when_idx)
+        self.assertLess(when_idx, allow_idx)
+        self.assertLess(allow_idx, plain_rule_idx)
+
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
             self.skipTest("GitHub publish workflow is not present in this checkout")

@@ -12,8 +12,10 @@ if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrout
   exit 2
 fi
 
-if [ "${AI_REVIEW_MODEL:-}" != "google/gemini-3.1-flash-lite" ]; then
-  echo "opencode model must be google/gemini-3.1-flash-lite" >&2
+# Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_OPENCODE_MODEL
+# override) and is not pinned here; the OpenRouter endpoint above remains fixed.
+if [ -z "${AI_REVIEW_MODEL:-}" ]; then
+  echo "AI_REVIEW_MODEL is required for the $AI_REVIEW_REVIEWER reviewer" >&2
   exit 2
 fi
 
@@ -66,8 +68,11 @@ rm -f \
   "$OPENCODE_REVIEW_ROOT/tui.json"
 find "$OPENCODE_REVIEW_ROOT" -name .opencode -prune -exec rm -rf {} +
 
-OPENCODE_CONFIG_JSON='{
-  "$schema": "https://opencode.ai/config.json",
+# Unquoted heredoc so $AI_REVIEW_MODEL expands; \$schema stays literal and the
+# {env:OPENROUTER_API_KEY} template (no leading $) is passed through untouched.
+OPENCODE_CONFIG_JSON=$(cat <<EOF
+{
+  "\$schema": "https://opencode.ai/config.json",
   "provider": {
     "openrouter": {
       "options": {
@@ -75,7 +80,7 @@ OPENCODE_CONFIG_JSON='{
         "baseURL": "https://openrouter.ai/api/v1"
       },
       "models": {
-        "google/gemini-3.1-flash-lite": {}
+        "$AI_REVIEW_MODEL": {}
       }
     }
   },
@@ -83,7 +88,7 @@ OPENCODE_CONFIG_JSON='{
   "agent": {
     "ai-reviewer": {
       "description": "Read-only AI code reviewer",
-      "model": "openrouter/google/gemini-3.1-flash-lite",
+      "model": "openrouter/$AI_REVIEW_MODEL",
       "permission": {
         "*": "deny",
         "read": "allow",
@@ -112,7 +117,9 @@ OPENCODE_CONFIG_JSON='{
     "task": "deny",
     "skill": "deny"
   }
-}'
+}
+EOF
+)
 
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \

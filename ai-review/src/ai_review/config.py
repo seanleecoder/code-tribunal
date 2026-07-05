@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -145,9 +146,96 @@ def load_yaml_subset(text: str) -> dict[str, Any]:
     return loaded
 
 
+def _env_flag(name: str, value: str) -> bool:
+    """Parse a boolean env value: the **raw** string must be exactly ``true`` or
+    ``false`` (lowercase, no surrounding whitespace).
+
+    The comparison is a byte-for-byte mirror of GitLab's
+    ``$AI_REVIEW_CRITIQUE_ENABLED == "true"`` rule — deliberately NOT case-folded or
+    stripped. A value GitLab would not accept as ``"true"`` (``TRUE``, ``" true "``,
+    ``1``, a typo like ``flase``) therefore fails loudly here instead of silently
+    diverging from CI job-creation. Applied uniformly to every boolean toggle.
+    """
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ConfigError(f"{name} must be exactly 'true' or 'false' (lowercase), got {value!r}")
+
+
+def apply_env_overrides(config: dict[str, Any]) -> None:
+    """Overlay runtime env vars onto the loaded config so operators can change
+    models/toggles without rebuilding the image.
+
+    Applied at load time so every stage (reviewer fan-out, panel sizing, and the
+    deterministic consensus engine) sees a consistent view. This requires the
+    override vars to be set as project-wide CI/CD variables (visible to all jobs);
+    the consensus stage additionally warns if its view disagrees with the manifest.
+
+    Recognized overrides:
+    - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
+    - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``
+    - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
+      this to ``"true"`` by default and gates the critique jobs on the exact same
+      variable, so config behavior and CI job-creation stay in lock-step.
+    - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
+
+    Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
+    unparseable value raises ``ConfigError``.
+    """
+    reviewers = config.get("reviewers")
+    if isinstance(reviewers, dict):
+        for name, reviewer in reviewers.items():
+            if not isinstance(reviewer, dict):
+                continue
+            prefix = f"AI_REVIEW_{name.upper()}_"
+            model_env = os.environ.get(f"{prefix}MODEL")
+            if model_env is not None and model_env.strip():
+                reviewer["model"] = model_env.strip()
+            enabled_env = os.environ.get(f"{prefix}ENABLED")
+            if enabled_env is not None:
+                reviewer["enabled"] = _env_flag(f"{prefix}ENABLED", enabled_env)
+
+    critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")
+    if critique_env is not None:
+        flag = _env_flag("AI_REVIEW_CRITIQUE_ENABLED", critique_env)
+        critique = config.setdefault("critique", {})
+        if isinstance(critique, dict):
+            critique["enabled"] = flag
+
+    gate_env = os.environ.get("AI_REVIEW_MERGE_GATE_ENABLED")
+    if gate_env is not None:
+        flag = _env_flag("AI_REVIEW_MERGE_GATE_ENABLED", gate_env)
+        merge_gate = config.setdefault("merge_gate", {})
+        if isinstance(merge_gate, dict):
+            merge_gate["enabled"] = flag
+
+
+def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
+    """Summarize the config actually in effect for this run (after env overrides),
+    so each run has one auditable record of which models/toggles were used — even
+    when they were changed at runtime via ``AI_REVIEW_*`` env vars. Recorded in the
+    input manifest by the prepare stage and re-derived by consensus for a
+    cross-stage consistency check."""
+    reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
+    critique = config.get("critique", {}) if isinstance(config, dict) else {}
+    merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
+    return {
+        "reviewers": {
+            name: {"model": reviewer.get("model"), "enabled": bool(reviewer.get("enabled"))}
+            for name, reviewer in reviewers.items()
+            if isinstance(reviewer, dict)
+        },
+        "critique_enabled": bool(critique.get("enabled")),
+        "critique_rounds": int(critique.get("rounds", 0) or 0),
+        "merge_gate_enabled": bool(merge_gate.get("enabled")),
+    }
+
+
 def load_config(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     config = load_yaml_subset(path.read_text(encoding="utf-8"))
+    apply_env_overrides(config)
     validate_config(config)
     return config
 
