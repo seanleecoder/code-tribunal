@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from urllib.parse import quote
 from typing import Any
@@ -106,15 +107,73 @@ class GitLabClient:
             return self.api_url + path
         return self.api_url + "/api/v4" + path
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def _send(self, method: str, path: str, **kwargs: Any) -> Any:
         headers = dict(kwargs.pop("headers", {}))
         headers[self.token_header] = self.token
         response = self.session.request(method, self._url(path), headers=headers, **kwargs)
         if response.status_code >= 400:
             raise GitLabApiError(f"GitLab API {method} {path} failed: {response.status_code}")
-        if response.status_code == 204 or not getattr(response, "text", ""):
+        return response
+
+    @staticmethod
+    def _parse(response: Any) -> Any:
+        if getattr(response, "status_code", None) == 204 or not getattr(response, "text", ""):
             return None
         return response.json()
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._parse(self._send(method, path, **kwargs))
+
+    @staticmethod
+    def _next_page(response: Any) -> int | None:
+        """Return GitLab's next page from the X-Next-Page header, or None if absent.
+
+        A present-but-empty header means "last page" and yields 0. When the header is
+        missing entirely (e.g. a mocked response) we return None so the caller can fall
+        back to a page-length heuristic instead.
+        """
+        headers = getattr(response, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            return None
+        raw = headers.get("X-Next-Page")
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        return int(text) if text.isdigit() else 0
+
+    def _get_all_pages(self, path: str, **kwargs: Any) -> list[Any]:
+        params = dict(kwargs.pop("params", {}))
+        per_page = int(params.pop("per_page", 100))
+        items: list[Any] = []
+        page = 1
+        # Bounded loop guards against a server that ignores paging and always returns
+        # a full page; 100 pages * per_page covers any realistic MR. The for/else warns
+        # only on true truncation (loop exhausted without a natural break).
+        for _ in range(100):
+            response = self._send(
+                "GET", path, params={**params, "per_page": per_page, "page": page}, **kwargs
+            )
+            batch = self._parse(response)
+            if not batch:
+                break
+            if not isinstance(batch, list):
+                raise GitLabApiError(f"GitLab paginated GET {path} returned a non-list page")
+            items.extend(batch)
+            next_page = self._next_page(response)
+            if next_page is not None:
+                if next_page == 0:
+                    break
+                page = next_page
+            elif len(batch) < per_page:
+                break
+            else:
+                page += 1
+        else:
+            sys.stderr.write(
+                f"ai-review: GitLab pagination cap reached for {path}; "
+                f"results truncated at {len(items)} items\n"
+            )
+        return items
 
     def fetch_latest_mr_version(
         self,
@@ -184,13 +243,9 @@ class GitLabClient:
         project_id_or_path: str | int,
         merge_request_iid: str | int,
     ) -> list[dict[str, Any]]:
-        discussions = self._request(
-            "GET",
+        return self._get_all_pages(
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/discussions",
         )
-        if not isinstance(discussions, list):
-            raise GitLabApiError("GitLab discussions response was not a list")
-        return discussions
 
     def update_discussion_note(
         self,
@@ -226,13 +281,9 @@ class GitLabClient:
         project_id_or_path: str | int,
         merge_request_iid: str | int,
     ) -> list[dict[str, Any]]:
-        notes = self._request(
-            "GET",
+        return self._get_all_pages(
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
         )
-        if not isinstance(notes, list):
-            raise GitLabApiError("GitLab notes response was not a list")
-        return notes
 
     def create_mr_note(
         self,

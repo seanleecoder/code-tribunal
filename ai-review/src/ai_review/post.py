@@ -712,13 +712,33 @@ def find_same_issue_fallback(
     return candidates[0]
 
 
+def _anchor_location(anchor: dict[str, Any]) -> str:
+    path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
+    start = anchor.get("start") if isinstance(anchor.get("start"), dict) else {}
+    line = start.get("new_line") or start.get("old_line")
+    return f"{path}:{line}" if isinstance(line, int) else path
+
+
+def _one_line(text: str, *, max_length: int) -> str:
+    collapsed = " ".join(sanitize_model_text(text, max_length=max_length * 2).split())
+    if len(collapsed) > max_length:
+        collapsed = collapsed[: max_length - 1].rstrip() + "…"
+    return collapsed
+
+
 def _summary_line(group: dict[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
-    path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
-    severity = str(group.get("final_severity", "")).upper()
-    category = str(group.get("category", ""))
-    title = sanitize_model_text(str(group.get("title", "")), max_length=200)
-    return f"- {severity} {category}: {title} — {path}"
+    location = _anchor_location(anchor)
+    severity = str(group.get("final_severity") or "").upper()
+    category = str(group.get("category") or "")
+    title = _one_line(str(group.get("title") or ""), max_length=160)
+    category_part = f" {category}" if category else ""
+    header = f"- **{severity}**{category_part} — `{location}`: {title}"
+    detail = _one_line(str(group.get("body") or ""), max_length=240)
+    if detail and detail != title:
+        # Continuation line indented two spaces so it renders under the bullet.
+        return f"{header}\n  {detail}"
+    return header
 
 
 def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:

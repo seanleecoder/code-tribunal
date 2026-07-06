@@ -12,10 +12,13 @@ from ai_review.gitlab_client import (
 
 
 class FakeResponse:
-    def __init__(self, payload: Any, status_code: int = 200) -> None:
+    def __init__(
+        self, payload: Any, status_code: int = 200, headers: dict[str, str] | None = None
+    ) -> None:
         self.payload = payload
         self.status_code = status_code
         self.text = "x"
+        self.headers = headers or {}
 
     def json(self) -> Any:
         return self.payload
@@ -118,6 +121,69 @@ class GitLabClientTests(unittest.TestCase):
         self.assertTrue(
             any(call[2].get("json", {}).get("resolved") is False for call in session.calls)
         )
+
+    def test_list_mr_discussions_follows_pagination(self) -> None:
+        # The summary note lives on a later page of a busy MR; without pagination the
+        # upsert never sees it and posts a duplicate summary each run.
+        class PagedSession:
+            def __init__(self) -> None:
+                self.pages: dict[int, FakeResponse] = {
+                    1: FakeResponse(
+                        [{"id": "d1"}, {"id": "d2"}], headers={"X-Next-Page": "2"}
+                    ),
+                    2: FakeResponse([{"id": "summary-note"}], headers={"X-Next-Page": ""}),
+                }
+                self.requested_pages: list[int] = []
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                page = int(kwargs["params"]["page"])
+                self.requested_pages.append(page)
+                return self.pages[page]
+
+        session = PagedSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        discussions = client.list_mr_discussions("group/project", 1)
+        self.assertEqual([d["id"] for d in discussions], ["d1", "d2", "summary-note"])
+        self.assertEqual(session.requested_pages, [1, 2])
+
+    def test_pagination_stops_on_short_page_without_headers(self) -> None:
+        # Mocked responses may omit pagination headers; a short page must end the loop
+        # rather than requesting forever.
+        class ShortPageSession:
+            def __init__(self) -> None:
+                self.count = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.count += 1
+                return FakeResponse([{"id": "only"}])
+
+        session = ShortPageSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        self.assertEqual(len(client.list_mr_discussions("group/project", 1)), 1)
+        self.assertEqual(session.count, 1)
+
+    def test_pagination_cap_warns_on_truncation(self) -> None:
+        # A server that always advertises a next page must stop at the 100-page cap and
+        # warn about truncation rather than looping forever or truncating silently.
+        class RunawaySession:
+            def __init__(self) -> None:
+                self.count = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.count += 1
+                return FakeResponse([{"id": self.count}], headers={"X-Next-Page": "999"})
+
+        import io
+        import contextlib
+
+        session = RunawaySession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            items = client.list_mr_discussions("group/project", 1)
+        self.assertEqual(session.count, 100)
+        self.assertEqual(len(items), 100)
+        self.assertIn("pagination cap reached", stderr.getvalue())
 
     def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
         # Bug #8: a 204/empty /changes response makes _request return None; fetch_mr_diff
