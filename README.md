@@ -406,8 +406,17 @@ make validate-local
 
 To integrate Code Tribunal into downstream projects:
 
-1. **Include CI Template**: Add [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml) to your repository's `.gitlab-ci.yml`:
+1. **Declare Stages & Include CI Template**: Add the AI review stages to your root `.gitlab-ci.yml` `stages:` list and include [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
    ```yaml
+   stages:
+     - prepare
+     - review
+     - critique
+     - consensus
+     - post
+     - gate
+     # ... your existing pipeline stages (e.g. build, test, deploy)
+
    include:
      - local: 'ai-review/ci/review.gitlab-ci.yml'
    ```

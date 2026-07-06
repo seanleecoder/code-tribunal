@@ -1,10 +1,5 @@
-stages:
-  - prepare
-  - review
-  - critique
-  - consensus
-  - post
-  - gate
+# Consuming repos must declare these stages in their root .gitlab-ci.yml:
+# prepare, review, critique, consensus, post, gate
 
 variables:
   # Public GHCR images, cut over from the Phase 5.5 private bootstrap refs.
