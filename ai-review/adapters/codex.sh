@@ -45,13 +45,36 @@ AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
-RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
-CODEX_HOME_DIR="$TMP_DIR/codex-home"
+REPO_SNAPSHOT_DIR="$AI_REVIEW_INPUT_DIR/repo_snapshot"
 OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
 if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
   OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
 fi
-mkdir -p "$TMP_DIR" "$CODEX_HOME_DIR"
+
+if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
+  echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
+  exit 2
+fi
+
+mkdir -p "$TMP_DIR"
+# Absolute paths so codex's own working root (--cd, below) never changes where
+# we read/write these files.
+TMP_DIR="$(cd "$TMP_DIR" && pwd)"
+RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
+CODEX_HOME_DIR="$TMP_DIR/codex-home"
+CODEX_REVIEW_ROOT="$TMP_DIR/codex-review-root.$$"
+mkdir -p "$CODEX_HOME_DIR" "$CODEX_REVIEW_ROOT"
+
+# Explore the pinned MR snapshot, not the ambient CI checkout (which may be
+# absent under GIT_STRATEGY: none, or point at a different ref than the reviewed
+# diff). Copy into a clean root and drop codex-specific config the MR could use
+# to steer the reviewer; CODEX_HOME is already redirected, but project-level
+# AGENTS.md and .codex are read from the working tree.
+cp -R "$REPO_SNAPSHOT_DIR"/. "$CODEX_REVIEW_ROOT"/
+# AGENTS.md is resolved hierarchically, so strip it at every level, not just the
+# root, or a nested copy could still steer the reviewer.
+find "$CODEX_REVIEW_ROOT" -name AGENTS.md -type f -delete
+find "$CODEX_REVIEW_ROOT" -name .codex -prune -exec rm -rf {} +
 
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
@@ -59,6 +82,7 @@ env -i \
   OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   CODEX_HOME="$CODEX_HOME_DIR" \
   codex exec \
+  --cd "$CODEX_REVIEW_ROOT" \
   --ephemeral \
   --ignore-user-config \
   --ignore-rules \

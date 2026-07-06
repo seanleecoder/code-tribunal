@@ -71,7 +71,14 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
         (repo_snapshot / ".opencode").mkdir()
         (repo_snapshot / ".opencode" / "plugin.js").write_text("module.exports = {}\n", encoding="utf-8")
+        (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
+        (repo_snapshot / ".codex").mkdir()
+        (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
         (repo_snapshot / "nested").mkdir()
+        (repo_snapshot / "nested" / "AGENTS.md").write_text(
+            "nested agent instructions\n",
+            encoding="utf-8",
+        )
         (repo_snapshot / "nested" / ".opencode").mkdir()
         (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
             "nested agent\n",
@@ -247,9 +254,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     "selected_dir": "",
                     "workspace_entries": set(),
                 }
-                if cli_name == "opencode":
+                dir_flag = {"opencode": "--dir", "codex": "--cd"}.get(cli_name)
+                if dir_flag is not None and dir_flag in shlex.split(cli_args):
                     argv = shlex.split(cli_args)
-                    selected_dir = Path(argv[argv.index("--dir") + 1])
+                    selected_dir = Path(argv[argv.index(dir_flag) + 1])
                     workspace_entries = {
                         f"{path.relative_to(selected_dir)}{'/' if path.is_dir() else ''}"
                         for path in selected_dir.rglob("*")
@@ -265,7 +273,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                         os.environ[key] = value
 
     def test_codex_real_path_invokes_codex_cli(self) -> None:
-        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli("codex", "codex")
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli("codex", "codex")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
@@ -280,6 +288,31 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("schemas/raw_finding_batch.schema.json", cli_args)
         self.assertIn("--output-schema ", cli_args)
         self.assertNotIn("schemas/finding_batch.schema.json", cli_args)
+        # codex explores a clean copy of the pinned MR snapshot, not the ambient
+        # CI checkout nor the input/snapshot dirs directly.
+        self.assertIn("--cd ", cli_args)
+        self.assertRegex(cli_args, r"--cd \S*/out/\.tmp/codex-review-root\.\d+(\s|$)")
+        self.assertNotRegex(cli_args, r"--cd \S*repo_snapshot")
+        self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
+        self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
+        # codex strips its own config (AGENTS.md, .codex) but leaves
+        # opencode-specific files intact.
+        self.assertEqual(
+            meta["workspace_entries"],
+            {
+                "README.md",
+                "nested/",
+                "src/",
+                "src/reviewed.py",
+                "opencode.json",
+                "opencode.jsonc",
+                "tui.json",
+                ".opencode/",
+                ".opencode/plugin.js",
+                "nested/.opencode/",
+                "nested/.opencode/agent.md",
+            },
+        )
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -334,9 +367,20 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotRegex(cli_args, r"--dir \S*repo_snapshot")
         self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
+        # opencode strips its own config (opencode.json/.jsonc, tui.json,
+        # .opencode) but leaves codex-specific files (AGENTS.md, .codex) intact.
         self.assertEqual(
             meta["workspace_entries"],
-            {"README.md", "nested/", "src/", "src/reviewed.py"},
+            {
+                "README.md",
+                "nested/",
+                "nested/AGENTS.md",
+                "src/",
+                "src/reviewed.py",
+                "AGENTS.md",
+                ".codex/",
+                ".codex/config.toml",
+            },
         )
         self.assertNotIn(" exec ", cli_args)
         self.assertNotIn("--output-format", cli_args)
