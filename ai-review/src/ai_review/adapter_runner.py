@@ -4,8 +4,10 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -470,6 +472,100 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     return None
 
 
+class _AdapterResult:
+    __slots__ = ("returncode", "stdout", "stderr")
+
+    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
+    # Kill the adapter shell and every descendant it spawned (the reviewer CLI,
+    # its subprocesses) by signalling the whole process group, then reap the
+    # shell. Guarded against the race where the process already exited.
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, OSError):
+        proc.kill()
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _run_adapter_process(
+    adapter_path: Path, env: dict[str, str], timeout_seconds: int
+) -> _AdapterResult:
+    # Stream the adapter's stdout+stderr to the job log line-by-line while also
+    # capturing them, instead of buffering silently until exit. Reviewers like
+    # claude (stream-json on stdout) and opencode (json on stdout) were otherwise
+    # invisible during the whole run — only codex, which narrates on stderr, was
+    # ever surfaced. Live mirroring goes to stderr (redacted) so stdout stays a
+    # clean machine channel; the captured copy is what we parse below.
+    # start_new_session puts the adapter shell in its own process group so we can
+    # kill the whole tree on timeout. The adapters don't `exec` their final CLI
+    # (claude/codex/opencode run as children of the shell), so killing only the
+    # shell PID would orphan the CLI, leave it holding the stdout/stderr pipes
+    # open, and hang the pump threads (and the timeout) indefinitely.
+    proc = subprocess.Popen(
+        [str(adapter_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        env=env,
+        start_new_session=True,
+    )
+    collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+    def _pump(stream: Any, key: str) -> None:
+        try:
+            for line in iter(stream.readline, ""):
+                collected[key].append(line)
+                sys.stderr.write(redact_text(line))
+                sys.stderr.flush()
+        finally:
+            stream.close()
+
+    threads = [
+        threading.Thread(target=_pump, args=(proc.stdout, "stdout"), daemon=True),
+        threading.Thread(target=_pump, args=(proc.stderr, "stderr"), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    try:
+        proc.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        # Bounded join: once the group is killed the pipes close and the threads
+        # exit promptly, but never block the timeout on a thread that somehow
+        # doesn't (they're daemon threads, so the interpreter can still exit).
+        for thread in threads:
+            thread.join(timeout=5)
+        raise subprocess.TimeoutExpired(
+            [str(adapter_path)],
+            timeout_seconds,
+            output="".join(collected["stdout"]),
+            stderr="".join(collected["stderr"]),
+        ) from None
+
+    for thread in threads:
+        thread.join()
+    return _AdapterResult(
+        proc.returncode,
+        "".join(collected["stdout"]),
+        "".join(collected["stderr"]),
+    )
+
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -584,16 +680,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
 
         timeout_seconds = max(1, int(reviewer_config.get("timeout_seconds", 60)) - 5)
-        result = subprocess.run(
-            [str(adapter_path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-            env=env,
-        )
-        if result.stderr:
-            sys.stderr.write(redact_text(result.stderr))
+        # Streams stdout/stderr to the job log live (redacted) as the adapter
+        # runs, then returns the captured copies for parsing below.
+        result = _run_adapter_process(adapter_path, env, timeout_seconds)
         if prompt_tmp is not None:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():

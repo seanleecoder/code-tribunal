@@ -72,8 +72,9 @@ mkdir -p "$CODEX_HOME_DIR" "$CODEX_REVIEW_ROOT"
 # AGENTS.md and .codex are read from the working tree.
 cp -R "$REPO_SNAPSHOT_DIR"/. "$CODEX_REVIEW_ROOT"/
 # AGENTS.md is resolved hierarchically, so strip it at every level, not just the
-# root, or a nested copy could still steer the reviewer.
-find "$CODEX_REVIEW_ROOT" -name AGENTS.md -type f -delete
+# root, or a nested copy could still steer the reviewer. Match symlinks too, or a
+# symlinked AGENTS.md -> elsewhere would survive and still be followed.
+find "$CODEX_REVIEW_ROOT" -name AGENTS.md \( -type f -o -type l \) -delete
 find "$CODEX_REVIEW_ROOT" -name .codex -prune -exec rm -rf {} +
 
 env -i \

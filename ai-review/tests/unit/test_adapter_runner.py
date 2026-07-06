@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -573,6 +574,34 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             batch = load_json_file(paths["output_dir"] / "findings" / "slow.json")
             self.assertEqual(batch["adapter_status"], "timeout")
             status = load_json_file(paths["output_dir"] / "status" / "slow.json")
+            self.assertEqual(status["status"], "timeout")
+
+    def test_timeout_kills_child_holding_pipe_open(self) -> None:
+        # Adapters don't exec their final CLI, so the reviewer runs as a child of
+        # the shell and inherits the stdout/stderr pipes. On timeout we must kill
+        # the whole process group: killing only the shell orphans the child, which
+        # keeps the pipes open and would hang the pump threads (and the timeout)
+        # until the child exits on its own. The long-lived grandchild here makes
+        # that hang observable — the call must still return promptly.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "hang", timeout_seconds=6)
+            _write_adapter(
+                paths["adapter_dir"],
+                "hang",
+                "#!/bin/sh\nsleep 30\n",
+            )
+            self._set_env(paths, config_path)
+
+            started = time.monotonic()
+            self.assertEqual(run_adapter("hang", "review"), _EXIT_ERROR)
+            elapsed = time.monotonic() - started
+
+            # Effective timeout is ~1s (config 6 minus the runner's 5s margin); a
+            # correct group-kill returns in a couple of seconds. If it regressed to
+            # killing only the shell, this would block ~30s until `sleep` exits.
+            self.assertLess(elapsed, 15)
+            status = load_json_file(paths["output_dir"] / "status" / "hang.json")
             self.assertEqual(status["status"], "timeout")
 
     def test_status_budget_skipped_short_circuits_before_adapter_runs(self) -> None:

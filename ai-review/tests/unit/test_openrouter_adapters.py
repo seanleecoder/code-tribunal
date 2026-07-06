@@ -5,6 +5,7 @@ import shlex
 import stat
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
@@ -151,6 +152,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 "mkdir -p \"$AI_REVIEW_OUTPUT_DIR\"\n"
                 "printf '%s\\n' \"$0 $args\" > \"$AI_REVIEW_OUTPUT_DIR/claude.args\"\n"
                 "env | sort > \"$AI_REVIEW_OUTPUT_DIR/claude.env\"\n"
+                "pwd > \"$AI_REVIEW_OUTPUT_DIR/claude.pwd\"\n"
+                "find . -mindepth 1 > \"$AI_REVIEW_OUTPUT_DIR/claude.tree\"\n"
                 "cat > \"$AI_REVIEW_OUTPUT_DIR/claude.stdin\"\n"
                 "printf '{\"findings\":[]}'\n",
                 encoding="utf-8",
@@ -192,6 +195,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         reviewer: str,
         cli_name: str,
         extra_env: dict[str, str] | None = None,
+        prepare_snapshot: "Callable[[Path], None] | None" = None,
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -201,6 +205,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             bin_dir.mkdir()
             raw_out = output_dir / ".tmp" / f"{reviewer}-review.raw.json"
             self._write_inputs(input_dir)
+            if prepare_snapshot is not None:
+                prepare_snapshot(input_dir / "repo_snapshot")
             self._write_fake_cli(bin_dir, cli_name)
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -272,8 +278,16 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     else:
                         os.environ[key] = value
 
+    def _add_symlinked_agent_config(self, snapshot: Path) -> None:
+        # A symlinked AGENTS.md must be stripped too, not just regular files.
+        (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
+        (snapshot / "symdir").mkdir()
+        os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
+
     def test_codex_real_path_invokes_codex_cli(self) -> None:
-        batch, cli_args, _cli_env, meta = self._run_with_fake_cli("codex", "codex")
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "codex", "codex", prepare_snapshot=self._add_symlinked_agent_config
+        )
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
@@ -297,6 +311,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
         # codex strips its own config (AGENTS.md, .codex) but leaves
         # opencode-specific files intact.
+        # steer.txt (the symlink target) and its dir survive; the symlinked
+        # AGENTS.md under symdir/ is stripped along with the regular AGENTS.md.
         self.assertEqual(
             meta["workspace_entries"],
             {
@@ -311,6 +327,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 ".opencode/plugin.js",
                 "nested/.opencode/",
                 "nested/.opencode/agent.md",
+                "steer.txt",
+                "symdir/",
             },
         )
 
@@ -322,6 +340,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             bin_dir = root / "bin"
             bin_dir.mkdir()
             self._write_inputs(input_dir)
+            # Symlinked agent config must be stripped too, not just regular files:
+            # a symlink named CLAUDE.md/AGENTS.md would otherwise be followed.
+            snapshot = input_dir / "repo_snapshot"
+            (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
+            os.symlink("steer.txt", snapshot / "CLAUDE.md")
+            (snapshot / "symdir").mkdir()
+            os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
             self._write_fake_cli(bin_dir, "claude")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -338,6 +363,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 batch = load_json_file(output_dir / "findings" / "claude.json")
                 cli_args = (output_dir / "claude.args").read_text(encoding="utf-8")
                 stdin = (output_dir / "claude.stdin").read_text(encoding="utf-8")
+                cwd = (output_dir / "claude.pwd").read_text(encoding="utf-8").strip()
+                tree = {
+                    line[2:]
+                    for line in (output_dir / "claude.tree").read_text(encoding="utf-8").splitlines()
+                    if line.startswith("./")
+                }
+                repo_snapshot_dir = str(input_dir / "repo_snapshot")
             finally:
                 for key, value in previous.items():
                     if value is None:
@@ -352,6 +384,23 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("--tools Read,Grep,Glob", cli_args)
         self.assertNotIn("bundle prompt", cli_args)
         self.assertIn("bundle prompt", stdin)
+        # claude explores a clean copy of the pinned MR snapshot rooted at its
+        # working directory (like codex --cd / opencode --dir), not the ambient
+        # CI checkout nor the input/snapshot dirs directly.
+        self.assertIn("--add-dir ", cli_args)
+        self.assertRegex(cli_args, r"--add-dir \S*/out/\.tmp/claude-review-root\.\d+(\s|$)")
+        self.assertRegex(cwd, r"/out/\.tmp/claude-review-root\.\d+$")
+        self.assertNotEqual(cwd, repo_snapshot_dir)
+        # Reviewed files sit at the working-tree root so diff paths resolve.
+        self.assertIn("src/reviewed.py", tree)
+        # Project-level agent config the MR could use to steer the reviewer is
+        # stripped at every level, including symlinked CLAUDE.md / AGENTS.md.
+        self.assertNotIn("AGENTS.md", tree)
+        self.assertNotIn("nested/AGENTS.md", tree)
+        self.assertNotIn("CLAUDE.md", tree)
+        self.assertNotIn("symdir/AGENTS.md", tree)
+        # Only the agent-config symlinks are removed; their target is untouched.
+        self.assertIn("steer.txt", tree)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")
