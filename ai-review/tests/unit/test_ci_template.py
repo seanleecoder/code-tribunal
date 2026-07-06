@@ -147,6 +147,75 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertLess(when_idx, allow_idx)
         self.assertLess(allow_idx, plain_rule_idx)
 
+    def test_critique_source_gate_stays_within_prepare_so_needs_never_dangles(self) -> None:
+        # Regression: `.critique_template` once used `extends: .ai_review_rules`
+        # for pipeline-source gating while ALSO declaring its own rules: block.
+        # A job's own rules: fully REPLACES rules inherited via extends (GitLab
+        # overrides the array, it does not merge), so the source gate was
+        # silently dropped and critique ran on EVERY pipeline source. On a
+        # push/tag/schedule pipeline its non-optional `needs: prepare_ai_review`
+        # (a job gated to MR/web/api) does not exist, failing pipeline creation.
+        #
+        # Compare against prepare_ai_review DIRECTLY, not .ai_review_rules:
+        # prepare carries its own inline rules: block, so it is the real target
+        # of the non-optional need whose sources critique must not exceed.
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        def _code_block(name: str) -> str:
+            match = re.search(rf"(?ms)^{re.escape(name)}:\n(.*?)(?=^\S)", text)
+            self.assertIsNotNone(match, f"{name} block not found")
+            return "\n".join(
+                line
+                for line in match.group(1).splitlines()
+                if not line.lstrip().startswith("#")
+            )
+
+        critique_block = _code_block(".critique_template")
+        source_re = r'\$CI_PIPELINE_SOURCE == "([a-z_]+)"'
+        prepare_sources = set(re.findall(source_re, _code_block("prepare_ai_review")))
+        critique_sources = set(re.findall(source_re, critique_block))
+        self.assertTrue(prepare_sources, "expected prepare_ai_review to gate on pipeline source")
+        # (1) Critique must carry an EXPLICIT source gate. A missing gate (the
+        # original bug) is not an empty source set — in GitLab it means "runs on
+        # every source", which is exactly the leak. Assert non-empty first, or
+        # the subset check below passes vacuously (set().issubset(x) is True).
+        self.assertTrue(
+            critique_sources,
+            "critique has no CI_PIPELINE_SOURCE gate; it would run on every pipeline "
+            "and dangle its non-optional needs: prepare_ai_review",
+        )
+        # (2) Every source that creates critique must also create prepare, so
+        # critique can never exist in a pipeline that lacks prepare_ai_review.
+        # Subset (not equality): a narrower critique is safe; only a critique
+        # source that prepare lacks dangles the need.
+        self.assertTrue(
+            critique_sources.issubset(prepare_sources),
+            f"critique sources {sorted(critique_sources)} must be within prepare sources "
+            f"{sorted(prepare_sources)}, or needs: prepare_ai_review dangles",
+        )
+
+        # The enable flag still gates critique, via a disable-guard that must
+        # come first so first-match rules evaluation lets it win over the
+        # source matches below.
+        disable_idx = critique_block.find('$AI_REVIEW_CRITIQUE_ENABLED != "true"')
+        never_idx = critique_block.find("when: never")
+        first_source_idx = min(
+            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"')
+            for source in critique_sources
+        )
+        self.assertNotEqual(disable_idx, -1, "critique enable-flag disable-guard missing")
+        self.assertNotEqual(never_idx, -1, "critique when: never guard missing")
+        self.assertLess(disable_idx, never_idx)
+        self.assertLess(never_idx, first_source_idx)
+
+        # Document the coupling the source gate protects: critique's need on
+        # prepare is non-optional, so critique may never exist without prepare.
+        prepare_need = re.search(
+            r"(?ms)^    - job: prepare_ai_review\n(.*?)(?=^    - job:|\Z)", critique_block
+        )
+        self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
+        self.assertNotIn("optional: true", prepare_need.group(1))
+
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
             self.skipTest("GitHub publish workflow is not present in this checkout")

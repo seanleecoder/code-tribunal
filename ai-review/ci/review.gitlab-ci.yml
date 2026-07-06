@@ -100,7 +100,6 @@ review_opencode:
 
 .critique_template:
   stage: critique
-  extends: .ai_review_rules
   image: "$AI_REVIEW_REVIEWER_IMAGE"
   interruptible: true
   allow_failure: true
@@ -110,8 +109,21 @@ review_opencode:
     AI_REVIEW_LOCAL_MOCK: "0"
     OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+  # Critique gating must combine BOTH the enabled-flag AND the source gate in
+  # this one rules: block. A job's own rules: FULLY REPLACES any rules inherited
+  # via `extends` (GitLab overrides the array, it does not merge), so we cannot
+  # rely on `.ai_review_rules` here — extending it would be silently shadowed.
+  # Without the source gate, critique jobs are created on push/tag/schedule
+  # pipelines where prepare_ai_review does NOT exist, and their non-optional
+  # `needs: prepare_ai_review` fails pipeline creation. Keep these sources in
+  # sync with prepare_ai_review / .ai_review_rules. The disabled-guard
+  # (when: never) must be first so it wins over the source matches below.
   rules:
-    - if: '$AI_REVIEW_CRITIQUE_ENABLED == "true"'
+    - if: '$AI_REVIEW_CRITIQUE_ENABLED != "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
   needs:
     - job: prepare_ai_review
       artifacts: true
