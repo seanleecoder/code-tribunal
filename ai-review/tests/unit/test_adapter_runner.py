@@ -604,6 +604,26 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "hang.json")
             self.assertEqual(status["status"], "timeout")
 
+    def test_timeout_archives_partial_output_for_debugging(self) -> None:
+        # A timeout must leave a post-mortem even when live mirroring is off (the
+        # default): whatever the reviewer emitted before the kill is archived to a
+        # timeout-debug artifact so a stuck reviewer isn't a black box.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "chatty", timeout_seconds=6)
+            _write_adapter(
+                paths["adapter_dir"],
+                "chatty",
+                "#!/bin/sh\nprintf 'progress-marker\\n'\nsleep 30\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("chatty", "review"), _EXIT_ERROR)
+
+            debug = paths["output_dir"] / "status" / "chatty-timeout-debug.txt"
+            self.assertTrue(debug.exists())
+            self.assertIn("progress-marker", debug.read_text(encoding="utf-8"))
+
     def test_status_budget_skipped_short_circuits_before_adapter_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))

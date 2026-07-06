@@ -372,9 +372,9 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
 
 
 def _write_parse_debug(
-    output_dir: Path, reviewer: str, stage: str, stdout: str, stderr: str
+    output_dir: Path, reviewer: str, stage: str, stdout: str, stderr: str, *, kind: str = "parse"
 ) -> None:
-    debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-parse-debug.txt"
+    debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(
         "\n".join(
@@ -501,14 +501,15 @@ def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
 
 
 def _run_adapter_process(
-    adapter_path: Path, env: dict[str, str], timeout_seconds: int
+    adapter_path: Path, env: dict[str, str], timeout_seconds: int, *, mirror_logs: bool
 ) -> _AdapterResult:
-    # Stream the adapter's stdout+stderr to the job log line-by-line while also
-    # capturing them, instead of buffering silently until exit. Reviewers like
-    # claude (stream-json on stdout) and opencode (json on stdout) were otherwise
-    # invisible during the whole run — only codex, which narrates on stderr, was
-    # ever surfaced. Live mirroring goes to stderr (redacted) so stdout stays a
-    # clean machine channel; the captured copy is what we parse below.
+    # Capture the adapter's stdout+stderr, and when mirror_logs is set, also
+    # stream them to the job log line-by-line (redacted) instead of buffering
+    # silently until exit. Live mirroring makes claude (stream-json on stdout) and
+    # opencode (json on stdout) visible during the run, not just codex (which
+    # narrates on stderr); it goes to stderr so stdout stays a clean channel.
+    # Mirroring is opt-in (AI_REVIEW_STREAM_ADAPTER_LOGS=1) because stream-json /
+    # --verbose output can be large and risk job-log truncation.
     # start_new_session puts the adapter shell in its own process group so we can
     # kill the whole tree on timeout. The adapters don't `exec` their final CLI
     # (claude/codex/opencode run as children of the shell), so killing only the
@@ -529,8 +530,9 @@ def _run_adapter_process(
         try:
             for line in iter(stream.readline, ""):
                 collected[key].append(line)
-                sys.stderr.write(redact_text(line))
-                sys.stderr.flush()
+                if mirror_logs:
+                    sys.stderr.write(redact_text(line))
+                    sys.stderr.flush()
         finally:
             stream.close()
 
@@ -680,9 +682,17 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
 
         timeout_seconds = max(1, int(reviewer_config.get("timeout_seconds", 60)) - 5)
-        # Streams stdout/stderr to the job log live (redacted) as the adapter
-        # runs, then returns the captured copies for parsing below.
-        result = _run_adapter_process(adapter_path, env, timeout_seconds)
+        # Opt-in live mirroring of the adapter's output to the job log; off by
+        # default to avoid large stream-json/--verbose dumps and log truncation.
+        mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
+        result = _run_adapter_process(
+            adapter_path, env, timeout_seconds, mirror_logs=mirror_logs
+        )
+        # When not mirroring live, still surface the adapter's stderr after it
+        # exits (adapters like codex narrate progress there) — matching the
+        # pre-streaming behavior. When mirroring, it was already echoed live.
+        if not mirror_logs and result.stderr:
+            sys.stderr.write(redact_text(result.stderr))
         if prompt_tmp is not None:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
@@ -770,6 +780,17 @@ def run_adapter(reviewer: str, stage: str) -> int:
             model = str(config.get("reviewers", {}).get(reviewer, {}).get("model", model))
         except Exception:
             pass
+        # Archive whatever the reviewer emitted before the kill so a timeout is
+        # debuggable even when live mirroring was off (the default) — otherwise a
+        # stuck reviewer leaves no trace of what it was doing.
+        _write_parse_debug(
+            output_dir,
+            reviewer,
+            stage,
+            exc.output or "",
+            exc.stderr or "",
+            kind="timeout",
+        )
         _write_empty(output_dir, output_file, reviewer, stage, "timeout", run_id, model, started_at)
         _write_status(
             output_dir,

@@ -151,11 +151,18 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 "args=\"$*\"\n"
                 "mkdir -p \"$AI_REVIEW_OUTPUT_DIR\"\n"
                 "printf '%s\\n' \"$0 $args\" > \"$AI_REVIEW_OUTPUT_DIR/claude.args\"\n"
+                "printf '%s\\n' \"$@\" > \"$AI_REVIEW_OUTPUT_DIR/claude.argv\"\n"
                 "env | sort > \"$AI_REVIEW_OUTPUT_DIR/claude.env\"\n"
                 "pwd > \"$AI_REVIEW_OUTPUT_DIR/claude.pwd\"\n"
                 "find . -mindepth 1 > \"$AI_REVIEW_OUTPUT_DIR/claude.tree\"\n"
                 "cat > \"$AI_REVIEW_OUTPUT_DIR/claude.stdin\"\n"
-                "printf '{\"findings\":[]}'\n",
+                # Emit stage-appropriate output so critique runs exercise the
+                # critique parse/finalize path, not a finding-shaped fallback.
+                "if [ \"$AI_REVIEW_STAGE\" = critique ]; then\n"
+                "  printf '{\"critiques\":[]}'\n"
+                "else\n"
+                "  printf '{\"findings\":[]}'\n"
+                "fi\n",
                 encoding="utf-8",
             )
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
@@ -163,6 +170,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         cli.write_text(
             "#!/bin/sh\n"
             "args=\"$*\"\n"
+            "payload='{\"findings\":[]}'\n"
+            "if [ \"$AI_REVIEW_STAGE\" = critique ]; then payload='{\"critiques\":[]}'; fi\n"
             "trace_dir=\"${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}\"\n"
             "if [ -n \"$trace_dir\" ]; then\n"
             "  mkdir -p \"$trace_dir\"\n"
@@ -182,9 +191,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             "  printf '%s\\n' \"$0 $args\" > \"$out.args\"\n"
             "  env | sort > \"$out.env\"\n"
             "  printf '%s\\n' \"$OPENROUTER_API_KEY\" > \"$out.key\"\n"
-            "  printf '{\"findings\":[]}' > \"$out\"\n"
+            "  printf '%s' \"$payload\" > \"$out\"\n"
             "else\n"
-            "  printf '{\"findings\":[]}'\n"
+            "  printf '%s' \"$payload\"\n"
             "fi\n",
             encoding="utf-8",
         )
@@ -196,6 +205,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         cli_name: str,
         extra_env: dict[str, str] | None = None,
         prepare_snapshot: "Callable[[Path], None] | None" = None,
+        stage: str = "review",
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -203,7 +213,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            raw_out = output_dir / ".tmp" / f"{reviewer}-review.raw.json"
+            raw_out = output_dir / ".tmp" / f"{reviewer}-{stage}.raw.json"
             self._write_inputs(input_dir)
             if prepare_snapshot is not None:
                 prepare_snapshot(input_dir / "repo_snapshot")
@@ -236,8 +246,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             for key, value in (extra_env or {}).items():
                 os.environ[key] = value
             try:
-                self.assertEqual(run_adapter(reviewer, "review"), 0)
-                batch = load_json_file(output_dir / "findings" / f"{reviewer}.json")
+                self.assertEqual(run_adapter(reviewer, stage), 0)
+                stage_dir = {"review": "findings", "critique": "critiques"}[stage]
+                batch = load_json_file(output_dir / stage_dir / f"{reviewer}.json")
                 if Path(f"{raw_out}.args").exists():
                     trace_prefix = Path(str(raw_out))
                     cli_args_path = Path(f"{trace_prefix}.args")
@@ -402,8 +413,59 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         # Only the agent-config symlinks are removed; their target is untouched.
         self.assertIn("steer.txt", tree)
 
+    def test_claude_critique_runs_without_repo_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "claude")
+            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
+            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
+            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
+            os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            try:
+                self.assertEqual(run_adapter("claude", "critique"), 0)
+                batch = load_json_file(output_dir / "critiques" / "claude.json")
+                argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
+                cwd = (output_dir / "claude.pwd").read_text(encoding="utf-8").strip()
+                tmp_dir = output_dir / ".tmp"
+                review_roots = (
+                    list(tmp_dir.glob("claude-review-root.*")) if tmp_dir.exists() else []
+                )
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
+        self.assertIn("critiques", batch)
+        # critique reasons over the prompt payload only: tools are disabled (empty
+        # --tools value) so claude answers in one shot instead of agentically
+        # exploring the snapshot, and the repo snapshot is neither copied nor
+        # rooted (no --add-dir, no claude-review-root, cwd is not a review root).
+        self.assertIn("--tools", argv)
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+        self.assertNotIn("--add-dir", argv)
+        self.assertNotIn("Read,Grep,Glob", argv)
+        self.assertNotRegex(cwd, r"/out/\.tmp/claude-review-root\.\d+$")
+        self.assertEqual(review_roots, [])
+
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
-        batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")
+        batch, cli_args, cli_env, meta = self._run_with_fake_cli(
+            "opencode", "opencode", prepare_snapshot=self._add_symlinked_agent_config
+        )
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
@@ -417,18 +479,20 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
         # opencode strips its own config (opencode.json/.jsonc, tui.json,
-        # .opencode) but leaves codex-specific files (AGENTS.md, .codex) intact.
+        # .opencode) and AGENTS.md (regular + symlinked, every level), since it
+        # reads AGENTS.md as agent instructions. codex-specific .codex is left
+        # intact; steer.txt (the symlink target) and its dir survive.
         self.assertEqual(
             meta["workspace_entries"],
             {
                 "README.md",
                 "nested/",
-                "nested/AGENTS.md",
                 "src/",
                 "src/reviewed.py",
-                "AGENTS.md",
                 ".codex/",
                 ".codex/config.toml",
+                "steer.txt",
+                "symdir/",
             },
         )
         self.assertNotIn(" exec ", cli_args)
@@ -459,6 +523,33 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn('"websearch": "deny"', cli_env)
         self.assertIn('"task": "deny"', cli_env)
         self.assertIn('"skill": "deny"', cli_env)
+
+    def test_codex_critique_runs_without_repo_access(self) -> None:
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "codex", "codex", stage="critique"
+        )
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
+        self.assertIn("critiques", batch)
+        # critique reasons only over the pooled findings in the prompt: codex
+        # still runs read-only, but its working root is left empty so there is
+        # nothing to explore — parity with claude's tools-off critique.
+        self.assertIn("--cd ", cli_args)
+        self.assertIn("--sandbox read-only", cli_args)
+        self.assertIn("schemas/critique_batch.schema.json", cli_args)
+        self.assertEqual(meta["workspace_entries"], set())
+
+    def test_opencode_critique_runs_without_repo_access(self) -> None:
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "opencode", "opencode", stage="critique"
+        )
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
+        self.assertIn("critiques", batch)
+        # Same as codex: the working root is empty for critique, so read/glob/grep
+        # have nothing to explore.
+        self.assertIn("--dir ", cli_args)
+        self.assertEqual(meta["workspace_entries"], set())
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
         for reviewer, cli_name in (("codex", "codex"), ("opencode", "opencode")):

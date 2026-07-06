@@ -48,11 +48,6 @@ OPENCODE_CONFIG_HOME="$TMP_DIR/opencode-config-home"
 OPENCODE_DATA_HOME="$TMP_DIR/opencode-data-home"
 OPENCODE_CONFIG_DIRECTORY="$TMP_DIR/opencode-config-dir"
 
-if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
-  echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
-
 mkdir -p \
   "$TMP_DIR" \
   "$OPENCODE_REVIEW_ROOT" \
@@ -61,12 +56,28 @@ mkdir -p \
   "$OPENCODE_DATA_HOME" \
   "$OPENCODE_CONFIG_DIRECTORY"
 
-cp -R "$REPO_SNAPSHOT_DIR"/. "$OPENCODE_REVIEW_ROOT"/
-rm -f \
-  "$OPENCODE_REVIEW_ROOT/opencode.json" \
-  "$OPENCODE_REVIEW_ROOT/opencode.jsonc" \
-  "$OPENCODE_REVIEW_ROOT/tui.json"
-find "$OPENCODE_REVIEW_ROOT" -name .opencode -prune -exec rm -rf {} +
+if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
+  # Explore a clean copy of the pinned MR snapshot. Strip project-level config the
+  # MR could use to steer the reviewer: opencode's own config files, its .opencode
+  # dirs, and AGENTS.md (opencode reads AGENTS.md as agent instructions, so it
+  # must be removed too — matching the codex/claude adapters). Match symlinks as
+  # well as regular files, at every level.
+  if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
+    echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
+    exit 2
+  fi
+  cp -R "$REPO_SNAPSHOT_DIR"/. "$OPENCODE_REVIEW_ROOT"/
+  find "$OPENCODE_REVIEW_ROOT" \
+    \( -name opencode.json -o -name opencode.jsonc -o -name tui.json -o -name AGENTS.md \) \
+    \( -type f -o -type l \) -delete
+  find "$OPENCODE_REVIEW_ROOT" -name .opencode -prune -exec rm -rf {} +
+else
+  # critique (and respond) reason only over the pooled findings in the prompt
+  # (critique.md: "grounded only in the finding data, rules, and manifest"), so
+  # leave the working root empty — read/glob/grep stay allowed but have nothing to
+  # explore, the same net effect as claude's tools-off critique.
+  :
+fi
 
 # Unquoted heredoc so $AI_REVIEW_MODEL expands; \$schema stays literal and the
 # {env:OPENROUTER_API_KEY} template (no leading $) is passed through untouched.

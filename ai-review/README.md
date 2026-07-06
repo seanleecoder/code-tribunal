@@ -82,6 +82,24 @@ likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLE
 `AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
 
+### Debugging a slow or stuck reviewer
+
+Set `AI_REVIEW_STREAM_ADAPTER_LOGS=1` to mirror each reviewer's stdout **and**
+stderr to the CI job log line-by-line as it runs, instead of only surfacing
+stderr after the job finishes. This makes an in-progress run observable — e.g. to
+see whether a reviewer is exploring the repo, retrying the API, or hung. It is
+**off by default** because Claude's `stream-json --verbose` output is large and
+can push a long run past GitLab's job-log size limit (truncating the tail). The
+full streams are always captured for parsing regardless, and a head+tail preview
+is archived to `out/status/<stage>-<reviewer>-parse-debug.txt` on a parse
+failure, so leaving it off never costs you post-mortem detail.
+
+Only the `review` stage explores the codebase (it is rooted at a clean copy of
+the MR snapshot, like the codex `--cd` / opencode `--dir` adapters). The
+`critique` stage runs Claude with tools disabled — it reasons only over the
+pooled findings in its prompt — so it completes in a single turn rather than
+agentically walking the repository.
+
 ### Running Local Adapter Against Real OpenRouter API
 
 ```bash
