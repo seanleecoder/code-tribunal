@@ -28,12 +28,22 @@ esac
 
 export ANTHROPIC_MODEL="${AI_REVIEW_MODEL}"
 
-claude -p \
+# Turn cap is opt-in. Unset by default so Claude runs its agentic loop to
+# completion (bounded by the reviewer timeout), matching the codex/opencode
+# adapters. A hard-coded low cap made stronger models hit error_max_turns
+# before emitting findings. Set AI_REVIEW_MAX_TURNS (or the reviewer's
+# max_turns in review.yaml) to re-impose one.
+set -- -p \
   --safe-mode \
   --model "${AI_REVIEW_MODEL}" \
   --no-session-persistence \
   --output-format stream-json \
   --verbose \
-  --tools "Read,Grep,Glob" \
-  --max-turns "${AI_REVIEW_MAX_TURNS:-${MAX_TURNS:-4}}" \
-  < "$AI_REVIEW_RENDERED_PROMPT"
+  --tools "Read,Grep,Glob"
+
+MAX_TURNS_VALUE="${AI_REVIEW_MAX_TURNS:-${MAX_TURNS:-}}"
+if [ -n "$MAX_TURNS_VALUE" ]; then
+  set -- "$@" --max-turns "$MAX_TURNS_VALUE"
+fi
+
+claude "$@" < "$AI_REVIEW_RENDERED_PROMPT"

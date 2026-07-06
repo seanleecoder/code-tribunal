@@ -16,6 +16,7 @@ from .canonical import json_loads_no_duplicates
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
+    AdapterModelError,
     SchemaValidationError,
     adapter_status_artifact,
     empty_critique_batch,
@@ -29,6 +30,14 @@ from .schema import (
 )
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Process exit code written for terminal error statuses (model_error,
+# schema_error, timeout, config_error, internal_error). The CI reviewer/critique
+# jobs stay `allow_failure: true`, so a non-zero exit surfaces as a visible
+# "warning" without hard-blocking the pipeline — the panel degradation policy
+# (min_successful_reviewers_for_blocking) still governs merge gating. Intentional
+# non-run outcomes (success, skipped, budget_skipped) keep exit code 0.
+_EXIT_ERROR = 1
 
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
@@ -51,6 +60,12 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+    # Optional operator-set turn cap for the claude adapter. The sanitized
+    # adapter env is built from allowlists only, so without this entry an outer
+    # AI_REVIEW_MAX_TURNS would be stripped and never reach claude.sh. A numeric
+    # value flows into a quoted `--max-turns` arg; a config `max_turns` (if any)
+    # only fills it in when the env var is absent (env override wins).
+    "AI_REVIEW_MAX_TURNS",
 }
 
 _PROVIDER_ENDPOINT_ENV = {
@@ -158,6 +173,19 @@ def _json_preview(value: str, *, limit: int = 500) -> str:
     return compact
 
 
+def _head_tail_preview(value: str, *, limit: int = 4000) -> str:
+    # Stream-json adapters end with the terminal result/error event, which is
+    # exactly what we need to diagnose a failure — but it lives at the *end* of
+    # stdout. A head-only preview (see _json_preview) drops it, so capture both
+    # ends when the output is too long to keep whole.
+    compact = " ".join(value.strip().split())
+    if len(compact) <= limit:
+        return compact
+    head = (limit * 2) // 3
+    tail = limit - head
+    return compact[:head] + "...[truncated]..." + compact[-tail:]
+
+
 def _extract_json_text(value: str) -> str:
     stripped = value.strip()
     if stripped.startswith("```"):
@@ -190,6 +218,22 @@ def _extract_json_text(value: str) -> str:
             return object_candidates[0][2]
         return candidates[0][2]
     return stripped
+
+
+def _terminal_error_detail(event: dict[str, Any]) -> str:
+    # Describe a terminal is_error event as usefully as possible. Turn-limit
+    # errors carry an empty `result` but a meaningful `subtype`
+    # (e.g. error_max_turns); fall back to a compact dump of the event otherwise.
+    detail = str(event.get("result", "")).strip()
+    if detail:
+        return detail
+    subtype = str(event.get("subtype", "")).strip()
+    if subtype:
+        return subtype
+    try:
+        return json.dumps(event, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(event)
 
 
 def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
@@ -227,6 +271,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
     assistant_parts = []
     result_text = ""
     event_types = []
+    stream_error: str | None = None
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -254,12 +299,21 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
         if event.get("is_error") is True:
-            raise SchemaValidationError(
-                f"adapter JSON stream returned an error: {_json_preview(str(event.get('result', '')))!r}"
-            )
+            # Record the terminal error but keep scanning: the model may have
+            # already emitted valid findings in an earlier assistant message and
+            # only *then* hit a terminal error (e.g. error_max_turns). We only
+            # fail if no usable reviewer content was produced — otherwise the
+            # good findings would be discarded. Prefer the result text, but fall
+            # back to the subtype (error_max_turns etc.) so an empty result does
+            # not collapse to an uninformative ''.
+            stream_error = _json_preview(_terminal_error_detail(event))
 
     text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
     if not text:
+        if stream_error is not None:
+            raise AdapterModelError(
+                f"adapter run ended in a model error before emitting reviewer output: {stream_error!r}"
+            )
         raise SchemaValidationError(
             "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
@@ -267,6 +321,10 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
     try:
         raw = json_loads_no_duplicates(_extract_json_text(text))
     except Exception as exc:
+        if stream_error is not None:
+            raise AdapterModelError(
+                f"adapter run ended in a model error: {stream_error!r}"
+            ) from exc
         raise SchemaValidationError(
             f"adapter JSON stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
         ) from exc
@@ -293,8 +351,8 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
 
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw.get("is_error") is True:
-            raise SchemaValidationError(
-                f"Claude Code returned an error result: {_json_preview(str(raw.get('result', '')))!r}"
+            raise AdapterModelError(
+                f"Claude Code returned an error result: {_json_preview(_terminal_error_detail(raw))!r}"
             )
         if raw["result"].strip():
             try:
@@ -306,7 +364,7 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
                 ) from exc
             raw = _coerce_adapter_root(unwrapped, stage=stage)
         else:
-            raise SchemaValidationError("Claude Code result was empty")
+            raise AdapterModelError("Claude Code result was empty")
 
     return raw
 
@@ -320,10 +378,10 @@ def _write_parse_debug(
         "\n".join(
             [
                 "stdout_preview:",
-                redact_text(_json_preview(stdout, limit=4000)),
+                redact_text(_head_tail_preview(stdout, limit=4000)),
                 "",
                 "stderr_preview:",
-                redact_text(_json_preview(stderr, limit=4000)),
+                redact_text(_head_tail_preview(stderr, limit=4000)),
                 "",
             ]
         ),
@@ -377,7 +435,9 @@ def _build_adapter_env(
     env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
     env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
     env["AI_REVIEW_TIMEOUT_SECONDS"] = str(max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10))
-    if reviewer_config.get("max_turns") is not None:
+    # An outer AI_REVIEW_MAX_TURNS (allowlisted above) takes precedence; config
+    # only supplies the value when the operator did not set the env override.
+    if reviewer_config.get("max_turns") is not None and "AI_REVIEW_MAX_TURNS" not in env:
         env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
@@ -461,7 +521,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 error_class="ReviewerConfigValidation",
                 error_message=validation_error,
             )
-            return 0
+            return _EXIT_ERROR
 
         budget_backend = str(config.get("budget", {}).get("backend", "none"))
         project_id, mr_iid = _manifest_project_and_mr(input_dir)
@@ -558,7 +618,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 error_class="AdapterExit",
                 error_message=result.stderr or f"adapter exited {result.returncode}",
             )
-            return 0
+            return _EXIT_ERROR
 
         try:
             raw = _load_adapter_json(result.stdout, stage=stage)
@@ -586,13 +646,14 @@ def run_adapter(reviewer: str, stage: str) -> int:
             else:
                 finalized = raw
         except Exception as exc:
+            status = "model_error" if isinstance(exc, AdapterModelError) else "schema_error"
             _write_parse_debug(output_dir, reviewer, stage, result.stdout, result.stderr)
             _write_empty(
                 output_dir,
                 output_file,
                 reviewer,
                 stage,
-                "schema_error",
+                status,
                 run_id,
                 model,
                 started_at,
@@ -601,14 +662,14 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_dir,
                 reviewer,
                 stage,
-                "schema_error",
+                status,
                 started_at,
                 started_monotonic,
                 output_file,
                 error_class=exc.__class__.__name__,
                 error_message=str(exc),
             )
-            return 0
+            return _EXIT_ERROR
 
         write_canonical_json(output_dir / output_file, finalized)
         _write_status(output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file)
@@ -632,7 +693,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_class="TimeoutExpired",
             error_message=str(exc),
         )
-        return 0
+        return _EXIT_ERROR
     except Exception as exc:
         _write_empty(
             output_dir,
@@ -655,7 +716,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )
-        return 0
+        return _EXIT_ERROR
 
 
 def cli(argv: list[str] | None = None) -> int:

@@ -11,7 +11,10 @@ reviewers:
     adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
     model: claude-haiku-4.5 # Model identifier passed to CLI adapter (override: AI_REVIEW_CLAUDE_MODEL)
     timeout_seconds: 900 # Execution timeout per reviewer job
-    max_turns: 4 # Max multi-turn agentic turns permitted
+    # No max_turns: like the codex/opencode adapters, Claude runs its agentic
+    # loop to completion, bounded by timeout_seconds. A low cap (was 4) made
+    # stronger, more exploratory models hit error_max_turns before emitting
+    # findings. Set max_turns here (or AI_REVIEW_MAX_TURNS) only to re-impose one.
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token
     cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)

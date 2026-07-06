@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.adapter_runner import run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import (
     SchemaValidationError,
     empty_critique_batch,
@@ -279,7 +279,7 @@ class SchemaValidationTests(unittest.TestCase):
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             try:
-                self.assertEqual(run_adapter("bad", "review"), 0)
+                self.assertEqual(run_adapter("bad", "review"), _EXIT_ERROR)
             finally:
                 for key, value in previous.items():
                     if value is None:

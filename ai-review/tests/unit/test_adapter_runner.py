@@ -8,9 +8,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.adapter_runner import _load_adapter_json, run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR, _load_adapter_json, run_adapter
 from ai_review.budget import BudgetDecision
-from ai_review.schema import SchemaValidationError, load_json_file, write_canonical_json
+from ai_review.schema import (
+    AdapterModelError,
+    SchemaValidationError,
+    load_json_file,
+    write_canonical_json,
+)
 
 _CONFIG_TAIL = [
     "panel:",
@@ -165,7 +170,45 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "result": "",
             }
         )
-        with self.assertRaisesRegex(SchemaValidationError, "result was empty"):
+        with self.assertRaisesRegex(AdapterModelError, "result was empty"):
+            _load_adapter_json(stdout)
+
+    def test_terminal_is_error_after_findings_keeps_findings(self) -> None:
+        # A terminal is_error event (e.g. error_max_turns) must not discard
+        # findings the model already emitted earlier in the stream.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": '{"findings":[]}'}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}
+                ),
+            ]
+        )
+        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
+
+    def test_terminal_is_error_without_output_is_model_error(self) -> None:
+        # No usable reviewer content before the terminal error → model_error,
+        # not schema_error (the CLI ran; it just never produced findings).
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}
+                ),
+            ]
+        )
+        # The subtype must survive so the message is not a bare '' — it is the
+        # only clue to *why* the run failed when result is empty.
+        with self.assertRaisesRegex(AdapterModelError, "error_max_turns"):
             _load_adapter_json(stdout)
 
     def test_loads_stream_json_assistant_content(self) -> None:
@@ -215,9 +258,11 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
 
 class MaxTurnsEnvTests(unittest.TestCase):
-    def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:
-        # Bug #13: the runner must export AI_REVIEW_MAX_TURNS from the reviewer config so
-        # the adapter honours it instead of falling back to the literal default.
+    def _run_turns_adapter(
+        self, *, config_max_turns: int | None, env_max_turns: str | None
+    ) -> str:
+        # Drive a synthetic reviewer whose adapter echoes the AI_REVIEW_MAX_TURNS
+        # it actually received, so the test observes what the runner exports.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "ai-review"
@@ -259,27 +304,26 @@ class MaxTurnsEnvTests(unittest.TestCase):
             adapter = adapter_dir / "turns.sh"
             adapter.write_text(
                 '#!/bin/sh\n'
-                'printf "%s" "$AI_REVIEW_MAX_TURNS" > "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
+                'printf "%s" "${AI_REVIEW_MAX_TURNS:-<unset>}" > "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
                 "printf '{\"findings\":[]}'\n",
                 encoding="utf-8",
             )
             adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
+            reviewer_lines = [
+                "  turns:",
+                "    enabled: true",
+                "    adapter: adapters/turns.sh",
+                "    model: turns-model",
+                "    timeout_seconds: 30",
+                "    max_findings: 50",
+                "    credential_variable: TURNS_KEY",
+            ]
+            if config_max_turns is not None:
+                reviewer_lines.insert(5, f"    max_turns: {config_max_turns}")
             config_path = config_dir / "review.yaml"
             config_path.write_text(
                 "\n".join(
-                    [
-                        "schema_version: review_config.v1",
-                        "reviewers:",
-                        "  turns:",
-                        "    enabled: true",
-                        "    adapter: adapters/turns.sh",
-                        "    model: turns-model",
-                        "    timeout_seconds: 30",
-                        "    max_turns: 7",
-                        "    max_findings: 50",
-                        "    credential_variable: TURNS_KEY",
-                        *_CONFIG_TAIL,
-                    ]
+                    ["schema_version: review_config.v1", "reviewers:", *reviewer_lines, *_CONFIG_TAIL]
                 ),
                 encoding="utf-8",
             )
@@ -292,19 +336,49 @@ class MaxTurnsEnvTests(unittest.TestCase):
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
-            os.environ.pop("AI_REVIEW_MAX_TURNS", None)
+            if env_max_turns is None:
+                os.environ.pop("AI_REVIEW_MAX_TURNS", None)
+            else:
+                os.environ["AI_REVIEW_MAX_TURNS"] = env_max_turns
             try:
                 self.assertEqual(run_adapter("turns", "review"), 0)
                 seen = (output_dir / "max_turns_seen.txt").read_text(encoding="utf-8")
+                batch = load_json_file(output_dir / "findings" / "turns.json")
+                self.assertEqual(batch["adapter_status"], "success")
             finally:
                 for key, value in previous.items():
                     if value is None:
                         os.environ.pop(key, None)
                     else:
                         os.environ[key] = value
-            self.assertEqual(seen, "7")
-            batch = load_json_file(output_dir / "findings" / "turns.json")
-            self.assertEqual(batch["adapter_status"], "success")
+            return seen
+
+    def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:
+        # Bug #13: the runner must export AI_REVIEW_MAX_TURNS from the reviewer config so
+        # the adapter honours it instead of falling back to the literal default.
+        self.assertEqual(
+            self._run_turns_adapter(config_max_turns=7, env_max_turns=None), "7"
+        )
+
+    def test_env_max_turns_passes_through_without_config(self) -> None:
+        # No config max_turns (the claude default): an operator-set env override
+        # must survive the sanitized adapter env and reach the adapter.
+        self.assertEqual(
+            self._run_turns_adapter(config_max_turns=None, env_max_turns="9"), "9"
+        )
+
+    def test_env_max_turns_wins_over_config(self) -> None:
+        # When both are set, the runtime env override takes precedence over config.
+        self.assertEqual(
+            self._run_turns_adapter(config_max_turns=7, env_max_turns="9"), "9"
+        )
+
+    def test_no_max_turns_leaves_env_unset(self) -> None:
+        # Neither configured nor overridden: the adapter sees no cap at all
+        # (claude.sh then omits --max-turns entirely).
+        self.assertEqual(
+            self._run_turns_adapter(config_max_turns=None, env_max_turns=None), "<unset>"
+        )
 
 
 def _scaffold_project(root: Path) -> dict[str, Path]:
@@ -405,7 +479,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(paths["adapter_dir"], "broken", '#!/bin/sh\necho "boom" >&2\nexit 1\n')
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("broken", "review"), 0)
+            self.assertEqual(run_adapter("broken", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "broken.json")
             self.assertEqual(batch["adapter_status"], "model_error")
@@ -420,7 +494,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(paths["adapter_dir"], "garbled", "#!/bin/sh\nprintf 'not json at all'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("garbled", "review"), 0)
+            self.assertEqual(run_adapter("garbled", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "garbled.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
@@ -494,7 +568,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("slow", "review"), 0)
+            self.assertEqual(run_adapter("slow", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "slow.json")
             self.assertEqual(batch["adapter_status"], "timeout")

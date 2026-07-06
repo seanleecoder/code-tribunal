@@ -26,6 +26,19 @@ class SchemaValidationError(ValueError):
     pass
 
 
+class AdapterModelError(RuntimeError):
+    """Reviewer CLI ran but ended in a model-side failure rather than emitting
+    malformed output.
+
+    Covers cases like Claude Code's terminal ``is_error`` result event (e.g.
+    ``error_max_turns``) or an otherwise-empty model result. Classified as
+    ``model_error`` — distinct from ``schema_error``, which means the adapter
+    produced content that failed schema validation.
+    """
+
+    pass
+
+
 ADAPTER_STATUSES = {
     "success",
     "skipped",

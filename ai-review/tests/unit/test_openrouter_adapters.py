@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.adapter_runner import run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
@@ -425,7 +425,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             for key, value in (extra_env or {}).items():
                 os.environ[key] = value
             try:
-                self.assertEqual(run_adapter(reviewer, "review"), 0)
+                # This helper only drives the invalid-config (model_error) path,
+                # so the adapter now exits non-zero.
+                self.assertEqual(run_adapter(reviewer, "review"), _EXIT_ERROR)
                 self.assertFalse((output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists())
                 return load_json_file(output_dir / "findings" / f"{reviewer}.json")
             finally:
