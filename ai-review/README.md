@@ -165,3 +165,7 @@ The system development and validation is documented across 6 milestone acceptanc
 - [Phase 5.5 Acceptance Evidence](PHASE_5_5_ACCEPTANCE.md): Public GHCR image publishing & preflight verification.
 
 For a concrete, artifact-backed walkthrough of every stage on one real pipeline run, see [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).
+
+## Planned Features
+
+- [Project Review Rules and Human-Gated Learning Loop](../specs/project-rules-and-learning-spec.md) (design spec): trusted target-branch project rules injected into reviewer/critique prompts, plus a scheduled job that turns cross-MR `wontfix` outcomes into human-approved `learned.md` rule proposals.
