@@ -305,6 +305,11 @@ Flat `.ai-review/rules/` directory:
 | `severity.md` | Calibration mapped to the tool's exact vocabulary (`info\|minor\|major\|blocker`; `security\|correctness\|performance\|maintainability\|style\|test\|other`) |
 | `learned.md` | Machine-proposed, human-merged (Section 7 output; humans may edit freely) |
 
+Within each file, every rule is a **heading-anchored, stably-identified block** in the
+rule-trace format (Section 8.2) — e.g. `## SUP-003` with `Scope`, `Applies when`,
+`Severity`, `Rule` fields. IDs are what make rules observable: citable in findings,
+countable in reports, and auditable over time.
+
 ### 6.2 What makes a rule review-effective
 
 Include (rules that change what a *reviewer* flags or ignores):
@@ -390,14 +395,17 @@ cursor snippet. Recommendation: a dedicated project access token, **Developer** 
 (`AI_REVIEW_LESSONS_TOKEN`) exposed **only** to scheduled pipelines on protected
 branches — MR pipelines never see it. The adapter env allowlist
 (`adapter_runner._build_adapter_env`) already excludes it from reviewer jobs; the
-acceptance suite asserts this explicitly (Section 9, Phase C).
+acceptance suite asserts this explicitly (Section 10, Phase C).
 
 ### 7.5 Cap and expiry policy for `learned.md`
 
 Hard cap 100 entries / 24 KiB (comfortably inside the 32 KiB per-file cap). The proposer
 also proposes **removals**: entries older than `lessons.expiry_months` (12) with no
 recurrence support since are listed in a "candidates for removal" section of the bot MR.
-Humans prune; the machine never deletes unilaterally.
+Humans prune; the machine never deletes unilaterally. Once rule tracing (Section 8) is
+in place, removal candidacy becomes usage-informed rather than purely time-based: a rule
+that traces show is still being applied or cited is never proposed for removal,
+regardless of age (Section 8.5).
 
 ### 7.6 Configuration
 
@@ -419,7 +427,150 @@ appropriate.
 
 ---
 
-## 8. Data and Schema Changes
+## 8. Rule Observability and Tracing (rule-trace alignment)
+
+### 8.1 Problem
+
+A growing `learned.md` (and rules set generally) is unmaintainable if rules are
+write-only prose: nobody can tell whether a rule is still doing work, was ever
+considered by a reviewer, or is being silently deviated from. A rule that is loaded is
+indistinguishable from one that is ignored unless the reviewer discloses which rules
+influenced its output. This section adopts the concepts of
+[rule-trace](https://github.com/seanleecoder/rule-trace) — stable rule IDs, per-run
+trace disclosures (candidates / applied / deviations), a deterministic validator, and
+usage reporting — and defines the shared setup between local coding-agent usage and
+code-tribunal CI usage.
+
+### 8.2 Rule identity — rule-trace format
+
+Every rule in `.ai-review/rules/*.md` is a heading-anchored block:
+
+```markdown
+## SUP-003
+- Scope: src/audit/
+- Applies when: reviewing async call sites
+- Severity: SHOULD
+- Rule: Do not flag missing `await` on `AuditLog.write(...)` — fire-and-forget
+  by design; durability is handled by the queue layer.
+- Evidence: !210, !214, !221 (added: 2026-07)
+```
+
+- **ID prefixes by file** (convention): `CTX-` context, `PRI-` priorities, `FTG-`
+  footguns, `SUP-` suppressions, `SEV-` severity, `LRN-` learned. The lessons proposer
+  (Section 7) assigns the next free `LRN-NNN` to every entry it drafts.
+- **Severity vocabulary** is rule-trace's `MUST | SHOULD | MAY` — this is the rule's
+  *bindingness for the reviewer*, orthogonal to the finding-severity vocabulary
+  (`info|minor|major|blocker`) a rule may talk about.
+- **Parsing is deterministic Python in prepare**, mirroring the subset of rule-trace's
+  `validate-rules.mjs` checks that matter here: IDs resolve to `##` headings, IDs are
+  unique across the loaded set, required fields present. Violations follow the existing
+  all-or-nothing policy and `on_error` knob (Section 3). Files containing prose without
+  ID blocks still load (backward compatible) — but only ID'd rules are traceable, and
+  the manifest warns about untraceable content.
+- The manifest `project_rules` block (Section 3.4) gains
+  `"rule_ids": ["SUP-003", "LRN-014", ...]` — the **candidate set**, recorded
+  deterministically at prepare time. Candidates never depend on LLM disclosure: every
+  loaded rule ID is by definition a candidate for every reviewer in the run.
+
+### 8.3 Trace contract — reviewer and critique disclosures
+
+The prompt framing (Section 4.2) gains an instruction block asking reviewers to
+disclose rule usage, and the output contracts gain **optional** fields:
+
+- Per finding (`finding_batch.v1`): `"applied_rules": ["FTG-002"]` — rule IDs that
+  shaped this finding (raised because of a footgun rule, calibrated by a severity
+  rule).
+- Per batch: a `rule_trace` object:
+
+```json
+"rule_trace": {
+  "applied": ["FTG-002", "SEV-001"],
+  "deviations": [
+    {"rule_id": "SUP-003", "justification": "this call site reads the result back"}
+  ]
+}
+```
+
+- Per critique verdict (`critique_batch.v1`): `"cited_rules": ["SUP-003"]` — the
+  suppression a critic cites when voting `noise`.
+
+Validation is fail-open and deterministic: IDs not present in the manifest's
+`rule_ids` are stripped with a warning (the rule-trace `--lint-file` analog);
+malformed trace objects are dropped, never fatal. **Observability must never reduce
+review reliability** — a reviewer that emits no trace still produces a valid batch.
+Deviation `justification` strings are LLM output and are sanitized like all model text
+(`post.py:sanitize_model_text`) before rendering anywhere.
+
+Suppression rules have an inherent observability asymmetry: a rule that works by
+*preventing* a finding leaves no finding to annotate. They surface in two ways —
+critique `cited_rules` on `noise` votes when a reviewer raises the issue anyway, and
+batch-level `applied` when a reviewer discloses it considered-and-suppressed.
+
+### 8.4 Aggregation and surfacing
+
+- **Consensus** (`consensus.py`) unions per-finding `applied_rules` and critique
+  `cited_rules` into a `rule_citations` list on each decided group — deterministic
+  set-union, no interpretation.
+- **Post** renders citations in the places humans look: inline comments get a trailing
+  "rules: FTG-002" line; the summary note gets a compact "Rules in effect" section
+  (candidate count, applied/cited IDs with counts, deviations with justifications).
+  A reviewer reading an MR can see *why* a finding exists and *which* learned rule
+  killed a false positive — per finding, which is the observability ask.
+- **Persistence**: post writes a small per-run usage summary into the existing MR state
+  note: `"rule_usage": {"SUP-003": {"applied": 1, "cited": 2, "deviated": 0}, ...}`
+  (bounded: IDs are capped by `max_files` × file size; counts only, no text). This
+  keeps the collection story identical to Section 7.1 — state notes are the durable
+  cross-MR store; no new write paths on MR pipelines.
+
+### 8.5 Metrics and maintenance reporting
+
+The scheduled lessons job (Section 7.1) already reads every recent MR's state note; it
+additionally aggregates `rule_usage` across MRs into a `rule_usage_report.json`
+artifact (and optionally a static `dashboard.html` in rule-trace's report format so the
+same viewer serves both worlds), tracking per rule ID:
+
+- candidate runs (from manifests via state notes) vs applied/cited counts →
+  **application rate**;
+- **dead rules** — candidates in many runs, never applied or cited;
+- **low-engagement rules** — applied far below candidacy;
+- **unwaived MUST gaps** — `Severity: MUST` rules with deviations lacking recorded
+  justification;
+- **deviation hotspots** — rules frequently deviated from (candidates for rewording,
+  rescoping, or deletion).
+
+The maintenance loop closes in the same bot MR the proposer already opens: the
+"candidates for removal" section (7.5) is driven by this data — dead or
+low-engagement beyond `lessons.expiry_months` — and each removal candidate carries its
+usage numbers as evidence. Humans prune; the machine never deletes.
+
+### 8.6 Shared setup with local coding agents
+
+The goal is one rules corpus and one observability pipeline serving both local agents
+and CI review. The sharing boundary is **formats and data, not runtime code**
+(rule-trace is dependency-free Node; code-tribunal is Python — sharing schemas is
+robust, sharing code is not):
+
+| Layer | Shared artifact | Local side (rule-trace) | CI side (code-tribunal) |
+|---|---|---|---|
+| Rule format | Heading-anchored IDs + metadata (8.2) | authored in `.agents/rules/`, indexed by `.agents/rules-catalog.md` | fetched from `.ai-review/rules/` on the target branch |
+| Rule sync | rule-trace importers + drift validation | `validate-rules.mjs` in the adopting repo's CI confirms importer targets match the catalog | `.ai-review/rules/` is an importer target for catalog rules tagged review-relevant; review-only rules may be authored there directly |
+| Trace records | JSONL schema: `{uuid, candidates, applied, deviations[{rule_id, justification}], source}` | Claude Code `Stop` hook → `.agents/metrics/traces.jsonl` (`source: "local"`) | lessons job exports per-run traces from state-note `rule_usage` + batch `rule_trace` (`source: "ci-review"`) |
+| Validation | The format rules themselves | `validate-rules.mjs` (full) | Python parser in prepare (subset: 8.2) |
+| Reporting | Report/dashboard format | `report.mjs` → `report.json` / `dashboard.html` | `rule_usage_report.json` in the same shape, so `report.mjs`'s dashboard renders merged local + CI traces |
+
+Division of authority: **rule-trace owns the canonical format and the local loop**
+(authoring, importers, drift, transcript-hook tracing); **code-tribunal owns the
+trusted-channel consumption and CI-side tracing** (target-branch fetch, prompt
+injection framing, consensus/post citation, state-note usage counters). The distilled
+review rules (Section 6.3, Appendix A) become catalog entries on day one, so local
+agents and reviewers verifiably see the same rules — with per-side scoping handled by
+which files each importer target includes.
+
+What deliberately stays unshared: code-tribunal never executes rule-trace's JS at
+review time (prepare must stay dependency-light and deterministic), and local traces
+never influence CI review decisions (they are observability data, not a trust input).
+
+## 9. Data and Schema Changes
 
 | Artifact | Change |
 |---|---|
@@ -427,10 +578,15 @@ appropriate.
 | `lessons_proposal.schema.json` | New schema for the drafting call's JSON contract (entries: rule text, category, scope, evidence MR iids, added stamp; removal candidates). |
 | Project snippet `ai-review-lessons-state:v1` | New machine-owned cursor + dedup-key store, same checksum discipline as `ai-review-state:v1`. |
 | `review_config.v1` | New `project_rules:` and `lessons:` sections, defaulted when absent; **no version bump** (rationale in Section 5). |
+| `finding_batch.v1` | Optional per-finding `applied_rules` and per-batch `rule_trace` (Section 8.3). Additive, optional — absent trace is valid. |
+| `critique_batch.v1` | Optional per-verdict `cited_rules` (Section 8.3). |
+| `consensus.v1` | Per-group `rule_citations` (Section 8.4). |
+| `ai-review-state:v1` | Per-run `rule_usage` counters (Section 8.4). Additive; bounded to counts. |
+| `rule_usage_report.json` | New scheduled-job artifact, shaped for rule-trace's report/dashboard tooling (Section 8.5). |
 
 ---
 
-## 9. Phasing and Acceptance Criteria
+## 10. Phasing and Acceptance Criteria
 
 ### Phase A — Trusted project rules injection
 
@@ -498,6 +654,46 @@ Security acceptance:
 - `schedule_only: true` makes the job refuse to run when
   `CI_PIPELINE_SOURCE != "schedule"`.
 
+### Phase D — Rule identity and trace contract
+
+Touches: `input_bundle.py` (rule-block parser, manifest `rule_ids`), schema files
+(`finding_batch`, `critique_batch`, `consensus`, `state`), `prompt_render.py` /
+prompts (trace disclosure instruction), `adapter_runner.py` (trace normalization),
+`consensus.py` (`rule_citations` union), `post.py` (citation rendering, `rule_usage`
+counters in the state note).
+
+Unit acceptance:
+- Parser matrix: valid blocks, duplicate IDs, missing required fields, prose-only files
+  (load with warning), ID prefix conventions not enforced (IDs are opaque strings).
+- Manifest `rule_ids` equals the parsed candidate set; empty when no ID'd rules.
+- Unknown rule IDs in finding/critique output are stripped with warnings; malformed
+  `rule_trace` objects dropped; batches without traces remain valid (fail-open matrix).
+- Deviation justifications pass through `sanitize_model_text` before rendering.
+- Consensus `rule_citations` is the deterministic union of applied + cited IDs.
+- State note `rule_usage` counters round-trip and stay within size retention limits.
+
+Live smoke: a planted `SUP-` rule → reviewer raises the issue anyway → critic cites the
+rule voting `noise` → consensus drops it → summary note's "Rules in effect" section
+shows the citation; state note contains the usage counters.
+
+### Phase E — Usage metrics and shared tooling
+
+Touches: `lessons.py` (usage aggregation, `rule_usage_report.json`, usage-informed
+removal candidates), docs (shared-setup guide: rule-trace catalog + importer wiring for
+`.ai-review/rules/`, trace JSONL export).
+
+Unit acceptance:
+- Report math: application rate, dead rules, low-engagement, unwaived MUST gaps,
+  deviation hotspots — each from constructed state-note fixtures.
+- Removal candidacy: aged rule with recent applied/cited usage is NOT proposed for
+  removal; aged dead rule is, with usage numbers as evidence.
+- Exported trace JSONL validates against the shared record shape
+  (`uuid, candidates, applied, deviations, source`).
+
+Live acceptance: after several reviewed MRs, the scheduled run publishes
+`rule_usage_report.json`; rule-trace's `report.mjs`/dashboard renders a merged view of
+local `.agents/metrics/traces.jsonl` and the exported CI traces in the adopting repo.
+
 ---
 
 ## Appendix A — Distillation Prompt (one-time, maintainer-run)
@@ -542,12 +738,23 @@ From the attached documents:
    `(correctness, title_fingerprint("missing await on AuditLog.write"), src/audit)`,
    passes the 3-occurrences/2-MRs gate, finds no covering entry in `suppressions.md`
    or `learned.md`, and has the drafting call word one entry.
-3. The bot opens MR "ai-review: 1 proposed lesson" editing `.ai-review/rules/learned.md`:
-   > Do not flag missing `await` on `AuditLog.write(...)` in `src/audit/` —
-   > fire-and-forget by design; durability is handled by the queue layer.
-   > (evidence: !210, !214, !221; added: 2026-07)
+3. The bot opens MR "ai-review: 1 proposed lesson" editing `.ai-review/rules/learned.md`,
+   assigning the next free ID:
+   > ## LRN-014
+   > - Scope: src/audit/
+   > - Applies when: reviewing async call sites
+   > - Severity: SHOULD
+   > - Rule: Do not flag missing `await` on `AuditLog.write(...)` — fire-and-forget
+   >   by design; durability is handled by the queue layer.
+   > - Evidence: !210, !214, !221 (added: 2026-07)
 4. A Maintainer reviews the evidence and merges. The entry now lives on the default
    branch.
-5. The next MR touching `src/audit/` is reviewed with `<PROJECT_RULES>` containing the
-   entry: reviewers stop raising it, and if one still does, critics vote `noise` citing
-   the suppression — consensus drops it. The mistake is not repeated.
+5. The next MR touching `src/audit/` is reviewed with `<PROJECT_RULES>` containing
+   `LRN-014` in its candidate set (manifest `rule_ids`): reviewers stop raising it, and
+   if one still does, critics vote `noise` with `cited_rules: ["LRN-014"]` — consensus
+   drops it and the summary note shows the citation. The mistake is not repeated,
+   and the fact that the rule is doing work is visible.
+6. Eighteen months later, the audit queue is removed and the finding class disappears.
+   `rule_usage_report.json` shows `LRN-014` dead for 12 months; the next lessons MR
+   lists it as a removal candidate with those numbers. A human deletes it. The rules
+   file does not accrete.
