@@ -64,4 +64,30 @@ RUN claude --version \
     && codex --version \
     && opencode --version
 
+# Fail the image build if the pinned CLI ever rejects either of the claude
+# adapter's stage flag sets (claude.sh) — the review probe (finding schema,
+# --add-dir, repo tools) and the critique probe (critique schema, --tools "",
+# no --add-dir) — including the undocumented --output-format stream-json +
+# --json-schema interaction, probed with the real schemas shipped in the base
+# image (with the $schema draft key stripped, exactly as the adapter passes
+# them). No credentials exist at build time: an *accepted* argv still runs
+# far enough to emit a '"type":"result"' stream event (auth error), while a
+# *rejected* flag or schema prints an error on stderr and produces no stream
+# at all — so grep stdout for the result event and ignore the CLI's exit
+# code. This validates flag/schema acceptance and stream shape only; whether
+# structured_output is actually emitted is observable per run via the
+# runner's "ai-review: ..." job-log line.
+RUN (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
+      --no-session-persistence --output-format stream-json --verbose \
+      --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/raw_finding_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
+      --bare --add-dir /workspace --tools "Read,Grep,Glob" \
+      --effort medium || true) \
+    | grep -q '"type":"result"' \
+    && (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
+      --no-session-persistence --output-format stream-json --verbose \
+      --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/critique_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
+      --bare --tools "" \
+      --effort medium || true) \
+    | grep -q '"type":"result"'
+
 WORKDIR /workspace

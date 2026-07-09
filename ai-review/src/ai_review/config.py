@@ -35,6 +35,11 @@ REVIEWER_REQUIRED_KEYS = {
     "credential_variable",
 }
 
+# Closed set of reviewer `effort` values. Matching the claude CLI's --effort
+# levels; a closed set also means the value that reaches shell argv can never
+# carry quoting/injection payloads.
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
 
 def _strip_comment(line: str) -> str:
     in_single = False
@@ -175,6 +180,9 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     Recognized overrides:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
     - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``
+    - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` (one of
+      ``low|medium|high|xhigh|max``, validated in ``validate_config``; currently
+      consumed only by the claude adapter's ``--effort`` flag)
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
@@ -195,6 +203,9 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
             enabled_env = os.environ.get(f"{prefix}ENABLED")
             if enabled_env is not None:
                 reviewer["enabled"] = _env_flag(f"{prefix}ENABLED", enabled_env)
+            effort_env = os.environ.get(f"{prefix}EFFORT")
+            if effort_env is not None and effort_env.strip():
+                reviewer["effort"] = effort_env.strip()
 
     critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")
     if critique_env is not None:
@@ -222,7 +233,11 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
     return {
         "reviewers": {
-            name: {"model": reviewer.get("model"), "enabled": bool(reviewer.get("enabled"))}
+            name: {
+                "model": reviewer.get("model"),
+                "enabled": bool(reviewer.get("enabled")),
+                "effort": reviewer.get("effort"),
+            }
             for name, reviewer in reviewers.items()
             if isinstance(reviewer, dict)
         },
@@ -266,6 +281,11 @@ def validate_config(config: dict[str, Any]) -> None:
         missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
+        effort = reviewer.get("effort")
+        if effort is not None and effort not in EFFORT_LEVELS:
+            raise ConfigError(
+                f"reviewer {name} effort must be one of {sorted(EFFORT_LEVELS)}, got {effort!r}"
+            )
     critique = config.setdefault("critique", {})
     critique.setdefault("enabled", False)
     critique.setdefault("rounds", 0)

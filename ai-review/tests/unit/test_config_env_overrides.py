@@ -59,6 +59,20 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
         self.assertTrue(config["reviewers"]["codex"]["enabled"])
 
+    def test_effort_override_per_reviewer(self) -> None:
+        config = _base_config()
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "low"}, clear=True):
+            apply_env_overrides(config)
+        self.assertEqual(config["reviewers"]["claude"]["effort"], "low")
+        # Untouched reviewers gain no effort key.
+        self.assertNotIn("effort", config["reviewers"]["codex"])
+
+    def test_blank_effort_override_is_ignored(self) -> None:
+        config = _base_config()
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "   "}, clear=True):
+            apply_env_overrides(config)
+        self.assertNotIn("effort", config["reviewers"]["claude"])
+
     def test_critique_and_merge_gate_overrides(self) -> None:
         config = _base_config()
         with mock.patch.dict(
@@ -98,6 +112,25 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+
+    def test_repo_config_default_effort_loads(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=False):
+            config = load_config(_REPO_CONFIG)
+        self.assertEqual(config["reviewers"]["claude"]["effort"], "medium")
+
+    def test_effort_override_applies_and_validates(self) -> None:
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "xhigh"}):
+            config = load_config(_REPO_CONFIG)
+        self.assertEqual(config["reviewers"]["claude"]["effort"], "xhigh")
+
+    def test_invalid_effort_fails_loudly(self) -> None:
+        # Closed set, case-sensitive (whitespace is stripped like model
+        # overrides): anything else must raise, never reach argv.
+        for value in ("turbo", "Low", "LOW"):
+            with self.subTest(value=value):
+                with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}):
+                    with self.assertRaisesRegex(ConfigError, "effort"):
+                        load_config(_REPO_CONFIG)
 
     def test_disabling_too_many_reviewers_fails_loudly(self) -> None:
         # Only claude enabled (1) but min_successful_reviewers_for_blocking is 2.
