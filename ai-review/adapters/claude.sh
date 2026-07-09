@@ -37,12 +37,36 @@ fi
 # with a hyphen being parsed as an option by cd/dirname/basename.
 PROMPT_FILE="$(cd -- "$(dirname -- "$AI_REVIEW_RENDERED_PROMPT")" && pwd)/$(basename -- "$AI_REVIEW_RENDERED_PROMPT")"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Ask claude for schema-conforming structured output, mirroring codex's
+# --output-schema. The terminal stream-json result event then carries the
+# findings in a `structured_output` field. This is best-effort steering, not
+# enforcement — the runner still falls back to parsing the result text when
+# structured_output is absent, and real conformance is enforced downstream by
+# finalize_finding_batch + JSON-schema validation.
+OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
+if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
+  OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
+fi
+
 set -- -p \
   --safe-mode \
   --model "${AI_REVIEW_MODEL}" \
   --no-session-persistence \
   --output-format stream-json \
-  --verbose
+  --verbose \
+  --json-schema "$(cat "$OUTPUT_SCHEMA")"
+
+# --bare skips startup auto-discovery (hooks, skills, plugins, MCP, auto
+# memory, CLAUDE.md) on top of --safe-mode, but it restricts Anthropic auth to
+# strictly ANTHROPIC_API_KEY — so skip it on the OpenRouter route, which
+# authenticates via ANTHROPIC_AUTH_TOKEN (mapped above).
+case "${ANTHROPIC_BASE_URL:-}" in
+  *openrouter.ai*) ;;
+  *) set -- "$@" --bare ;;
+esac
 
 # Default working directory for stages that don't explore the repo.
 RUN_DIR="."
@@ -100,6 +124,15 @@ fi
 MAX_TURNS_VALUE="${AI_REVIEW_MAX_TURNS:-${MAX_TURNS:-}}"
 if [ -n "$MAX_TURNS_VALUE" ]; then
   set -- "$@" --max-turns "$MAX_TURNS_VALUE"
+fi
+
+# Effort modulates how much reasoning/exploration the model volunteers — it is
+# NOT a turn cap; the agentic loop still runs to completion (bounded only by
+# timeout_seconds as a hang-catch). Sourced from reviewers.<name>.effort in
+# review.yaml (runtime override: AI_REVIEW_<REVIEWER>_EFFORT), exported by the
+# runner as AI_REVIEW_EFFORT and validated there against a closed set.
+if [ -n "${AI_REVIEW_EFFORT:-}" ]; then
+  set -- "$@" --effort "$AI_REVIEW_EFFORT"
 fi
 
 cd "$RUN_DIR"

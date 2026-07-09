@@ -468,6 +468,7 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_CODEX_MODEL` | `reviewers.codex.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_OPENCODE_MODEL` | `reviewers.opencode.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_<REVIEWER>_ENABLED` | `reviewers.<name>.enabled` | Strict `true`/`false`. Disabling below `panel.min_successful_reviewers_for_blocking` fails validation loudly. |
+| `AI_REVIEW_<REVIEWER>_EFFORT` | `reviewers.<name>.effort` | Reasoning/exploration effort, one of `low`/`medium`/`high`/`xhigh`/`max` (anything else fails config validation). Voluntary stopping, not a turn cap. Currently consumed only by the claude adapter (`--effort`). |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled` **and** critique job creation | The CI template sets this to `"true"` by default and the critique-job rule keys off the exact same variable, so config behavior and CI job-creation stay in lock-step. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
 | `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |

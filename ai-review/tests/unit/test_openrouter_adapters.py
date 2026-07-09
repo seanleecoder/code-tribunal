@@ -395,6 +395,17 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("--tools Read,Grep,Glob", cli_args)
         self.assertNotIn("bundle prompt", cli_args)
         self.assertIn("bundle prompt", stdin)
+        # Structured-output steering: the review schema text is passed inline
+        # (mirroring codex --output-schema), not the post-consensus batch schema.
+        self.assertIn("--json-schema", cli_args)
+        self.assertIn('"$id": "raw_finding_batch.schema.json"', cli_args)
+        self.assertNotIn("critique_batch.schema.json", cli_args)
+        # Effort comes from the repo config default (reviewers.claude.effort).
+        self.assertIn("--effort medium", cli_args)
+        # This test runs the OpenRouter route (ANTHROPIC_BASE_URL above), where
+        # --bare would break ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
+        self.assertNotIn("--bare", cli_args)
+        self.assertIn("--safe-mode", cli_args)
         # claude explores a clean copy of the pinned MR snapshot rooted at its
         # working directory (like codex --cd / opencode --dir), not the ambient
         # CI checkout nor the input/snapshot dirs directly.
@@ -412,6 +423,42 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("symdir/AGENTS.md", tree)
         # Only the agent-config symlinks are removed; their target is untouched.
         self.assertIn("steer.txt", tree)
+
+    def test_claude_direct_anthropic_route_adds_bare(self) -> None:
+        # Without an OpenRouter ANTHROPIC_BASE_URL, auth is plain
+        # ANTHROPIC_API_KEY, so --bare (which restricts auth to exactly that)
+        # is safe and skips startup auto-discovery on top of --safe-mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "claude")
+            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
+            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
+            os.environ.pop("ANTHROPIC_BASE_URL", None)
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            try:
+                self.assertEqual(run_adapter("claude", "review"), 0)
+                batch = load_json_file(output_dir / "findings" / "claude.json")
+                argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("--bare", argv)
+        self.assertIn("--safe-mode", argv)
 
     def test_claude_critique_runs_without_repo_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -461,6 +508,11 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("Read,Grep,Glob", argv)
         self.assertNotRegex(cwd, r"/out/\.tmp/claude-review-root\.\d+$")
         self.assertEqual(review_roots, [])
+        # critique steers toward the critique schema, not the review one.
+        self.assertIn("--json-schema", argv)
+        argv_text = "\n".join(argv)
+        self.assertIn('"$id": "critique_batch.schema.json"', argv_text)
+        self.assertNotIn("raw_finding_batch.schema.json", argv_text)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli(

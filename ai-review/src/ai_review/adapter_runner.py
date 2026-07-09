@@ -274,6 +274,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
     result_text = ""
     event_types = []
     stream_error: str | None = None
+    structured_result: dict[str, Any] | list[Any] | None = None
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -300,6 +301,14 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             assistant_parts.extend(_extract_text_parts(event))
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
+        # With --json-schema, the terminal result event carries the
+        # schema-conforming payload in `structured_output`. Best-effort: the
+        # field is sometimes absent even with the flag set, so every text-based
+        # fallback below must stay.
+        if isinstance(event.get("structured_output"), (dict, list)) and event.get(
+            "is_error"
+        ) is not True:
+            structured_result = event["structured_output"]
         if event.get("is_error") is True:
             # Record the terminal error but keep scanning: the model may have
             # already emitted valid findings in an earlier assistant message and
@@ -309,6 +318,9 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             # back to the subtype (error_max_turns etc.) so an empty result does
             # not collapse to an uninformative ''.
             stream_error = _json_preview(_terminal_error_detail(event))
+
+    if structured_result is not None:
+        return _coerce_adapter_root(structured_result, stage=stage)
 
     text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
     if not text:
@@ -343,6 +355,17 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
             f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
     raw = _coerce_adapter_root(raw, stage=stage)
+    # Single-object Claude Code result envelope (--output-format json) carrying
+    # a schema-conforming `structured_output`: prefer it over re-parsing the
+    # `result` text. Guarded on is_error so error envelopes keep flowing into
+    # the AdapterModelError path below.
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and raw.get("is_error") is not True
+        and isinstance(raw.get("structured_output"), (dict, list))
+    ):
+        return _coerce_adapter_root(raw["structured_output"], stage=stage)
     if (
         "\n" in stdout.strip()
         and "findings" not in raw
@@ -441,6 +464,12 @@ def _build_adapter_env(
     # only supplies the value when the operator did not set the env override.
     if reviewer_config.get("max_turns") is not None and "AI_REVIEW_MAX_TURNS" not in env:
         env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
+    # Reasoning-effort hint for CLIs that support it (claude's --effort).
+    # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
+    # runtime override is already folded in at config load, and the value is
+    # validated against a closed set in validate_config.
+    if reviewer_config.get("effort"):
+        env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
     return env
