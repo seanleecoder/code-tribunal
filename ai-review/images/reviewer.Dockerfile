@@ -65,15 +65,22 @@ RUN claude --version \
     && opencode --version
 
 # Fail the image build if the pinned CLI ever rejects the claude adapter's
-# flag combination (claude.sh: --output-format stream-json + --json-schema —
-# an interaction the docs only document for --output-format json). No
-# credentials exist at build time: an *accepted* argv still runs far enough to
-# emit a '"type":"result"' stream event (auth error), while a *rejected* flag
-# prints `error: unknown option` on stderr and produces no stream at all — so
-# grep stdout for the result event and ignore the CLI's exit code.
-RUN (echo probe | claude -p --safe-mode --no-session-persistence \
-      --output-format stream-json --verbose \
-      --json-schema '{"type":"object"}' --tools "" || true) \
+# review-stage flag set (claude.sh; the critique stage differs only in the
+# --tools value and the absence of --add-dir), including the undocumented
+# --output-format stream-json + --json-schema interaction, probed with the
+# real finding schema shipped in the base image. No credentials exist at
+# build time: an *accepted* argv still runs far enough to emit a
+# '"type":"result"' stream event (auth error), while a *rejected* flag prints
+# `error: unknown option` on stderr and produces no stream at all — so grep
+# stdout for the result event and ignore the CLI's exit code. This validates
+# flag acceptance and stream shape only; whether structured_output is
+# actually emitted is observable per run via the runner's "ai-review: ..."
+# job-log line.
+RUN (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
+      --no-session-persistence --output-format stream-json --verbose \
+      --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/raw_finding_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
+      --bare --add-dir /workspace --tools "Read,Grep,Glob" \
+      --effort medium || true) \
     | grep -q '"type":"result"'
 
 WORKDIR /workspace

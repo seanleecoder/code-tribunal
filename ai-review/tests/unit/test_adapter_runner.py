@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -238,7 +240,12 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        # Steering activity is stated in the job log so it is never silent.
+        self.assertIn("used structured_output", stderr.getvalue())
 
     def test_stream_structured_output_critique_list_root(self) -> None:
         critique = {
@@ -267,7 +274,8 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
     def test_stream_structured_output_absent_falls_back_to_result_text(self) -> None:
         # --json-schema is best-effort: structured_output is sometimes omitted,
-        # so the existing result-text path must keep working.
+        # so the existing result-text path must keep working — and the job log
+        # must say steering was inactive (never silently).
         stdout = "\n".join(
             [
                 json.dumps({"type": "system", "subtype": "init"}),
@@ -281,7 +289,26 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        self.assertIn("no structured_output", stderr.getvalue())
+
+    def test_opencode_stream_logs_no_structured_output_message(self) -> None:
+        # opencode streams have no terminal result event; the steering log
+        # would be noise there and must not appear either way.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "s"}),
+                json.dumps({"type": "text", "text": '{"findings":[]}'}),
+            ]
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        self.assertNotIn("structured_output", stderr.getvalue())
 
     def test_stream_structured_output_on_error_event_is_ignored(self) -> None:
         # A terminal error's structured_output must not be trusted; with no other

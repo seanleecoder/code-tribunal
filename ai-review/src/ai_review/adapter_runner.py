@@ -269,12 +269,28 @@ def _extract_text_parts(content: Any) -> list[str]:
     return parts
 
 
+def _log_structured_output_usage(stage: str | None, *, used: bool) -> None:
+    # Schema steering (--json-schema) is best-effort: whether the CLI actually
+    # emitted structured_output is invisible in the findings themselves, so
+    # state it in the job log — otherwise inactive steering would be silent.
+    stage_label = stage or "review"
+    if used:
+        message = f"ai-review: {stage_label} adapter used structured_output\n"
+    else:
+        message = (
+            f"ai-review: {stage_label} adapter result event carried no "
+            "structured_output; parsing result text\n"
+        )
+    sys.stderr.write(redact_text(message))
+
+
 def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     assistant_parts = []
     result_text = ""
     event_types = []
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
+    saw_result_event = False
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -288,6 +304,8 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         if not isinstance(event, dict):
             continue
         event_types.append(str(event.get("type", "unknown")))
+        if event.get("type") == "result":
+            saw_result_event = True
         if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
         if str(event.get("type", "")).startswith("message") and isinstance(
@@ -320,7 +338,12 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             stream_error = _json_preview(_terminal_error_detail(event))
 
     if structured_result is not None:
+        _log_structured_output_usage(stage, used=True)
         return _coerce_adapter_root(structured_result, stage=stage)
+    if saw_result_event and stream_error is None:
+        # Claude-style stream (terminal result event) without the steering
+        # payload; opencode-style streams have no result event and log nothing.
+        _log_structured_output_usage(stage, used=False)
 
     text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
     if not text:
@@ -365,7 +388,14 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
         and raw.get("is_error") is not True
         and isinstance(raw.get("structured_output"), (dict, list))
     ):
+        _log_structured_output_usage(stage, used=True)
         return _coerce_adapter_root(raw["structured_output"], stage=stage)
+    if (
+        raw.get("type") == "result"
+        and raw.get("is_error") is not True
+        and "structured_output" not in raw
+    ):
+        _log_structured_output_usage(stage, used=False)
     if (
         "\n" in stdout.strip()
         and "findings" not in raw

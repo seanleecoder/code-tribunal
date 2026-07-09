@@ -400,6 +400,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("--json-schema", cli_args)
         self.assertIn('"$id": "raw_finding_batch.schema.json"', cli_args)
         self.assertNotIn("critique_batch.schema.json", cli_args)
+        # The $schema draft declaration must be stripped — the CLI rejects
+        # schemas declaring the 2020-12 draft at argument validation.
+        self.assertNotIn('"$schema"', cli_args)
         # Effort comes from the repo config default (reviewers.claude.effort).
         self.assertIn("--effort medium", cli_args)
         # This test runs the OpenRouter route (ANTHROPIC_BASE_URL above), where
@@ -513,6 +516,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         argv_text = "\n".join(argv)
         self.assertIn('"$id": "critique_batch.schema.json"', argv_text)
         self.assertNotIn("raw_finding_batch.schema.json", argv_text)
+        # $schema draft declaration stripped (CLI rejects the 2020-12 draft).
+        self.assertNotIn('"$schema"', argv_text)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli(

@@ -47,14 +47,29 @@ AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # structured_output is absent, and real conformance is enforced downstream by
 # finalize_finding_batch + JSON-schema validation.
 # Note: the docs pair --json-schema with --output-format json; its interaction
-# with stream-json is verified per pinned CLI by the image-build smoke test in
-# images/reviewer.Dockerfile. If structured_output is absent the runner falls
-# back to parsing the result text (the prompt still demands final JSON), so
-# the worst case equals the pre-json-schema pipeline.
+# with stream-json is verified per pinned CLI (full review-stage flag set) by
+# the image-build smoke test in images/reviewer.Dockerfile. If
+# structured_output is absent the runner falls back to parsing the result text
+# (the prompt still demands final JSON) and says so in the job log, so the
+# worst case equals the pre-json-schema pipeline — visibly, not silently.
 OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
 if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
   OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
 fi
+
+# The CLI rejects schemas that declare the 2020-12 draft ("--json-schema is
+# not a valid JSON Schema: no schema with key or ref https://json-schema.org/
+# draft/2020-12/schema"), so strip the $schema key when passing the shared
+# schema files; $id, $ref, $defs, pattern and const are accepted as-is
+# (verified against the pinned CLI, and re-verified per pinned CLI by the
+# image-build smoke test).
+JSON_SCHEMA_VALUE="$("${PYTHON:-python3}" -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    schema = json.load(handle)
+schema.pop("$schema", None)
+print(json.dumps(schema))
+' "$OUTPUT_SCHEMA")"
 
 set -- -p \
   --safe-mode \
@@ -62,7 +77,7 @@ set -- -p \
   --no-session-persistence \
   --output-format stream-json \
   --verbose \
-  --json-schema "$(cat "$OUTPUT_SCHEMA")"
+  --json-schema "$JSON_SCHEMA_VALUE"
 
 # --bare skips startup auto-discovery (hooks, skills, plugins, MCP, auto
 # memory, CLAUDE.md) on top of --safe-mode, but it restricts Anthropic auth to
