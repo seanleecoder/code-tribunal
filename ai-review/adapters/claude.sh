@@ -46,6 +46,11 @@ AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # enforcement — the runner still falls back to parsing the result text when
 # structured_output is absent, and real conformance is enforced downstream by
 # finalize_finding_batch + JSON-schema validation.
+# Note: the docs pair --json-schema with --output-format json; its interaction
+# with stream-json is verified per pinned CLI by the image-build smoke test in
+# images/reviewer.Dockerfile. If structured_output is absent the runner falls
+# back to parsing the result text (the prompt still demands final JSON), so
+# the worst case equals the pre-json-schema pipeline.
 OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
 if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
   OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"

@@ -64,4 +64,16 @@ RUN claude --version \
     && codex --version \
     && opencode --version
 
+# Fail the image build if the pinned CLI ever rejects the claude adapter's
+# flag combination (claude.sh: --output-format stream-json + --json-schema —
+# an interaction the docs only document for --output-format json). No
+# credentials exist at build time: an *accepted* argv still runs far enough to
+# emit a '"type":"result"' stream event (auth error), while a *rejected* flag
+# prints `error: unknown option` on stderr and produces no stream at all — so
+# grep stdout for the result event and ignore the CLI's exit code.
+RUN (echo probe | claude -p --safe-mode --no-session-persistence \
+      --output-format stream-json --verbose \
+      --json-schema '{"type":"object"}' --tools "" || true) \
+    | grep -q '"type":"result"'
+
 WORKDIR /workspace
