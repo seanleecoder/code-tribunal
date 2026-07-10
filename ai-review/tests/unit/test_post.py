@@ -74,6 +74,11 @@ class FakePostClient:
         return {"id": note_id, "body": body}
 
 
+class DiffFailPostClient(FakePostClient):
+    def fetch_mr_diff(self, project_id: str, mr_iid: str) -> str:
+        raise RuntimeError("diff unavailable")
+
+
 class StatePostClient(FakePostClient):
     def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
         super().__init__(current_head_sha)
@@ -155,6 +160,32 @@ class PostTests(unittest.TestCase):
                 "retention": {"max_records": 200, "max_state_bytes": 50000},
             },
         }
+
+
+    def test_render_body_redacts_model_authored_secrets(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {"claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"}
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        body, _body_hash = render_body(group, 1, "run")
+
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+
+    def test_diff_fetch_failure_surfaces_warning(self) -> None:
+        client = DiffFailPostClient("head")
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertTrue(any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"]))
 
     def _state_record(
         self,

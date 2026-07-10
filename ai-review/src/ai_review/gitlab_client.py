@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from urllib.parse import quote
 from typing import Any
+from urllib.parse import quote
 
 from .anchors import gitlab_line_code
 

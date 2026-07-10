@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
 

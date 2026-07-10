@@ -173,8 +173,8 @@ class GitLabClientTests(unittest.TestCase):
                 self.count += 1
                 return FakeResponse([{"id": self.count}], headers={"X-Next-Page": "999"})
 
-        import io
         import contextlib
+        import io
 
         session = RunawaySession()
         client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)

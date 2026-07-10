@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .anchors import remap_anchor, title_fingerprint
@@ -16,16 +16,17 @@ from .gitlab_client import (
     build_position,
     root_note_id_from_discussion,
 )
-from .memory import find_matching_record
 from .memory import (
     compact_state,
     empty_state,
     encode_state_note,
+    find_matching_record,
     newest_valid_state_from_notes,
     normalize_state,
     normalize_state_record,
     state_overflow_reason,
 )
+from .redact import redact_text
 from .schema import load_json_file, now_iso, write_canonical_json
 
 MARKER_RE = re.compile(
@@ -103,7 +104,8 @@ class ExistingReviewDiscussion:
 
 
 def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
-    sanitized = text.replace("<!--", "< !--").replace("-->", "-- >")
+    sanitized = redact_text(text)
+    sanitized = sanitized.replace("<!--", "< !--").replace("-->", "-- >")
     sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n").strip()
     return sanitized[:max_length]
 
@@ -850,6 +852,7 @@ def _load_current_diff_text(
     client: GitLabClient,
     manifest: dict[str, Any],
     diff_text: str | None,
+    warnings: list[str],
 ) -> str | None:
     if diff_text is not None:
         return diff_text
@@ -858,7 +861,11 @@ def _load_current_diff_text(
         return None
     try:
         return fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
-    except Exception:
+    except Exception as exc:
+        warnings.append(
+            "diff_fetch_failed: inline remap skipped, anchors may be stale "
+            f"({type(exc).__name__})"
+        )
         return None
 
 
@@ -912,7 +919,7 @@ def post_consensus(
         return result
 
     version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text)
+    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
     inline_multiline = bool(posting.get("inline_multiline", False))
     inline_sides = set(posting.get("v1_inline_sides", ["new"]))
     fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))

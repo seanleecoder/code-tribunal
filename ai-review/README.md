@@ -70,7 +70,7 @@ Reviewer models (default **Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **O
 
 - `OPENROUTER_API_KEY`: Masked project variable, shared by `review_claude`, `review_codex`, and `review_opencode`.
 - `OPENROUTER_BASE_URL`: Defaults to `https://openrouter.ai/api/v1` in the CI template; only override for a non-default OpenRouter deployment. This endpoint remains a **hard boundary** for the Codex/OpenCode adapters even though the model is no longer pinned.
-- `ANTHROPIC_BASE_URL`: Set by the CI template for `review_claude` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` when pointing at OpenRouter.
+- `ANTHROPIC_BASE_URL`: Set by the CI template for `review_claude` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` only when this value is exactly `https://openrouter.ai/api`.
 
 ### Runtime Overrides (no rebuild)
 
@@ -149,7 +149,7 @@ Each reviewer writes strictly to its own output files (`out/findings/<reviewer>.
 - **0 / 3 Successful**: `failed` infrastructure mode (fails pipeline before posting).
 
 ### Budget Backend
-`budget.backend: none` (the default in `config/review.yaml`) makes the budget check in `adapter_runner.py` a no-op; `budget_skipped` status is only reachable once a production budget backend is configured in `budget.py`.
+`budget.backend: none` (the default in `config/review.yaml`) is planned/advisory only: `budget.py` returns `budget_backend_not_implemented`, and `budget_skipped` status is only reachable once a production budget backend is configured.
 
 ---
 
@@ -165,3 +165,8 @@ The system development and validation is documented across 6 milestone acceptanc
 - [Phase 5.5 Acceptance Evidence](PHASE_5_5_ACCEPTANCE.md): Public GHCR image publishing & preflight verification.
 
 For a concrete, artifact-backed walkthrough of every stage on one real pipeline run, see [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).
+
+
+## Implemented vs Reserved Configuration
+
+Budget and Jira settings are currently planned/experimental. `post.py` does not import `jira_client`, Jira comment counters remain `0`, and the default budget backend is `none`. Several policy knobs remain reserved for later cleanup, including alternate quorum/degraded behavior, expected reviewer counts, majority-noise severity policy, merge-gate project-setting automation, most container-level `security.*` controls, per-reviewer `cli_version`, and `limits.max_findings_per_reviewer`.

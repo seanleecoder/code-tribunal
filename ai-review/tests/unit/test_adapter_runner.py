@@ -11,7 +11,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.adapter_runner import _EXIT_ERROR, _load_adapter_json, run_adapter
+from ai_review.adapter_runner import (
+    _EXIT_ERROR,
+    _cli_reviewer_validation_error,
+    _load_adapter_json,
+    run_adapter,
+)
 from ai_review.budget import BudgetDecision
 from ai_review.schema import (
     AdapterModelError,
@@ -71,6 +76,21 @@ _CONFIG_TAIL = [
     "security:",
     "  redact_logs: true",
 ]
+
+
+class AdapterEndpointValidationTests(unittest.TestCase):
+    def test_claude_rejects_hostile_anthropic_openrouter_lookalike(self) -> None:
+        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False):
+            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+
+        self.assertIsNotNone(error)
+        self.assertIn("ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api", error)
+
+    def test_claude_accepts_canonical_anthropic_openrouter_base(self) -> None:
+        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False):
+            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+
+        self.assertIsNone(error)
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):

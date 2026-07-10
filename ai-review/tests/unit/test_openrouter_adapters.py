@@ -204,7 +204,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         reviewer: str,
         cli_name: str,
         extra_env: dict[str, str] | None = None,
-        prepare_snapshot: "Callable[[Path], None] | None" = None,
+        prepare_snapshot: Callable[[Path], None] | None = None,
         stage: str = "review",
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:

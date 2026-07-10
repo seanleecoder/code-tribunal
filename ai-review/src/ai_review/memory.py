@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
-
 
 MATCH_PRECEDENCE = (
     "exact_issue_id",
@@ -297,11 +296,7 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
             superseded.append(record)
         elif status == "resolved":
             resolved.append(record)
-        elif status == "wontfix" and retention.get("keep_wontfix", True):
-            records.append(record)
-        elif status == "open" and retention.get("keep_open", True):
-            records.append(record)
-        elif status not in {"open", "resolved", "wontfix", "superseded"}:
+        elif status == "wontfix" and retention.get("keep_wontfix", True) or status == "open" and retention.get("keep_open", True) or status not in {"open", "resolved", "wontfix", "superseded"}:
             records.append(record)
 
     def keep_latest(items: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:

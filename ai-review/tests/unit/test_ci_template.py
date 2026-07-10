@@ -4,7 +4,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _PUBLISH_WORKFLOW = (

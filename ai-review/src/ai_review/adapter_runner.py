@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from . import budget
-from .config import ConfigError, load_config, resolve_adapter_path
 from .canonical import json_loads_no_duplicates
+from .config import ConfigError, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
@@ -32,6 +32,7 @@ from .schema import (
 )
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 # Process exit code written for terminal error statuses (model_error,
 # schema_error, timeout, config_error, internal_error). The CI reviewer/critique
@@ -479,7 +480,7 @@ def _build_adapter_env(
         env[credential_variable] = credential
 
     anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    if "openrouter.ai" in anthropic_base_url and (
+    if anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL and (
         openrouter_key := os.environ.get("OPENROUTER_API_KEY")
     ) is not None:
         env["OPENROUTER_API_KEY"] = openrouter_key
@@ -522,12 +523,22 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     if not _MODEL_ID_RE.match(model or ""):
         return f"model id has unsupported characters: {model!r}"
     # The OpenRouter endpoint remains a hard exfiltration boundary for the CLI
-    # reviewers and must stay the canonical host.
-    if reviewer not in {"codex", "opencode"}:
+    # reviewers and must stay the canonical host. Claude uses Anthropic's
+    # endpoint env var and OpenRouter's Anthropic-compatible /api base; validate
+    # it before spawning the shell adapter so substring-lookalike hosts never see
+    # the shared OpenRouter token.
+    if reviewer == "claude":
+        base_url = os.environ.get("ANTHROPIC_BASE_URL")
+        if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
+            return (
+                "ANTHROPIC_BASE_URL must be unset or exactly "
+                f"{_ANTHROPIC_OPENROUTER_BASE_URL}"
+            )
         return None
-    base_url = os.environ.get("OPENROUTER_BASE_URL")
-    if base_url is not None and base_url != _OPENROUTER_BASE_URL:
-        return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
+    if reviewer in {"codex", "opencode"}:
+        base_url = os.environ.get("OPENROUTER_BASE_URL")
+        if base_url is not None and base_url != _OPENROUTER_BASE_URL:
+            return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
     return None
 
 
@@ -540,7 +551,7 @@ class _AdapterResult:
         self.stderr = stderr
 
 
-def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     # Kill the adapter shell and every descendant it spawned (the reviewer CLI,
     # its subprocesses) by signalling the whole process group, then reap the
     # shell. Guarded against the race where the process already exited.

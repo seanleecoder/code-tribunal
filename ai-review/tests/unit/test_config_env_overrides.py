@@ -137,9 +137,8 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict(
             "os.environ",
             {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CODEX_ENABLED": "false"},
-        ):
-            with self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_blocking"):
-                load_config(_REPO_CONFIG)
+        ), self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_blocking"):
+            load_config(_REPO_CONFIG)
 
 
 if __name__ == "__main__":

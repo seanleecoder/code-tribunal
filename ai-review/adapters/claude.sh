@@ -13,18 +13,16 @@ if ! command -v claude >/dev/null 2>&1; then
   exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
 fi
 
-case "${ANTHROPIC_BASE_URL:-}" in
-  *openrouter.ai*)
-    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-      export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
-    fi
-    export ANTHROPIC_API_KEY=""
-    if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-      echo "OpenRouter review requires OPENROUTER_API_KEY or ANTHROPIC_AUTH_TOKEN" >&2
-      exit 2
-    fi
-    ;;
-esac
+if [ "${ANTHROPIC_BASE_URL:-}" = "https://openrouter.ai/api" ]; then
+  if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+    export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
+  fi
+  export ANTHROPIC_API_KEY=""
+  if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    echo "OpenRouter review requires OPENROUTER_API_KEY or ANTHROPIC_AUTH_TOKEN" >&2
+    exit 2
+  fi
+fi
 
 export ANTHROPIC_MODEL="${AI_REVIEW_MODEL}"
 
@@ -83,10 +81,9 @@ set -- -p \
 # memory, CLAUDE.md) on top of --safe-mode, but it restricts Anthropic auth to
 # strictly ANTHROPIC_API_KEY — so skip it on the OpenRouter route, which
 # authenticates via ANTHROPIC_AUTH_TOKEN (mapped above).
-case "${ANTHROPIC_BASE_URL:-}" in
-  *openrouter.ai*) ;;
-  *) set -- "$@" --bare ;;
-esac
+if [ "${ANTHROPIC_BASE_URL:-}" != "https://openrouter.ai/api" ]; then
+  set -- "$@" --bare
+fi
 
 # Default working directory for stages that don't explore the repo.
 RUN_DIR="."

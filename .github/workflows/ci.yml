@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dev dependencies
+        run: python -m pip install -e '.[dev]' pytest-cov
+      - name: Ruff
+        run: ruff check ai-review/src ai-review/tests
+      - name: Tests with coverage
+        run: pytest ai-review/tests --cov=ai_review --cov-report=term-missing
+      # Strict mypy is enabled in pyproject.toml, but the whole tree is still being
+      # typed incrementally. Run it on every PR as a visible non-blocking signal
+      # until SPEC-13 closes the remaining dict[str, Any] gaps.
+      - name: Mypy strict reality check
+        continue-on-error: true
+        run: mypy
