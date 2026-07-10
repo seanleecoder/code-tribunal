@@ -78,9 +78,7 @@ class FindingCapTests(unittest.TestCase):
                 max_findings=2,
             )
         self.assertEqual(len(finalized["findings"]), 2)
-        self.assertEqual(
-            {finding["severity"] for finding in finalized["findings"]}, {"blocker"}
-        )
+        self.assertEqual({finding["severity"] for finding in finalized["findings"]}, {"blocker"})
         validate_instance(finalized, "finding_batch.schema.json")
 
     def test_cap_drops_malformed_candidates_without_consuming_slots(self) -> None:

@@ -49,9 +49,13 @@ def _strip_comment(line: str) -> str:
             in_single = not in_single
         elif char == '"' and not in_single:
             in_double = not in_double
-        elif char == "#" and not in_single and not in_double:
-            if index == 0 or line[index - 1].isspace():
-                return line[:index]
+        elif (
+            char == "#"
+            and not in_single
+            and not in_double
+            and (index == 0 or line[index - 1].isspace())
+        ):
+            return line[:index]
     return line
 
 
@@ -139,11 +143,11 @@ def _parse_block(tokens: list[tuple[int, str]], index: int, indent: int) -> tupl
 def load_yaml_subset(text: str) -> dict[str, Any]:
     try:
         import yaml  # type: ignore[import-not-found]
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
         tokens = _tokenize_yaml_subset(text)
         parsed, index = _parse_block(tokens, 0, 0)
         if index != len(tokens) or not isinstance(parsed, dict):
-            raise ConfigError("invalid YAML subset")
+            raise ConfigError("invalid YAML subset") from exc
         return parsed
     loaded = yaml.safe_load(text)
     if not isinstance(loaded, dict):

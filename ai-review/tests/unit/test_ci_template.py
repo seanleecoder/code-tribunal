@@ -7,15 +7,14 @@ from pathlib import Path
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _PUBLISH_WORKFLOW = (
-    Path(__file__).resolve().parents[3]
-    / ".github"
-    / "workflows"
-    / "publish-ai-review-images.yml"
+    Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
 )
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
+_ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
+_AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -79,6 +78,11 @@ def _workflow_job(text: str, job_name: str) -> str:
 
 
 class GitLabCiTemplateTests(unittest.TestCase):
+    def test_public_readmes_do_not_use_retired_unverifiable_verdict(self) -> None:
+        for path in (_ROOT_README, _AI_REVIEW_README):
+            with self.subTest(path=path):
+                self.assertNotIn("unverifiable", path.read_text(encoding="utf-8"))
+
     def test_template_uses_top_level_immutable_image_variables(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
@@ -164,9 +168,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             match = re.search(rf"(?ms)^{re.escape(name)}:\n(.*?)(?=^\S)", text)
             self.assertIsNotNone(match, f"{name} block not found")
             return "\n".join(
-                line
-                for line in match.group(1).splitlines()
-                if not line.lstrip().startswith("#")
+                line for line in match.group(1).splitlines() if not line.lstrip().startswith("#")
             )
 
         critique_block = _code_block(".critique_template")
@@ -199,8 +201,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         disable_idx = critique_block.find('$AI_REVIEW_CRITIQUE_ENABLED != "true"')
         never_idx = critique_block.find("when: never")
         first_source_idx = min(
-            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"')
-            for source in critique_sources
+            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"') for source in critique_sources
         )
         self.assertNotEqual(disable_idx, -1, "critique enable-flag disable-guard missing")
         self.assertNotEqual(never_idx, -1, "critique when: never guard missing")
@@ -258,10 +259,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("docker save", build_preflight)
         self.assertIn("actions/download-artifact@v4", publish)
         self.assertIn("docker load", publish)
-        self.assertIn("docker image inspect \"$AI_REVIEW_BASE_TAG\"", publish)
-        self.assertIn("docker image inspect \"$AI_REVIEW_REVIEWER_TAG\"", publish)
+        self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
+        self.assertIn('docker image inspect "$AI_REVIEW_REVIEWER_TAG"', publish)
         self.assertIn("docker push", publish)
-        self.assertIn("docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}'", publish)
+        self.assertIn(
+            "docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}'", publish
+        )
         self.assertIn("sha256:[0-9a-f]{64}", text)
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
@@ -297,7 +300,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertIn('AI_REVIEW_IMAGE_VERSION: "1_0"', text)
-        self.assertIn("Public GHCR tags use semantic \"1.0-<sha>\"", text)
+        self.assertIn('Public GHCR tags use semantic "1.0-<sha>"', text)
         self.assertIn(
             'AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:'
             'ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',

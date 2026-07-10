@@ -80,14 +80,20 @@ _CONFIG_TAIL = [
 
 class AdapterEndpointValidationTests(unittest.TestCase):
     def test_claude_rejects_hostile_anthropic_openrouter_lookalike(self) -> None:
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False
+        ):
             error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
 
         self.assertIsNotNone(error)
-        self.assertIn("ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api", error)
+        self.assertIn(
+            "ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api", error
+        )
 
     def test_claude_accepts_canonical_anthropic_openrouter_base(self) -> None:
-        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False
+        ):
             error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
 
         self.assertIsNone(error)
@@ -116,7 +122,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "type": "result",
                 "subtype": "success",
                 "is_error": False,
-                "result": "```json\n{\"findings\":[]}\n```",
+                "result": '```json\n{"findings":[]}\n```',
             }
         )
         loaded = _load_adapter_json(stdout)
@@ -134,9 +140,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "is_error": False,
                 "result": (
                     "```json\n"
-                    "[{\"target_source_finding_id\":\"" + "1" * 64 + "\", "
-                    "\"critic\":\"claude\",\"verdict\":\"agree\","
-                    "\"adjusted_severity\":null,\"rationale\":\"valid\"}]\n"
+                    '[{"target_source_finding_id":"' + "1" * 64 + '", '
+                    '"critic":"claude","verdict":"agree",'
+                    '"adjusted_severity":null,"rationale":"valid"}]\n'
                     "```"
                 ),
             }
@@ -155,9 +161,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
     def test_loads_critique_array_before_unrelated_trailing_bracket(self) -> None:
         stdout = (
-            "[{\"target_source_finding_id\":\"" + "3" * 64 + "\", "
-            "\"critic\":\"claude\",\"verdict\":\"agree\","
-            "\"adjusted_severity\":null,\"rationale\":\"valid\"}]"
+            '[{"target_source_finding_id":"' + "3" * 64 + '", '
+            '"critic":"claude","verdict":"agree",'
+            '"adjusted_severity":null,"rationale":"valid"}]'
             "\ntrailing note ]"
         )
         loaded = _load_adapter_json(stdout, stage="critique")
@@ -172,9 +178,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                     {
                         "type": "text",
                         "text": (
-                            "[{\"target_source_finding_id\":\"" + "2" * 64 + "\", "
-                            "\"critic\":\"opencode\",\"verdict\":\"noise\","
-                            "\"adjusted_severity\":null,\"rationale\":\"too vague\"}]"
+                            '[{"target_source_finding_id":"' + "2" * 64 + '", '
+                            '"critic":"opencode","verdict":"noise",'
+                            '"adjusted_severity":null,"rationale":"too vague"}]'
                         ),
                     }
                 ),
@@ -390,7 +396,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                         },
                     }
                 ),
-                json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": ""}),
+                json.dumps(
+                    {"type": "result", "subtype": "success", "is_error": False, "result": ""}
+                ),
             ]
         )
         loaded = _load_adapter_json(stdout)
@@ -424,9 +432,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
 
 class MaxTurnsEnvTests(unittest.TestCase):
-    def _run_turns_adapter(
-        self, *, config_max_turns: int | None, env_max_turns: str | None
-    ) -> str:
+    def _run_turns_adapter(self, *, config_max_turns: int | None, env_max_turns: str | None) -> str:
         # Drive a synthetic reviewer whose adapter echoes the AI_REVIEW_MAX_TURNS
         # it actually received, so the test observes what the runner exports.
         with tempfile.TemporaryDirectory() as tmp:
@@ -469,8 +475,9 @@ class MaxTurnsEnvTests(unittest.TestCase):
             )
             adapter = adapter_dir / "turns.sh"
             adapter.write_text(
-                '#!/bin/sh\n'
-                'printf "%s" "${AI_REVIEW_MAX_TURNS:-<unset>}" > "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
+                "#!/bin/sh\n"
+                'printf "%s" "${AI_REVIEW_MAX_TURNS:-<unset>}" '
+                '> "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
                 "printf '{\"findings\":[]}'\n",
                 encoding="utf-8",
             )
@@ -489,7 +496,12 @@ class MaxTurnsEnvTests(unittest.TestCase):
             config_path = config_dir / "review.yaml"
             config_path.write_text(
                 "\n".join(
-                    ["schema_version: review_config.v1", "reviewers:", *reviewer_lines, *_CONFIG_TAIL]
+                    [
+                        "schema_version: review_config.v1",
+                        "reviewers:",
+                        *reviewer_lines,
+                        *_CONFIG_TAIL,
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -522,22 +534,16 @@ class MaxTurnsEnvTests(unittest.TestCase):
     def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:
         # Bug #13: the runner must export AI_REVIEW_MAX_TURNS from the reviewer config so
         # the adapter honours it instead of falling back to the literal default.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=7, env_max_turns=None), "7"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=7, env_max_turns=None), "7")
 
     def test_env_max_turns_passes_through_without_config(self) -> None:
         # No config max_turns (the claude default): an operator-set env override
         # must survive the sanitized adapter env and reach the adapter.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=None, env_max_turns="9"), "9"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=None, env_max_turns="9"), "9")
 
     def test_env_max_turns_wins_over_config(self) -> None:
         # When both are set, the runtime env override takes precedence over config.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=7, env_max_turns="9"), "9"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=7, env_max_turns="9"), "9")
 
     def test_no_max_turns_leaves_env_unset(self) -> None:
         # Neither configured nor overridden: the adapter sees no cap at all
@@ -548,9 +554,7 @@ class MaxTurnsEnvTests(unittest.TestCase):
 
 
 class EffortEnvTests(unittest.TestCase):
-    def _run_effort_adapter(
-        self, *, config_effort: str | None, env_effort: str | None
-    ) -> str:
+    def _run_effort_adapter(self, *, config_effort: str | None, env_effort: str | None) -> str:
         # Synthetic reviewer whose adapter echoes AI_REVIEW_EFFORT, so the test
         # observes exactly what the runner exports (config value, with the
         # AI_REVIEW_<REVIEWER>_EFFORT override folded in at config load).
@@ -594,8 +598,9 @@ class EffortEnvTests(unittest.TestCase):
             )
             adapter = adapter_dir / "effort.sh"
             adapter.write_text(
-                '#!/bin/sh\n'
-                'printf "%s" "${AI_REVIEW_EFFORT:-<unset>}" > "$AI_REVIEW_OUTPUT_DIR/effort_seen.txt"\n'
+                "#!/bin/sh\n"
+                'printf "%s" "${AI_REVIEW_EFFORT:-<unset>}" '
+                '> "$AI_REVIEW_OUTPUT_DIR/effort_seen.txt"\n'
                 "printf '{\"findings\":[]}'\n",
                 encoding="utf-8",
             )
@@ -614,7 +619,12 @@ class EffortEnvTests(unittest.TestCase):
             config_path = config_dir / "review.yaml"
             config_path.write_text(
                 "\n".join(
-                    ["schema_version: review_config.v1", "reviewers:", *reviewer_lines, *_CONFIG_TAIL]
+                    [
+                        "schema_version: review_config.v1",
+                        "reviewers:",
+                        *reviewer_lines,
+                        *_CONFIG_TAIL,
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -645,22 +655,16 @@ class EffortEnvTests(unittest.TestCase):
             return seen
 
     def test_config_effort_is_exported_to_adapter(self) -> None:
-        self.assertEqual(
-            self._run_effort_adapter(config_effort="high", env_effort=None), "high"
-        )
+        self.assertEqual(self._run_effort_adapter(config_effort="high", env_effort=None), "high")
 
     def test_env_effort_override_wins_over_config(self) -> None:
         # The AI_REVIEW_<REVIEWER>_EFFORT override is folded in at config load,
         # so the adapter must see the override, not the yaml default.
-        self.assertEqual(
-            self._run_effort_adapter(config_effort="medium", env_effort="low"), "low"
-        )
+        self.assertEqual(self._run_effort_adapter(config_effort="medium", env_effort="low"), "low")
 
     def test_no_effort_leaves_env_unset(self) -> None:
         # Neither configured nor overridden: claude.sh then omits --effort.
-        self.assertEqual(
-            self._run_effort_adapter(config_effort=None, env_effort=None), "<unset>"
-        )
+        self.assertEqual(self._run_effort_adapter(config_effort=None, env_effort=None), "<unset>")
 
 
 def _scaffold_project(root: Path) -> dict[str, Path]:
@@ -782,9 +786,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(batch["adapter_status"], "schema_error")
             status = load_json_file(paths["output_dir"] / "status" / "garbled.json")
             self.assertEqual(status["status"], "schema_error")
-            self.assertTrue(
-                (paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists()
-            )
+            self.assertTrue((paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists())
 
     def test_review_drops_malformed_finding_without_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -834,7 +836,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "mixed.json")
             self.assertEqual(batch["adapter_status"], "success")
-            self.assertEqual([finding["title"] for finding in batch["findings"]], ["Validate before indexing"])
+            self.assertEqual(
+                [finding["title"] for finding in batch["findings"]], ["Validate before indexing"]
+            )
             status = load_json_file(paths["output_dir"] / "status" / "mixed.json")
             self.assertEqual(status["status"], "success")
             self.assertFalse((paths["output_dir"] / "status" / "mixed-parse-debug.txt").exists())
@@ -846,7 +850,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(
                 paths["adapter_dir"],
                 "slow",
-                '#!/bin/sh\nsleep 5\nprintf \'{"findings":[]}\'\n',
+                "#!/bin/sh\nsleep 5\nprintf '{\"findings\":[]}'\n",
             )
             self._set_env(paths, config_path)
 

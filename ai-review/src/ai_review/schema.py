@@ -121,7 +121,9 @@ def _type_matches(instance: Any, expected: str) -> bool:
     raise SchemaValidationError(f"unsupported schema type: {expected}")
 
 
-def _validate_subset(instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str) -> None:
+def _validate_subset(
+    instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str
+) -> None:
     if "$ref" in schema:
         _validate_subset(instance, _resolve_ref(schema, root), root, path)
         return
@@ -402,11 +404,7 @@ def finalize_finding_batch(
     }
     dropped = 0
     for index, finding in ranked_findings:
-        if (
-            max_findings is not None
-            and max_findings >= 0
-            and len(findings) >= max_findings
-        ):
+        if max_findings is not None and max_findings >= 0 and len(findings) >= max_findings:
             break
         try:
             normalized = {key: finding[key] for key in finding_keys if key in finding}
@@ -455,9 +453,7 @@ def finalize_finding_batch(
             # A single finding with an unresolvable/malformed anchor must not discard the
             # whole batch — drop just that finding and keep the valid ones.
             dropped += 1
-            sys.stderr.write(
-                redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n")
-            )
+            sys.stderr.write(redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n"))
             continue
         findings.append(normalized)
     if dropped:

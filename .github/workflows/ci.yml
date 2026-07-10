@@ -18,7 +18,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install dev dependencies
-        run: python -m pip install -e '.[dev]' pytest-cov
+        run: python -m pip install -e '.[dev]'
       - name: Ruff
         run: ruff check ai-review/src ai-review/tests
       - name: Tests with coverage

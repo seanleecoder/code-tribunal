@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -245,9 +246,15 @@ def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any
     if isinstance(raw, list):
         if stage == "critique":
             return {"critiques": raw}
-        if stage is None and all(isinstance(item, dict) for item in raw):
-            if not raw or any("target_source_finding_id" in item or "verdict" in item for item in raw):
-                return {"critiques": raw}
+        if (
+            stage is None
+            and all(isinstance(item, dict) for item in raw)
+            and (
+                not raw
+                or any("target_source_finding_id" in item or "verdict" in item for item in raw)
+            )
+        ):
+            return {"critiques": raw}
     raise SchemaValidationError("adapter output root must be an object")
 
 
@@ -299,8 +306,9 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         try:
             event = json_loads_no_duplicates(stripped)
         except Exception as exc:
+            preview = _json_preview(stripped)
             raise SchemaValidationError(
-                f"adapter stream contained non-JSON line: {exc}; preview={_json_preview(stripped)!r}"
+                f"adapter stream contained non-JSON line: {exc}; preview={preview!r}"
             ) from exc
         if not isinstance(event, dict):
             continue
@@ -309,11 +317,12 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             saw_result_event = True
         if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
-        if str(event.get("type", "")).startswith("message") and isinstance(
-            event.get("message"), dict
+        if (
+            str(event.get("type", "")).startswith("message")
+            and isinstance(event.get("message"), dict)
+            and event["message"].get("role") == "assistant"
         ):
-            if event["message"].get("role") == "assistant":
-                assistant_parts.extend(_extract_text_parts(event["message"]))
+            assistant_parts.extend(_extract_text_parts(event["message"]))
         if str(event.get("type", "")).startswith("message") and isinstance(event.get("part"), dict):
             assistant_parts.extend(_extract_text_parts(event["part"]))
         if event.get("type") == "text":
@@ -324,9 +333,10 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         # schema-conforming payload in `structured_output`. Best-effort: the
         # field is sometimes absent even with the flag set, so every text-based
         # fallback below must stay.
-        if isinstance(event.get("structured_output"), (dict, list)) and event.get(
-            "is_error"
-        ) is not True:
+        if (
+            isinstance(event.get("structured_output"), (dict, list))
+            and event.get("is_error") is not True
+        ):
             structured_result = event["structured_output"]
         if event.get("is_error") is True:
             # Record the terminal error but keep scanning: the model may have
@@ -346,12 +356,13 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         # payload; opencode-style streams have no result event and log nothing.
         _log_structured_output_usage(stage, used=False)
 
-    text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
+    text = (
+        result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
+    )
     if not text:
         if stream_error is not None:
-            raise AdapterModelError(
-                f"adapter run ended in a model error before emitting reviewer output: {stream_error!r}"
-            )
+            message = "adapter run ended in a model error before emitting reviewer output"
+            raise AdapterModelError(f"{message}: {stream_error!r}")
         raise SchemaValidationError(
             "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
@@ -363,8 +374,9 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             raise AdapterModelError(
                 f"adapter run ended in a model error: {stream_error!r}"
             ) from exc
+        preview = _json_preview(text)
         raise SchemaValidationError(
-            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
+            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={preview!r}"
         ) from exc
     return _coerce_adapter_root(raw, stage=stage)
 
@@ -407,9 +419,8 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
 
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw.get("is_error") is True:
-            raise AdapterModelError(
-                f"Claude Code returned an error result: {_json_preview(_terminal_error_detail(raw))!r}"
-            )
+            error_detail = _json_preview(_terminal_error_detail(raw))
+            raise AdapterModelError(f"Claude Code returned an error result: {error_detail!r}")
         if raw["result"].strip():
             try:
                 unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))
@@ -455,11 +466,7 @@ def _build_adapter_env(
     reviewer_config: dict[str, Any],
     prompt_tmp: Path | None,
 ) -> dict[str, str]:
-    env = {
-        key: value
-        for key in _ADAPTER_RUNTIME_ENV
-        if (value := os.environ.get(key)) is not None
-    }
+    env = {key: value for key in _ADAPTER_RUNTIME_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
             key: value
@@ -468,11 +475,7 @@ def _build_adapter_env(
         }
     )
     env.update(
-        {
-            key: value
-            for key in _PROVIDER_ENDPOINT_ENV
-            if (value := os.environ.get(key)) is not None
-        }
+        {key: value for key in _PROVIDER_ENDPOINT_ENV if (value := os.environ.get(key)) is not None}
     )
 
     credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
@@ -480,9 +483,10 @@ def _build_adapter_env(
         env[credential_variable] = credential
 
     anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    if anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL and (
-        openrouter_key := os.environ.get("OPENROUTER_API_KEY")
-    ) is not None:
+    if (
+        anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
+        and (openrouter_key := os.environ.get("OPENROUTER_API_KEY")) is not None
+    ):
         env["OPENROUTER_API_KEY"] = openrouter_key
 
     env["AI_REVIEW_REVIEWER"] = reviewer
@@ -490,7 +494,9 @@ def _build_adapter_env(
     env["AI_REVIEW_MODEL"] = model
     env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
     env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
-    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10))
+    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(
+        max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10)
+    )
     # An outer AI_REVIEW_MAX_TURNS (allowlisted above) takes precedence; config
     # only supplies the value when the operator did not set the env override.
     if reviewer_config.get("max_turns") is not None and "AI_REVIEW_MAX_TURNS" not in env:
@@ -530,10 +536,7 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     if reviewer == "claude":
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
         if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
-            return (
-                "ANTHROPIC_BASE_URL must be unset or exactly "
-                f"{_ANTHROPIC_OPENROUTER_BASE_URL}"
-            )
+            return f"ANTHROPIC_BASE_URL must be unset or exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
         return None
     if reviewer in {"codex", "opencode"}:
         base_url = os.environ.get("OPENROUTER_BASE_URL")
@@ -560,14 +563,10 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     except (ProcessLookupError, OSError):
         proc.kill()
         return
-    try:
+    with contextlib.suppress(ProcessLookupError, OSError):
         os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 def _run_adapter_process(
@@ -654,17 +653,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
             raise ConfigError(f"unknown reviewer: {reviewer}")
         model = str(reviewer_config.get("model", "unknown-model"))
         if reviewer_config.get("enabled") is not True:
-            _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
-            _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            _write_empty(
+                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+            )
+            _write_status(
+                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+            )
             return 0
 
         critique_config = config.get("critique", {})
         if stage == "critique" and (
-            critique_config.get("enabled") is not True
-            or int(critique_config.get("rounds", 0)) == 0
+            critique_config.get("enabled") is not True or int(critique_config.get("rounds", 0)) == 0
         ):
-            _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
-            _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            _write_empty(
+                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+            )
+            _write_status(
+                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+            )
             return 0
 
         if (validation_error := _cli_reviewer_validation_error(reviewer, model)) is not None:
@@ -755,9 +761,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         # Opt-in live mirroring of the adapter's output to the job log; off by
         # default to avoid large stream-json/--verbose dumps and log truncation.
         mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
-        result = _run_adapter_process(
-            adapter_path, env, timeout_seconds, mirror_logs=mirror_logs
-        )
+        result = _run_adapter_process(adapter_path, env, timeout_seconds, mirror_logs=mirror_logs)
         # When not mirroring live, still surface the adapter's stderr after it
         # exits (adapters like codex narrate progress there) — matching the
         # pre-streaming behavior. When mirroring, it was already echoed live.
@@ -841,7 +845,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
             return _EXIT_ERROR
 
         write_canonical_json(output_dir / output_file, finalized)
-        _write_status(output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file)
+        _write_status(
+            output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file
+        )
         return 0
     except subprocess.TimeoutExpired as exc:
         model = "unknown-model"

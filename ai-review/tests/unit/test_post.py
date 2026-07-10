@@ -65,7 +65,9 @@ class FakePostClient:
         self.discussions.append({"id": f"note-{note_id}", "notes": [{"id": note_id, "body": body}]})
         return note
 
-    def update_mr_note(self, project_id: str, mr_iid: str, note_id: int, body: str) -> dict[str, Any]:
+    def update_mr_note(
+        self, project_id: str, mr_iid: str, note_id: int, body: str
+    ) -> dict[str, Any]:
         self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for discussion in self.discussions:
             for note in discussion.get("notes", []):
@@ -161,12 +163,13 @@ class PostTests(unittest.TestCase):
             },
         }
 
-
     def test_render_body_redacts_model_authored_secrets(self) -> None:
         group = self._consensus()["groups"][0]
         group["title"] = "leaked glpat-1234567890abcdef1234"
         group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
-        group["evidence_by_reviewer"] = {"claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"}
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
         group["suggestion"] = "replace glpat-1234567890abcdef1234"
 
         body, _body_hash = render_body(group, 1, "run")
@@ -185,7 +188,9 @@ class PostTests(unittest.TestCase):
             self._consensus(),
         )
 
-        self.assertTrue(any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"]))
+        self.assertTrue(
+            any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"])
+        )
 
     def _state_record(
         self,
@@ -215,7 +220,9 @@ class PostTests(unittest.TestCase):
             "status": "open",
             "last_seen_sha": "old-head",
             "first_seen_sha": "old-head",
-            "anchor": anchor if anchor is not None else copy.deepcopy(group["representative_anchor"]),
+            "anchor": anchor
+            if anchor is not None
+            else copy.deepcopy(group["representative_anchor"]),
             "last_posted_body_hash": "0" * 64,
             "last_decision": "surface",
             "last_final_severity": "major",
@@ -885,7 +892,9 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["updated_discussions"], 0)
         self.assertEqual(client.resolve_calls, [])
-        self.assertTrue(any("ambiguous existing record match" in item for item in result["warnings"]))
+        self.assertTrue(
+            any("ambiguous existing record match" in item for item in result["warnings"])
+        )
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual({record["status"] for record in state_after["records"]}, {"stale"})
         self.assertEqual(
@@ -995,9 +1004,11 @@ class PostTests(unittest.TestCase):
     def test_post_ambiguous_remap_marks_stale_without_mutation(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
-        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
-            f"+tail-{index}" for index in range(6)
-        ]
+        block = (
+            [f"+ctx-{index}" for index in range(6)]
+            + ["+target"]
+            + [f"+tail-{index}" for index in range(6)]
+        )
         old_diff = "\n".join(
             [
                 "diff --git a/src/foo.py b/src/foo.py",

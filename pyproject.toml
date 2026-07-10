@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2",
+  "pytest-cov>=5.0",
   "ruff>=0.5",
   "mypy>=1.10",
 ]
@@ -35,7 +36,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["B904", "E501", "SIM102", "SIM103", "SIM105", "SIM117"]
 
 [tool.mypy]
 python_version = "3.12"

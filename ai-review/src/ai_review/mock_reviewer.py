@@ -80,7 +80,10 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
                 "severity": "major",
                 "category": "correctness",
                 "title": "Validate the empty response before indexing",
-                "body": "The added code indexes the first record before checking whether the collection is empty.",
+                "body": (
+                    "The added code indexes the first record before checking whether "
+                    "the collection is empty."
+                ),
                 "evidence": [
                     "records[0] is accessed before the existing empty-records guard can run."
                 ],

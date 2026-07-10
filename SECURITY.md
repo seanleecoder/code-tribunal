@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities privately by opening a GitHub private vulnerability report for this repository. If private reporting is not available in your GitHub UI, contact the project maintainers out-of-band before publishing details.
+Please report suspected vulnerabilities privately by opening a GitHub private vulnerability report for this repository. If private reporting is not available in your GitHub UI, open a public issue titled "Security contact request" without vulnerability details so maintainers can arrange a private channel before publication.
 
 Please include:
 

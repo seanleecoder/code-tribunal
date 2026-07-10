@@ -10,6 +10,32 @@ body:
       description: What happened?
     validations:
       required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Pipeline stage
+      options:
+        - prepare
+        - review
+        - critique
+        - consensus
+        - post
+        - gate
+        - unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: reviewer
+    attributes:
+      label: Reviewer
+      options:
+        - claude
+        - codex
+        - opencode
+        - not reviewer-specific
+        - unknown
+    validations:
+      required: true
   - type: textarea
     id: reproduce
     attributes:

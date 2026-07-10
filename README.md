@@ -1,11 +1,11 @@
 # Code Tribunal (`ai-review`)
 
-[![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
+[![CI](https://github.com/seanleecoder/code-tribunal/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) [![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
 [![Python Version](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](pyproject.toml)
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
-**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), optional Jira issue linking, and automated merge gating.
+**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), planned Jira issue linking, and automated merge gating.
 
 It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs optional blind cross-examination, posts idempotent inline GitLab discussions, maintains state across MR revisions, and enforces CI/CD merge gating.
 
@@ -27,7 +27,7 @@ It orchestrates a panel of independent LLM reviewer models via provider CLIs (**
 
 ## High-Level System Architecture
 
-Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, restricted egress, and no credential access.
+Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab/Jira credential access.
 
 ```mermaid
 flowchart TD

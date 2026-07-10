@@ -96,9 +96,11 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         ):
             with self.subTest(var=var, value=value):
                 config = _base_config()
-                with mock.patch.dict("os.environ", {var: value}, clear=True):
-                    with self.assertRaisesRegex(ConfigError, var):
-                        apply_env_overrides(config)
+                with (
+                    mock.patch.dict("os.environ", {var: value}, clear=True),
+                    self.assertRaisesRegex(ConfigError, var),
+                ):
+                    apply_env_overrides(config)
 
 
 class LoadConfigOverrideTests(unittest.TestCase):
@@ -127,17 +129,22 @@ class LoadConfigOverrideTests(unittest.TestCase):
         # Closed set, case-sensitive (whitespace is stripped like model
         # overrides): anything else must raise, never reach argv.
         for value in ("turbo", "Low", "LOW"):
-            with self.subTest(value=value):
-                with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}):
-                    with self.assertRaisesRegex(ConfigError, "effort"):
-                        load_config(_REPO_CONFIG)
+            with (
+                self.subTest(value=value),
+                mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}),
+                self.assertRaisesRegex(ConfigError, "effort"),
+            ):
+                load_config(_REPO_CONFIG)
 
     def test_disabling_too_many_reviewers_fails_loudly(self) -> None:
         # Only claude enabled (1) but min_successful_reviewers_for_blocking is 2.
-        with mock.patch.dict(
-            "os.environ",
-            {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CODEX_ENABLED": "false"},
-        ), self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_blocking"):
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CODEX_ENABLED": "false"},
+            ),
+            self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_blocking"),
+        ):
             load_config(_REPO_CONFIG)
 
 
