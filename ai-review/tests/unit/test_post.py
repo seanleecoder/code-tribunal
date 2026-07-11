@@ -9,6 +9,7 @@ from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
 from ai_review.post import (
     _classify_post_groups,
+    _desired_discussion_resolved,
     _initial_post_result,
     load_persisted_state,
     plan_state,
@@ -560,6 +561,37 @@ class PostTests(unittest.TestCase):
         )
         self.assertEqual(plan.outcome.warnings, [])
         self.assertEqual(plan.planned_by_issue, {})
+
+    def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
+        base_record = self._state_record(self._consensus()["groups"][0])
+
+        resolved_record = dict(base_record, status="resolved")
+        self.assertIs(
+            _desired_discussion_resolved(resolved_record, {base_record["issue_id"]: "open"}),
+            True,
+        )
+        self.assertIsNone(
+            _desired_discussion_resolved(resolved_record, {base_record["issue_id"]: "resolved"})
+        )
+
+        wontfix_record = dict(base_record, status="wontfix")
+        self.assertIs(
+            _desired_discussion_resolved(wontfix_record, {base_record["issue_id"]: "open"}),
+            True,
+        )
+
+        reopened_record = dict(
+            base_record,
+            status="open",
+            human_disposition="reopen",
+        )
+        self.assertIs(
+            _desired_discussion_resolved(reopened_record, {base_record["issue_id"]: "resolved"}),
+            False,
+        )
+        self.assertIsNone(
+            _desired_discussion_resolved(reopened_record, {base_record["issue_id"]: "open"})
+        )
 
     def test_post_stale_head_has_no_side_effects(self) -> None:
         client = FakePostClient("new-head")
