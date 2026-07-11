@@ -4,9 +4,10 @@ from types import MappingProxyType
 
 from .types import Severity
 
-SEVERITY_RANK: MappingProxyType[Severity, int] = MappingProxyType(
-    {"info": 0, "minor": 1, "major": 2, "blocker": 3}
+SEVERITIES: tuple[Severity, ...] = ("info", "minor", "major", "blocker")
+SEVERITY_RANK: MappingProxyType[str, int] = MappingProxyType(
+    {severity: rank for rank, severity in enumerate(SEVERITIES)}
 )
 SEVERITY_BY_RANK: MappingProxyType[int, Severity] = MappingProxyType(
-    {rank: severity for severity, rank in SEVERITY_RANK.items()}
+    {rank: severity for rank, severity in enumerate(SEVERITIES)}
 )

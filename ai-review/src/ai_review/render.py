@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from .canonical import canonical_json, sha256_hex
 from .redact import redact_text
+from .types import FindingGroup
 
 RENDER_BODY_VERSION = "render-body.v1"
 
@@ -26,7 +25,7 @@ def source_hash(source_finding_ids: list[str]) -> str:
     return sha256_hex(canonical_json(sorted(source_finding_ids)))
 
 
-def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
+def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
     critique_summary = group.get(
         "critique_summary",
         {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
@@ -53,7 +52,7 @@ def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
 
 
 def render_body(
-    group: dict[str, Any],
+    group: FindingGroup,
     successful_reviewer_count: int,
     run_id: str,
 ) -> tuple[str, str]:

@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .anchors import remap_anchor, title_fingerprint
 from .canonical import sha256_hex
@@ -44,6 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
+from .types import FindingGroup
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -54,12 +55,12 @@ def source_hash(source_finding_ids: list[str]) -> str:
     return _source_hash(source_finding_ids)
 
 
-def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
+def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
     return _compute_body_hash(group, body_without_marker)
 
 
 def render_body(
-    group: dict[str, Any],
+    group: FindingGroup,
     successful_reviewer_count: int,
     run_id: str,
 ) -> tuple[str, str]:
@@ -1188,7 +1189,7 @@ def post_consensus(
                     continue
 
         body, body_hash = render_body(
-            post_group,
+            cast(FindingGroup, post_group),
             len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
         )
