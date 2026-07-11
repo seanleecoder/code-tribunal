@@ -170,6 +170,9 @@ transitive-chain split runs even when semantic grouping is disabled. Intentional
 changes to grouping output should run `make update-golden`, include the changed
 files in the same PR, and explain the semantic change.
 
-SPEC-12's full fake-GitLab post→gate E2E harness is still tracked as follow-up
-work before SPEC-13/SPEC-14 refactors: add an in-memory GitLab client, blocking
-and FYI post→gate scenarios, and idempotent re-run coverage.
+Under [`tests/integration/`](tests/integration/), `test_post_gate_e2e.py` drives
+the SPEC-12 fake-GitLab post→gate harness through blocking, FYI-only, and
+idempotent re-run scenarios. The reusable in-memory client lives in
+[`tests/support/fake_gitlab.py`](tests/support/fake_gitlab.py) so SPEC-14 and
+SPEC-15 refactors can assert posting and gate behavior without contacting a real
+GitLab instance.
