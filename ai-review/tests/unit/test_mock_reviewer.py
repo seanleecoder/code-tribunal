@@ -20,8 +20,8 @@ def _diff(last_line: str) -> str:
 
 class MockReviewerTests(unittest.TestCase):
     def test_finds_indexing_candidate(self) -> None:
-        # Confirms the walker still works after being switched to anchors' shared
-        # HUNK_RE / strip_diff_prefix (Bug #15 dedup).
+        # Confirms the walker still works after being switched to anchors'
+        # shared unified-diff parser.
         candidate = _find_indexing_candidate(_diff("+    return records[0]"))
         self.assertIsNotNone(candidate)
         assert candidate is not None
