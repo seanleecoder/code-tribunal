@@ -507,6 +507,9 @@ surrounding whitespace) — a byte-for-byte match of GitLab's `== "true"` rule. 
 other value (`TRUE`, `1`, `yes`, `" true "`, a typo like `flase`) fails the pipeline
 loudly rather than silently no-op'ing or diverging from CI job-creation.
 
+Golden consensus snapshots can be refreshed after intentional reducer output
+changes with `make update-golden`; review the resulting fixture diff before merging.
+
 > **Notes:**
 > - These variables are read at runtime, but the *code that reads them* ships inside
 >   the container image. A given image build must already contain this logic; after

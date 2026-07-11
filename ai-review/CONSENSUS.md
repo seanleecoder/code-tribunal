@@ -163,7 +163,13 @@ matching + deterministic tie-breaking + semantic grouping in full consensus outp
 and `test_consensus_cli.py` (failed panel still writes an artifact and exits `3`;
 critic identity is bound from the filename even if the payload lies).
 
-Under [`tests/contract/`](tests/contract/), `test_golden_consensus.py` compares a
-semantic-grouping consensus artifact against a checked-in canonical JSON snapshot.
-Intentional changes to grouping output should update the golden file in the same
-PR and explain the semantic change.
+Under [`tests/contract/`](tests/contract/), `test_golden_consensus.py` compares
+semantic-on and default semantic-off consensus artifacts against checked-in
+canonical JSON snapshots. The default snapshot is especially important because the
+transitive-chain split runs even when semantic grouping is disabled. Intentional
+changes to grouping output should run `make update-golden`, include the changed
+files in the same PR, and explain the semantic change.
+
+SPEC-12's full fake-GitLab post→gate E2E harness is still tracked as follow-up
+work before SPEC-13/SPEC-14 refactors: add an in-memory GitLab client, blocking
+and FYI post→gate scenarios, and idempotent re-run coverage.

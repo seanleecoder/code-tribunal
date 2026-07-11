@@ -204,7 +204,6 @@ def _split_transitive_component(
     grouping_config: dict[str, Any] | None,
 ) -> list[list[dict[str, Any]]]:
     groups: list[list[dict[str, Any]]] = []
-    representatives: list[dict[str, Any]] = []
     for finding in sorted(component, key=lambda item: item["source_finding_id"]):
         for group in groups:
             if all(
@@ -214,7 +213,6 @@ def _split_transitive_component(
                 group.append(finding)
                 break
         else:
-            representatives.append(finding)
             groups.append([finding])
     return groups
 
