@@ -14,6 +14,7 @@ from .constants import SEVERITY_RANK
 from .gitlab_client import (
     GitLabApiError,
     GitLabClient,
+    MergeRequestVersion,
     build_position,
     current_user_id,
     root_note_id_from_discussion,
@@ -1000,111 +1001,20 @@ def plan_state(
     )
 
 
-def post_consensus(
+def post_inline(
     client: GitLabClient,
-    config: dict[str, Any],
     manifest: dict[str, Any],
     consensus: dict[str, Any],
+    result: PostResult,
+    state_plan: StatePlan,
+    inline_candidates: list[dict[str, Any]],
+    summary_fallback_groups: list[dict[str, Any]],
+    version: MergeRequestVersion,
     *,
-    dry_run: bool = False,
-    diff_text: str | None = None,
-) -> PostResult:
-    current_head_sha = client.fetch_current_mr_head_sha(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    result = _initial_post_result(
-        consensus=consensus,
-        manifest=manifest,
-        current_head_sha=current_head_sha,
-    )
-    posting = config.get("posting", {})
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
-        result["status"] = "stale_head"
-        return result
-
-    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
-    max_fyi = int(limits.get("max_fyi_findings", 50))
-
-    raw_discussions = (
-        []
-        if dry_run
-        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
-    )
-    existing_discussions = index_ai_review_discussions(raw_discussions)
-    bot_author_id = None if dry_run else current_user_id(client)
-    if not dry_run and bot_author_id is None:
-        raise RuntimeError(
-            "discussion-marker recovery requires GitLab current_user lookup to verify author"
-        )
-    state_warnings: list[str] = []
-    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
-    state_warnings.extend(load_warnings)
-    recovered_state = state_from_existing_discussions(
-        existing_discussions,
-        current_head_sha=manifest["head_sha"],
-        expected_author_id=bot_author_id,
-    )
-    if persisted_state is None:
-        state_config = config.get("state", {}) if isinstance(config, dict) else {}
-        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
-            persisted_state = normalize_state(
-                recovered_state,
-                manifest=manifest,
-                pipeline_id=_pipeline_id(manifest),
-            )
-    if persisted_state is None:
-        persisted_state = empty_state(
-            project_id=manifest["project_id"],
-            merge_request_iid=manifest["merge_request_iid"],
-            head_sha=manifest["head_sha"],
-            pipeline_id=_pipeline_id(manifest),
-        )
-    result["warnings"].extend(state_warnings)
-    human_commands = collect_human_commands(
-        client,
-        manifest["project_id"],
-        raw_discussions,
-    )
-
-    # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
-    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
-        _classify_post_groups(
-            cast(list[FindingGroup], consensus.get("groups", [])),
-            inline_sides=inline_sides,
-            inline_multiline=inline_multiline,
-            max_surface=max_surface,
-        )
-    )
-    inline_candidates = cast(list[dict[str, Any]], classified_inline)
-    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
-    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
-    result["warnings"].extend(classification_warnings)
-
-    state_plan = plan_state(
-        config,
-        manifest,
-        consensus,
-        persisted_state,
-        inline_candidates,
-        summary_fallback_groups,
-        fyi_groups,
-        human_commands,
-    )
-    result["warnings"].extend(state_plan.outcome.warnings)
-    result["stale_unverified"] += state_plan.outcome.stale_unverified
-    if state_plan.outcome.overflow is not None:
-        result["status"] = "state_overflow"
-        result["warnings"].append(state_plan.outcome.overflow)
-        return result
+    inline_multiline: bool,
+    current_diff_text: str | None,
+    dry_run: bool,
+) -> None:
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
@@ -1271,6 +1181,23 @@ def post_consensus(
             }
         )
 
+
+def finalize_state(
+    client: GitLabClient,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: dict[str, Any],
+    result: PostResult,
+    state_plan: StatePlan,
+    raw_discussions: list[dict[str, Any]],
+    summary_fallback_groups: list[dict[str, Any]],
+    fyi_groups: list[dict[str, Any]],
+    *,
+    fallback_to_summary: bool,
+    fyi_mode: str,
+    max_fyi: int,
+    dry_run: bool,
+) -> PostResult:
     fallback_to_post = summary_fallback_groups if fallback_to_summary else []
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
     result["summary_comment"] = cast(
@@ -1346,6 +1273,142 @@ def post_consensus(
             )
             result["warnings"].append(f"state persistence failed: {exc}")
     return result
+
+
+def post_consensus(
+    client: GitLabClient,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    diff_text: str | None = None,
+) -> PostResult:
+    current_head_sha = client.fetch_current_mr_head_sha(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+    )
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+        result["status"] = "stale_head"
+        return result
+
+    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
+    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+
+    raw_discussions = (
+        []
+        if dry_run
+        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
+    )
+    existing_discussions = index_ai_review_discussions(raw_discussions)
+    bot_author_id = None if dry_run else current_user_id(client)
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
+    state_warnings: list[str] = []
+    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
+    state_warnings.extend(load_warnings)
+    recovered_state = state_from_existing_discussions(
+        existing_discussions,
+        current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
+    )
+    if persisted_state is None:
+        state_config = config.get("state", {}) if isinstance(config, dict) else {}
+        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
+            persisted_state = normalize_state(
+                recovered_state,
+                manifest=manifest,
+                pipeline_id=_pipeline_id(manifest),
+            )
+    if persisted_state is None:
+        persisted_state = empty_state(
+            project_id=manifest["project_id"],
+            merge_request_iid=manifest["merge_request_iid"],
+            head_sha=manifest["head_sha"],
+            pipeline_id=_pipeline_id(manifest),
+        )
+    result["warnings"].extend(state_warnings)
+    human_commands = collect_human_commands(
+        client,
+        manifest["project_id"],
+        raw_discussions,
+    )
+
+    # Classify groups: inline-postable surface findings, surface findings that must fall
+    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
+        _classify_post_groups(
+            cast(list[FindingGroup], consensus.get("groups", [])),
+            inline_sides=inline_sides,
+            inline_multiline=inline_multiline,
+            max_surface=max_surface,
+        )
+    )
+    inline_candidates = cast(list[dict[str, Any]], classified_inline)
+    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
+    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
+    result["warnings"].extend(classification_warnings)
+
+    state_plan = plan_state(
+        config,
+        manifest,
+        consensus,
+        persisted_state,
+        inline_candidates,
+        summary_fallback_groups,
+        fyi_groups,
+        human_commands,
+    )
+    result["warnings"].extend(state_plan.outcome.warnings)
+    result["stale_unverified"] += state_plan.outcome.stale_unverified
+    if state_plan.outcome.overflow is not None:
+        result["status"] = "state_overflow"
+        result["warnings"].append(state_plan.outcome.overflow)
+        return result
+    post_inline(
+        client,
+        manifest,
+        consensus,
+        result,
+        state_plan,
+        inline_candidates,
+        summary_fallback_groups,
+        version,
+        inline_multiline=inline_multiline,
+        current_diff_text=current_diff_text,
+        dry_run=dry_run,
+    )
+
+    return finalize_state(
+        client,
+        config,
+        manifest,
+        consensus,
+        result,
+        state_plan,
+        raw_discussions,
+        summary_fallback_groups,
+        fyi_groups,
+        fallback_to_summary=fallback_to_summary,
+        fyi_mode=fyi_mode,
+        max_fyi=max_fyi,
+        dry_run=dry_run,
+    )
 
 
 def cli(argv: list[str] | None = None) -> int:
