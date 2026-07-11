@@ -6,13 +6,16 @@ DIFF ?= $(AI_REVIEW_ROOT)/tests/fixtures/diffs/simple.diff
 REPO ?= $(AI_REVIEW_ROOT)/tests/fixtures/repos/simple
 LOCAL_OUT ?= .ai-review-local
 
-.PHONY: test lint review-local consensus-local validate-local
+.PHONY: test lint update-golden review-local consensus-local validate-local
 
 test:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1 && PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(AI_REVIEW_ROOT)/tests || PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m unittest discover -s $(AI_REVIEW_ROOT)/tests -p 'test_*.py'
 
 lint:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import ruff" >/dev/null 2>&1 && PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests || PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m compileall -q $(AI_REVIEW_ROOT)/src
+
+update-golden:
+	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests $(PYTHON) $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py
 
 review-local:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review.input_bundle local --config $(AI_REVIEW_ROOT)/config/review.yaml --diff $(DIFF) --repo $(REPO) --out $(LOCAL_OUT)/inputs

@@ -10,6 +10,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 - Apache-2.0 license and open-source project scaffolding.
 - Pull request CI for linting, tests with coverage, and an initial non-blocking strict mypy run.
+- Optional deterministic semantic consensus grouping with a `panel_convergence` summary metric.
 
 ### Changed
 

@@ -153,6 +153,51 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             load_config(_REPO_CONFIG)
 
+    def test_semantic_grouping_env_overrides_apply_and_validate(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": "true",
+                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": "0.7",
+            },
+        ):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertTrue(config["panel"]["grouping"]["semantic"]["enabled"])
+        self.assertEqual(config["panel"]["grouping"]["semantic"]["threshold"], 0.7)
+
+    def test_invalid_semantic_grouping_env_overrides_fail_loudly(self) -> None:
+        invalid_envs = (
+            {"AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": "TRUE"},
+            {"AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": "high"},
+            {"AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": "1.5"},
+        )
+        for env in invalid_envs:
+            with (
+                self.subTest(env=env),
+                mock.patch.dict("os.environ", env),
+                self.assertRaises(ConfigError),
+            ):
+                load_config(_REPO_CONFIG)
+
+    def test_panel_semantic_grouping_config_is_validated(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 1.5}}
+
+        with self.assertRaisesRegex(ConfigError, "panel.grouping.semantic.threshold"):
+            validate_config(config)
+
+    def test_effective_config_summary_includes_semantic_grouping(self) -> None:
+        from ai_review.config import effective_config_summary
+
+        config = load_config(_REPO_CONFIG)
+        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 0.75}}
+        validate_config(config)
+
+        summary = effective_config_summary(config)
+        self.assertTrue(summary["panel_grouping_semantic_enabled"])
+        self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
+
 
 if __name__ == "__main__":
     unittest.main()
