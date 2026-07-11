@@ -468,7 +468,12 @@ To integrate Code Tribunal into downstream projects:
 | `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
 | `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |
 
-Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline.
+Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file with `scripts/verify_pipeline_trust.py path/to/.gitlab-ci.yml` before rollout.
+
+
+### Upgrade note: render body hash v1
+
+This release folds `RENDER_BODY_VERSION` into AI review discussion `body_hash` values. The posted Markdown body is intentionally unchanged, but existing `ai-review:v1` markers from older builds will not match the new hash input. Operators should expect a one-time update of existing bot-authored AI review threads on the next run after upgrading.
 
 4. **Required GitLab Project Settings**:
    - Enable **Pipelines must succeed** (Settings -> General -> Merge requests).

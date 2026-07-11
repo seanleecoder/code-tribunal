@@ -14,6 +14,7 @@ from .gitlab_client import (
     GitLabApiError,
     GitLabClient,
     build_position,
+    current_user_id,
     root_note_id_from_discussion,
 )
 from .memory import (
@@ -231,17 +232,6 @@ def discussion_markers(discussions: list[dict[str, Any]]) -> dict[str, dict[str,
 
 
 
-def _current_user_id(client: GitLabClient) -> int | None:
-    current_user_fn = getattr(client, "current_user", None)
-    if not callable(current_user_fn):
-        return None
-    try:
-        current_user = current_user_fn()
-    except Exception:
-        return None
-    user_id = current_user.get("id") if isinstance(current_user, dict) else None
-    return user_id if isinstance(user_id, int) else None
-
 def _pipeline_id(manifest: dict[str, Any]) -> str:
     return os.environ.get("CI_PIPELINE_ID") or str(manifest.get("run_id") or "")
 
@@ -270,6 +260,11 @@ def load_persisted_state(
     if not _state_enabled(config):
         return None, []
     state_config = config.get("state", {})
+    bot_author_id = current_user_id(client)
+    if bot_author_id is None:
+        raise RuntimeError(
+            "state backend requires GitLab current_user lookup to verify state-note author"
+        )
     notes = _list_mr_notes_if_supported(
         client,
         manifest["project_id"],
@@ -278,7 +273,7 @@ def load_persisted_state(
     state, warnings = newest_valid_state_from_notes(
         notes,
         checksum_required=bool(state_config.get("checksum_required", True)),
-        expected_author_id=_current_user_id(client),
+        expected_author_id=bot_author_id,
     )
     if state is None:
         return None, warnings
@@ -893,7 +888,11 @@ def post_consensus(
         else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
-    bot_author_id = None if dry_run else _current_user_id(client)
+    bot_author_id = None if dry_run else current_user_id(client)
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
     state_warnings: list[str] = []
     persisted_state, load_warnings = load_persisted_state(client, config, manifest)
     state_warnings.extend(load_warnings)

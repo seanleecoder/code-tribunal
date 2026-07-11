@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .canonical import sha256_hex
 from .config import effective_config_summary, load_config
-from .gitlab_client import GitLabClient
+from .gitlab_client import GitLabClient, current_user_id
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
@@ -132,16 +132,6 @@ def _external_fork_secrets_blocked(config: dict) -> str | None:
     )
 
 
-def _current_user_id(client: GitLabClient) -> int | None:
-    current_user_fn = getattr(client, "current_user", None)
-    if not callable(current_user_fn):
-        return None
-    try:
-        current_user = current_user_fn()
-    except Exception:
-        return None
-    user_id = current_user.get("id") if isinstance(current_user, dict) else None
-    return user_id if isinstance(user_id, int) else None
 
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
@@ -208,11 +198,16 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
     if state_config.get("backend") == "gitlab_mr_state_note":
         try:
+            bot_author_id = current_user_id(client)
+            if bot_author_id is None:
+                raise BundleError(
+                    "state backend requires GitLab current_user lookup to verify state-note author"
+                )
             notes = client.list_mr_notes(project_id, mr_iid)
             loaded, warnings = newest_valid_state_from_notes(
                 notes,
                 checksum_required=bool(state_config.get("checksum_required", True)),
-                expected_author_id=_current_user_id(client),
+                expected_author_id=bot_author_id,
             )
             if loaded is not None:
                 state = loaded

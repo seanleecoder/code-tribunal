@@ -56,7 +56,8 @@ In all variants:
 ### Acceptance criteria
 - Documented, reproducible integration where a hostile MR that edits the pipeline
   YAML **cannot** obtain Protected variables or forge a passing gate. Validate on
-  a scratch GitLab project.
+  a scratch GitLab project and record the evidence requested in
+  [SPEC-06 Trusted CI Delivery Runbook](spec-06-trusted-ci-runbook.md).
 - README no longer instructs `include: local:` for secret-bearing stages.
 
 ### Tests

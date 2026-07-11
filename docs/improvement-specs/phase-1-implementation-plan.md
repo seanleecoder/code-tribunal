@@ -141,8 +141,9 @@ acceptance criteria require a real GitLab project configuration.
 
 ## Open decisions
 
-- Whether SPEC-07 should include HMAC immediately or land author filtering first
-  with a documented HMAC migration window.
+- SPEC-07 HMAC is deliberately deferred until a protected `AI_REVIEW_STATE_HMAC_KEY`
+  can be provisioned; track follow-up as "SPEC-07-HMAC migration" and keep
+  author filtering fail-closed in the meantime.
 - Whether SPEC-06 should ship only documentation/templates or also include an
   automated `verify_pipeline_trust.py` audit script.
 - Exact retention defaults for stale records in SPEC-10; choose values generous

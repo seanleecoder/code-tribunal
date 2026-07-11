@@ -422,6 +422,33 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(consensus["groups"][0]["final_severity"], "minor")
         validate_instance(consensus, "consensus.schema.json")
 
+    def test_multiple_disputers_cannot_unblock_quorum_blocker(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [
+                _batch("claude", _finding("claude", source_id, "blocker")),
+                _batch("codex", _finding("codex", "2" * 64, "blocker")),
+            ],
+            _critique_config(allow_severity_downgrade=True),
+            critique_batches=[
+                _critique_batch(
+                    "opencode",
+                    [_critique("opencode", source_id, "dispute", adjusted_severity="minor")],
+                ),
+                _critique_batch(
+                    "reviewer4",
+                    [_critique("reviewer4", source_id, "dispute", adjusted_severity="info")],
+                ),
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(group["final_severity"], "blocker")
+        self.assertTrue(group["block_merge"])
+        self.assertTrue(consensus["summary"]["block_merge"])
+        validate_instance(consensus, "consensus.schema.json")
+
 
 if __name__ == "__main__":
     unittest.main()
