@@ -229,27 +229,49 @@ def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -
     return state
 
 
-def state_note_candidates(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        note
-        for note in notes
-        if isinstance(note, dict)
-        and isinstance(note.get("body"), str)
-        and (
-            STATE_NOTE_SPEC_RE.search(note["body"]) is not None
-            or STATE_NOTE_LEGACY_RE.search(note["body"]) is not None
-        )
-    ]
+def _note_author_id(note: dict[str, Any]) -> int | None:
+    author = note.get("author")
+    if not isinstance(author, dict):
+        return None
+    author_id = author.get("id")
+    return author_id if isinstance(author_id, int) else None
+
+
+def state_note_candidates(
+    notes: list[dict[str, Any]],
+    *,
+    expected_author_id: int | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    candidates: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for note in notes:
+        if not (
+            isinstance(note, dict)
+            and isinstance(note.get("body"), str)
+            and (
+                STATE_NOTE_SPEC_RE.search(note["body"]) is not None
+                or STATE_NOTE_LEGACY_RE.search(note["body"]) is not None
+            )
+        ):
+            continue
+        if expected_author_id is not None and _note_author_id(note) != expected_author_id:
+            warnings.append(
+                f"ignored state note {note.get('id')} from non-bot author {_note_author_id(note)}"
+            )
+            continue
+        candidates.append(note)
+    return candidates, warnings
 
 
 def newest_valid_state_from_notes(
     notes: list[dict[str, Any]],
     *,
     checksum_required: bool = True,
+    expected_author_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    warnings: list[str] = []
+    candidates, warnings = state_note_candidates(notes, expected_author_id=expected_author_id)
     valid: list[tuple[str, int, dict[str, Any]]] = []
-    for note in state_note_candidates(notes):
+    for note in candidates:
         try:
             state = decode_state_note(note, checksum_required=checksum_required)
         except ValueError as exc:
@@ -291,15 +313,19 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
     retention = retention or {}
     keep_resolved_runs = int(retention.get("keep_resolved_runs", 5))
     keep_superseded_runs = int(retention.get("keep_superseded_runs", 2))
+    keep_stale_runs = int(retention.get("keep_stale_runs", 2))
     records = []
     resolved = []
     superseded = []
+    stale = []
     for record in state.get("records", []):
         status = record.get("status")
         if status == "superseded":
             superseded.append(record)
         elif status == "resolved":
             resolved.append(record)
+        elif status in {"stale", "stale_unverified"}:
+            stale.append(record)
         elif status == "wontfix":
             if not retention.get("keep_wontfix", True):
                 continue
@@ -325,6 +351,7 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
         records
         + keep_latest(resolved, keep_resolved_runs)
         + keep_latest(superseded, keep_superseded_runs)
+        + keep_latest(stale, keep_stale_runs)
     )
     return attach_state_hash(
         {key: value for key, value in compacted.items() if key != "state_hash"}

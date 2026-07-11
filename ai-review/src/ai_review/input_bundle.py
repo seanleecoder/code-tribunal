@@ -116,6 +116,33 @@ def prepare_local_bundle(
     return out_path
 
 
+
+def _external_fork_secrets_blocked(config: dict) -> str | None:
+    source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
+    project_id = os.environ.get("CI_PROJECT_ID")
+    if not source_project_id or not project_id or source_project_id == project_id:
+        return None
+    security = config.get("security", {}) if isinstance(config, dict) else {}
+    if bool(security.get("allow_external_fork_secrets", False)):
+        return None
+    return (
+        "external fork MR secret-bearing prepare path is disabled because "
+        "security.allow_external_fork_secrets is false "
+        f"(source_project_id={source_project_id}, project_id={project_id})"
+    )
+
+
+def _current_user_id(client: GitLabClient) -> int | None:
+    current_user_fn = getattr(client, "current_user", None)
+    if not callable(current_user_fn):
+        return None
+    try:
+        current_user = current_user_fn()
+    except Exception:
+        return None
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    return user_id if isinstance(user_id, int) else None
+
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -129,6 +156,9 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
             "CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
         )
     config_dict = load_config(config)
+    fork_block_reason = _external_fork_secrets_blocked(config_dict)
+    if fork_block_reason is not None:
+        raise SystemExit(f"prepare refused to run: {fork_block_reason}")
     client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
     version = client.fetch_latest_mr_version(project_id, mr_iid)
     diff_text = client.fetch_mr_diff(project_id, mr_iid)
@@ -182,6 +212,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
             loaded, warnings = newest_valid_state_from_notes(
                 notes,
                 checksum_required=bool(state_config.get("checksum_required", True)),
+                expected_author_id=_current_user_id(client),
             )
             if loaded is not None:
                 state = loaded

@@ -353,8 +353,8 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         self.assertEqual(disabled["groups"][0]["final_severity"], "blocker")
-        self.assertEqual(enabled["groups"][0]["final_severity"], "major")
-        self.assertFalse(enabled["groups"][0]["block_merge"])
+        self.assertEqual(enabled["groups"][0]["final_severity"], "blocker")
+        self.assertTrue(enabled["groups"][0]["block_merge"])
         validate_instance(enabled, "consensus.schema.json")
 
     def test_downgraded_single_reviewer_blocker_becomes_fyi(self) -> None:
@@ -372,10 +372,10 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         group = consensus["groups"][0]
-        self.assertEqual(group["final_severity"], "major")
-        self.assertEqual(group["decision"], "fyi")
+        self.assertEqual(group["final_severity"], "blocker")
+        self.assertEqual(group["decision"], "surface")
         self.assertFalse(group["block_merge"])
-        self.assertFalse(group["human_ack_recommended"])
+        self.assertTrue(group["human_ack_recommended"])
         validate_instance(consensus, "consensus.schema.json")
 
     def test_downgraded_quorum_blocker_recomputes_nonblocking_surface(self) -> None:
@@ -396,9 +396,30 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         group = consensus["groups"][0]
-        self.assertEqual(group["final_severity"], "major")
+        self.assertEqual(group["final_severity"], "blocker")
         self.assertEqual(group["decision"], "surface")
-        self.assertFalse(group["block_merge"])
+        self.assertTrue(group["block_merge"])
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_multiple_disputers_only_downgrade_major_once(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(allow_severity_downgrade=True),
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [_critique("codex", source_id, "dispute", adjusted_severity="minor")],
+                ),
+                _critique_batch(
+                    "opencode",
+                    [_critique("opencode", source_id, "dispute", adjusted_severity="info")],
+                ),
+            ],
+        )
+
+        self.assertEqual(consensus["groups"][0]["final_severity"], "minor")
         validate_instance(consensus, "consensus.schema.json")
 
 

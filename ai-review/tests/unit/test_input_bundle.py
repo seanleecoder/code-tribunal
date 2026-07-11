@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
-from ai_review.input_bundle import BundleError, _enforce_diff_limits
+from ai_review.input_bundle import BundleError, _enforce_diff_limits, _external_fork_secrets_blocked
 
 
 def _diff_with_files(count: int) -> str:
@@ -35,6 +36,27 @@ class InputBundleLimitTests(unittest.TestCase):
     def test_defaults_apply_when_limits_absent(self) -> None:
         # Missing limits fall back to the documented defaults (250000 bytes / 200 files).
         _enforce_diff_limits(_diff_with_files(1), {})
+
+    def test_external_fork_secret_gate_blocks_by_default(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"CI_PROJECT_ID": "1", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "2"},
+            clear=True,
+        ):
+            reason = _external_fork_secrets_blocked({"security": {}})
+        self.assertIsNotNone(reason)
+        self.assertIn("allow_external_fork_secrets is false", reason or "")
+
+    def test_external_fork_secret_gate_allows_explicit_opt_in(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"CI_PROJECT_ID": "1", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "2"},
+            clear=True,
+        ):
+            reason = _external_fork_secrets_blocked(
+                {"security": {"allow_external_fork_secrets": True}}
+            )
+        self.assertIsNone(reason)
 
 
 if __name__ == "__main__":

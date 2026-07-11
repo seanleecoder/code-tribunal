@@ -8,7 +8,7 @@ from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import effective_config_summary, enabled_reviewers, load_config
 from .memory import find_matching_record, state_from_aliases
-from .post import render_body
+from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
 
 SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
@@ -245,14 +245,16 @@ def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, st
     )
 
 
-def _severity_after_one_level_downgrade(current: str, adjusted: Any) -> str:
-    if not isinstance(adjusted, str) or adjusted not in SEVERITY_RANK:
-        return current
+def _severity_after_group_downgrade(current: str, adjusted_values: list[str]) -> str:
+    requested_ranks = [SEVERITY_RANK[value] for value in adjusted_values if value in SEVERITY_RANK]
     current_rank = SEVERITY_RANK[current]
-    adjusted_rank = SEVERITY_RANK[adjusted]
-    if adjusted_rank >= current_rank:
+    lower_ranks = [rank for rank in requested_ranks if rank < current_rank]
+    if not lower_ranks:
         return current
-    return SEVERITY_BY_RANK[max(current_rank - 1, adjusted_rank)]
+    downgraded = SEVERITY_BY_RANK[max(current_rank - 1, min(lower_ranks))]
+    if current == "blocker" and downgraded != "blocker":
+        return current
+    return downgraded
 
 
 def _same_path_and_category(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -439,12 +441,13 @@ def _apply_critiques(
             continue
         if allow_downgrade:
             severity = str(group["final_severity"])
-            for adjusted in sorted(
-                downgrades.get(index, []),
-                key=lambda item: SEVERITY_RANK.get(item, SEVERITY_RANK[severity]),
-            ):
-                severity = _severity_after_one_level_downgrade(severity, adjusted)
-            group["final_severity"] = severity
+            group["final_severity"] = _severity_after_group_downgrade(
+                severity,
+                sorted(
+                    downgrades.get(index, []),
+                    key=lambda item: SEVERITY_RANK.get(item, SEVERITY_RANK[severity]),
+                ),
+            )
         _recompute_group_decision(
             group,
             config,

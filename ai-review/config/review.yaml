@@ -89,8 +89,8 @@ critique:
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
+  allow_advisory_escalation: false # Security default: do not let critique promote advisory findings
+  allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:

@@ -225,8 +225,8 @@ critique:
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
+  allow_advisory_escalation: false # Security default: do not let critique promote advisory findings
+  allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
@@ -422,7 +422,7 @@ make validate-local
 
 To integrate Code Tribunal into downstream projects:
 
-1. **Declare Stages & Include CI Template**: Add the AI review stages to your root `.gitlab-ci.yml` `stages:` list and include [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
+1. **Declare Stages & Include the Trusted CI Template**: Add the AI review stages to your root `.gitlab-ci.yml` `stages:` list and include the review template from a protected repository/ref that merge-request authors cannot edit:
    ```yaml
    stages:
      - prepare
@@ -434,8 +434,12 @@ To integrate Code Tribunal into downstream projects:
      # ... your existing pipeline stages (e.g. build, test, deploy)
 
    include:
-     - local: 'ai-review/ci/review.gitlab-ci.yml'
+     - project: 'org/code-tribunal-ci'
+       ref: 'v1.0.0' # protected tag or protected branch
+       file: '/review.gitlab-ci.yml'
    ```
+
+   **Do not use `include: local` for secret-bearing AI review jobs in merge-request pipelines.** GitLab resolves local includes from the MR source branch, so an attacker could rewrite the review, post, or gate job definitions before protected tokens are consumed. Host `review.gitlab-ci.yml` in a separate protected template repository or protected branch/tag, require CODEOWNERS approval for changes, and pin consumers to a reviewed ref.
 
 2. **Image Variables & Cutover State**:
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
@@ -455,14 +459,16 @@ To integrate Code Tribunal into downstream projects:
 
 3. **Configure GitLab CI/CD Variables** (Settings -> CI/CD -> Variables):
 
-| Variable | Description | Masked | Required |
-|---|---|---|---|
-| `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes |
-| `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes |
-| `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes |
-| `JIRA_EMAIL` | Jira Cloud user email (if Jira integration enabled). | No | Optional |
-| `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Optional |
-| `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional |
+| Variable | Description | Masked | Protected | Required |
+|---|---|---|---|---|
+| `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
+| `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes | Yes |
+| `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes | Yes |
+| `JIRA_EMAIL` | Jira Cloud user email (if Jira integration enabled). | No | Optional | Optional |
+| `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
+| `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |
+
+Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline.
 
 4. **Required GitLab Project Settings**:
    - Enable **Pipelines must succeed** (Settings -> General -> Merge requests).
