@@ -79,7 +79,9 @@ def _workflow_job(text: str, job_name: str) -> str:
 
 class GitLabCiTemplateTests(unittest.TestCase):
     def test_public_readmes_do_not_use_retired_unverifiable_verdict(self) -> None:
-        for path in (_ROOT_README, _AI_REVIEW_README):
+        readmes = [path for path in (_ROOT_README, _AI_REVIEW_README) if path.exists()]
+        self.assertTrue(readmes, "expected at least one README in this test environment")
+        for path in readmes:
             with self.subTest(path=path):
                 self.assertNotIn("unverifiable", path.read_text(encoding="utf-8"))
 

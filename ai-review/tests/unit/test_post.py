@@ -21,6 +21,7 @@ class FakePostClient:
         self.mr_notes: list[dict[str, Any]] = []
         self.updated_mr_notes: list[dict[str, Any]] = []
         self.created_positions: list[dict[str, Any]] = []
+        self.created_bodies: list[str] = []
 
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
@@ -37,6 +38,7 @@ class FakePostClient:
     ) -> dict[str, Any]:
         self.created += 1
         self.created_positions.append(position)
+        self.created_bodies.append(body)
         return {"id": "discussion", "notes": [{"id": 123}]}
 
     def list_mr_discussions(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
@@ -191,6 +193,35 @@ class PostTests(unittest.TestCase):
         self.assertTrue(
             any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"])
         )
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_consensus_redacts_created_discussion_body(self) -> None:
+        client = FakePostClient("head")
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text="",
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(len(client.created_bodies), 1)
+        body = client.created_bodies[0]
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+        validate_instance(result, "post_result.schema.json")
 
     def _state_record(
         self,
