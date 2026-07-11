@@ -44,7 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup, PostResult, SummaryComment
+from .types import FindingGroup, PostResult, State, StateRecord, SummaryComment
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -125,6 +125,27 @@ STOPWORDS = {
     "would",
     "your",
 }
+
+
+@dataclass
+class PlanOutcome:
+    warnings: list[str]
+    stale_unverified: int = 0
+    overflow: str | None = None
+
+
+@dataclass
+class StatePlan:
+    persisted_state: State
+    base_records: list[StateRecord]
+    planned_records: list[StateRecord]
+    planned_by_issue: dict[str, StateRecord]
+    planned_matches: dict[str, StateRecord]
+    ambiguous_issue_ids: set[str]
+    pipeline_id: str
+    planned_state: State
+    retention: dict[str, Any]
+    outcome: PlanOutcome
 
 
 @dataclass(frozen=True)
@@ -920,6 +941,219 @@ def _can_remap_anchor(anchor: Any) -> bool:
     )
 
 
+
+def plan_state(
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: dict[str, Any],
+    persisted_state: dict[str, Any],
+    inline_candidates: list[dict[str, Any]],
+    summary_fallback_groups: list[dict[str, Any]],
+    fyi_groups: list[dict[str, Any]],
+    human_commands: dict[str, str],
+) -> StatePlan:
+    outcome = PlanOutcome(warnings=[])
+    pipeline_id = _pipeline_id(manifest)
+    base_records = [
+        record
+        for record in persisted_state.get("records", [])
+        if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
+    ]
+    planned_matches: dict[str, StateRecord] = {}
+    ambiguous_issue_ids: set[str] = set()
+    protected_issue_ids: set[str] = set()
+    planned_records: list[StateRecord] = []
+    planned_issue_ids: set[str] = set()
+    planning_used_discussion_ids: set[Any] = set()
+    all_current_groups = [
+        group
+        for group in inline_candidates + summary_fallback_groups + fyi_groups
+        if isinstance(group.get("issue_id"), str)
+    ]
+    for group in all_current_groups:
+        state_for_match = {
+            "records": [
+                record
+                for record in base_records
+                if record.get("discussion_id") not in planning_used_discussion_ids
+            ]
+        }
+        state_match = find_matching_record(group, state_for_match)
+        if state_match.status == "ambiguous":
+            ambiguous_issue_ids.add(group["issue_id"])
+            candidate_ids = [
+                record["issue_id"]
+                for record in state_match.records
+                if isinstance(record.get("issue_id"), str)
+            ]
+            protected_issue_ids.update(candidate_ids)
+            outcome.warnings.append(
+                f"ambiguous existing record match for {group['issue_id']}; "
+                f"protected {len(candidate_ids)} candidate record(s)"
+            )
+            for candidate in state_match.records:
+                candidate_id = candidate.get("issue_id")
+                if not isinstance(candidate_id, str) or candidate_id in planned_issue_ids:
+                    continue
+                updated = dict(candidate)
+                updated["status"] = "stale"
+                updated["remap_status"] = "ambiguous"
+                planned_records.append(
+                    cast(
+                        StateRecord,
+                        normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+                    )
+                )
+                planned_issue_ids.add(candidate_id)
+            continue
+        previous = (
+            cast(StateRecord, state_match.record) if state_match.status == "matched" else None
+        )
+        if previous is not None:
+            planned_matches[group["issue_id"]] = previous
+            if isinstance(previous.get("issue_id"), str):
+                protected_issue_ids.add(previous["issue_id"])
+            if previous.get("discussion_id") is not None:
+                planning_used_discussion_ids.add(previous.get("discussion_id"))
+        status = "open"
+        human_disposition = previous.get("human_disposition") if previous else None
+        command = human_commands.get(group["issue_id"])
+        if command is None and previous is not None:
+            command = human_commands.get(str(previous.get("issue_id") or ""))
+        if command == "wontfix":
+            status = "wontfix"
+            human_disposition = "wontfix"
+        elif command == "resolve":
+            status = "resolved"
+            human_disposition = "resolve"
+        elif command == "reopen":
+            status = "open"
+            human_disposition = "reopen"
+        elif previous is not None and previous.get("status") == "wontfix":
+            status = "wontfix"
+            human_disposition = previous.get("human_disposition") or "wontfix"
+        planned_records.append(
+            cast(
+                StateRecord,
+                _record_for_group(
+                    group,
+                    manifest=manifest,
+                    pipeline_id=pipeline_id,
+                    existing=cast(dict[str, Any] | None, previous),
+                    status=status,
+                    human_disposition=human_disposition,
+                ),
+            )
+        )
+        planned_issue_ids.add(group["issue_id"])
+        if previous is not None and isinstance(previous.get("issue_id"), str):
+            planned_issue_ids.add(previous["issue_id"])
+
+    resolution_quorum = _has_resolution_quorum(config, consensus)
+    for record in base_records:
+        issue_id = record["issue_id"]
+        if issue_id in planned_issue_ids:
+            continue
+        if issue_id in protected_issue_ids:
+            updated = dict(record)
+            if updated.get("status") == "open":
+                updated["status"] = "stale"
+                updated["remap_status"] = (
+                    "ambiguous" if issue_id in protected_issue_ids else updated.get("remap_status")
+                )
+            planned_records.append(
+                cast(
+                    StateRecord,
+                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+                )
+            )
+            planned_issue_ids.add(issue_id)
+            continue
+        command = human_commands.get(issue_id)
+        updated = dict(record)
+        if command == "reopen":
+            updated["status"] = "open"
+            updated["human_disposition"] = "reopen"
+        elif command == "wontfix":
+            updated["status"] = "wontfix"
+            updated["human_disposition"] = "wontfix"
+        elif command == "resolve":
+            updated["status"] = "resolved"
+            updated["human_disposition"] = "resolve"
+        elif record.get("status") == "open":
+            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
+            if not resolution_quorum:
+                outcome.stale_unverified += 1
+        planned_records.append(
+            cast(
+                StateRecord,
+                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+            )
+        )
+    planned_state = normalize_state(
+        {
+            **persisted_state,
+            "last_head_sha": manifest["head_sha"],
+            "written_by_pipeline_id": pipeline_id,
+            "updated_at": now_iso(),
+            "records": planned_records,
+            "run_history": (
+                persisted_state.get("run_history", [])
+                if isinstance(persisted_state.get("run_history"), list)
+                else []
+            )
+            + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
+        },
+        manifest=manifest,
+        pipeline_id=pipeline_id,
+    )
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
+    planned_state = compact_state(planned_state, retention if isinstance(retention, dict) else {})
+    if _state_enabled(config):
+        overflow = state_overflow_reason(
+            planned_state,
+            max_records=int(retention.get("max_records", 200))
+            if isinstance(retention, dict)
+            else 200,
+            max_state_bytes=int(retention.get("max_state_bytes", 50000))
+            if isinstance(retention, dict)
+            else 50000,
+        )
+        if overflow is not None:
+            outcome.overflow = overflow
+            return StatePlan(
+                persisted_state=cast(State, persisted_state),
+                base_records=cast(list[StateRecord], base_records),
+                planned_records=planned_records,
+                planned_by_issue={},
+                planned_matches=planned_matches,
+                ambiguous_issue_ids=ambiguous_issue_ids,
+                pipeline_id=pipeline_id,
+                planned_state=cast(State, planned_state),
+                retention=retention if isinstance(retention, dict) else {},
+                outcome=outcome,
+            )
+
+    planned_by_issue = {record["issue_id"]: record for record in planned_records}
+    for group_issue_id, existing in planned_matches.items():
+        existing_issue_id = existing.get("issue_id")
+        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
+            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    return StatePlan(
+        persisted_state=cast(State, persisted_state),
+        base_records=cast(list[StateRecord], base_records),
+        planned_records=planned_records,
+        planned_by_issue=planned_by_issue,
+        planned_matches=planned_matches,
+        ambiguous_issue_ids=ambiguous_issue_ids,
+        pipeline_id=pipeline_id,
+        planned_state=cast(State, planned_state),
+        retention=retention if isinstance(retention, dict) else {},
+        outcome=outcome,
+    )
+
+
 def post_consensus(
     client: GitLabClient,
     config: dict[str, Any],
@@ -1009,175 +1243,28 @@ def post_consensus(
     fyi_groups = cast(list[dict[str, Any]], classified_fyi)
     result["warnings"].extend(classification_warnings)
 
-    pipeline_id = _pipeline_id(manifest)
-    base_records = [
-        record
-        for record in persisted_state.get("records", [])
-        if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
-    ]
-    planned_matches: dict[str, dict[str, Any]] = {}
-    ambiguous_issue_ids: set[str] = set()
-    protected_issue_ids: set[str] = set()
-    planned_records: list[dict[str, Any]] = []
-    planned_issue_ids: set[str] = set()
-    planning_used_discussion_ids: set[Any] = set()
-    all_current_groups = [
-        group
-        for group in inline_candidates + summary_fallback_groups + fyi_groups
-        if isinstance(group.get("issue_id"), str)
-    ]
-    for group in all_current_groups:
-        state_for_match = {
-            "records": [
-                record
-                for record in base_records
-                if record.get("discussion_id") not in planning_used_discussion_ids
-            ]
-        }
-        state_match = find_matching_record(group, state_for_match)
-        if state_match.status == "ambiguous":
-            ambiguous_issue_ids.add(group["issue_id"])
-            candidate_ids = [
-                record["issue_id"]
-                for record in state_match.records
-                if isinstance(record.get("issue_id"), str)
-            ]
-            protected_issue_ids.update(candidate_ids)
-            result["warnings"].append(
-                f"ambiguous existing record match for {group['issue_id']}; "
-                f"protected {len(candidate_ids)} candidate record(s)"
-            )
-            for candidate in state_match.records:
-                candidate_id = candidate.get("issue_id")
-                if not isinstance(candidate_id, str) or candidate_id in planned_issue_ids:
-                    continue
-                updated = dict(candidate)
-                updated["status"] = "stale"
-                updated["remap_status"] = "ambiguous"
-                planned_records.append(
-                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
-                )
-                planned_issue_ids.add(candidate_id)
-            continue
-        previous = state_match.record if state_match.status == "matched" else None
-        if previous is not None:
-            planned_matches[group["issue_id"]] = previous
-            if isinstance(previous.get("issue_id"), str):
-                protected_issue_ids.add(previous["issue_id"])
-            if previous.get("discussion_id") is not None:
-                planning_used_discussion_ids.add(previous.get("discussion_id"))
-        status = "open"
-        human_disposition = previous.get("human_disposition") if previous else None
-        command = human_commands.get(group["issue_id"])
-        if command is None and previous is not None:
-            command = human_commands.get(str(previous.get("issue_id") or ""))
-        if command == "wontfix":
-            status = "wontfix"
-            human_disposition = "wontfix"
-        elif command == "resolve":
-            status = "resolved"
-            human_disposition = "resolve"
-        elif command == "reopen":
-            status = "open"
-            human_disposition = "reopen"
-        elif previous is not None and previous.get("status") == "wontfix":
-            status = "wontfix"
-            human_disposition = previous.get("human_disposition") or "wontfix"
-        planned_records.append(
-            _record_for_group(
-                group,
-                manifest=manifest,
-                pipeline_id=pipeline_id,
-                existing=previous,
-                status=status,
-                human_disposition=human_disposition,
-            )
-        )
-        planned_issue_ids.add(group["issue_id"])
-        if previous is not None and isinstance(previous.get("issue_id"), str):
-            planned_issue_ids.add(previous["issue_id"])
-
-    resolution_quorum = _has_resolution_quorum(config, consensus)
-    for record in base_records:
-        issue_id = record["issue_id"]
-        if issue_id in planned_issue_ids:
-            continue
-        if issue_id in protected_issue_ids:
-            updated = dict(record)
-            if updated.get("status") == "open":
-                updated["status"] = "stale"
-                updated["remap_status"] = (
-                    "ambiguous" if issue_id in protected_issue_ids else updated.get("remap_status")
-                )
-            planned_records.append(
-                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
-            )
-            planned_issue_ids.add(issue_id)
-            continue
-        command = human_commands.get(issue_id)
-        updated = dict(record)
-        if command == "reopen":
-            updated["status"] = "open"
-            updated["human_disposition"] = "reopen"
-        elif command == "wontfix":
-            updated["status"] = "wontfix"
-            updated["human_disposition"] = "wontfix"
-        elif command == "resolve":
-            updated["status"] = "resolved"
-            updated["human_disposition"] = "resolve"
-        elif record.get("status") == "open":
-            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
-            if not resolution_quorum:
-                result["stale_unverified"] += 1
-        planned_records.append(
-            normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
-        )
-    planned_state = normalize_state(
-        {
-            **persisted_state,
-            "last_head_sha": manifest["head_sha"],
-            "written_by_pipeline_id": pipeline_id,
-            "updated_at": now_iso(),
-            "records": planned_records,
-            "run_history": (
-                persisted_state.get("run_history", [])
-                if isinstance(persisted_state.get("run_history"), list)
-                else []
-            )
-            + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
-        },
-        manifest=manifest,
-        pipeline_id=pipeline_id,
+    state_plan = plan_state(
+        config,
+        manifest,
+        consensus,
+        persisted_state,
+        inline_candidates,
+        summary_fallback_groups,
+        fyi_groups,
+        human_commands,
     )
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
-    planned_state = compact_state(planned_state, retention if isinstance(retention, dict) else {})
-    if _state_enabled(config):
-        overflow = state_overflow_reason(
-            planned_state,
-            max_records=int(retention.get("max_records", 200))
-            if isinstance(retention, dict)
-            else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
-        )
-        if overflow is not None:
-            result["status"] = "state_overflow"
-            result["warnings"].append(overflow)
-            return result
-
-    planned_by_issue = {record["issue_id"]: record for record in planned_records}
-    for group_issue_id, existing in planned_matches.items():
-        existing_issue_id = existing.get("issue_id")
-        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
-            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    result["warnings"].extend(state_plan.outcome.warnings)
+    result["stale_unverified"] += state_plan.outcome.stale_unverified
+    if state_plan.outcome.overflow is not None:
+        result["status"] = "state_overflow"
+        result["warnings"].append(state_plan.outcome.overflow)
+        return result
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
         position = build_position(anchor, version, multiline=inline_multiline)
-        planned_record = planned_by_issue.get(group["issue_id"])
-        if group["issue_id"] in ambiguous_issue_ids:
+        planned_record = state_plan.planned_by_issue.get(group["issue_id"])
+        if group["issue_id"] in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
                 "skipped inline creation"
@@ -1187,7 +1274,7 @@ def post_consensus(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = planned_matches.get(group["issue_id"])
+        existing = state_plan.planned_matches.get(group["issue_id"])
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -1203,7 +1290,7 @@ def post_consensus(
                 post_group = dict(group, issue_id=existing["issue_id"])
             existing_anchor = existing.get("anchor")
             if current_diff_text is not None and _can_remap_anchor(existing_anchor):
-                remap = remap_anchor(current_diff_text, existing_anchor)
+                remap = remap_anchor(current_diff_text, cast(dict[str, Any], existing_anchor))
                 remap_status = str(remap.get("status"))
                 if remap_status == "exact":
                     if planned_record is not None:
@@ -1247,28 +1334,30 @@ def post_consensus(
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
+            existing_discussion_id = str(existing["discussion_id"])
+            existing_root_note_id = cast(int, existing["root_note_id"])
             if existing.get("last_posted_body_hash") == body_hash:
                 result["skipped_unchanged"] += 1
                 continue
             client.update_discussion_note(
                 manifest["project_id"],
                 manifest["merge_request_iid"],
-                str(existing["discussion_id"]),
-                int(existing["root_note_id"]),
+                existing_discussion_id,
+                existing_root_note_id,
                 body,
             )
             used_discussion_ids.add(existing["discussion_id"])
             if planned_record is not None:
-                planned_record["discussion_id"] = str(existing["discussion_id"])
-                planned_record["root_note_id"] = int(existing["root_note_id"])
+                planned_record["discussion_id"] = existing_discussion_id
+                planned_record["root_note_id"] = existing_root_note_id
                 planned_record["last_posted_body_hash"] = body_hash
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
                     "issue_id": post_group["issue_id"],
                     "action": "updated",
-                    "discussion_id": str(existing["discussion_id"]),
-                    "root_note_id": int(existing["root_note_id"]),
+                    "discussion_id": existing_discussion_id,
+                    "root_note_id": existing_root_note_id,
                 }
             )
             continue
@@ -1354,8 +1443,11 @@ def post_consensus(
     if _state_enabled(config):
         resolve_discussion = getattr(client, "resolve_discussion", None)
         if callable(resolve_discussion):
-            prior_status = {record["issue_id"]: record.get("status") for record in base_records}
-            for record in planned_records:
+            prior_status = {
+                record["issue_id"]: record.get("status")
+                for record in state_plan.base_records
+            }
+            for record in state_plan.planned_records:
                 discussion_id = record.get("discussion_id")
                 if discussion_id is None:
                     continue
@@ -1381,22 +1473,18 @@ def post_consensus(
                     result["resolved_discussions"] += 1
         final_state = normalize_state(
             {
-                **planned_state,
-                "records": planned_records,
+                **state_plan.planned_state,
+                "records": state_plan.planned_records,
                 "updated_at": now_iso(),
             },
             manifest=manifest,
-            pipeline_id=pipeline_id,
+            pipeline_id=state_plan.pipeline_id,
         )
-        final_state = compact_state(final_state, retention if isinstance(retention, dict) else {})
+        final_state = compact_state(final_state, state_plan.retention)
         overflow = state_overflow_reason(
             final_state,
-            max_records=int(retention.get("max_records", 200))
-            if isinstance(retention, dict)
-            else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
+            max_records=int(state_plan.retention.get("max_records", 200)),
+            max_state_bytes=int(state_plan.retention.get("max_state_bytes", 50000)),
         )
         if overflow is not None:
             result["status"] = "partial_failed"
