@@ -1006,7 +1006,9 @@ def plan_state(
                 )
                 planned_issue_ids.add(candidate_id)
             continue
-        previous = state_match.record if state_match.status == "matched" else None
+        previous = (
+            cast(StateRecord, state_match.record) if state_match.status == "matched" else None
+        )
         if previous is not None:
             planned_matches[group["issue_id"]] = previous
             if isinstance(previous.get("issue_id"), str):
@@ -1031,13 +1033,16 @@ def plan_state(
             status = "wontfix"
             human_disposition = previous.get("human_disposition") or "wontfix"
         planned_records.append(
-            _record_for_group(
-                group,
-                manifest=manifest,
-                pipeline_id=pipeline_id,
-                existing=previous,
-                status=status,
-                human_disposition=human_disposition,
+            cast(
+                StateRecord,
+                _record_for_group(
+                    group,
+                    manifest=manifest,
+                    pipeline_id=pipeline_id,
+                    existing=cast(dict[str, Any] | None, previous),
+                    status=status,
+                    human_disposition=human_disposition,
+                ),
             )
         )
         planned_issue_ids.add(group["issue_id"])
@@ -1057,7 +1062,10 @@ def plan_state(
                     "ambiguous" if issue_id in protected_issue_ids else updated.get("remap_status")
                 )
             planned_records.append(
-                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
+                cast(
+                    StateRecord,
+                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+                )
             )
             planned_issue_ids.add(issue_id)
             continue
@@ -1136,7 +1144,7 @@ def plan_state(
         persisted_state=cast(State, persisted_state),
         base_records=cast(list[StateRecord], base_records),
         planned_records=planned_records,
-        planned_by_issue=cast(dict[str, StateRecord], planned_by_issue),
+        planned_by_issue=planned_by_issue,
         planned_matches=planned_matches,
         ambiguous_issue_ids=ambiguous_issue_ids,
         pipeline_id=pipeline_id,
@@ -1282,7 +1290,7 @@ def post_consensus(
                 post_group = dict(group, issue_id=existing["issue_id"])
             existing_anchor = existing.get("anchor")
             if current_diff_text is not None and _can_remap_anchor(existing_anchor):
-                remap = remap_anchor(current_diff_text, existing_anchor)
+                remap = remap_anchor(current_diff_text, cast(dict[str, Any], existing_anchor))
                 remap_status = str(remap.get("status"))
                 if remap_status == "exact":
                     if planned_record is not None:
@@ -1326,28 +1334,30 @@ def post_consensus(
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
+            existing_discussion_id = str(existing["discussion_id"])
+            existing_root_note_id = cast(int, existing["root_note_id"])
             if existing.get("last_posted_body_hash") == body_hash:
                 result["skipped_unchanged"] += 1
                 continue
             client.update_discussion_note(
                 manifest["project_id"],
                 manifest["merge_request_iid"],
-                str(existing["discussion_id"]),
-                int(existing["root_note_id"]),
+                existing_discussion_id,
+                existing_root_note_id,
                 body,
             )
             used_discussion_ids.add(existing["discussion_id"])
             if planned_record is not None:
-                planned_record["discussion_id"] = str(existing["discussion_id"])
-                planned_record["root_note_id"] = int(existing["root_note_id"])
+                planned_record["discussion_id"] = existing_discussion_id
+                planned_record["root_note_id"] = existing_root_note_id
                 planned_record["last_posted_body_hash"] = body_hash
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
                     "issue_id": post_group["issue_id"],
                     "action": "updated",
-                    "discussion_id": str(existing["discussion_id"]),
-                    "root_note_id": int(existing["root_note_id"]),
+                    "discussion_id": existing_discussion_id,
+                    "root_note_id": existing_root_note_id,
                 }
             )
             continue
