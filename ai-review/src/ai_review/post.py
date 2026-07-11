@@ -127,6 +127,19 @@ STOPWORDS = {
 }
 
 
+
+@dataclass
+class StatePlan:
+    persisted_state: dict[str, Any]
+    base_records: list[dict[str, Any]]
+    planned_records: list[dict[str, Any]]
+    planned_by_issue: dict[str, dict[str, Any]]
+    planned_matches: dict[str, dict[str, Any]]
+    ambiguous_issue_ids: set[str]
+    pipeline_id: str
+    planned_state: dict[str, Any]
+    retention: dict[str, Any]
+
 @dataclass(frozen=True)
 class ExistingReviewDiscussion:
     discussion_id: Any
@@ -920,95 +933,18 @@ def _can_remap_anchor(anchor: Any) -> bool:
     )
 
 
-def post_consensus(
-    client: GitLabClient,
+
+def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
     consensus: dict[str, Any],
-    *,
-    dry_run: bool = False,
-    diff_text: str | None = None,
-) -> PostResult:
-    current_head_sha = client.fetch_current_mr_head_sha(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    result = _initial_post_result(
-        consensus=consensus,
-        manifest=manifest,
-        current_head_sha=current_head_sha,
-    )
-    posting = config.get("posting", {})
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
-        result["status"] = "stale_head"
-        return result
-
-    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
-    max_fyi = int(limits.get("max_fyi_findings", 50))
-
-    raw_discussions = (
-        []
-        if dry_run
-        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
-    )
-    existing_discussions = index_ai_review_discussions(raw_discussions)
-    bot_author_id = None if dry_run else current_user_id(client)
-    if not dry_run and bot_author_id is None:
-        raise RuntimeError(
-            "discussion-marker recovery requires GitLab current_user lookup to verify author"
-        )
-    state_warnings: list[str] = []
-    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
-    state_warnings.extend(load_warnings)
-    recovered_state = state_from_existing_discussions(
-        existing_discussions,
-        current_head_sha=manifest["head_sha"],
-        expected_author_id=bot_author_id,
-    )
-    if persisted_state is None:
-        state_config = config.get("state", {}) if isinstance(config, dict) else {}
-        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
-            persisted_state = normalize_state(
-                recovered_state,
-                manifest=manifest,
-                pipeline_id=_pipeline_id(manifest),
-            )
-    if persisted_state is None:
-        persisted_state = empty_state(
-            project_id=manifest["project_id"],
-            merge_request_iid=manifest["merge_request_iid"],
-            head_sha=manifest["head_sha"],
-            pipeline_id=_pipeline_id(manifest),
-        )
-    result["warnings"].extend(state_warnings)
-    human_commands = collect_human_commands(
-        client,
-        manifest["project_id"],
-        raw_discussions,
-    )
-
-    # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
-    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
-        _classify_post_groups(
-            cast(list[FindingGroup], consensus.get("groups", [])),
-            inline_sides=inline_sides,
-            inline_multiline=inline_multiline,
-            max_surface=max_surface,
-        )
-    )
-    inline_candidates = cast(list[dict[str, Any]], classified_inline)
-    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
-    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
-    result["warnings"].extend(classification_warnings)
-
+    persisted_state: dict[str, Any],
+    inline_candidates: list[dict[str, Any]],
+    summary_fallback_groups: list[dict[str, Any]],
+    fyi_groups: list[dict[str, Any]],
+    human_commands: dict[str, str],
+    result: PostResult,
+) -> StatePlan | None:
     pipeline_id = _pipeline_id(manifest)
     base_records = [
         record
@@ -1165,13 +1101,137 @@ def post_consensus(
         if overflow is not None:
             result["status"] = "state_overflow"
             result["warnings"].append(overflow)
-            return result
+            return None
 
     planned_by_issue = {record["issue_id"]: record for record in planned_records}
     for group_issue_id, existing in planned_matches.items():
         existing_issue_id = existing.get("issue_id")
         if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
             planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    return StatePlan(
+        persisted_state=persisted_state,
+        base_records=base_records,
+        planned_records=planned_records,
+        planned_by_issue=planned_by_issue,
+        planned_matches=planned_matches,
+        ambiguous_issue_ids=ambiguous_issue_ids,
+        pipeline_id=pipeline_id,
+        planned_state=planned_state,
+        retention=retention if isinstance(retention, dict) else {},
+    )
+
+
+def post_consensus(
+    client: GitLabClient,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    diff_text: str | None = None,
+) -> PostResult:
+    current_head_sha = client.fetch_current_mr_head_sha(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+    )
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+        result["status"] = "stale_head"
+        return result
+
+    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
+    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+
+    raw_discussions = (
+        []
+        if dry_run
+        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
+    )
+    existing_discussions = index_ai_review_discussions(raw_discussions)
+    bot_author_id = None if dry_run else current_user_id(client)
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
+    state_warnings: list[str] = []
+    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
+    state_warnings.extend(load_warnings)
+    recovered_state = state_from_existing_discussions(
+        existing_discussions,
+        current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
+    )
+    if persisted_state is None:
+        state_config = config.get("state", {}) if isinstance(config, dict) else {}
+        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
+            persisted_state = normalize_state(
+                recovered_state,
+                manifest=manifest,
+                pipeline_id=_pipeline_id(manifest),
+            )
+    if persisted_state is None:
+        persisted_state = empty_state(
+            project_id=manifest["project_id"],
+            merge_request_iid=manifest["merge_request_iid"],
+            head_sha=manifest["head_sha"],
+            pipeline_id=_pipeline_id(manifest),
+        )
+    result["warnings"].extend(state_warnings)
+    human_commands = collect_human_commands(
+        client,
+        manifest["project_id"],
+        raw_discussions,
+    )
+
+    # Classify groups: inline-postable surface findings, surface findings that must fall
+    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
+        _classify_post_groups(
+            cast(list[FindingGroup], consensus.get("groups", [])),
+            inline_sides=inline_sides,
+            inline_multiline=inline_multiline,
+            max_surface=max_surface,
+        )
+    )
+    inline_candidates = cast(list[dict[str, Any]], classified_inline)
+    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
+    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
+    result["warnings"].extend(classification_warnings)
+
+    state_plan = plan_state(
+        config,
+        manifest,
+        consensus,
+        persisted_state,
+        inline_candidates,
+        summary_fallback_groups,
+        fyi_groups,
+        human_commands,
+        result,
+    )
+    if state_plan is None:
+        return result
+    planned_by_issue = state_plan.planned_by_issue
+    ambiguous_issue_ids = state_plan.ambiguous_issue_ids
+    planned_matches = state_plan.planned_matches
+    base_records = state_plan.base_records
+    planned_records = state_plan.planned_records
+    planned_state = state_plan.planned_state
+    pipeline_id = state_plan.pipeline_id
+    retention = state_plan.retention
+
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
