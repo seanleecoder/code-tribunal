@@ -805,6 +805,77 @@ def upsert_summary_comment(
     return summary
 
 
+def _initial_post_result(
+    *,
+    consensus: dict[str, Any],
+    manifest: dict[str, Any],
+    current_head_sha: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "post_result.v1",
+        "run_id": consensus["run_id"],
+        "status": "success",
+        "head_sha": manifest["head_sha"],
+        "current_head_sha": current_head_sha,
+        "created_discussions": 0,
+        "updated_discussions": 0,
+        "resolved_discussions": 0,
+        "skipped_unchanged": 0,
+        "stale_unverified": 0,
+        "jira_comments_created": 0,
+        "jira_comments_updated": 0,
+        "posted_discussions": [],
+        "warnings": [],
+        "summary_comment": {
+            "action": "none",
+            "note_id": None,
+            "surface_findings": 0,
+            "fyi_findings": 0,
+        },
+    }
+
+
+def _classify_post_groups(
+    groups: list[dict[str, Any]],
+    *,
+    inline_sides: set[str],
+    inline_multiline: bool,
+    max_surface: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    inline_candidates: list[dict[str, Any]] = []
+    summary_fallback_groups: list[dict[str, Any]] = []
+    fyi_groups: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for group in groups:
+        decision = group.get("decision")
+        if decision == "fyi":
+            fyi_groups.append(group)
+            continue
+        if decision != "surface":
+            continue
+        anchor = group["representative_anchor"]
+        if anchor.get("side") not in inline_sides:
+            warnings.append(f"summary fallback required for unsupported side: {anchor.get('side')}")
+            summary_fallback_groups.append(group)
+            continue
+        if anchor.get("start") != anchor.get("end") and not inline_multiline:
+            warnings.append("summary fallback required for multiline anchor")
+            summary_fallback_groups.append(group)
+            continue
+        inline_candidates.append(group)
+
+    inline_candidates = _sort_groups(inline_candidates)
+    if len(inline_candidates) > max_surface:
+        overflow = inline_candidates[max_surface:]
+        inline_candidates = inline_candidates[:max_surface]
+        for group in overflow:
+            warnings.append(
+                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
+            )
+            summary_fallback_groups.append(group)
+    return inline_candidates, summary_fallback_groups, fyi_groups, warnings
+
+
 def _load_current_diff_text(
     client: GitLabClient,
     manifest: dict[str, Any],
@@ -846,28 +917,11 @@ def post_consensus(
         manifest["project_id"],
         manifest["merge_request_iid"],
     )
-    result = {
-        "schema_version": "post_result.v1",
-        "run_id": consensus["run_id"],
-        "status": "success",
-        "head_sha": manifest["head_sha"],
-        "current_head_sha": current_head_sha,
-        "created_discussions": 0,
-        "updated_discussions": 0,
-        "resolved_discussions": 0,
-        "skipped_unchanged": 0,
-        "stale_unverified": 0,
-        "jira_comments_created": 0,
-        "jira_comments_updated": 0,
-        "posted_discussions": [],
-        "warnings": [],
-        "summary_comment": {
-            "action": "none",
-            "note_id": None,
-            "surface_findings": 0,
-            "fyi_findings": 0,
-        },
-    }
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
     posting = config.get("posting", {})
     limits = config.get("limits", {})
     if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
@@ -925,41 +979,16 @@ def post_consensus(
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline), and FYI findings.
-    inline_candidates: list[dict[str, Any]] = []
-    summary_fallback_groups: list[dict[str, Any]] = []
-    fyi_groups: list[dict[str, Any]] = []
-    for group in consensus.get("groups", []):
-        decision = group.get("decision")
-        if decision == "fyi":
-            fyi_groups.append(group)
-            continue
-        if decision != "surface":
-            continue
-        anchor = group["representative_anchor"]
-        if anchor.get("side") not in inline_sides:
-            result["warnings"].append(
-                f"summary fallback required for unsupported side: {anchor.get('side')}"
-            )
-            summary_fallback_groups.append(group)
-            continue
-        if anchor.get("start") != anchor.get("end") and not inline_multiline:
-            result["warnings"].append("summary fallback required for multiline anchor")
-            summary_fallback_groups.append(group)
-            continue
-        inline_candidates.append(group)
-
-    # Enforce the inline surface cap; highest-severity findings keep the inline slots and
-    # any overflow is redirected to the summary comment rather than dropped.
-    inline_candidates = _sort_groups(inline_candidates)
-    if len(inline_candidates) > max_surface:
-        overflow = inline_candidates[max_surface:]
-        inline_candidates = inline_candidates[:max_surface]
-        for group in overflow:
-            result["warnings"].append(
-                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
-            )
-            summary_fallback_groups.append(group)
+    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    inline_candidates, summary_fallback_groups, fyi_groups, classification_warnings = (
+        _classify_post_groups(
+            [group for group in consensus.get("groups", []) if isinstance(group, dict)],
+            inline_sides=inline_sides,
+            inline_multiline=inline_multiline,
+            max_surface=max_surface,
+        )
+    )
+    result["warnings"].extend(classification_warnings)
 
     pipeline_id = _pipeline_id(manifest)
     base_records = [
