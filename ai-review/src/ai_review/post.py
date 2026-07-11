@@ -835,16 +835,24 @@ def _initial_post_result(
     }
 
 
+type PostGroupClassification = tuple[
+    list[FindingGroup],
+    list[FindingGroup],
+    list[FindingGroup],
+    list[str],
+]
+
+
 def _classify_post_groups(
-    groups: list[dict[str, Any]],
+    groups: list[FindingGroup],
     *,
     inline_sides: set[str],
     inline_multiline: bool,
     max_surface: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    inline_candidates: list[dict[str, Any]] = []
-    summary_fallback_groups: list[dict[str, Any]] = []
-    fyi_groups: list[dict[str, Any]] = []
+) -> PostGroupClassification:
+    inline_candidates: list[FindingGroup] = []
+    summary_fallback_groups: list[FindingGroup] = []
+    fyi_groups: list[FindingGroup] = []
     warnings: list[str] = []
     for group in groups:
         decision = group.get("decision")
@@ -864,7 +872,13 @@ def _classify_post_groups(
             continue
         inline_candidates.append(group)
 
-    inline_candidates = _sort_groups(inline_candidates)
+    inline_candidates = sorted(
+        inline_candidates,
+        key=lambda group: (
+            -SEVERITY_RANK.get(str(group.get("final_severity")), -1),
+            str(group.get("issue_id", "")),
+        ),
+    )
     if len(inline_candidates) > max_surface:
         overflow = inline_candidates[max_surface:]
         inline_candidates = inline_candidates[:max_surface]
@@ -980,14 +994,17 @@ def post_consensus(
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
-    inline_candidates, summary_fallback_groups, fyi_groups, classification_warnings = (
+    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
         _classify_post_groups(
-            consensus.get("groups", []),
+            cast(list[FindingGroup], consensus.get("groups", [])),
             inline_sides=inline_sides,
             inline_multiline=inline_multiline,
             max_surface=max_surface,
         )
     )
+    inline_candidates = cast(list[dict[str, Any]], classified_inline)
+    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
+    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
     result["warnings"].extend(classification_warnings)
 
     pipeline_id = _pipeline_id(manifest)
