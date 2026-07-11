@@ -44,7 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup
+from .types import FindingGroup, PostResult, SummaryComment
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -810,7 +810,7 @@ def _initial_post_result(
     consensus: dict[str, Any],
     manifest: dict[str, Any],
     current_head_sha: str,
-) -> dict[str, Any]:
+) -> PostResult:
     return {
         "schema_version": "post_result.v1",
         "run_id": consensus["run_id"],
@@ -912,7 +912,7 @@ def post_consensus(
     *,
     dry_run: bool = False,
     diff_text: str | None = None,
-) -> dict[str, Any]:
+) -> PostResult:
     current_head_sha = client.fetch_current_mr_head_sha(
         manifest["project_id"],
         manifest["merge_request_iid"],
@@ -982,7 +982,7 @@ def post_consensus(
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
     inline_candidates, summary_fallback_groups, fyi_groups, classification_warnings = (
         _classify_post_groups(
-            [group for group in consensus.get("groups", []) if isinstance(group, dict)],
+            consensus.get("groups", []),
             inline_sides=inline_sides,
             inline_multiline=inline_multiline,
             max_surface=max_surface,
@@ -1319,15 +1319,18 @@ def post_consensus(
 
     fallback_to_post = summary_fallback_groups if fallback_to_summary else []
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
-    result["summary_comment"] = upsert_summary_comment(
-        client,
-        manifest,
-        consensus["run_id"],
-        raw_discussions,
-        fallback_to_post,
-        fyi_to_post,
-        max_fyi,
-        dry_run=dry_run,
+    result["summary_comment"] = cast(
+        SummaryComment,
+        upsert_summary_comment(
+            client,
+            manifest,
+            consensus["run_id"],
+            raw_discussions,
+            fallback_to_post,
+            fyi_to_post,
+            max_fyi,
+            dry_run=dry_run,
+        ),
     )
     if _state_enabled(config):
         resolve_discussion = getattr(client, "resolve_discussion", None)

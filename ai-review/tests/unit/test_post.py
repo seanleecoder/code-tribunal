@@ -7,7 +7,14 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
-from ai_review.post import load_persisted_state, post_consensus, render_body, source_hash
+from ai_review.post import (
+    _classify_post_groups,
+    _initial_post_result,
+    load_persisted_state,
+    post_consensus,
+    render_body,
+    source_hash,
+)
 from ai_review.schema import validate_instance
 
 
@@ -167,6 +174,103 @@ class PostTests(unittest.TestCase):
                 "retention": {"max_records": 200, "max_state_bytes": 50000},
             },
         }
+
+    def test_initial_post_result_uses_schema_defaults(self) -> None:
+        result = _initial_post_result(
+            consensus=self._consensus(),
+            manifest=self._manifest("head"),
+            current_head_sha="head",
+        )
+
+        self.assertEqual(result["schema_version"], "post_result.v1")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["head_sha"], "head")
+        self.assertEqual(result["current_head_sha"], "head")
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["posted_discussions"], [])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(
+            result["summary_comment"],
+            {
+                "action": "none",
+                "note_id": None,
+                "surface_findings": 0,
+                "fyi_findings": 0,
+            },
+        )
+        validate_instance(result, "post_result.schema.json")
+
+    def test_classify_post_groups_routes_surface_fyi_and_fallbacks(self) -> None:
+        base = self._consensus()["groups"][0]
+        surface = copy.deepcopy(base)
+        surface["issue_id"] = "1" * 64
+        unsupported = copy.deepcopy(base)
+        unsupported["issue_id"] = "2" * 64
+        unsupported["representative_anchor"]["side"] = "old"
+        multiline = copy.deepcopy(base)
+        multiline["issue_id"] = "3" * 64
+        multiline["representative_anchor"]["end"] = {
+            "old_line": None,
+            "new_line": 4,
+            "line_code": None,
+        }
+        fyi = copy.deepcopy(base)
+        fyi["issue_id"] = "4" * 64
+        fyi["decision"] = "fyi"
+
+        inline, fallback, fyi_groups, warnings = _classify_post_groups(
+            [surface, unsupported, multiline, fyi],
+            inline_sides={"new"},
+            inline_multiline=False,
+            max_surface=25,
+        )
+
+        self.assertEqual([group["issue_id"] for group in inline], ["1" * 64])
+        self.assertEqual(
+            [group["issue_id"] for group in fallback],
+            ["2" * 64, "3" * 64],
+        )
+        self.assertEqual([group["issue_id"] for group in fyi_groups], ["4" * 64])
+        self.assertEqual(
+            warnings,
+            [
+                "summary fallback required for unsupported side: old",
+                "summary fallback required for multiline anchor",
+            ],
+        )
+
+    def test_classify_post_groups_applies_surface_cap_by_severity(self) -> None:
+        base = self._consensus()["groups"][0]
+        minor = copy.deepcopy(base)
+        minor["issue_id"] = "1" * 64
+        minor["final_severity"] = "minor"
+        blocker = copy.deepcopy(base)
+        blocker["issue_id"] = "2" * 64
+        blocker["final_severity"] = "blocker"
+
+        inline, fallback, fyi_groups, warnings = _classify_post_groups(
+            [minor, blocker],
+            inline_sides={"new"},
+            inline_multiline=False,
+            max_surface=1,
+        )
+
+        self.assertEqual([group["issue_id"] for group in inline], ["2" * 64])
+        self.assertEqual([group["issue_id"] for group in fallback], ["1" * 64])
+        self.assertEqual(fyi_groups, [])
+        self.assertEqual(
+            warnings,
+            ["surface fallback to summary: max_posted_surface_findings (1) reached"],
+        )
+
+    def test_classify_post_groups_preserves_fail_closed_malformed_group(self) -> None:
+        with self.assertRaises(AttributeError):
+            _classify_post_groups(
+                [object()],  # type: ignore[list-item]
+                inline_sides={"new"},
+                inline_multiline=False,
+                max_surface=25,
+            )
 
     def test_load_persisted_state_fails_closed_when_current_user_unavailable(self) -> None:
         class BrokenUserClient(FakePostClient):
