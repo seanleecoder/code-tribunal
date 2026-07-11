@@ -13,6 +13,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Changed
 
+- AI review `body_hash` now includes `RENDER_BODY_VERSION`; posted Markdown is unchanged, but existing bot-authored discussion markers will receive a one-time update after upgrade.
 - Documentation now distinguishes implemented behavior from reserved configuration.
 - Claude adapter endpoint handling now requires the exact OpenRouter Anthropic base URL.
 - Posted model-authored finding text is redacted before publication.

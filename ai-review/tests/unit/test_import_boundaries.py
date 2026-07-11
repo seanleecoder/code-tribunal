@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
 import unittest
+from pathlib import Path
 
 
 class ImportBoundaryTests(unittest.TestCase):
@@ -21,11 +23,15 @@ class ImportBoundaryTests(unittest.TestCase):
             print(ai_review.consensus.panel_status(['claude'], ['claude'], 1))
             """
         )
+        env = dict(os.environ)
+        src = Path(__file__).resolve().parents[2] / "src"
+        env["PYTHONPATH"] = str(src)
         completed = subprocess.run(
             [sys.executable, "-c", script],
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
         self.assertEqual(completed.stdout.strip(), "full")
 

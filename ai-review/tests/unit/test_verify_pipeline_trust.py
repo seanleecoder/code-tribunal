@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from scripts.verify_pipeline_trust import find_trust_issues
+import importlib.util
+from pathlib import Path
+
+_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "verify_pipeline_trust.py"
+_SPEC = importlib.util.spec_from_file_location("verify_pipeline_trust", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+verify_pipeline_trust = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(verify_pipeline_trust)
+find_trust_issues = verify_pipeline_trust.find_trust_issues
 
 
 def test_flags_local_review_include() -> None:

@@ -7,7 +7,7 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
-from ai_review.post import post_consensus, render_body, source_hash
+from ai_review.post import load_persisted_state, post_consensus, render_body, source_hash
 from ai_review.schema import validate_instance
 
 
@@ -167,6 +167,21 @@ class PostTests(unittest.TestCase):
                 "retention": {"max_records": 200, "max_state_bytes": 50000},
             },
         }
+
+    def test_load_persisted_state_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+                return []
+
+        with self.assertRaisesRegex(RuntimeError, "current_user"):
+            load_persisted_state(
+                BrokenUserClient("head"),
+                {"state": {"backend": "gitlab_mr_state_note", "checksum_required": True}},
+                self._manifest("head"),
+            )
 
     def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
         body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")
