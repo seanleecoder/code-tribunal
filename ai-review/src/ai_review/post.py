@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 
 from .anchors import remap_anchor, title_fingerprint
 from .canonical import sha256_hex
@@ -44,7 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup
+from .types import FindingGroup, PostResult, SummaryComment
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -700,7 +700,15 @@ def _summary_line(group: dict[str, Any]) -> str:
     return header
 
 
-def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+@overload
+def _sort_groups(groups: list[FindingGroup]) -> list[FindingGroup]: ...
+
+
+@overload
+def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+
+def _sort_groups(groups: list[Any]) -> list[Any]:
     return sorted(
         groups,
         key=lambda group: (
@@ -805,6 +813,85 @@ def upsert_summary_comment(
     return summary
 
 
+def _initial_post_result(
+    *,
+    consensus: dict[str, Any],
+    manifest: dict[str, Any],
+    current_head_sha: str,
+) -> PostResult:
+    return {
+        "schema_version": "post_result.v1",
+        "run_id": consensus["run_id"],
+        "status": "success",
+        "head_sha": manifest["head_sha"],
+        "current_head_sha": current_head_sha,
+        "created_discussions": 0,
+        "updated_discussions": 0,
+        "resolved_discussions": 0,
+        "skipped_unchanged": 0,
+        "stale_unverified": 0,
+        "jira_comments_created": 0,
+        "jira_comments_updated": 0,
+        "posted_discussions": [],
+        "warnings": [],
+        "summary_comment": {
+            "action": "none",
+            "note_id": None,
+            "surface_findings": 0,
+            "fyi_findings": 0,
+        },
+    }
+
+
+type PostGroupClassification = tuple[
+    list[FindingGroup],
+    list[FindingGroup],
+    list[FindingGroup],
+    list[str],
+]
+
+
+def _classify_post_groups(
+    groups: list[FindingGroup],
+    *,
+    inline_sides: set[str],
+    inline_multiline: bool,
+    max_surface: int,
+) -> PostGroupClassification:
+    inline_candidates: list[FindingGroup] = []
+    summary_fallback_groups: list[FindingGroup] = []
+    fyi_groups: list[FindingGroup] = []
+    warnings: list[str] = []
+    for group in groups:
+        decision = group.get("decision")
+        if decision == "fyi":
+            fyi_groups.append(group)
+            continue
+        if decision != "surface":
+            continue
+        anchor = group["representative_anchor"]
+        if anchor.get("side") not in inline_sides:
+            warnings.append(f"summary fallback required for unsupported side: {anchor.get('side')}")
+            summary_fallback_groups.append(group)
+            continue
+        if anchor.get("start") != anchor.get("end") and not inline_multiline:
+            warnings.append("summary fallback required for multiline anchor")
+            summary_fallback_groups.append(group)
+            continue
+        inline_candidates.append(group)
+
+    inline_candidates = _sort_groups(inline_candidates)
+    if len(inline_candidates) > max_surface:
+        overflow = inline_candidates[max_surface:]
+        inline_candidates = inline_candidates[:max_surface]
+        for group in overflow:
+            warnings.append(
+                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
+            )
+            summary_fallback_groups.append(group)
+    return inline_candidates, summary_fallback_groups, fyi_groups, warnings
+
+
 def _load_current_diff_text(
     client: GitLabClient,
     manifest: dict[str, Any],
@@ -841,33 +928,16 @@ def post_consensus(
     *,
     dry_run: bool = False,
     diff_text: str | None = None,
-) -> dict[str, Any]:
+) -> PostResult:
     current_head_sha = client.fetch_current_mr_head_sha(
         manifest["project_id"],
         manifest["merge_request_iid"],
     )
-    result = {
-        "schema_version": "post_result.v1",
-        "run_id": consensus["run_id"],
-        "status": "success",
-        "head_sha": manifest["head_sha"],
-        "current_head_sha": current_head_sha,
-        "created_discussions": 0,
-        "updated_discussions": 0,
-        "resolved_discussions": 0,
-        "skipped_unchanged": 0,
-        "stale_unverified": 0,
-        "jira_comments_created": 0,
-        "jira_comments_updated": 0,
-        "posted_discussions": [],
-        "warnings": [],
-        "summary_comment": {
-            "action": "none",
-            "note_id": None,
-            "surface_findings": 0,
-            "fyi_findings": 0,
-        },
-    }
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
     posting = config.get("posting", {})
     limits = config.get("limits", {})
     if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
@@ -925,41 +995,19 @@ def post_consensus(
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline), and FYI findings.
-    inline_candidates: list[dict[str, Any]] = []
-    summary_fallback_groups: list[dict[str, Any]] = []
-    fyi_groups: list[dict[str, Any]] = []
-    for group in consensus.get("groups", []):
-        decision = group.get("decision")
-        if decision == "fyi":
-            fyi_groups.append(group)
-            continue
-        if decision != "surface":
-            continue
-        anchor = group["representative_anchor"]
-        if anchor.get("side") not in inline_sides:
-            result["warnings"].append(
-                f"summary fallback required for unsupported side: {anchor.get('side')}"
-            )
-            summary_fallback_groups.append(group)
-            continue
-        if anchor.get("start") != anchor.get("end") and not inline_multiline:
-            result["warnings"].append("summary fallback required for multiline anchor")
-            summary_fallback_groups.append(group)
-            continue
-        inline_candidates.append(group)
-
-    # Enforce the inline surface cap; highest-severity findings keep the inline slots and
-    # any overflow is redirected to the summary comment rather than dropped.
-    inline_candidates = _sort_groups(inline_candidates)
-    if len(inline_candidates) > max_surface:
-        overflow = inline_candidates[max_surface:]
-        inline_candidates = inline_candidates[:max_surface]
-        for group in overflow:
-            result["warnings"].append(
-                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
-            )
-            summary_fallback_groups.append(group)
+    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
+        _classify_post_groups(
+            cast(list[FindingGroup], consensus.get("groups", [])),
+            inline_sides=inline_sides,
+            inline_multiline=inline_multiline,
+            max_surface=max_surface,
+        )
+    )
+    inline_candidates = cast(list[dict[str, Any]], classified_inline)
+    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
+    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
+    result["warnings"].extend(classification_warnings)
 
     pipeline_id = _pipeline_id(manifest)
     base_records = [
@@ -1290,15 +1338,18 @@ def post_consensus(
 
     fallback_to_post = summary_fallback_groups if fallback_to_summary else []
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
-    result["summary_comment"] = upsert_summary_comment(
-        client,
-        manifest,
-        consensus["run_id"],
-        raw_discussions,
-        fallback_to_post,
-        fyi_to_post,
-        max_fyi,
-        dry_run=dry_run,
+    result["summary_comment"] = cast(
+        SummaryComment,
+        upsert_summary_comment(
+            client,
+            manifest,
+            consensus["run_id"],
+            raw_discussions,
+            fallback_to_post,
+            fyi_to_post,
+            max_fyi,
+            dry_run=dry_run,
+        ),
     )
     if _state_enabled(config):
         resolve_discussion = getattr(client, "resolve_discussion", None)
