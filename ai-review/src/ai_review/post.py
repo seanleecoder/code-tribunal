@@ -44,7 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup, PostResult, State, StateRecord, SummaryComment
+from .types import FindingGroup, PostResult, State, StateRecord, StateRecordStatus, SummaryComment
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -77,56 +77,6 @@ SUMMARY_MARKER_RE = re.compile(
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
-TEXT_TOKEN_RE = re.compile(r"[a-z0-9]+")
-FAILURE_KEYWORDS = {
-    "attributeerror",
-    "csrf",
-    "empty",
-    "indexerror",
-    "injection",
-    "keyerror",
-    "missing",
-    "none",
-    "null",
-    "permission",
-    "timeout",
-    "typeerror",
-    "valueerror",
-    "xss",
-}
-STOPWORDS = {
-    "about",
-    "after",
-    "also",
-    "and",
-    "are",
-    "because",
-    "been",
-    "before",
-    "being",
-    "but",
-    "can",
-    "could",
-    "from",
-    "has",
-    "have",
-    "into",
-    "may",
-    "not",
-    "only",
-    "that",
-    "the",
-    "then",
-    "this",
-    "when",
-    "where",
-    "will",
-    "with",
-    "would",
-    "your",
-}
-
-
 @dataclass
 class PlanOutcome:
     warnings: list[str]
@@ -561,44 +511,6 @@ def state_from_existing_discussions(
     return {"state_schema_version": 1, "records": records}
 
 
-def normalize_issue_text(text: str) -> str:
-    return " ".join(TEXT_TOKEN_RE.findall(text.lower()))
-
-
-def content_tokens(normalized: str) -> set[str]:
-    return {token for token in normalized.split() if len(token) >= 3 and token not in STOPWORDS}
-
-
-def failure_keywords(normalized: str) -> set[str]:
-    return {token for token in normalized.split() if token in FAILURE_KEYWORDS}
-
-
-def same_issue_text(existing: ExistingReviewDiscussion, group: dict[str, Any]) -> bool:
-    existing_title = normalize_issue_text(existing.title)
-    group_title = normalize_issue_text(str(group.get("title", "")))
-    if existing_title and existing_title == group_title:
-        return True
-
-    existing_summary = normalize_issue_text(existing.summary)
-    group_summary = normalize_issue_text(str(group.get("body", "")))
-    if existing_summary and existing_summary == group_summary:
-        return True
-
-    existing_tokens = content_tokens(" ".join([existing_title, existing_summary]))
-    group_tokens = content_tokens(" ".join([group_title, group_summary]))
-    if not existing_tokens or not group_tokens:
-        return False
-    shared = existing_tokens & group_tokens
-    union = existing_tokens | group_tokens
-    if len(shared) < 6:
-        return False
-    if failure_keywords(" ".join([existing_title, existing_summary])) != failure_keywords(
-        " ".join([group_title, group_summary])
-    ):
-        return False
-    return len(shared) / len(union) >= 0.82
-
-
 def position_side(position: dict[str, Any]) -> str | None:
     has_old = position.get("old_line") is not None
     has_new = position.get("new_line") is not None
@@ -609,87 +521,6 @@ def position_side(position: dict[str, Any]) -> str | None:
     if has_new:
         return "new"
     return None
-
-
-def line_range_key(
-    position: dict[str, Any],
-) -> tuple[tuple[Any, Any, Any], tuple[Any, Any, Any]] | None:
-    line_range = position.get("line_range")
-    if not isinstance(line_range, dict):
-        return None
-    start = line_range.get("start")
-    end = line_range.get("end")
-    if not isinstance(start, dict) or not isinstance(end, dict):
-        return None
-    return (
-        (start.get("type"), start.get("old_line"), start.get("new_line")),
-        (end.get("type"), end.get("old_line"), end.get("new_line")),
-    )
-
-
-def same_inline_anchor(existing: dict[str, Any], target: dict[str, Any]) -> bool:
-    if existing.get("head_sha") != target.get("head_sha"):
-        return False
-    side = position_side(target)
-    if side is None or position_side(existing) != side:
-        return False
-
-    if side == "new":
-        if existing.get("new_path") != target.get("new_path"):
-            return False
-        if existing.get("new_line") != target.get("new_line"):
-            return False
-    elif side == "old":
-        if existing.get("old_path") != target.get("old_path"):
-            return False
-        if existing.get("old_line") != target.get("old_line"):
-            return False
-    else:
-        if existing.get("old_path") != target.get("old_path") or existing.get(
-            "new_path"
-        ) != target.get("new_path"):
-            return False
-        if existing.get("old_line") != target.get("old_line") or existing.get(
-            "new_line"
-        ) != target.get("new_line"):
-            return False
-
-    existing_has_range = isinstance(existing.get("line_range"), dict)
-    target_has_range = isinstance(target.get("line_range"), dict)
-    if existing_has_range != target_has_range:
-        return False
-    if not target_has_range:
-        return True
-
-    existing_range = line_range_key(existing)
-    target_range = line_range_key(target)
-    return existing_range is not None and existing_range == target_range
-
-
-def find_same_issue_fallback(
-    existing_discussions: list[ExistingReviewDiscussion],
-    group: dict[str, Any],
-    position: dict[str, Any],
-    used_discussion_ids: set[Any] | None = None,
-) -> ExistingReviewDiscussion | None:
-    used = used_discussion_ids or set()
-    candidates: list[ExistingReviewDiscussion] = []
-    category = str(group.get("category", "")).strip().lower()
-    for discussion in existing_discussions:
-        if discussion.resolved or discussion.position is None:
-            continue
-        if discussion.discussion_id in used:
-            continue
-        if str(discussion.category or "").strip().lower() != category:
-            continue
-        if not same_inline_anchor(discussion.position, position):
-            continue
-        if not same_issue_text(discussion, group):
-            continue
-        candidates.append(discussion)
-    if len(candidates) != 1:
-        return None
-    return candidates[0]
 
 
 def _anchor_location(anchor: dict[str, Any]) -> str:
@@ -941,9 +772,9 @@ def _can_remap_anchor(anchor: Any) -> bool:
     )
 
 
-def _desired_resolution_state(
+def _desired_discussion_resolved(
     record: StateRecord,
-    prior_status: dict[str, Any],
+    prior_status: dict[str, StateRecordStatus | None],
 ) -> bool | None:
     if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
         record["issue_id"]
@@ -1466,7 +1297,7 @@ def post_consensus(
                 discussion_id = record.get("discussion_id")
                 if discussion_id is None:
                     continue
-                desired = _desired_resolution_state(record, prior_status)
+                desired = _desired_discussion_resolved(record, prior_status)
                 if desired is None or dry_run:
                     continue
                 resolve_discussion(
