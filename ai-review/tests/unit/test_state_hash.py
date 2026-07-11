@@ -136,6 +136,65 @@ class StateHashTests(unittest.TestCase):
         self.assertEqual(state["last_head_sha"], "new")
         self.assertTrue(warnings)
 
+    def test_newest_valid_state_ignores_non_bot_authors(self) -> None:
+        bot_state = attach_state_hash(
+            {
+                "state_schema_version": 1,
+                "project_id": "1",
+                "merge_request_iid": "2",
+                "last_head_sha": "bot",
+                "state_note_id": None,
+                "written_by_pipeline_id": "p1",
+                "updated_at": "2026-06-29T00:00:00Z",
+                "records": [],
+            }
+        )
+        forged_state = attach_state_hash(
+            dict(bot_state, last_head_sha="forged", updated_at="2026-06-30T00:00:00Z")
+        )
+
+        state, warnings = newest_valid_state_from_notes(
+            [
+                {"id": 1, "body": encode_state_note(bot_state), "author": {"id": 10}},
+                {"id": 2, "body": encode_state_note(forged_state), "author": {"id": 99}},
+            ],
+            expected_author_id=10,
+        )
+
+        self.assertEqual(state["last_head_sha"], "bot")
+        self.assertIn("non-bot author", warnings[0])
+
+    def test_compaction_bounds_stale_records(self) -> None:
+        def record(issue_id: str, run_id: str) -> dict[str, object]:
+            return {
+                "issue_id": issue_id * 64,
+                "status": "stale_unverified",
+                "last_matched_run_id": run_id,
+                "last_seen_sha": issue_id,
+            }
+
+        state = attach_state_hash(
+            {
+                "state_schema_version": 1,
+                "project_id": "1",
+                "merge_request_iid": "2",
+                "last_head_sha": "abc",
+                "state_note_id": None,
+                "written_by_pipeline_id": "p1",
+                "updated_at": "2026-06-29T00:00:00Z",
+                "records": [
+                    record("a", "gl-1-1"),
+                    record("b", "gl-2-1"),
+                    record("c", "gl-3-1"),
+                ],
+            }
+        )
+        compacted = compact_state(state, {"keep_stale_runs": 2})
+        self.assertEqual(
+            [record["last_matched_run_id"] for record in compacted["records"]],
+            ["gl-3-1", "gl-2-1"],
+        )
+
     def test_state_aliases_schema(self) -> None:
         state = {
             "records": [

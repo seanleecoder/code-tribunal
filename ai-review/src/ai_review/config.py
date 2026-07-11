@@ -259,6 +259,25 @@ def load_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
+
+def _validate_severity_policy(config: dict[str, Any]) -> None:
+    policy = config.get("severity_policy")
+    if not isinstance(policy, dict):
+        raise ConfigError("severity_policy must be a mapping")
+    single = policy.get("single_reviewer_blocker")
+    if not isinstance(single, dict):
+        raise ConfigError("severity_policy.single_reviewer_blocker must be a mapping")
+    categories = single.get("categories")
+    if not isinstance(categories, list) or not all(isinstance(item, str) for item in categories):
+        raise ConfigError(
+            "severity_policy.single_reviewer_blocker.categories must be a list of strings"
+        )
+    quorum = policy.get("quorum_blocker")
+    if not isinstance(quorum, dict):
+        raise ConfigError("severity_policy.quorum_blocker must be a mapping")
+    if not isinstance(quorum.get("block_merge"), bool):
+        raise ConfigError("severity_policy.quorum_blocker.block_merge must be a boolean")
+
 def enabled_reviewers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     reviewers = config.get("reviewers", {})
     if not isinstance(reviewers, dict):
@@ -276,6 +295,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError(f"unknown top-level config keys: {sorted(unknown)}")
     if config.get("schema_version") != "review_config.v1":
         raise ConfigError("schema_version must be review_config.v1")
+    _validate_severity_policy(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict) or not reviewers:
         raise ConfigError("at least one reviewer must be configured")

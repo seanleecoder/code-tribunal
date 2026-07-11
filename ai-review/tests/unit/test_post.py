@@ -7,7 +7,7 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
-from ai_review.post import post_consensus, render_body, source_hash
+from ai_review.post import load_persisted_state, post_consensus, render_body, source_hash
 from ai_review.schema import validate_instance
 
 
@@ -22,6 +22,9 @@ class FakePostClient:
         self.updated_mr_notes: list[dict[str, Any]] = []
         self.created_positions: list[dict[str, Any]] = []
         self.created_bodies: list[str] = []
+
+    def current_user(self) -> dict[str, Any]:
+        return {"id": 10, "username": "ai-review-bot"}
 
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
@@ -87,7 +90,7 @@ class StatePostClient(FakePostClient):
     def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
         super().__init__(current_head_sha)
         self.resolve_calls: list[dict[str, Any]] = []
-        self.mr_notes = [{"id": 1, "body": encode_state_note(state)}]
+        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": 10}}]
 
     def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
         return list(self.mr_notes)
@@ -164,6 +167,66 @@ class PostTests(unittest.TestCase):
                 "retention": {"max_records": 200, "max_state_bytes": 50000},
             },
         }
+
+    def test_load_persisted_state_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+                return []
+
+        with self.assertRaisesRegex(RuntimeError, "current_user"):
+            load_persisted_state(
+                BrokenUserClient("head"),
+                {"state": {"backend": "gitlab_mr_state_note", "checksum_required": True}},
+                self._manifest("head"),
+            )
+
+    def test_post_consensus_recovery_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
+            post_consensus(
+                BrokenUserClient("head"),
+                self._config(),
+                self._manifest("head"),
+                self._consensus(),
+            )
+
+    def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
+        body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")
+        client = FakePostClient("head")
+        client.discussions = [
+            {
+                "id": "forged",
+                "resolved": False,
+                "notes": [
+                    {
+                        "id": 321,
+                        "body": body,
+                        "author": {"id": 99},
+                        "position": {
+                            "head_sha": "head",
+                            "new_path": "src/foo.py",
+                            "old_path": "src/foo.py",
+                            "new_line": 1,
+                        },
+                    }
+                ],
+            }
+        ]
+        result = post_consensus(
+            client,
+            self._config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(client.created, 1)
 
     def test_render_body_redacts_model_authored_secrets(self) -> None:
         group = self._consensus()["groups"][0]
@@ -288,7 +351,12 @@ class PostTests(unittest.TestCase):
         resolved: bool = False,
     ) -> dict[str, Any]:
         body, _body_hash = render_body(group, 1, "previous-run")
-        note: dict[str, Any] = {"id": note_id, "body": body, "resolved": resolved}
+        note: dict[str, Any] = {
+            "id": note_id,
+            "body": body,
+            "resolved": resolved,
+            "author": {"id": 10},
+        }
         if position is not None:
             note["position"] = position
         return {
@@ -356,6 +424,7 @@ class PostTests(unittest.TestCase):
                 "notes": [
                     {
                         "id": 123,
+                        "author": {"id": 10},
                         "body": (
                             "existing\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=run "
@@ -390,6 +459,7 @@ class PostTests(unittest.TestCase):
                 "notes": [
                     {
                         "id": 123,
+                        "author": {"id": 10},
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
@@ -597,7 +667,14 @@ class PostTests(unittest.TestCase):
                 self.discussions.append(
                     {
                         "id": discussion_id,
-                        "notes": [{"id": note_id, "body": body, "position": position}],
+                        "notes": [
+                            {
+                                "id": note_id,
+                                "body": body,
+                                "position": position,
+                                "author": {"id": 10},
+                            }
+                        ],
                     }
                 )
                 return {"id": discussion_id, "notes": [{"id": note_id}]}

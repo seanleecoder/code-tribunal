@@ -81,6 +81,18 @@ def root_note_id_from_discussion(response: dict[str, Any]) -> int:
     return note_id
 
 
+def current_user_id(client: Any) -> int | None:
+    current_user_fn = getattr(client, "current_user", None)
+    if not callable(current_user_fn):
+        return None
+    try:
+        current_user = current_user_fn()
+    except Exception:
+        return None
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    return user_id if isinstance(user_id, int) else None
+
+
 class GitLabClient:
     def __init__(
         self,

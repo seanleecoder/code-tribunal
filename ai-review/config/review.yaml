@@ -89,8 +89,8 @@ critique:
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
+  allow_advisory_escalation: false # Security default: do not let critique promote advisory findings
+  allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
@@ -122,6 +122,7 @@ state:
     keep_wontfix: true # Preserve state records marked as won't fix
     keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
     keep_superseded_runs: 2 # Retention depth for superseded run records
+    keep_stale_runs: 2 # Retention depth for stale/stale_unverified records
     max_records: 200 # Max state entry count
     max_state_bytes: 50000 # Max byte size for state payload note
     overflow_behavior: fail_closed # Fail pipeline if state payload exceeds size/record limits

@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import remap_anchor, title_fingerprint
-from .canonical import canonical_json, sha256_hex
+from .canonical import sha256_hex
 from .config import load_config
 from .gitlab_client import (
     GitLabApiError,
     GitLabClient,
     build_position,
+    current_user_id,
     root_note_id_from_discussion,
 )
 from .memory import (
@@ -26,8 +27,42 @@ from .memory import (
     normalize_state_record,
     state_overflow_reason,
 )
-from .redact import redact_text
+from .render import (
+    compute_body_hash as _compute_body_hash,
+)
+from .render import (
+    render_body as _render_body,
+)
+from .render import (
+    sanitize_model_text,
+)
+from .render import (
+    source_hash as _source_hash,
+)
+from .render import (
+    validate_suggestion as _validate_suggestion,
+)
 from .schema import load_json_file, now_iso, write_canonical_json
+
+
+def validate_suggestion(suggestion: str | None) -> bool:
+    return _validate_suggestion(suggestion)
+
+
+def source_hash(source_finding_ids: list[str]) -> str:
+    return _source_hash(source_finding_ids)
+
+
+def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
+    return _compute_body_hash(group, body_without_marker)
+
+
+def render_body(
+    group: dict[str, Any],
+    successful_reviewer_count: int,
+    run_id: str,
+) -> tuple[str, str]:
+    return _render_body(group, successful_reviewer_count, run_id)
 
 MARKER_RE = re.compile(
     r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
@@ -101,107 +136,7 @@ class ExistingReviewDiscussion:
     title: str
     summary: str
     resolved: bool
-
-
-def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
-    sanitized = redact_text(text)
-    sanitized = sanitized.replace("<!--", "< !--").replace("-->", "-- >")
-    sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n").strip()
-    return sanitized[:max_length]
-
-
-def validate_suggestion(suggestion: str | None) -> bool:
-    if suggestion is None:
-        return True
-    if "<!--" in suggestion or "-->" in suggestion:
-        return False
-    return suggestion.count("```") % 2 == 0
-
-
-def source_hash(source_finding_ids: list[str]) -> str:
-    return sha256_hex(canonical_json(sorted(source_finding_ids)))
-
-
-def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
-    critique_summary = group.get(
-        "critique_summary",
-        {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
-    )
-    return sha256_hex(
-        canonical_json(
-            {
-                "issue_id": group["issue_id"],
-                "decision": group["decision"],
-                "final_severity": group["final_severity"],
-                "block_merge": group["block_merge"],
-                "human_ack_recommended": group.get("human_ack_recommended", False),
-                "title": group["title"],
-                "body_without_marker": body_without_marker,
-                "sorted_source_finding_ids": sorted(group.get("source_finding_ids", [])),
-                "sorted_critique_summary": {
-                    key: critique_summary.get(key, 0)
-                    for key in sorted(["agree", "dispute", "noise", "duplicate"])
-                },
-            }
-        )
-    )
-
-
-def render_body(
-    group: dict[str, Any],
-    successful_reviewer_count: int,
-    run_id: str,
-) -> tuple[str, str]:
-    reviewers = sorted(group.get("contributing_reviewers", []))
-    title = sanitize_model_text(str(group["title"]), max_length=240)
-    summary = sanitize_model_text(str(group.get("body", "")), max_length=1200)
-    evidence_lines = []
-    evidence_by_reviewer = group.get("evidence_by_reviewer", {})
-    if isinstance(evidence_by_reviewer, dict):
-        for reviewer in reviewers:
-            evidence = sanitize_model_text(
-                str(evidence_by_reviewer.get(reviewer, summary)),
-                max_length=300,
-            )
-            evidence_lines.append(f"- {reviewer}: {evidence}")
-    if not evidence_lines:
-        evidence_lines.append(f"- {', '.join(reviewers) or 'reviewer'}: {summary}")
-
-    suggestion = group.get("suggestion")
-    suggestion_block = ""
-    if isinstance(suggestion, str) and validate_suggestion(suggestion):
-        suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion, max_length=1200)
-
-    body_without_marker = (
-        "\n".join(
-            [
-                f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
-                "",
-                title,
-                "",
-                summary,
-                "",
-                "Evidence:",
-                *evidence_lines,
-                "",
-                "Consensus:",
-                f"- Reviewers: {', '.join(reviewers)}",
-                f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-                f"- Critique support: {group.get('critique_support_count', 0)}",
-                f"- Decision: {group['decision']}",
-                f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-                "- Human acknowledgment: "
-                + ("recommended" if group.get("human_ack_recommended") else "not required"),
-            ]
-        )
-        + suggestion_block
-    )
-    body_hash = compute_body_hash(group, body_without_marker)
-    marker = (
-        f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
-        f"body_hash={body_hash} source={source_hash(group.get('source_finding_ids', []))} -->"
-    )
-    return body_without_marker + "\n\n" + marker, body_hash
+    author_id: int | None
 
 
 def parse_marker(body: str) -> dict[str, str] | None:
@@ -274,6 +209,12 @@ def index_ai_review_discussions(
                 title=rendered.get("title", ""),
                 summary=rendered.get("summary", ""),
                 resolved=bool(discussion.get("resolved") or root.get("resolved")),
+                author_id=(
+                    root.get("author", {}).get("id")
+                    if isinstance(root.get("author"), dict)
+                    and isinstance(root.get("author", {}).get("id"), int)
+                    else None
+                ),
             )
         )
     return indexed
@@ -288,6 +229,7 @@ def discussion_markers(discussions: list[dict[str, Any]]) -> dict[str, dict[str,
             "body_hash": discussion.marker["body_hash"],
         }
     return markers
+
 
 
 def _pipeline_id(manifest: dict[str, Any]) -> str:
@@ -318,6 +260,11 @@ def load_persisted_state(
     if not _state_enabled(config):
         return None, []
     state_config = config.get("state", {})
+    bot_author_id = current_user_id(client)
+    if bot_author_id is None:
+        raise RuntimeError(
+            "state backend requires GitLab current_user lookup to verify state-note author"
+        )
     notes = _list_mr_notes_if_supported(
         client,
         manifest["project_id"],
@@ -326,6 +273,7 @@ def load_persisted_state(
     state, warnings = newest_valid_state_from_notes(
         notes,
         checksum_required=bool(state_config.get("checksum_required", True)),
+        expected_author_id=bot_author_id,
     )
     if state is None:
         return None, warnings
@@ -550,11 +498,14 @@ def state_from_existing_discussions(
     *,
     exclude_discussion_ids: set[Any] | None = None,
     current_head_sha: str | None = None,
+    expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
         if discussion.resolved or discussion.discussion_id in excluded:
+            continue
+        if expected_author_id is not None and discussion.author_id != expected_author_id:
             continue
         if discussion.discussion_id is None or discussion.root_note_id is None:
             continue
@@ -937,12 +888,18 @@ def post_consensus(
         else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
+    bot_author_id = None if dry_run else current_user_id(client)
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
     state_warnings: list[str] = []
     persisted_state, load_warnings = load_persisted_state(client, config, manifest)
     state_warnings.extend(load_warnings)
     recovered_state = state_from_existing_discussions(
         existing_discussions,
         current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
     )
     if persisted_state is None:
         state_config = config.get("state", {}) if isinstance(config, dict) else {}

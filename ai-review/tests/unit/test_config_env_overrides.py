@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
-from ai_review.config import ConfigError, apply_env_overrides, load_config
+from ai_review.config import ConfigError, apply_env_overrides, load_config, validate_config
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -135,6 +135,12 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 self.assertRaisesRegex(ConfigError, "effort"),
             ):
                 load_config(_REPO_CONFIG)
+
+    def test_missing_severity_policy_fails_loudly(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config.pop("severity_policy")
+        with self.assertRaisesRegex(ConfigError, "severity_policy"):
+            validate_config(config)
 
     def test_disabling_too_many_reviewers_fails_loudly(self) -> None:
         # Only claude enabled (1) but min_successful_reviewers_for_blocking is 2.

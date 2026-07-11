@@ -24,7 +24,7 @@ context:
 | Phase | Theme | Specs | Goal |
 |---|---|---|---|
 | **0 — Week 1** | Quick wins | SPEC-01…05 | Stop the bleeding: legal, trust, cheap security, honest docs, quality gate |
-| **1 — Month 1** | Security + determinism | SPEC-06…10 | Close the structural security gaps and the reproducibility leak |
+| **1 — Month 1** | Security + determinism | SPEC-06…10 | Close the structural security gaps and the reproducibility leak ([implementation plan](phase-1-implementation-plan.md)) |
 | **2 — Month 2** | Correctness + testability | SPEC-11…14 | Make the flagship consensus feature actually converge; test the untested half |
 | **3 — Month 3** | Platform + scale | SPEC-15…18 | Unlock GitHub; reproducible builds; adaptive cost; extract the reducer |
 
