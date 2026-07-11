@@ -59,6 +59,9 @@ constant consolidation are independent of the `post_consensus` extraction.
 
 ### Step 1 — SPEC-12: E2E and golden safety net
 
+See the dedicated [SPEC-12 implementation plan](spec-12-implementation-plan.md) for the full fake-GitLab post→gate harness rollout.
+
+
 1. Add `tests/support/fake_gitlab.py` with an in-memory `GitLabClient` compatible
    with the methods used by `input_bundle.py`, `post.py`, and `gate.py`.
 2. Add fixtures for a minimal local input bundle, mock reviewer outputs, blocking
