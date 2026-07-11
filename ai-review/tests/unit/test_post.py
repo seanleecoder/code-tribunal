@@ -21,6 +21,7 @@ class FakePostClient:
         self.mr_notes: list[dict[str, Any]] = []
         self.updated_mr_notes: list[dict[str, Any]] = []
         self.created_positions: list[dict[str, Any]] = []
+        self.created_bodies: list[str] = []
 
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
@@ -37,6 +38,7 @@ class FakePostClient:
     ) -> dict[str, Any]:
         self.created += 1
         self.created_positions.append(position)
+        self.created_bodies.append(body)
         return {"id": "discussion", "notes": [{"id": 123}]}
 
     def list_mr_discussions(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
@@ -65,13 +67,20 @@ class FakePostClient:
         self.discussions.append({"id": f"note-{note_id}", "notes": [{"id": note_id, "body": body}]})
         return note
 
-    def update_mr_note(self, project_id: str, mr_iid: str, note_id: int, body: str) -> dict[str, Any]:
+    def update_mr_note(
+        self, project_id: str, mr_iid: str, note_id: int, body: str
+    ) -> dict[str, Any]:
         self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for discussion in self.discussions:
             for note in discussion.get("notes", []):
                 if note.get("id") == note_id:
                     note["body"] = body
         return {"id": note_id, "body": body}
+
+
+class DiffFailPostClient(FakePostClient):
+    def fetch_mr_diff(self, project_id: str, mr_iid: str) -> str:
+        raise RuntimeError("diff unavailable")
 
 
 class StatePostClient(FakePostClient):
@@ -156,6 +165,64 @@ class PostTests(unittest.TestCase):
             },
         }
 
+    def test_render_body_redacts_model_authored_secrets(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        body, _body_hash = render_body(group, 1, "run")
+
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+
+    def test_diff_fetch_failure_surfaces_warning(self) -> None:
+        client = DiffFailPostClient("head")
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertTrue(
+            any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"])
+        )
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_consensus_redacts_created_discussion_body(self) -> None:
+        client = FakePostClient("head")
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text="",
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(len(client.created_bodies), 1)
+        body = client.created_bodies[0]
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+        validate_instance(result, "post_result.schema.json")
+
     def _state_record(
         self,
         group: dict[str, Any],
@@ -184,7 +251,9 @@ class PostTests(unittest.TestCase):
             "status": "open",
             "last_seen_sha": "old-head",
             "first_seen_sha": "old-head",
-            "anchor": anchor if anchor is not None else copy.deepcopy(group["representative_anchor"]),
+            "anchor": anchor
+            if anchor is not None
+            else copy.deepcopy(group["representative_anchor"]),
             "last_posted_body_hash": "0" * 64,
             "last_decision": "surface",
             "last_final_severity": "major",
@@ -854,7 +923,9 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["updated_discussions"], 0)
         self.assertEqual(client.resolve_calls, [])
-        self.assertTrue(any("ambiguous existing record match" in item for item in result["warnings"]))
+        self.assertTrue(
+            any("ambiguous existing record match" in item for item in result["warnings"])
+        )
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual({record["status"] for record in state_after["records"]}, {"stale"})
         self.assertEqual(
@@ -964,9 +1035,11 @@ class PostTests(unittest.TestCase):
     def test_post_ambiguous_remap_marks_stale_without_mutation(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
-        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
-            f"+tail-{index}" for index in range(6)
-        ]
+        block = (
+            [f"+ctx-{index}" for index in range(6)]
+            + ["+target"]
+            + [f"+tail-{index}" for index in range(6)]
+        )
         old_diff = "\n".join(
             [
                 "diff --git a/src/foo.py b/src/foo.py",

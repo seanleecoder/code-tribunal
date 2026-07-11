@@ -1,11 +1,11 @@
 # Code Tribunal (`ai-review`)
 
-[![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
+[![CI](https://github.com/seanleecoder/code-tribunal/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) [![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
 [![Python Version](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](pyproject.toml)
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
-**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), optional Jira issue linking, and automated merge gating.
+**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), planned Jira issue linking, and automated merge gating.
 
 It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs optional blind cross-examination, posts idempotent inline GitLab discussions, maintains state across MR revisions, and enforces CI/CD merge gating.
 
@@ -14,20 +14,20 @@ It orchestrates a panel of independent LLM reviewer models via provider CLIs (**
 ## Key Features
 
 - **Multi-Agent Consensus Panel**: Combines independent model reviewers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, and **Google Gemini 3.1 Flash Lite**) to eliminate single-model hallucination and bias.
-- **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), rebuttals (`disagree`), duplicate markers (`duplicate`), or unverifiable flags (`unverifiable`) before final consensus.
+- **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), disputes (`dispute`), noise classifications (`noise`), or duplicate markers (`duplicate`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
-- **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with restricted network egress (provider API endpoints only), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
+- **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with CLI-policy-dependent provider access (runner/container egress enforcement is planned), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
 - **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs without creating duplicate threads across commits.
 - **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`), mapping historical issues across code revisions using line remapping (`anchors.py`).
-- **Jira Integration**: Discovers Jira issue keys via regex patterns (`issue_key_patterns`), formats ADF (Atlassian Document Format) summaries, and supports idempotent Jira commenting (`ai-review-jira:v1`).
+- **Jira Integration (planned/experimental)**: Jira issue discovery and ADF formatting helpers exist, but MR posting currently does not call `jira_client`; Jira comment counts remain `0`.
 - **Automated Merge Gating**: Integrates natively with GitLab CI/CD `pipelines_must_succeed` setting, automatically failing the pipeline when unresolved blocking findings exist.
-- **Budget & Limit Controls**: Configurable per-job, per-MR, and per-project daily USD budget caps with automatic fallback to advisory mode.
+- **Budget & Limit Controls (planned)**: Configuration is present, but `budget.backend: none` is currently advisory/no-op and returns `budget_backend_not_implemented` until a production backend is added.
 
 ---
 
 ## High-Level System Architecture
 
-Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, restricted egress, and no credential access.
+Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab/Jira credential access.
 
 ```mermaid
 flowchart TD
@@ -84,7 +84,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 ### 3. `critique` (Blind Cross-Examination - Optional)
 - Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes `critique_claude`, `critique_codex`, and `critique_opencode`. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
-- Reviewers evaluate peer findings, producing agreement (`agree`), rebuttal (`disagree`), duplicate (`duplicate`), or unverifiable (`unverifiable`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
+- Reviewers evaluate peer findings, producing agreement (`agree`), dispute (`dispute`), noise (`noise`), or duplicate (`duplicate`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
 ### 4. `consensus` (Deduplication & Quorum Voting)
 - Executed by `python -m ai_review.consensus`.
@@ -108,7 +108,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
   - Skips unchanged existing discussions (`skipped_unchanged`).
   - Updates discussion text if body content changed.
 - Posts or updates a summary comment for multiline/fallback findings.
-- If Jira is enabled, discovers Jira issue keys (`jira_client.py`) and posts idempotent Jira comments.
+- Jira remains planned/experimental: `jira_client.py` contains discovery/ADF helpers, but `post.py` does not import it and reports `jira_comments_created`/`jira_comments_updated` as `0`.
 - Writes an updated hidden state note (`ai-review-state:v1`) containing base64url-encoded state payload with SHA-256 integrity checksum.
 - Outputs `out/post/post_result.json` matching [ai-review/schemas/post_result.schema.json](ai-review/schemas/post_result.schema.json).
 
@@ -120,6 +120,22 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 - Outputs `out/gate/gate_result.json` matching [ai-review/schemas/gate_result.schema.json](ai-review/schemas/gate_result.schema.json).
 
 ---
+
+## Implemented vs Reserved Configuration
+
+| Area / knob | Status | Notes |
+|---|---|---|
+| `panel.quorum.mode` | Reserved | Consensus currently uses the implemented vote/degradation logic rather than alternate quorum modes. |
+| `panel.degraded_behavior.*` | Reserved | Documented for future policy work; only current implemented degradation paths are reflected in artifacts. |
+| `panel.expected_reviewers` | Reserved | Informational today; successful reviewer counts come from produced artifacts. |
+| `severity_policy.majority_noise` | Reserved | Critique verdicts are recorded, but this policy knob does not yet drive merge decisions. |
+| `merge_gate.mechanism`, `required_project_setting`, `stale_head_behavior` | Reserved | Gate artifacts are produced for CI; project-setting automation is not implemented. |
+| Most `security.*` fields | Reserved | Endpoint validation and environment allowlisting exist; container-level egress/token controls are not fully enforced yet. |
+| `budget.*` | Planned | `backend: none` is advisory/no-op and reports `budget_backend_not_implemented`. |
+| `jira.*` | Planned/experimental | Jira helpers exist, but posting does not create or update Jira comments. |
+| Per-reviewer `cli_version` | Reserved | CLI versions are documented/pinned by images rather than enforced from this knob. |
+| `limits.max_findings_per_reviewer` | Reserved | Schema/config placeholder; reviewer output is validated downstream. |
+| Several `posting.*` knobs | Reserved | Core GitLab posting, state, summary, and stale-head behavior exist; some advanced policy toggles are placeholders. |
 
 ## Complete Configuration Reference (`config/review.yaml`)
 
@@ -320,7 +336,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
 |  |                                     |   |                                   |  |
 |  | - Access to GITLAB_WRITE_TOKEN      |   | - Isolated Read-Only /opt/ai-review|  |
 |  | - Full git access                   |   | - ONLY OPENROUTER_API_KEY exposed |  |
-|  | - Posts Discussions & State Notes   |   | - Network: https://openrouter.ai  |  |
+|  | - Posts Discussions & State Notes   |   | - Provider access: CLI-policy dependent |  |
 |  +-------------------------------------+   | - Shell & File Edits DENIED       |  |
 |                                            +-----------------------------------+  |
 +-----------------------------------------------------------------------------------+
@@ -332,7 +348,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
   - **Claude Code**: Invoked via `claude.sh` with stream output parsing and disabled legacy model remap.
   - **Codex CLI**: Executed via `codex.sh` with `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`.
   - **OpenCode CLI**: Invoked via `opencode.sh` with `opencode --pure run --agent ai-reviewer --format json` in an isolated directory with `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, and `OPENCODE_DISABLE_LSP_DOWNLOAD=1`.
-- **Egress Control**: Network calls are restricted to OpenRouter API endpoints (`https://openrouter.ai/api/v1`).
+- **Egress Control**: Provider endpoint pinning is enforced in adapter validation, but runner/container network egress is CLI-policy-dependent and not yet enforced at the container layer (tracked by H2/SPEC-06).
 - **Immutable Container Images**: Pre-built base and reviewer container images are preflighted and signed/attested via GitHub Actions.
 
 ---
@@ -345,7 +361,7 @@ All inter-stage data exchanges are governed by 9 JSON Schemas located in [ai-rev
 |---|---|---|
 | [finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json) | `finding_batch.v1` | Reviewer finding output (category, severity, line numbers, anchor code, title, body, confidence, suggested_fix). |
 | [raw_finding_batch.schema.json](ai-review/schemas/raw_finding_batch.schema.json) | N/A | Intermediate schema used for CLI structured output validation (e.g. Codex CLI `--output-schema`). |
-| [critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json) | `critique_batch.v1` | Peer cross-examination verdicts (`agree`, `disagree`, `duplicate`, `unverifiable`). |
+| [critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json) | `critique_batch.v1` | Peer cross-examination verdicts (`agree`, `dispute`, `noise`, `duplicate`). |
 | [consensus.schema.json](ai-review/schemas/consensus.schema.json) | `consensus.v1` | Deduplicated findings, vote tallies, surfaced/FYI classification, and `block_merge` decision. |
 | [state.schema.json](ai-review/schemas/state.schema.json) | `state.v1` | Hidden state payload tracking active/resolved/wontfix/superseded issues across MR commits. |
 | [state_aliases.schema.json](ai-review/schemas/state_aliases.schema.json) | `state_aliases.v1` | State alias records passed to `prepare` for historical issue matching across commits. |

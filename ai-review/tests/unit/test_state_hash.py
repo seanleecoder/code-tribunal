@@ -50,7 +50,9 @@ class StateHashTests(unittest.TestCase):
         )
         body = encode_state_note(state)
         self.assertIn("AI review state. Machine-owned; do not edit.", body)
-        self.assertRegex(body, r"<!-- ai-review-state:v1 [A-Za-z0-9_-]+ state_hash=[a-f0-9]{64} -->")
+        self.assertRegex(
+            body, r"<!-- ai-review-state:v1 [A-Za-z0-9_-]+ state_hash=[a-f0-9]{64} -->"
+        )
         self.assertNotIn("checksum=", body)
         self.assertEqual(decode_state_note_body(body), state)
         with self.assertRaisesRegex(ValueError, "state_hash"):
@@ -83,9 +85,7 @@ class StateHashTests(unittest.TestCase):
         )
         self.assertEqual(decode_state_note_body(body), state)
         with self.assertRaisesRegex(ValueError, "checksum"):
-            decode_state_note_body(
-                re.sub(r"checksum=[a-f0-9]{64}", "checksum=" + "0" * 64, body)
-            )
+            decode_state_note_body(re.sub(r"checksum=[a-f0-9]{64}", "checksum=" + "0" * 64, body))
 
     def test_state_note_rejects_bad_internal_state_hash(self) -> None:
         state = attach_state_hash(
@@ -125,7 +125,12 @@ class StateHashTests(unittest.TestCase):
             [
                 {"id": 1, "body": encode_state_note(old)},
                 {"id": 2, "body": encode_state_note(new)},
-                {"id": 3, "body": "<!-- ai-review-state:v1 checksum=" + "0" * 64 + " -->bad<!-- /ai-review-state:v1 -->"},
+                {
+                    "id": 3,
+                    "body": "<!-- ai-review-state:v1 checksum="
+                    + "0" * 64
+                    + " -->bad<!-- /ai-review-state:v1 -->",
+                },
             ]
         )
         self.assertEqual(state["last_head_sha"], "new")

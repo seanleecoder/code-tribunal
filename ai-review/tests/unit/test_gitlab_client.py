@@ -85,7 +85,9 @@ class GitLabClientTests(unittest.TestCase):
         self.assertEqual(unchanged["new_line"], 12)
 
     def test_build_position_multiline_adds_line_range(self) -> None:
-        position = build_position(self._anchor("new"), MergeRequestVersion("b", "s", "h"), multiline=True)
+        position = build_position(
+            self._anchor("new"), MergeRequestVersion("b", "s", "h"), multiline=True
+        )
         self.assertEqual(position["line_range"]["start"]["line_code"], "line-start")
         self.assertEqual(position["line_range"]["end"]["line_code"], "line-end")
 
@@ -128,9 +130,7 @@ class GitLabClientTests(unittest.TestCase):
         class PagedSession:
             def __init__(self) -> None:
                 self.pages: dict[int, FakeResponse] = {
-                    1: FakeResponse(
-                        [{"id": "d1"}, {"id": "d2"}], headers={"X-Next-Page": "2"}
-                    ),
+                    1: FakeResponse([{"id": "d1"}, {"id": "d2"}], headers={"X-Next-Page": "2"}),
                     2: FakeResponse([{"id": "summary-note"}], headers={"X-Next-Page": ""}),
                 }
                 self.requested_pages: list[int] = []
@@ -173,8 +173,8 @@ class GitLabClientTests(unittest.TestCase):
                 self.count += 1
                 return FakeResponse([{"id": self.count}], headers={"X-Next-Page": "999"})
 
-        import io
         import contextlib
+        import io
 
         session = RunawaySession()
         client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)

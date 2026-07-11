@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-HUNK_RE = re.compile(r"@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? \+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@")
+HUNK_RE = re.compile(
+    r"@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? \+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@"
+)
 
 
 @dataclass(frozen=True)
@@ -108,7 +111,9 @@ def normalize_symbol(symbol: Any) -> str | None:
     return normalized or None
 
 
-def candidate_issue_signature(anchor: dict[str, Any], category: str, title_fp: str) -> dict[str, Any]:
+def candidate_issue_signature(
+    anchor: dict[str, Any], category: str, title_fp: str
+) -> dict[str, Any]:
     return {
         "path_key": anchor_path_key(anchor),
         "category": category,
@@ -150,9 +155,8 @@ def _target_matches(side: str, target_start: dict[str, Any], line: DiffLine) -> 
         return line.new_line == target_start.get("new_line")
     if side == "old":
         return line.old_line == target_start.get("old_line")
-    return (
-        line.old_line == target_start.get("old_line")
-        and line.new_line == target_start.get("new_line")
+    return line.old_line == target_start.get("old_line") and line.new_line == target_start.get(
+        "new_line"
     )
 
 
@@ -164,7 +168,9 @@ def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
     return line.old_line is not None and line.new_line is not None
 
 
-def context_hash_from_unified_diff(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> str:
+def context_hash_from_unified_diff(
+    diff_text: str, anchor: dict[str, Any], *, window: int = 6
+) -> str:
     side = str(anchor["side"])
     old_path: str | None = None
     new_path: str | None = None
@@ -187,7 +193,9 @@ def context_hash_from_unified_diff(diff_text: str, anchor: dict[str, Any], *, wi
         target_index = target_indexes[0]
         start = max(target_index - window, 0)
         end = min(target_index + window, len(side_lines) - 1)
-        return compute_context_hash(anchor_path_key(anchor), side, [line.text for line in side_lines[start : end + 1]])
+        return compute_context_hash(
+            anchor_path_key(anchor), side, [line.text for line in side_lines[start : end + 1]]
+        )
 
     for raw_line in diff_text.splitlines():
         parsed_paths = _parse_diff_paths(raw_line)

@@ -60,7 +60,9 @@ def _directory_sha256(path: Path) -> str:
     return sha256_hex(b"".join(digest_parts))
 
 
-def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path, out: str | Path) -> Path:
+def prepare_local_bundle(
+    config: str | Path, diff: str | Path, repo: str | Path, out: str | Path
+) -> Path:
     config_path = Path(config)
     diff_path = Path(diff)
     repo_path = Path(repo)
@@ -87,7 +89,9 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
         "open": [],
     }
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions)
-    write_canonical_json(out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []})
+    write_canonical_json(
+        out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []}
+    )
 
     diff_sha = _file_sha256(diff_path)
     manifest = {
@@ -121,7 +125,8 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     token = os.environ.get("GITLAB_READ_TOKEN")
     if not api_url or not project_id or not mr_iid or not token:
         raise SystemExit(
-            "prepare requires CI_API_V4_URL, CI_PROJECT_ID, CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
+            "prepare requires CI_API_V4_URL, CI_PROJECT_ID, "
+            "CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
         )
     config_dict = load_config(config)
     client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")

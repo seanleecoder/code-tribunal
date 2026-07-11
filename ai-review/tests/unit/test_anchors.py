@@ -18,7 +18,9 @@ def _diff(line: str, *, new_line: int = 2, old_line: int = 1, path: str = "src/f
     )
 
 
-def _anchor(side: str, *, old_line: int | None, new_line: int | None, path: str = "src/foo.py") -> dict[str, Any]:
+def _anchor(
+    side: str, *, old_line: int | None, new_line: int | None, path: str = "src/foo.py"
+) -> dict[str, Any]:
     return {
         "old_path": path,
         "new_path": path,
@@ -55,9 +57,11 @@ class AnchorRemapTests(unittest.TestCase):
         self.assertEqual(missing["status"], "missing")
         self.assertIsNone(missing["anchor"])
 
-        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
-            f"+tail-{index}" for index in range(6)
-        ]
+        block = (
+            [f"+ctx-{index}" for index in range(6)]
+            + ["+target"]
+            + [f"+tail-{index}" for index in range(6)]
+        )
         original_block_diff = "\n".join(
             [
                 "diff --git a/src/foo.py b/src/foo.py",

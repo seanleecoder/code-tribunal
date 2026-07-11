@@ -134,9 +134,23 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         cases = [
-            [_critique_batch("opencode", [_critique("opencode", "1" * 64, "duplicate", duplicate_of="f" * 64)])],
-            [_critique_batch("opencode", [_critique("opencode", "1" * 64, "duplicate", duplicate_of="3" * 64)])],
-            [_critique_batch("claude", [_critique("claude", "1" * 64, "duplicate", duplicate_of="2" * 64)])],
+            [
+                _critique_batch(
+                    "opencode",
+                    [_critique("opencode", "1" * 64, "duplicate", duplicate_of="f" * 64)],
+                )
+            ],
+            [
+                _critique_batch(
+                    "opencode",
+                    [_critique("opencode", "1" * 64, "duplicate", duplicate_of="3" * 64)],
+                )
+            ],
+            [
+                _critique_batch(
+                    "claude", [_critique("claude", "1" * 64, "duplicate", duplicate_of="2" * 64)]
+                )
+            ],
             [
                 _critique_batch(
                     "opencode",
@@ -149,7 +163,11 @@ class Phase5ConsensusTests(unittest.TestCase):
             with self.subTest(critiques=critiques):
                 consensus = build_consensus(
                     _manifest(),
-                    [_batch("claude", first), _batch("codex", second), _batch("codex", different_path)],
+                    [
+                        _batch("claude", first),
+                        _batch("codex", second),
+                        _batch("codex", different_path),
+                    ],
                     _critique_config(),
                     critique_batches=critiques,
                 )
@@ -227,13 +245,17 @@ class Phase5ConsensusTests(unittest.TestCase):
 
         group = consensus["groups"][0]
         self.assertEqual(group["critique_support_count"], 0)
-        self.assertEqual(group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0})
+        self.assertEqual(
+            group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0}
+        )
         validate_instance(consensus, "consensus.schema.json")
 
     def test_finalized_failed_critique_batch_does_not_affect_counts_or_majority(self) -> None:
         source_id = "1" * 64
         failed = finalize_critique_batch(
-            _critique_batch("codex", [_critique("codex", source_id, "noise")], status="model_error"),
+            _critique_batch(
+                "codex", [_critique("codex", source_id, "noise")], status="model_error"
+            ),
             critic="codex",
             run_id="run",
         )
@@ -252,7 +274,9 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(failed["critiques"], [])
         self.assertEqual(group["critique_noise_count"], 1)
         self.assertEqual(group["critique_support_count"], 0)
-        self.assertEqual(group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 1, "duplicate": 0})
+        self.assertEqual(
+            group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 1, "duplicate": 0}
+        )
         self.assertEqual(group["decision"], "drop")
         validate_instance(consensus, "consensus.schema.json")
 
@@ -282,9 +306,7 @@ class Phase5ConsensusTests(unittest.TestCase):
         critiques = [_critique_batch("codex", [_critique("codex", source_id, "noise")])]
 
         without_critiques = build_consensus(_manifest(), batches, config)
-        with_critiques = build_consensus(
-            _manifest(), batches, config, critique_batches=critiques
-        )
+        with_critiques = build_consensus(_manifest(), batches, config, critique_batches=critiques)
 
         self.assertEqual(with_critiques, without_critiques)
 

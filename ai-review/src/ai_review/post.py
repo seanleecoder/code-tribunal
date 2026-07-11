@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .anchors import remap_anchor, title_fingerprint
@@ -16,16 +16,17 @@ from .gitlab_client import (
     build_position,
     root_note_id_from_discussion,
 )
-from .memory import find_matching_record
 from .memory import (
     compact_state,
     empty_state,
     encode_state_note,
+    find_matching_record,
     newest_valid_state_from_notes,
     normalize_state,
     normalize_state_record,
     state_overflow_reason,
 )
+from .redact import redact_text
 from .schema import load_json_file, now_iso, write_canonical_json
 
 MARKER_RE = re.compile(
@@ -103,7 +104,8 @@ class ExistingReviewDiscussion:
 
 
 def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
-    sanitized = text.replace("<!--", "< !--").replace("-->", "-- >")
+    sanitized = redact_text(text)
+    sanitized = sanitized.replace("<!--", "< !--").replace("-->", "-- >")
     sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n").strip()
     return sanitized[:max_length]
 
@@ -170,27 +172,30 @@ def render_body(
     if isinstance(suggestion, str) and validate_suggestion(suggestion):
         suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion, max_length=1200)
 
-    body_without_marker = "\n".join(
-        [
-            f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
-            "",
-            title,
-            "",
-            summary,
-            "",
-            "Evidence:",
-            *evidence_lines,
-            "",
-            "Consensus:",
-            f"- Reviewers: {', '.join(reviewers)}",
-            f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-            f"- Critique support: {group.get('critique_support_count', 0)}",
-            f"- Decision: {group['decision']}",
-            f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-            "- Human acknowledgment: "
-            + ("recommended" if group.get("human_ack_recommended") else "not required"),
-        ]
-    ) + suggestion_block
+    body_without_marker = (
+        "\n".join(
+            [
+                f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
+                "",
+                title,
+                "",
+                summary,
+                "",
+                "Evidence:",
+                *evidence_lines,
+                "",
+                "Consensus:",
+                f"- Reviewers: {', '.join(reviewers)}",
+                f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
+                f"- Critique support: {group.get('critique_support_count', 0)}",
+                f"- Decision: {group['decision']}",
+                f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
+                "- Human acknowledgment: "
+                + ("recommended" if group.get("human_ack_recommended") else "not required"),
+            ]
+        )
+        + suggestion_block
+    )
     body_hash = compute_body_hash(group, body_without_marker)
     marker = (
         f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
@@ -392,7 +397,8 @@ def _record_for_group(
     aliases = previous.get("aliases") if isinstance(previous.get("aliases"), dict) else {}
     merged_aliases = {
         "candidate_issue_signatures": sorted(
-            set(aliases.get("candidate_issue_signatures", [])) | set(_candidate_signature_hashes(group))
+            set(aliases.get("candidate_issue_signatures", []))
+            | set(_candidate_signature_hashes(group))
         ),
         "source_finding_ids": sorted(
             set(aliases.get("source_finding_ids", [])) | set(group.get("source_finding_ids", []))
@@ -401,7 +407,8 @@ def _record_for_group(
             set(aliases.get("context_hashes", [])) | set(match_keys.get("context_hashes", []))
         ),
         "title_fingerprints": sorted(
-            set(aliases.get("title_fingerprints", [])) | set(match_keys.get("title_fingerprints", []))
+            set(aliases.get("title_fingerprints", []))
+            | set(match_keys.get("title_fingerprints", []))
         ),
         "symbols": sorted(set(aliases.get("symbols", [])) | set(match_keys.get("symbols", []))),
     }
@@ -446,7 +453,9 @@ def _has_resolution_quorum(config: dict[str, Any], consensus: dict[str, Any]) ->
     return len(consensus.get("successful_reviewers", [])) >= required
 
 
-def _author_access_level(client: GitLabClient, project_id: str, author: dict[str, Any]) -> int | None:
+def _author_access_level(
+    client: GitLabClient, project_id: str, author: dict[str, Any]
+) -> int | None:
     access_level = author.get("access_level")
     if isinstance(access_level, int):
         return access_level
@@ -663,15 +672,13 @@ def same_inline_anchor(existing: dict[str, Any], target: dict[str, Any]) -> bool
         if existing.get("old_line") != target.get("old_line"):
             return False
     else:
-        if (
-            existing.get("old_path") != target.get("old_path")
-            or existing.get("new_path") != target.get("new_path")
-        ):
+        if existing.get("old_path") != target.get("old_path") or existing.get(
+            "new_path"
+        ) != target.get("new_path"):
             return False
-        if (
-            existing.get("old_line") != target.get("old_line")
-            or existing.get("new_line") != target.get("new_line")
-        ):
+        if existing.get("old_line") != target.get("old_line") or existing.get(
+            "new_line"
+        ) != target.get("new_line"):
             return False
 
     existing_has_range = isinstance(existing.get("line_range"), dict)
@@ -850,6 +857,7 @@ def _load_current_diff_text(
     client: GitLabClient,
     manifest: dict[str, Any],
     diff_text: str | None,
+    warnings: list[str],
 ) -> str | None:
     if diff_text is not None:
         return diff_text
@@ -858,7 +866,10 @@ def _load_current_diff_text(
         return None
     try:
         return fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
-    except Exception:
+    except Exception as exc:
+        warnings.append(
+            f"diff_fetch_failed: inline remap skipped, anchors may be stale ({type(exc).__name__})"
+        )
         return None
 
 
@@ -912,7 +923,7 @@ def post_consensus(
         return result
 
     version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text)
+    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
     inline_multiline = bool(posting.get("inline_multiline", False))
     inline_sides = set(posting.get("v1_inline_sides", ["new"]))
     fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
@@ -1122,7 +1133,11 @@ def post_consensus(
             "written_by_pipeline_id": pipeline_id,
             "updated_at": now_iso(),
             "records": planned_records,
-            "run_history": (persisted_state.get("run_history", []) if isinstance(persisted_state.get("run_history"), list) else [])
+            "run_history": (
+                persisted_state.get("run_history", [])
+                if isinstance(persisted_state.get("run_history"), list)
+                else []
+            )
             + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
         },
         manifest=manifest,
@@ -1134,7 +1149,9 @@ def post_consensus(
     if _state_enabled(config):
         overflow = state_overflow_reason(
             planned_state,
-            max_records=int(retention.get("max_records", 200)) if isinstance(retention, dict) else 200,
+            max_records=int(retention.get("max_records", 200))
+            if isinstance(retention, dict)
+            else 200,
             max_state_bytes=int(retention.get("max_state_bytes", 50000))
             if isinstance(retention, dict)
             else 50000,
@@ -1261,8 +1278,9 @@ def post_consensus(
             )
         except GitLabApiError as exc:
             if isinstance(position.get("line_range"), dict):
+                issue_id = post_group["issue_id"]
                 result["warnings"].append(
-                    f"multiline create failed for {post_group['issue_id']}; retrying single-line: {exc}"
+                    f"multiline create failed for {issue_id}; retrying single-line: {exc}"
                 )
                 single_line_position = dict(position)
                 single_line_position.pop("line_range", None)
@@ -1333,9 +1351,14 @@ def post_consensus(
                 if discussion_id is None:
                     continue
                 desired: bool | None = None
-                if record.get("status") in {"resolved", "wontfix"} and prior_status.get(record["issue_id"]) != record.get("status"):
+                if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
+                    record["issue_id"]
+                ) != record.get("status"):
                     desired = True
-                elif record.get("human_disposition") == "reopen" and prior_status.get(record["issue_id"]) != "open":
+                elif (
+                    record.get("human_disposition") == "reopen"
+                    and prior_status.get(record["issue_id"]) != "open"
+                ):
                     desired = False
                 if desired is None or dry_run:
                     continue
@@ -1359,7 +1382,9 @@ def post_consensus(
         final_state = compact_state(final_state, retention if isinstance(retention, dict) else {})
         overflow = state_overflow_reason(
             final_state,
-            max_records=int(retention.get("max_records", 200)) if isinstance(retention, dict) else 200,
+            max_records=int(retention.get("max_records", 200))
+            if isinstance(retention, dict)
+            else 200,
             max_state_bytes=int(retention.get("max_state_bytes", 50000))
             if isinstance(retention, dict)
             else 50000,

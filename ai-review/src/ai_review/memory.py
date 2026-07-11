@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
-
 
 MATCH_PRECEDENCE = (
     "exact_issue_id",
@@ -106,7 +105,9 @@ def normalize_state_record(
         "discussion_id": (
             str(record["discussion_id"]) if record.get("discussion_id") is not None else None
         ),
-        "root_note_id": record.get("root_note_id") if isinstance(record.get("root_note_id"), int) else None,
+        "root_note_id": record.get("root_note_id")
+        if isinstance(record.get("root_note_id"), int)
+        else None,
         "jira_comment_id": (
             str(record["jira_comment_id"]) if record.get("jira_comment_id") is not None else None
         ),
@@ -222,7 +223,9 @@ def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -
     if isinstance(note.get("id"), int):
         state = dict(state)
         state["state_note_id"] = note["id"]
-        state = attach_state_hash({key: value for key, value in state.items() if key != "state_hash"})
+        state = attach_state_hash(
+            {key: value for key, value in state.items() if key != "state_hash"}
+        )
     return state
 
 
@@ -297,11 +300,15 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
             superseded.append(record)
         elif status == "resolved":
             resolved.append(record)
-        elif status == "wontfix" and retention.get("keep_wontfix", True):
+        elif status == "wontfix":
+            if not retention.get("keep_wontfix", True):
+                continue
             records.append(record)
-        elif status == "open" and retention.get("keep_open", True):
+        elif status == "open":
+            if not retention.get("keep_open", True):
+                continue
             records.append(record)
-        elif status not in {"open", "resolved", "wontfix", "superseded"}:
+        else:
             records.append(record)
 
     def keep_latest(items: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
@@ -314,10 +321,14 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
         )[:count]
 
     compacted = dict(state)
-    compacted["records"] = records + keep_latest(resolved, keep_resolved_runs) + keep_latest(
-        superseded, keep_superseded_runs
+    compacted["records"] = (
+        records
+        + keep_latest(resolved, keep_resolved_runs)
+        + keep_latest(superseded, keep_superseded_runs)
     )
-    return attach_state_hash({key: value for key, value in compacted.items() if key != "state_hash"})
+    return attach_state_hash(
+        {key: value for key, value in compacted.items() if key != "state_hash"}
+    )
 
 
 def state_overflow_reason(
@@ -328,7 +339,9 @@ def state_overflow_reason(
 ) -> str | None:
     record_count = len(state.get("records", []))
     if record_count > max_records:
-        return f"state has {record_count} records, exceeds state.retention.max_records ({max_records})"
+        return (
+            f"state has {record_count} records, exceeds state.retention.max_records ({max_records})"
+        )
     encoded_bytes = len(encode_state_note(state).encode("utf-8"))
     if encoded_bytes > max_state_bytes:
         return (
@@ -468,8 +481,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
             _same_category(record, group)
             and bool(_group_values(group, "path_keys") & _record_path_keys(record))
             and bool(
-                _group_values(group, "context_hashes")
-                & _record_aliases(record, "context_hashes")
+                _group_values(group, "context_hashes") & _record_aliases(record, "context_hashes")
             )
         )
 
@@ -502,7 +514,8 @@ def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) ->
     records = [
         record
         for record in (state or {}).get("records", [])
-        if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
+        if isinstance(record, dict)
+        and isinstance(record.get("issue_id"), str)
         and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:

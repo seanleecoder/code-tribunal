@@ -3,8 +3,8 @@ from __future__ import annotations
 import copy
 import unittest
 
-from ai_review.consensus import build_consensus
 from ai_review.canonical import canonical_json, sha256_hex
+from ai_review.consensus import build_consensus
 from ai_review.schema import SchemaValidationError, validate_instance
 
 

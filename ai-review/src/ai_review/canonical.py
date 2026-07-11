@@ -51,7 +51,9 @@ def _reject_non_finite(value: Any) -> None:
 
 def canonical_json_text(value: Any) -> str:
     _reject_non_finite(value)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
 
 
 def canonical_json(value: Any) -> bytes:

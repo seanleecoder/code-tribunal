@@ -106,9 +106,10 @@ class RunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = self._env(Path(tmp))
             transport = _RecordingTransport([(429, "rate limited, api_key=sk-or-v1-secret-value")])
-            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(
-                io.StringIO()
-            ) as err:
+            with (
+                contextlib.redirect_stdout(io.StringIO()) as out,
+                contextlib.redirect_stderr(io.StringIO()) as err,
+            ):
                 code = run("codex", "review", transport=transport, env=env)
             self.assertNotEqual(code, 0)
             self.assertEqual(out.getvalue(), "")
