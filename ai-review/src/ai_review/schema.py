@@ -18,6 +18,7 @@ from .anchors import (
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
+from .constants import SEVERITY_RANK
 from .redact import redact_text
 
 
@@ -49,7 +50,6 @@ ADAPTER_STATUSES = {
     "budget_skipped",
 }
 
-_SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
 
 
 def schema_dir() -> Path:
@@ -318,7 +318,7 @@ def _confidence_rank(finding: Any) -> float:
 def _severity_rank(finding: Any) -> int:
     if not isinstance(finding, dict):
         return -1
-    return _SEVERITY_RANK.get(str(finding.get("severity")), -1)
+    return SEVERITY_RANK.get(str(finding.get("severity")), -1)
 
 
 def _rank_findings_for_cap(

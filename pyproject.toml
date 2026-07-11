@@ -26,6 +26,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["ai-review/src"]
 
+[tool.setuptools.package-data]
+ai_review = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["ai-review/tests"]
 pythonpath = ["ai-review/src"]
