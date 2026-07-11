@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 
 from .anchors import remap_anchor, title_fingerprint
 from .canonical import sha256_hex
@@ -700,7 +700,15 @@ def _summary_line(group: dict[str, Any]) -> str:
     return header
 
 
-def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+@overload
+def _sort_groups(groups: list[FindingGroup]) -> list[FindingGroup]: ...
+
+
+@overload
+def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+
+def _sort_groups(groups: list[Any]) -> list[Any]:
     return sorted(
         groups,
         key=lambda group: (
@@ -872,13 +880,7 @@ def _classify_post_groups(
             continue
         inline_candidates.append(group)
 
-    inline_candidates = sorted(
-        inline_candidates,
-        key=lambda group: (
-            -SEVERITY_RANK.get(str(group.get("final_severity")), -1),
-            str(group.get("issue_id", "")),
-        ),
-    )
+    inline_candidates = _sort_groups(inline_candidates)
     if len(inline_candidates) > max_surface:
         overflow = inline_candidates[max_surface:]
         inline_candidates = inline_candidates[:max_surface]
