@@ -13,11 +13,10 @@ from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.post import post_consensus
 from ai_review.schema import load_json_file, validate_instance
-
-from tests.support.fake_gitlab import FakeGitLabClient
+from support.fake_gitlab import FakeGitLabClient
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
-REPO_ROOT = Path(__file__).resolve().parents[2]
+AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 
 
 class PostGateEndToEndTests(unittest.TestCase):
@@ -30,7 +29,9 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertIs(consensus["summary"]["block_merge"], True)
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 1)
+        self.assertEqual(post_result["summary_comment"]["action"], "none")
         self.assertEqual(client.discussion_count(), 1)
+        self.assertEqual(len(client.summary_notes()), 0)
         self.assertEqual(exit_code, 7)
         self.assertEqual(gate_result["status"], "failed_blocking_findings")
         self.assertIs(gate_result["block_merge"], True)
@@ -71,7 +72,7 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(second_post["updated_discussions"], 0)
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.discussion_count(), 1)
-        self.assertLessEqual(len(client.summary_notes()), 1)
+        self.assertEqual(len(client.summary_notes()), 0)
         self.assertEqual(len(client.state_notes()), 1)
         self.assertEqual(exit_code, 7)
         self.assertEqual(second_gate["status"], "failed_blocking_findings")
@@ -101,7 +102,7 @@ class PostGateEndToEndTests(unittest.TestCase):
             encoding="utf-8",
         )
         bundle = prepare_local_bundle(
-            REPO_ROOT / "config" / "review.yaml",
+            AI_REVIEW_ROOT / "config" / "review.yaml",
             FIXTURE_ROOT / "diffs" / "simple.diff",
             repo,
             tmp / "bundle",

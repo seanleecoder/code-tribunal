@@ -70,20 +70,21 @@ Design notes:
 
 ### 2. Add compact integration fixtures
 
-Create fixtures under `ai-review/tests/fixtures/integration/`:
+Use compact, deterministic fixtures with the smallest amount of checked-in data
+needed for the first SPEC-12 landing:
 
-- `review.yaml` — minimal config enabling posting and merge gate with low limits
-  so overflow/fallback behavior is easy to add later.
-- `mr.diff` — a tiny diff with one added Python line that can accept an inline
-  finding.
-- `repo/` — minimal repository snapshot content for `prepare_local_bundle`.
-- `blocking_findings.json` or a Python fixture builder — two successful reviewer
-  batches that quorum-group into one `decision: surface` finding.
-- `fyi_findings.json` or a Python fixture builder — one reviewer finding, or a
-  non-blocking policy case, that yields `decision: fyi` and `block_merge: false`.
+- Reuse `ai-review/tests/fixtures/diffs/simple.diff` for the inline-postable diff
+  path instead of duplicating another copy under an integration-only directory.
+- Build the temporary repository snapshot in the test with only the source file
+  needed by `prepare_local_bundle`.
+- Load the repository's normal `config/review.yaml`, then override only the
+  test-specific knobs in memory.
+- Use Python builders for blocking and FYI reviewer batches so the expected
+  consensus shape is readable and avoids large duplicated JSON fixtures.
 
-Prefer Python builders when they remove duplicated JSON noise, but keep any
-checked-in fixture data canonical and deterministic.
+Extract `tests/fixtures/integration/` files later when SPEC-14 adds more scenarios
+or when multiple integration tests need to share larger inputs. Any checked-in
+fixture data should remain canonical and deterministic.
 
 ### 3. Build a shared E2E test helper
 
