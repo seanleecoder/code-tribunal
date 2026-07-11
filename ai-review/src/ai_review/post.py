@@ -10,6 +10,7 @@ from typing import Any
 from .anchors import remap_anchor, title_fingerprint
 from .canonical import sha256_hex
 from .config import load_config
+from .constants import SEVERITY_RANK
 from .gitlab_client import (
     GitLabApiError,
     GitLabClient,
@@ -76,7 +77,6 @@ SUMMARY_MARKER_RE = re.compile(
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
 TEXT_TOKEN_RE = re.compile(r"[a-z0-9]+")
-SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
 FAILURE_KEYWORDS = {
     "attributeerror",
     "csrf",

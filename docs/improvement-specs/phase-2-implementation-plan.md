@@ -94,6 +94,8 @@ See the dedicated [SPEC-12 implementation plan](spec-12-implementation-plan.md) 
 
 ### Step 3 — SPEC-13: TypedDict domain contracts
 
+See the dedicated [SPEC-13/14 implementation plan](spec-13-14-implementation-plan.md) for the post-SPEC-12 typing and refactor rollout.
+
 1. Create `ai_review/types.py` with `TypedDict` definitions that mirror the JSON
    schemas for anchors, findings, groups, critiques, state, consensus, post
    results, and gate results.

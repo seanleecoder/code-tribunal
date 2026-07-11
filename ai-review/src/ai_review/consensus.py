@@ -8,12 +8,10 @@ from typing import Any
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import effective_config_summary, enabled_reviewers, load_config
+from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
 from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
-
-SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
-SEVERITY_BY_RANK = {value: key for key, value in SEVERITY_RANK.items()}
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
