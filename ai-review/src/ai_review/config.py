@@ -191,6 +191,10 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
     - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
+    - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` ->
+      ``panel.grouping.semantic.enabled``
+    - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` ->
+      ``panel.grouping.semantic.threshold``
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
@@ -224,6 +228,28 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         merge_gate = config.setdefault("merge_gate", {})
         if isinstance(merge_gate, dict):
             merge_gate["enabled"] = flag
+
+    semantic_enabled_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED")
+    semantic_threshold_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD")
+    if semantic_enabled_env is not None or semantic_threshold_env is not None:
+        panel = config.setdefault("panel", {})
+        if isinstance(panel, dict):
+            grouping = panel.setdefault("grouping", {})
+            if isinstance(grouping, dict):
+                semantic = grouping.setdefault("semantic", {})
+                if isinstance(semantic, dict):
+                    if semantic_enabled_env is not None:
+                        semantic["enabled"] = _env_flag(
+                            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
+                            semantic_enabled_env,
+                        )
+                    if semantic_threshold_env is not None:
+                        try:
+                            semantic["threshold"] = float(semantic_threshold_env.strip())
+                        except ValueError as exc:
+                            raise ConfigError(
+                                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD must be a number"
+                            ) from exc
 
 
 def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:

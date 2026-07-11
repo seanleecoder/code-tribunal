@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from ai_review.consensus import group_findings
 
@@ -141,6 +143,53 @@ class GroupingTests(unittest.TestCase):
                 ),
             ],
             grouping_config={"semantic": {"enabled": True, "threshold": 0.2}},
+        )
+
+        self.assertEqual([len(group) for group in groups], [2, 1])
+
+    def test_labeled_grouping_fixture_corpus(self) -> None:
+        fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "grouping" / "corpus.json"
+        corpus = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        for case in corpus["cases"]:
+            with self.subTest(case=case["name"]):
+                groups = group_findings(
+                    case["findings"],
+                    grouping_config=case.get("grouping_config"),
+                )
+                self.assertEqual([len(group) for group in groups], case["expected_group_sizes"])
+
+    def test_transitive_overlap_chain_splits_with_semantic_disabled(self) -> None:
+        groups = group_findings(
+            [
+                _finding(
+                    "1" * 64,
+                    "src/foo.py",
+                    "1" * 64,
+                    title="Config lookup hub",
+                    title_fingerprint="hub-left" * 8,
+                    evidence_fingerprint="hub-right" * 8,
+                    line=12,
+                ),
+                _finding(
+                    "2" * 64,
+                    "src/foo.py",
+                    "2" * 64,
+                    title="Null config access crashes",
+                    title_fingerprint="hub-left" * 8,
+                    evidence_fingerprint="left-only" * 8,
+                    line=10,
+                ),
+                _finding(
+                    "3" * 64,
+                    "src/foo.py",
+                    "3" * 64,
+                    title="SQL query builds raw user input",
+                    title_fingerprint="right-only" * 8,
+                    evidence_fingerprint="hub-right" * 8,
+                    line=14,
+                ),
+            ]
         )
 
         self.assertEqual([len(group) for group in groups], [2, 1])

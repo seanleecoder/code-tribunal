@@ -65,7 +65,9 @@ Four design choices:
   `sha256_hex(canonical_json(...))`.
 - **Exhaustive sorting** before any hash or emit.
 - **Connected-components clustering (union-find), not order-dependent greedy
-  grouping** — so the grouping result is independent of reviewer/input order.
+  grouping** — so initial candidate grouping is independent of reviewer/input
+  order. Components are then split by a deterministic all-members check so
+  transitive chains cannot fabricate quorum between dissimilar endpoints.
 - **No timestamps inside decision objects.**
 
 Same inputs → identical `consensus.json`, every time.
@@ -81,11 +83,19 @@ Same inputs → identical `consensus.json`, every time.
 2. **Deduplication via union-find.** `same_issue(a, b)` is a symmetric predicate:
    same `source_finding_id` / validated critique duplicate-link; OR same
    path + category + side + `context_hash`; OR same path + category with overlapping
-   line ranges and a matching title/evidence fingerprint or symbol. `group_findings`
-   runs union-find over all pairs, then post-splits each component by
-   (category, path) to prevent accidental cross-category merges. Because it is
-   connected components rather than sequential merging, the result does not depend on
-   input order.
+   line ranges and a matching title/evidence fingerprint or symbol. When
+   `panel.grouping.semantic.enabled` is true, the final same-path/category/range
+   branch may also match on deterministic Jaccard similarity over normalized
+   `title + body` words and 3-word shingles at
+   `panel.grouping.semantic.threshold`. `group_findings` runs union-find over all
+   pairs, then post-splits each component by (category, path) and by an all-members
+   same-issue check. This preserves deterministic connected-components discovery
+   while preventing an A-B/B-C chain from merging A and C when the endpoints are
+   dissimilar.
+
+   Any future embedding-based similarity must be computed before the reducer and
+   passed in as ordinary input data. `consensus.py` must remain free of network or
+   model calls so the same inputs still produce byte-identical output.
 
 3. **Voting & severity.** `vote_count` = number of **distinct reviewers** in a group
    (one vote per reviewer). `final_severity` = the **max** severity in the group.
@@ -115,7 +125,9 @@ Same inputs → identical `consensus.json`, every time.
    `test_agree_support_does_not_increase_vote_count`.)
 
 6. **Finalization.** Every array is sorted, ids are canonical hashes, and the run's
-   `summary.block_merge = any(group.block_merge)`. The `gate` stage
+   `summary.block_merge = any(group.block_merge)`. The summary also reports
+   `panel_convergence`, the fraction of surfaced groups whose `vote_count >= 2`;
+   FYI and dropped groups do not contribute to the denominator. The `gate` stage
    ([`gate.py`](src/ai_review/gate.py)) then reads `summary.block_merge` to pass or
    fail the CI job.
 
@@ -143,9 +155,15 @@ so `review.yaml`'s value simply acts as the default when the variable is unset.)
 ## 5. Tests that pin this behavior
 
 Under [`tests/unit/`](tests/unit/): `test_voting.py` (panel status + decision
-policy), `test_grouping.py` (union-find), `test_phase5_consensus.py` (critique
-merges, majority-noise drop, `agree` doesn't add a vote, opt-in escalation/downgrade,
+policy), `test_grouping.py` (union-find, semantic grouping, transitive splitting,
+and the labeled grouping corpus), `test_phase5_consensus.py` (critique merges,
+majority-noise drop, `agree` doesn't add a vote, opt-in escalation/downgrade,
 `rounds: 0` ignores critiques), `test_consensus_state_matching.py` (cross-run
-matching + deterministic tie-breaking), and `test_consensus_cli.py` (failed panel
-still writes an artifact and exits `3`; critic identity is bound from the filename
-even if the payload lies).
+matching + deterministic tie-breaking + semantic grouping in full consensus output),
+and `test_consensus_cli.py` (failed panel still writes an artifact and exits `3`;
+critic identity is bound from the filename even if the payload lies).
+
+Under [`tests/contract/`](tests/contract/), `test_golden_consensus.py` compares a
+semantic-grouping consensus artifact against a checked-in canonical JSON snapshot.
+Intentional changes to grouping output should update the golden file in the same
+PR and explain the semantic change.

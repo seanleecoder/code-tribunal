@@ -498,6 +498,8 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_<REVIEWER>_EFFORT` | `reviewers.<name>.effort` | Reasoning/exploration effort, one of `low`/`medium`/`high`/`xhigh`/`max` (anything else fails config validation). Voluntary stopping, not a turn cap. Currently consumed only by the claude adapter (`--effort`). |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled` **and** critique job creation | The CI template sets this to `"true"` by default and the critique-job rule keys off the exact same variable, so config behavior and CI job-creation stay in lock-step. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
 | `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |
 
 All boolean variables above must be **exactly `true` or `false`** (lowercase, no

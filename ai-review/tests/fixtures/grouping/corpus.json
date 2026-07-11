@@ -1,0 +1,113 @@
+{
+  "schema_version": "grouping_corpus.v1",
+  "cases": [
+    {
+      "name": "same_bug_different_words_semantic",
+      "grouping_config": {"semantic": {"enabled": true, "threshold": 0.2}},
+      "expected_group_sizes": [2],
+      "findings": [
+        {
+          "source_finding_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "category": "correctness",
+          "title": "Missing None guard before config lookup",
+          "body": "The config lookup raises KeyError when required values are absent.",
+          "fingerprints": {
+            "title_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": null, "new_line": 42, "line_code": null},
+            "end": {"old_line": null, "new_line": 42, "line_code": null},
+            "context_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "symbol": null
+          }
+        },
+        {
+          "source_finding_id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "category": "correctness",
+          "title": "Config lookup lacks guard for absent values",
+          "body": "Required values that are absent make the config lookup raise KeyError.",
+          "fingerprints": {
+            "title_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "evidence_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": null, "new_line": 43, "line_code": null},
+            "end": {"old_line": null, "new_line": 43, "line_code": null},
+            "context_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+            "symbol": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "hub_chain_splits_without_semantic",
+      "expected_group_sizes": [2, 1],
+      "findings": [
+        {
+          "source_finding_id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "category": "correctness",
+          "title": "Config lookup hub",
+          "body": "This middle finding overlaps both neighbors but should not join unrelated endpoints.",
+          "fingerprints": {
+            "title_fingerprint": "abababababababababababababababababababababababababababababababab",
+            "evidence_fingerprint": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": null, "new_line": 12, "line_code": null},
+            "end": {"old_line": null, "new_line": 12, "line_code": null},
+            "context_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "symbol": null
+          }
+        },
+        {
+          "source_finding_id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "category": "correctness",
+          "title": "Null config access crashes",
+          "body": "The config lookup raises KeyError for missing required values.",
+          "fingerprints": {
+            "title_fingerprint": "abababababababababababababababababababababababababababababababab",
+            "evidence_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": null, "new_line": 10, "line_code": null},
+            "end": {"old_line": null, "new_line": 10, "line_code": null},
+            "context_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+            "symbol": null
+          }
+        },
+        {
+          "source_finding_id": "3333333333333333333333333333333333333333333333333333333333333333",
+          "category": "correctness",
+          "title": "SQL query builds raw user input",
+          "body": "The database query concatenates untrusted user input into SQL text.",
+          "fingerprints": {
+            "title_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "evidence_fingerprint": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
+            "side": "new",
+            "start": {"old_line": null, "new_line": 14, "line_code": null},
+            "end": {"old_line": null, "new_line": 14, "line_code": null},
+            "context_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+            "symbol": null
+          }
+        }
+      ]
+    }
+  ]
+}

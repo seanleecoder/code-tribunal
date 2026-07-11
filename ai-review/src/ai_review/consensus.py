@@ -206,9 +206,12 @@ def _split_transitive_component(
     groups: list[list[dict[str, Any]]] = []
     representatives: list[dict[str, Any]] = []
     for finding in sorted(component, key=lambda item: item["source_finding_id"]):
-        for index, representative in enumerate(representatives):
-            if same_issue(representative, finding, duplicate_links, grouping_config):
-                groups[index].append(finding)
+        for group in groups:
+            if all(
+                same_issue(member, finding, duplicate_links, grouping_config)
+                for member in group
+            ):
+                group.append(finding)
                 break
         else:
             representatives.append(finding)
@@ -660,10 +663,10 @@ def build_consensus(
                 sum(
                     1
                     for group in groups
-                    if group["decision"] != "drop" and group["vote_count"] >= 2
+                    if group["decision"] == "surface" and group["vote_count"] >= 2
                 )
-                / sum(1 for group in groups if group["decision"] != "drop")
-                if any(group["decision"] != "drop" for group in groups)
+                / sum(1 for group in groups if group["decision"] == "surface")
+                if any(group["decision"] == "surface" for group in groups)
                 else 0.0
             ),
         },
