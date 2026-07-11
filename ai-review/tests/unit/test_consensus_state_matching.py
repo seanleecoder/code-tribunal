@@ -150,6 +150,7 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         self.assertEqual(len(consensus["groups"]), 1)
         self.assertEqual(consensus["groups"][0]["vote_count"], 3)
         self.assertEqual(consensus["summary"]["surface_count"], 1)
+        self.assertEqual(consensus["summary"]["panel_convergence"], 1.0)
         validate_instance(consensus, "consensus.schema.json")
 
     def test_matched_state_reuses_issue_id(self) -> None:

@@ -44,6 +44,10 @@ panel:
   quorum:
     mode: absolute # Voting calculation scheme (unused / reserved in schema)
     votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
+  grouping:
+    semantic:
+      enabled: false # Deterministic title/body similarity grouping; kept opt-in until calibrated on fixtures
+      threshold: 0.5 # Jaccard threshold over normalized word and 3-word shingles
   # Declarative degradation policy schema (unused / reserved in code; runtime logic uses min_successful_reviewers_for_blocking)
   degraded_behavior:
     successful_reviewers_0: fail_pipeline_infra

@@ -42,12 +42,19 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["surface_count", "fyi_count", "drop_count", "block_merge"],
+      "required": [
+        "surface_count",
+        "fyi_count",
+        "drop_count",
+        "block_merge",
+        "panel_convergence"
+      ],
       "properties": {
         "surface_count": { "type": "integer", "minimum": 0 },
         "fyi_count": { "type": "integer", "minimum": 0 },
         "drop_count": { "type": "integer", "minimum": 0 },
-        "block_merge": { "type": "boolean" }
+        "block_merge": { "type": "boolean" },
+        "panel_convergence": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     }
   },

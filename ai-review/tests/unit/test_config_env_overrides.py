@@ -153,6 +153,24 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             load_config(_REPO_CONFIG)
 
+    def test_panel_semantic_grouping_config_is_validated(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 1.5}}
+
+        with self.assertRaisesRegex(ConfigError, "panel.grouping.semantic.threshold"):
+            validate_config(config)
+
+    def test_effective_config_summary_includes_semantic_grouping(self) -> None:
+        from ai_review.config import effective_config_summary
+
+        config = load_config(_REPO_CONFIG)
+        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 0.75}}
+        validate_config(config)
+
+        summary = effective_config_summary(config)
+        self.assertTrue(summary["panel_grouping_semantic_enabled"])
+        self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
+
 
 if __name__ == "__main__":
     unittest.main()

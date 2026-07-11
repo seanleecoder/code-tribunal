@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,38 @@ def _ranges_overlap(a: dict[str, Any], b: dict[str, Any], *, tolerance: int = 3)
     )
 
 
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _normalized_issue_tokens(finding: dict[str, Any]) -> set[str]:
+    text = f"{finding.get('title', '')} {finding.get('body', '')}".lower()
+    words = _WORD_RE.findall(text)
+    if len(words) < 3:
+        return set(words)
+    shingles = {" ".join(words[index : index + 3]) for index in range(len(words) - 2)}
+    return set(words) | shingles
+
+
+def _issue_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+    a_tokens = _normalized_issue_tokens(a)
+    b_tokens = _normalized_issue_tokens(b)
+    if not a_tokens or not b_tokens:
+        return 0.0
+    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+
+
+def _semantic_grouping_enabled(grouping_config: dict[str, Any] | None) -> bool:
+    semantic = (grouping_config or {}).get("semantic", {})
+    return isinstance(semantic, dict) and semantic.get("enabled") is True
+
+
+def _semantic_threshold(grouping_config: dict[str, Any] | None) -> float:
+    semantic = (grouping_config or {}).get("semantic", {})
+    if not isinstance(semantic, dict):
+        return 0.5
+    return float(semantic.get("threshold", 0.5))
+
+
 DuplicateLink = tuple[str, str]
 
 
@@ -55,6 +88,7 @@ def same_issue(
     a: dict[str, Any],
     b: dict[str, Any],
     duplicate_links: set[DuplicateLink] | None = None,
+    grouping_config: dict[str, Any] | None = None,
 ) -> bool:
     if a["source_finding_id"] == b["source_finding_id"]:
         return True
@@ -76,20 +110,27 @@ def same_issue(
         and a_anchor["context_hash"] == b_anchor["context_hash"]
     ):
         return True
-    return (
+    same_path_category_range = (
         anchor_path_key(a_anchor) == anchor_path_key(b_anchor)
         and a["category"] == b["category"]
         and _ranges_overlap(a, b)
-        and (
-            a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
-            or a["fingerprints"]["evidence_fingerprint"]
-            == b["fingerprints"]["evidence_fingerprint"]
-            or (
-                a_anchor.get("symbol")
-                and b_anchor.get("symbol")
-                and a_anchor.get("symbol") == b_anchor.get("symbol")
-            )
+    )
+    if not same_path_category_range:
+        return False
+    if (
+        a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
+        or a["fingerprints"]["evidence_fingerprint"]
+        == b["fingerprints"]["evidence_fingerprint"]
+        or (
+            a_anchor.get("symbol")
+            and b_anchor.get("symbol")
+            and a_anchor.get("symbol") == b_anchor.get("symbol")
         )
+    ):
+        return True
+    return (
+        _semantic_grouping_enabled(grouping_config)
+        and _issue_text_similarity(a, b) >= _semantic_threshold(grouping_config)
     )
 
 
@@ -157,15 +198,34 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
     return (1, title, path, source_hash, "")
 
 
+def _split_transitive_component(
+    component: list[dict[str, Any]],
+    duplicate_links: set[DuplicateLink] | None,
+    grouping_config: dict[str, Any] | None,
+) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    representatives: list[dict[str, Any]] = []
+    for finding in sorted(component, key=lambda item: item["source_finding_id"]):
+        for index, representative in enumerate(representatives):
+            if same_issue(representative, finding, duplicate_links, grouping_config):
+                groups[index].append(finding)
+                break
+        else:
+            representatives.append(finding)
+            groups.append([finding])
+    return groups
+
+
 def group_findings(
     findings: list[dict[str, Any]],
     duplicate_links: set[DuplicateLink] | None = None,
+    grouping_config: dict[str, Any] | None = None,
 ) -> list[list[dict[str, Any]]]:
     ordered = sorted(findings, key=lambda item: item["source_finding_id"])
     uf = UnionFind(len(ordered))
     for left_index, left in enumerate(ordered):
         for right_index in range(left_index + 1, len(ordered)):
-            if same_issue(left, ordered[right_index], duplicate_links):
+            if same_issue(left, ordered[right_index], duplicate_links, grouping_config):
                 uf.union(left_index, right_index)
     components: dict[int, list[dict[str, Any]]] = {}
     for index, finding in enumerate(ordered):
@@ -177,9 +237,10 @@ def group_findings(
             buckets.setdefault(
                 (finding["category"], anchor_path_key(finding["anchor"])), []
             ).append(finding)
-        split_components.extend(
-            sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"])
-        )
+        for bucket in sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"]):
+            split_components.extend(
+                _split_transitive_component(bucket, duplicate_links, grouping_config)
+            )
     return sorted(split_components, key=lambda group: group[0]["source_finding_id"])
 
 
@@ -489,7 +550,9 @@ def build_consensus(
             if _critique_enabled(config)
             else set()
         )
-        for findings in group_findings(all_findings, valid_duplicate_links):
+        for findings in group_findings(
+            all_findings, valid_duplicate_links, config.get("panel", {}).get("grouping")
+        ):
             issue_id = issue_id_for_group(findings)
             representative = _representative(findings)
             decision, block_merge, require_ack, final_severity = decision_for_group(
@@ -593,6 +656,16 @@ def build_consensus(
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             "drop_count": sum(1 for group in groups if group["decision"] == "drop"),
             "block_merge": any(group["block_merge"] for group in groups),
+            "panel_convergence": (
+                sum(
+                    1
+                    for group in groups
+                    if group["decision"] != "drop" and group["vote_count"] >= 2
+                )
+                / sum(1 for group in groups if group["decision"] != "drop")
+                if any(group["decision"] != "drop" for group in groups)
+                else 0.0
+            ),
         },
     }
 

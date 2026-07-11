@@ -235,6 +235,9 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
     merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
+    panel = config.get("panel", {}) if isinstance(config, dict) else {}
+    grouping = panel.get("grouping", {}) if isinstance(panel, dict) else {}
+    semantic = grouping.get("semantic", {}) if isinstance(grouping, dict) else {}
     return {
         "reviewers": {
             name: {
@@ -248,6 +251,12 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "critique_enabled": bool(critique.get("enabled")),
         "critique_rounds": int(critique.get("rounds", 0) or 0),
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
+        "panel_grouping_semantic_enabled": bool(
+            isinstance(semantic, dict) and semantic.get("enabled") is True
+        ),
+        "panel_grouping_semantic_threshold": (
+            float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
+        ),
     }
 
 
@@ -336,6 +345,22 @@ def validate_config(config: dict[str, Any]) -> None:
     votes_required = quorum.get("votes_required") if isinstance(quorum, dict) else None
     if enabled_count > 1 and (not isinstance(votes_required, int) or votes_required < 2):
         raise ConfigError("panel.quorum.votes_required must be at least 2 with multiple reviewers")
+    grouping = panel.get("grouping", {})
+    if grouping is None:
+        grouping = {}
+        panel["grouping"] = grouping
+    if not isinstance(grouping, dict):
+        raise ConfigError("panel.grouping must be a mapping")
+    semantic = grouping.setdefault("semantic", {})
+    if not isinstance(semantic, dict):
+        raise ConfigError("panel.grouping.semantic must be a mapping")
+    semantic.setdefault("enabled", False)
+    semantic.setdefault("threshold", 0.5)
+    if not isinstance(semantic.get("enabled"), bool):
+        raise ConfigError("panel.grouping.semantic.enabled must be a boolean")
+    threshold = semantic.get("threshold")
+    if not isinstance(threshold, int | float) or not (0.0 <= float(threshold) <= 1.0):
+        raise ConfigError("panel.grouping.semantic.threshold must be between 0.0 and 1.0")
 
 
 def resolve_adapter_path(config_path: str | Path, adapter: str) -> Path:
