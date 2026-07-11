@@ -44,7 +44,7 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup, PostResult, SummaryComment
+from .types import FindingGroup, PostResult, State, StateRecord, SummaryComment
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -127,18 +127,26 @@ STOPWORDS = {
 }
 
 
+@dataclass
+class PlanOutcome:
+    warnings: list[str]
+    stale_unverified: int = 0
+    overflow: str | None = None
+
 
 @dataclass
 class StatePlan:
-    persisted_state: dict[str, Any]
-    base_records: list[dict[str, Any]]
-    planned_records: list[dict[str, Any]]
-    planned_by_issue: dict[str, dict[str, Any]]
-    planned_matches: dict[str, dict[str, Any]]
+    persisted_state: State
+    base_records: list[StateRecord]
+    planned_records: list[StateRecord]
+    planned_by_issue: dict[str, StateRecord]
+    planned_matches: dict[str, StateRecord]
     ambiguous_issue_ids: set[str]
     pipeline_id: str
-    planned_state: dict[str, Any]
+    planned_state: State
     retention: dict[str, Any]
+    outcome: PlanOutcome
+
 
 @dataclass(frozen=True)
 class ExistingReviewDiscussion:
@@ -943,18 +951,18 @@ def plan_state(
     summary_fallback_groups: list[dict[str, Any]],
     fyi_groups: list[dict[str, Any]],
     human_commands: dict[str, str],
-    result: PostResult,
-) -> StatePlan | None:
+) -> StatePlan:
+    outcome = PlanOutcome(warnings=[])
     pipeline_id = _pipeline_id(manifest)
     base_records = [
         record
         for record in persisted_state.get("records", [])
         if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
     ]
-    planned_matches: dict[str, dict[str, Any]] = {}
+    planned_matches: dict[str, StateRecord] = {}
     ambiguous_issue_ids: set[str] = set()
     protected_issue_ids: set[str] = set()
-    planned_records: list[dict[str, Any]] = []
+    planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
     all_current_groups = [
@@ -979,7 +987,7 @@ def plan_state(
                 if isinstance(record.get("issue_id"), str)
             ]
             protected_issue_ids.update(candidate_ids)
-            result["warnings"].append(
+            outcome.warnings.append(
                 f"ambiguous existing record match for {group['issue_id']}; "
                 f"protected {len(candidate_ids)} candidate record(s)"
             )
@@ -991,7 +999,10 @@ def plan_state(
                 updated["status"] = "stale"
                 updated["remap_status"] = "ambiguous"
                 planned_records.append(
-                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
+                    cast(
+                        StateRecord,
+                        normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+                    )
                 )
                 planned_issue_ids.add(candidate_id)
             continue
@@ -1064,9 +1075,12 @@ def plan_state(
         elif record.get("status") == "open":
             updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
             if not resolution_quorum:
-                result["stale_unverified"] += 1
+                outcome.stale_unverified += 1
         planned_records.append(
-            normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
+            cast(
+                StateRecord,
+                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+            )
         )
     planned_state = normalize_state(
         {
@@ -1099,9 +1113,19 @@ def plan_state(
             else 50000,
         )
         if overflow is not None:
-            result["status"] = "state_overflow"
-            result["warnings"].append(overflow)
-            return None
+            outcome.overflow = overflow
+            return StatePlan(
+                persisted_state=cast(State, persisted_state),
+                base_records=cast(list[StateRecord], base_records),
+                planned_records=planned_records,
+                planned_by_issue={},
+                planned_matches=planned_matches,
+                ambiguous_issue_ids=ambiguous_issue_ids,
+                pipeline_id=pipeline_id,
+                planned_state=cast(State, planned_state),
+                retention=retention if isinstance(retention, dict) else {},
+                outcome=outcome,
+            )
 
     planned_by_issue = {record["issue_id"]: record for record in planned_records}
     for group_issue_id, existing in planned_matches.items():
@@ -1109,15 +1133,16 @@ def plan_state(
         if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
             planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
     return StatePlan(
-        persisted_state=persisted_state,
-        base_records=base_records,
+        persisted_state=cast(State, persisted_state),
+        base_records=cast(list[StateRecord], base_records),
         planned_records=planned_records,
-        planned_by_issue=planned_by_issue,
+        planned_by_issue=cast(dict[str, StateRecord], planned_by_issue),
         planned_matches=planned_matches,
         ambiguous_issue_ids=ambiguous_issue_ids,
         pipeline_id=pipeline_id,
-        planned_state=planned_state,
+        planned_state=cast(State, planned_state),
         retention=retention if isinstance(retention, dict) else {},
+        outcome=outcome,
     )
 
 
@@ -1219,25 +1244,19 @@ def post_consensus(
         summary_fallback_groups,
         fyi_groups,
         human_commands,
-        result,
     )
-    if state_plan is None:
+    result["warnings"].extend(state_plan.outcome.warnings)
+    result["stale_unverified"] += state_plan.outcome.stale_unverified
+    if state_plan.outcome.overflow is not None:
+        result["status"] = "state_overflow"
+        result["warnings"].append(state_plan.outcome.overflow)
         return result
-    planned_by_issue = state_plan.planned_by_issue
-    ambiguous_issue_ids = state_plan.ambiguous_issue_ids
-    planned_matches = state_plan.planned_matches
-    base_records = state_plan.base_records
-    planned_records = state_plan.planned_records
-    planned_state = state_plan.planned_state
-    pipeline_id = state_plan.pipeline_id
-    retention = state_plan.retention
-
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
         position = build_position(anchor, version, multiline=inline_multiline)
-        planned_record = planned_by_issue.get(group["issue_id"])
-        if group["issue_id"] in ambiguous_issue_ids:
+        planned_record = state_plan.planned_by_issue.get(group["issue_id"])
+        if group["issue_id"] in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
                 "skipped inline creation"
@@ -1247,7 +1266,7 @@ def post_consensus(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = planned_matches.get(group["issue_id"])
+        existing = state_plan.planned_matches.get(group["issue_id"])
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -1414,8 +1433,11 @@ def post_consensus(
     if _state_enabled(config):
         resolve_discussion = getattr(client, "resolve_discussion", None)
         if callable(resolve_discussion):
-            prior_status = {record["issue_id"]: record.get("status") for record in base_records}
-            for record in planned_records:
+            prior_status = {
+                record["issue_id"]: record.get("status")
+                for record in state_plan.base_records
+            }
+            for record in state_plan.planned_records:
                 discussion_id = record.get("discussion_id")
                 if discussion_id is None:
                     continue
@@ -1441,22 +1463,18 @@ def post_consensus(
                     result["resolved_discussions"] += 1
         final_state = normalize_state(
             {
-                **planned_state,
-                "records": planned_records,
+                **state_plan.planned_state,
+                "records": state_plan.planned_records,
                 "updated_at": now_iso(),
             },
             manifest=manifest,
-            pipeline_id=pipeline_id,
+            pipeline_id=state_plan.pipeline_id,
         )
-        final_state = compact_state(final_state, retention if isinstance(retention, dict) else {})
+        final_state = compact_state(final_state, state_plan.retention)
         overflow = state_overflow_reason(
             final_state,
-            max_records=int(retention.get("max_records", 200))
-            if isinstance(retention, dict)
-            else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
+            max_records=int(state_plan.retention.get("max_records", 200)),
+            max_state_bytes=int(state_plan.retention.get("max_state_bytes", 50000)),
         )
         if overflow is not None:
             result["status"] = "partial_failed"

@@ -11,6 +11,7 @@ from ai_review.post import (
     _classify_post_groups,
     _initial_post_result,
     load_persisted_state,
+    plan_state,
     post_consensus,
     render_body,
     source_hash,
@@ -468,6 +469,97 @@ class PostTests(unittest.TestCase):
             "resolved": resolved,
             "notes": [note],
         }
+
+
+    def test_plan_state_marks_ambiguous_matches_stale_without_result_mutation(self) -> None:
+        consensus = self._consensus()
+        group = copy.deepcopy(consensus["groups"][0])
+        group["issue_id"] = "9" * 64
+        record_one = self._state_record(group, issue_id="1" * 64, discussion_id="d1")
+        record_two = self._state_record(group, issue_id="2" * 64, discussion_id="d2")
+        state = self._state_with_records([record_one, record_two])
+
+        plan = plan_state(
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+
+        self.assertEqual(plan.outcome.stale_unverified, 0)
+        self.assertIsNone(plan.outcome.overflow)
+        self.assertEqual(
+            plan.outcome.warnings,
+            [f"ambiguous existing record match for {'9' * 64}; protected 2 candidate record(s)"],
+        )
+        planned_by_id = {record["issue_id"]: record for record in plan.planned_records}
+        self.assertEqual(planned_by_id["1" * 64]["status"], "stale")
+        self.assertEqual(planned_by_id["1" * 64]["remap_status"], "ambiguous")
+        self.assertEqual(planned_by_id["2" * 64]["status"], "stale")
+        self.assertEqual(planned_by_id["2" * 64]["remap_status"], "ambiguous")
+        self.assertNotIn(group["issue_id"], plan.planned_by_issue)
+
+    def test_plan_state_applies_human_commands_to_current_and_stale_records(self) -> None:
+        consensus = self._consensus()
+        current_group = copy.deepcopy(consensus["groups"][0])
+        current_record = self._state_record(current_group, discussion_id="current-discussion")
+        stale_group = copy.deepcopy(consensus["groups"][0])
+        stale_group["issue_id"] = "2" * 64
+        stale_record = self._state_record(stale_group, discussion_id="stale-discussion")
+        state = self._state_with_records([current_record, stale_record])
+
+        plan = plan_state(
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            state,
+            [current_group],
+            [],
+            [],
+            {current_group["issue_id"]: "wontfix", stale_group["issue_id"]: "resolve"},
+        )
+
+        planned_by_id = {record["issue_id"]: record for record in plan.planned_records}
+        self.assertEqual(planned_by_id[current_group["issue_id"]]["status"], "wontfix")
+        self.assertEqual(
+            planned_by_id[current_group["issue_id"]]["human_disposition"],
+            "wontfix",
+        )
+        self.assertEqual(planned_by_id[stale_group["issue_id"]]["status"], "resolved")
+        self.assertEqual(
+            planned_by_id[stale_group["issue_id"]]["human_disposition"],
+            "resolve",
+        )
+        self.assertEqual(plan.outcome.warnings, [])
+
+    def test_plan_state_reports_overflow_without_mutating_post_result(self) -> None:
+        consensus = self._consensus()
+        group = copy.deepcopy(consensus["groups"][0])
+        state = self._state_with_records([])
+        config = self._state_config()
+        config["state"]["retention"]["max_records"] = 0
+
+        plan = plan_state(
+            config,
+            self._manifest("head"),
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+
+        self.assertEqual(
+            plan.outcome.overflow,
+            "state has 1 records, exceeds state.retention.max_records (0)",
+        )
+        self.assertEqual(plan.outcome.warnings, [])
+        self.assertEqual(plan.planned_by_issue, {})
 
     def test_post_stale_head_has_no_side_effects(self) -> None:
         client = FakePostClient("new-head")
