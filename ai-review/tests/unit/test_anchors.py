@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from ai_review.anchors import context_hash_from_unified_diff, remap_anchor
+from ai_review.anchors import context_hash_from_unified_diff, parse_unified_diff, remap_anchor
 
 
 def _diff(line: str, *, new_line: int = 2, old_line: int = 1, path: str = "src/foo.py") -> str:
@@ -34,6 +34,39 @@ def _anchor(
 
 
 class AnchorRemapTests(unittest.TestCase):
+    def test_parse_unified_diff_covers_headers_hunks_and_line_kinds(self) -> None:
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,2 +1,3 @@",
+                " keep",
+                "-old",
+                "+new",
+                "+extra",
+                "\\ No newline at end of file",
+                "diff --git a/src/empty.py b/src/empty.py",
+                "--- a/src/empty.py",
+                "+++ b/src/empty.py",
+                "@@ -0,0 +1,0 @@",
+            ]
+        )
+
+        files = list(parse_unified_diff(diff_text))
+
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0].old_path, "src/foo.py")
+        self.assertEqual(files[0].new_path, "src/foo.py")
+        self.assertEqual(
+            [(line.old_line, line.new_line, line.text) for line in files[0].lines],
+            [(1, 1, "keep"), (2, None, "old"), (None, 2, "new"), (None, 3, "extra")],
+        )
+        self.assertTrue(all(line.hunk_header == "@@ -1,2 +1,3 @@" for line in files[0].lines))
+        self.assertEqual(files[1].old_path, "src/empty.py")
+        self.assertEqual(files[1].new_path, "src/empty.py")
+        self.assertEqual(files[1].lines, ())
+
     def test_remap_anchor_exact(self) -> None:
         diff_text = _diff("+target", new_line=2)
         anchor = _anchor("new", old_line=None, new_line=2)
