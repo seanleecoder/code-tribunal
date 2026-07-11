@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import importlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,9 +15,13 @@ from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.post import post_consensus
 from ai_review.schema import load_json_file, validate_instance
-from support.fake_gitlab import FakeGitLabClient
 
-FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
+TESTS_ROOT = Path(__file__).resolve().parents[1]
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
+FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
+
+FIXTURE_ROOT = TESTS_ROOT / "fixtures"
 AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 
 

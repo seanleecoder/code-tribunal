@@ -177,6 +177,23 @@ If golden consensus output changes intentionally, run from the repository root:
 make update-golden
 ```
 
+## Deferred follow-ups
+
+The first full SPEC-12 landing intentionally keeps the required harness small.
+These review follow-ups are useful, but should land as separate PRs because they
+either broaden coverage beyond the acceptance criteria or overlap with later
+Phase 2 typing/refactor work:
+
+- Add an optional mock-reviewer E2E path that runs the local mock adapter before
+  consensus instead of using hand-built reviewer batches.
+- Consolidate older unit-test-only fake clients onto `tests/support/fake_gitlab.py`
+  when SPEC-14 starts decomposing `post_consensus`.
+- Add focused integration branches for `resolve_discussion`, human commands,
+  stale-head gate pass-through, post failure statuses, state overflow, and
+  GitLab-backed input-bundle fetching as the post pipeline is decomposed.
+- Introduce a typed client `Protocol` in SPEC-13 so the real GitLab client and
+  fakes share an explicit static surface instead of duck typing.
+
 ## Rollback plan
 
 The fake client and integration tests are additive. If they uncover an unrelated
