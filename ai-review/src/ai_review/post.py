@@ -941,6 +941,21 @@ def _can_remap_anchor(anchor: Any) -> bool:
     )
 
 
+def _desired_resolution_state(
+    record: StateRecord,
+    prior_status: dict[str, Any],
+) -> bool | None:
+    if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
+        record["issue_id"]
+    ) != record.get("status"):
+        return True
+    if (
+        record.get("human_disposition") == "reopen"
+        and prior_status.get(record["issue_id"]) != "open"
+    ):
+        return False
+    return None
+
 
 def plan_state(
     config: dict[str, Any],
@@ -1451,16 +1466,7 @@ def post_consensus(
                 discussion_id = record.get("discussion_id")
                 if discussion_id is None:
                     continue
-                desired: bool | None = None
-                if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
-                    record["issue_id"]
-                ) != record.get("status"):
-                    desired = True
-                elif (
-                    record.get("human_disposition") == "reopen"
-                    and prior_status.get(record["issue_id"]) != "open"
-                ):
-                    desired = False
+                desired = _desired_resolution_state(record, prior_status)
                 if desired is None or dry_run:
                     continue
                 resolve_discussion(
