@@ -183,6 +183,19 @@ class PostTests(unittest.TestCase):
                 self._manifest("head"),
             )
 
+    def test_post_consensus_recovery_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
+            post_consensus(
+                BrokenUserClient("head"),
+                self._config(),
+                self._manifest("head"),
+                self._consensus(),
+            )
+
     def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
         body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")
         client = FakePostClient("head")
