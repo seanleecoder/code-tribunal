@@ -69,8 +69,9 @@ previous guardrails and type improvements.
 
 ### Current implementation status
 
-As of the current SPEC-13/14 continuation PR, the typing, phase-extraction, and
-Phase 2 posting-state cleanup slice is complete:
+As of the current SPEC-13/14 continuation PR, the typing and phase-extraction
+slice is complete, with one explicit Phase 2 correctness tradeoff kept for
+posting safety:
 
 - Steps 1 and 2 are implemented for the reducer path: domain `TypedDict`
   shapes exist and strict mypy covers `consensus`, `memory`, `render`, and
@@ -93,11 +94,12 @@ Phase 2 posting-state cleanup slice is complete:
 - The SPEC-14d refactor reduced `post_consensus` from roughly 250 lines before
   extraction to roughly 100 lines, with extracted helpers covering context
   loading, state planning, inline posting, and finalization.
-- The SPEC-14 state-processing cleanup is implemented: `plan_state` now builds
-  the planned state without running the full normalize/compact/overflow pass,
-  and `finalize_state` performs that pass exactly once after inline mutations
-  have updated discussion ids and body hashes. This intentionally reports state
-  overflow after mutation rather than as a pre-posting fail-closed condition.
+- The SPEC-14 state-processing cleanup keeps the pre-write overflow guard by
+  design: `plan_state` performs a compacted state-size check before any GitLab
+  writes so overflow remains fail-closed, and `finalize_state` re-checks after
+  inline mutations add discussion ids and body hashes. This intentionally
+  preserves fail-closed GitLab write behavior over a literal single overflow
+  check.
 - The extracted `plan_state`, `post_inline`, `post_consensus`, and
   `finalize_state` functions are all within the Phase 2 target of roughly 150
   lines, with smaller helpers covering stale-record planning and GitLab update

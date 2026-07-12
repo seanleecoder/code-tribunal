@@ -598,7 +598,7 @@ class PostTests(unittest.TestCase):
         )
         self.assertEqual(plan.outcome.warnings, [])
 
-    def test_plan_state_defers_overflow_check_to_finalize(self) -> None:
+    def test_plan_state_reports_overflow_without_mutating_post_result(self) -> None:
         consensus = self._consensus()
         group = copy.deepcopy(consensus["groups"][0])
         state = self._state_with_records([])
@@ -616,9 +616,12 @@ class PostTests(unittest.TestCase):
             {},
         )
 
-        self.assertIsNone(plan.outcome.overflow)
+        self.assertEqual(
+            plan.outcome.overflow,
+            "state has 1 records, exceeds state.retention.max_records (0)",
+        )
         self.assertEqual(plan.outcome.warnings, [])
-        self.assertIn(group["issue_id"], plan.planned_by_issue)
+        self.assertEqual(plan.planned_by_issue, {})
 
     def test_prepare_post_context_loads_state_discussions_and_commands(self) -> None:
         consensus = self._consensus()
@@ -1301,7 +1304,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_state_overflow_reports_after_single_finalize_check(self) -> None:
+    def test_post_state_overflow_fails_closed_before_mutation(self) -> None:
         client = FakePostClient("head")
         client.list_mr_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
         result = post_consensus(
@@ -1318,17 +1321,10 @@ class PostTests(unittest.TestCase):
             self._manifest("head"),
             self._consensus(),
         )
-        self.assertEqual(result["status"], "partial_failed")
-        self.assertEqual(client.created, 1)
+        self.assertEqual(result["status"], "state_overflow")
+        self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
         self.assertEqual(client.mr_notes, [])
-        self.assertTrue(
-            any(
-                warning == "state overflow after mutations: state has 1 records, "
-                "exceeds state.retention.max_records (0)"
-                for warning in result["warnings"]
-            )
-        )
         validate_instance(result, "post_result.schema.json")
 
     def test_post_writes_persisted_state_note(self) -> None:
@@ -1370,7 +1366,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(state["records"][0]["discussion_id"], "discussion")
         self.assertEqual(state["records"][0]["status"], "open")
 
-    def test_post_state_processing_runs_once_after_planning(self) -> None:
+    def test_post_state_processing_runs_before_and_after_mutations(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
         persisted_state = self._state_with_records([self._state_record(group)])
@@ -1416,11 +1412,12 @@ class PostTests(unittest.TestCase):
 
         validate_instance(result, "post_result.schema.json")
         self.assertEqual(result["status"], "success")
-        # Loading the persisted state normalizes once; posting state is then
-        # normalized, compacted, and overflow-checked exactly once in finalize.
-        self.assertEqual(normalize_calls, 2)
-        self.assertEqual(compact_calls, 1)
-        self.assertEqual(overflow_calls, 1)
+        # Loading the persisted state normalizes once. Posting state is checked
+        # before GitLab writes to fail closed on overflow, then re-checked after
+        # inline mutations add discussion ids and body hashes.
+        self.assertEqual(normalize_calls, 3)
+        self.assertEqual(compact_calls, 2)
+        self.assertEqual(overflow_calls, 2)
 
     def test_post_state_match_changed_issue_id_does_not_auto_resolve_prior_record(self) -> None:
         consensus = self._consensus()

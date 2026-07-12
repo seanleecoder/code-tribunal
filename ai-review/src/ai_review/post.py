@@ -893,6 +893,52 @@ def _planned_by_issue(
     return planned_by_issue
 
 
+def _state_retention(config: dict[str, Any]) -> dict[str, Any]:
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
+    return retention if isinstance(retention, dict) else {}
+
+
+def _planned_state_payload(
+    persisted_state: State,
+    *,
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    pipeline_id: str,
+    planned_records: list[StateRecord],
+) -> dict[str, Any]:
+    return {
+        **persisted_state,
+        "last_head_sha": manifest["head_sha"],
+        "written_by_pipeline_id": pipeline_id,
+        "updated_at": now_iso(),
+        "records": planned_records,
+        "run_history": (
+            persisted_state.get("run_history", [])
+            if isinstance(persisted_state.get("run_history"), list)
+            else []
+        )
+        + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
+    }
+
+
+def _process_state_for_persistence(
+    state: dict[str, Any],
+    *,
+    manifest: dict[str, Any],
+    pipeline_id: str,
+    retention: dict[str, Any],
+) -> tuple[State, str | None]:
+    processed_state = normalize_state(state, manifest=manifest, pipeline_id=pipeline_id)
+    processed_state = compact_state(processed_state, retention)
+    overflow = state_overflow_reason(
+        processed_state,
+        max_records=int(retention.get("max_records", 200)),
+        max_state_bytes=int(retention.get("max_state_bytes", 50000)),
+    )
+    return cast(State, processed_state), overflow
+
+
 def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
@@ -922,9 +968,7 @@ def plan_state(
         if isinstance(group.get("issue_id"), str)
     ]
     for group in all_current_groups:
-        issue_id = group["issue_id"]
-        if not isinstance(issue_id, str):
-            continue
+        issue_id = cast(str, group["issue_id"])
         state_for_match = {
             "records": [
                 record
@@ -1014,32 +1058,35 @@ def plan_state(
         pipeline_id=pipeline_id,
         outcome=outcome,
     )
-    planned_state = {
-        **persisted_state,
-        "last_head_sha": manifest["head_sha"],
-        "written_by_pipeline_id": pipeline_id,
-        "updated_at": now_iso(),
-        "records": planned_records,
-        "run_history": (
-            persisted_state.get("run_history", [])
-            if isinstance(persisted_state.get("run_history"), list)
-            else []
-        )
-        + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
-    }
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
+    planned_state = _planned_state_payload(
+        persisted_state,
+        manifest=manifest,
+        consensus=consensus,
+        pipeline_id=pipeline_id,
+        planned_records=planned_records,
+    )
+    retention = _state_retention(config)
+    processed_state, overflow = _process_state_for_persistence(
+        planned_state,
+        manifest=manifest,
+        pipeline_id=pipeline_id,
+        retention=retention,
+    )
+    if _state_enabled(config) and overflow is not None:
+        outcome.overflow = overflow
 
     return StatePlan(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        planned_by_issue=_planned_by_issue(planned_records, planned_matches),
+        planned_by_issue={}
+        if outcome.overflow is not None
+        else _planned_by_issue(planned_records, planned_matches),
         planned_matches=planned_matches,
         ambiguous_issue_ids=ambiguous_issue_ids,
         pipeline_id=pipeline_id,
-        planned_state=cast(State, planned_state),
-        retention=retention if isinstance(retention, dict) else {},
+        planned_state=processed_state,
+        retention=retention,
         outcome=outcome,
     )
 
@@ -1348,7 +1395,7 @@ def finalize_state(
                 )
                 if desired:
                     result["resolved_discussions"] += 1
-        final_state = normalize_state(
+        final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,
                 "records": state_plan.planned_records,
@@ -1356,12 +1403,7 @@ def finalize_state(
             },
             manifest=manifest,
             pipeline_id=state_plan.pipeline_id,
-        )
-        final_state = compact_state(final_state, state_plan.retention)
-        overflow = state_overflow_reason(
-            final_state,
-            max_records=int(state_plan.retention.get("max_records", 200)),
-            max_state_bytes=int(state_plan.retention.get("max_state_bytes", 50000)),
+            retention=state_plan.retention,
         )
         if overflow is not None:
             result["status"] = "partial_failed"
@@ -1372,7 +1414,7 @@ def finalize_state(
                 client,
                 config,
                 manifest,
-                final_state,
+                cast(dict[str, Any], final_state),
                 dry_run=dry_run,
             )
         except Exception as exc:
