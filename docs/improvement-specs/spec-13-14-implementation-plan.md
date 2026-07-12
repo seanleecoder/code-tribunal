@@ -69,8 +69,9 @@ previous guardrails and type improvements.
 
 ### Current implementation status
 
-As of the current SPEC-13/14 continuation PR, the planned implementation steps
-are complete:
+As of the current SPEC-13/14 continuation PR, the behavior-preserving typing and
+phase-extraction slice is complete. A few broader Phase 2 correctness and
+cleanup acceptance bars remain explicit follow-ups rather than hidden claims:
 
 - Steps 1 and 2 are implemented for the reducer path: domain `TypedDict`
   shapes exist and strict mypy covers `consensus`, `memory`, `render`, and
@@ -81,7 +82,8 @@ are complete:
   post/gate/state-matching seams.
 - Steps 4 and 5 are implemented: severity ranking is centralized and unified
   diff parsing is shared by anchor/remap and mock-reviewer code.
-- Steps 6 and 7 are implemented for the current GitLab posting path:
+- Steps 6 and 7 are implemented for the current GitLab posting path as a
+  behavior-preserving extraction:
   `post_consensus` delegates to named context loading, group classification,
   state planning, inline posting, and finalization phases, with focused unit
   tests around those seams.
@@ -92,6 +94,14 @@ are complete:
 - The SPEC-14d refactor reduced `post_consensus` from roughly 250 lines before
   extraction to roughly 100 lines, with extracted helpers covering context
   loading, state planning, inline posting, and finalization.
+- Known open Phase 2 follow-ups: `plan_state` still performs the pre-posting
+  normalize/compact/overflow pass and `finalize_state` repeats that pass after
+  inline mutations; a unit test now characterizes this as current behavior.
+  Removing the double pass should be a separate correctness PR because it can
+  change failure timing and state-write behavior.
+- Known open cleanup follow-up: the delegated `plan_state` and `post_inline`
+  helpers remain above the Phase 2 target of roughly 150 lines. They should be
+  decomposed further after the behavior-preserving seams have settled.
 
 
 ## SPEC-13 detailed plan

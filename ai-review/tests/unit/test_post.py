@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import unittest
 from typing import Any
+from unittest.mock import patch
 
+import ai_review.post as post_module
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
@@ -1363,7 +1365,59 @@ class PostTests(unittest.TestCase):
         validate_instance(state, "state.schema.json")
         self.assertEqual(state["records"][0]["discussion_id"], "discussion")
         self.assertEqual(state["records"][0]["status"], "open")
+
+    def test_post_state_processing_runs_in_planning_and_finalize_phases(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        persisted_state = self._state_with_records([self._state_record(group)])
+        client = StatePostClient("head", persisted_state)
+
+        normalize_calls = 0
+        compact_calls = 0
+        overflow_calls = 0
+        real_normalize_state = post_module.normalize_state
+        real_compact_state = post_module.compact_state
+        real_state_overflow_reason = post_module.state_overflow_reason
+
+        def spy_normalize_state(*args: Any, **kwargs: Any) -> Any:
+            nonlocal normalize_calls
+            normalize_calls += 1
+            return real_normalize_state(*args, **kwargs)
+
+        def spy_compact_state(*args: Any, **kwargs: Any) -> Any:
+            nonlocal compact_calls
+            compact_calls += 1
+            return real_compact_state(*args, **kwargs)
+
+        def spy_state_overflow_reason(*args: Any, **kwargs: Any) -> Any:
+            nonlocal overflow_calls
+            overflow_calls += 1
+            return real_state_overflow_reason(*args, **kwargs)
+
+        with (
+            patch.object(post_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(post_module, "compact_state", side_effect=spy_compact_state),
+            patch.object(
+                post_module,
+                "state_overflow_reason",
+                side_effect=spy_state_overflow_reason,
+            ),
+        ):
+            result = post_consensus(
+                client,  # type: ignore[arg-type]
+                self._state_config(),
+                self._manifest("head"),
+                consensus,
+            )
+
         validate_instance(result, "post_result.schema.json")
+        self.assertEqual(result["status"], "success")
+        # Loading the persisted state normalizes once, then the behavior-preserving
+        # state phases normalize/compact/overflow-check during both planning and
+        # finalization. The latter double pass is a documented follow-up target.
+        self.assertEqual(normalize_calls, 3)
+        self.assertEqual(compact_calls, 2)
+        self.assertEqual(overflow_calls, 2)
 
     def test_post_state_match_changed_issue_id_does_not_auto_resolve_prior_record(self) -> None:
         consensus = self._consensus()

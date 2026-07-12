@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast, overload
@@ -303,7 +304,7 @@ def write_persisted_state(
     return created if isinstance(created, dict) else None
 
 
-def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
+def _candidate_signature_hashes(group: Mapping[str, Any]) -> list[str]:
     values = group.get("candidate_issue_signature_hashes")
     if not isinstance(values, list):
         values = group.get("_candidate_issue_signature_hashes", [])
@@ -311,7 +312,7 @@ def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
 
 
 def _record_for_group(
-    group: dict[str, Any],
+    group: Mapping[str, Any],
     *,
     manifest: dict[str, Any],
     pipeline_id: str,
@@ -578,7 +579,7 @@ def _one_line(text: str, *, max_length: int) -> str:
     return collapsed
 
 
-def _summary_line(group: dict[str, Any]) -> str:
+def _summary_line(group: Mapping[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
     location = _anchor_location(anchor)
     severity = str(group.get("final_severity") or "").upper()
@@ -613,8 +614,8 @@ def _sort_groups(groups: list[Any]) -> list[Any]:
 
 def render_summary_body(
     run_id: str,
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
 ) -> tuple[str, str]:
     lines = ["**AI review summary**", ""]
@@ -670,8 +671,8 @@ def upsert_summary_comment(
     manifest: dict[str, Any],
     run_id: str,
     raw_discussions: list[dict[str, Any]],
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
     dry_run: bool = False,
@@ -840,9 +841,9 @@ def plan_state(
     manifest: dict[str, Any],
     consensus: Consensus,
     persisted_state: State,
-    inline_candidates: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     human_commands: dict[str, str],
 ) -> StatePlan:
     outcome = PlanOutcome(warnings=[])
@@ -864,6 +865,9 @@ def plan_state(
         if isinstance(group.get("issue_id"), str)
     ]
     for group in all_current_groups:
+        issue_id = group["issue_id"]
+        if not isinstance(issue_id, str):
+            continue
         state_for_match = {
             "records": [
                 record
@@ -871,9 +875,9 @@ def plan_state(
                 if record.get("discussion_id") not in planning_used_discussion_ids
             ]
         }
-        state_match = find_matching_record(cast(FindingGroup, group), cast(State, state_for_match))
+        state_match = find_matching_record(group, cast(State, state_for_match))
         if state_match.status == "ambiguous":
-            ambiguous_issue_ids.add(group["issue_id"])
+            ambiguous_issue_ids.add(issue_id)
             candidate_ids = [
                 record["issue_id"]
                 for record in state_match.records
@@ -881,7 +885,7 @@ def plan_state(
             ]
             protected_issue_ids.update(candidate_ids)
             outcome.warnings.append(
-                f"ambiguous existing record match for {group['issue_id']}; "
+                f"ambiguous existing record match for {issue_id}; "
                 f"protected {len(candidate_ids)} candidate record(s)"
             )
             for candidate in state_match.records:
@@ -903,14 +907,14 @@ def plan_state(
             cast(StateRecord, state_match.record) if state_match.status == "matched" else None
         )
         if previous is not None:
-            planned_matches[group["issue_id"]] = previous
+            planned_matches[issue_id] = previous
             if isinstance(previous.get("issue_id"), str):
                 protected_issue_ids.add(previous["issue_id"])
             if previous.get("discussion_id") is not None:
                 planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
         human_disposition = previous.get("human_disposition") if previous else None
-        command = human_commands.get(group["issue_id"])
+        command = human_commands.get(issue_id)
         if command is None and previous is not None:
             command = human_commands.get(str(previous.get("issue_id") or ""))
         if command == "wontfix":
@@ -938,7 +942,7 @@ def plan_state(
                 ),
             )
         )
-        planned_issue_ids.add(group["issue_id"])
+        planned_issue_ids.add(issue_id)
         if previous is not None and isinstance(previous.get("issue_id"), str):
             planned_issue_ids.add(previous["issue_id"])
 
@@ -1051,7 +1055,7 @@ def plan_state(
 class InlinePostOutcome:
     result: PostResult
     state_plan: StatePlan
-    summary_fallback_groups: list[dict[str, Any]]
+    summary_fallback_groups: list[FindingGroup]
 
 
 def post_inline(
@@ -1060,8 +1064,8 @@ def post_inline(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    inline_candidates: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
     version: MergeRequestVersion,
     *,
     inline_multiline: bool,
@@ -1077,10 +1081,13 @@ def post_inline(
     """
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
+        issue_id = group["issue_id"]
+        if not isinstance(issue_id, str):
+            continue
         anchor = group["representative_anchor"]
         position = build_position(anchor, version, multiline=inline_multiline)
-        planned_record = state_plan.planned_by_issue.get(group["issue_id"])
-        if group["issue_id"] in state_plan.ambiguous_issue_ids:
+        planned_record = state_plan.planned_by_issue.get(issue_id)
+        if issue_id in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
                 "skipped inline creation"
@@ -1090,7 +1097,7 @@ def post_inline(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = state_plan.planned_matches.get(group["issue_id"])
+        existing = state_plan.planned_matches.get(issue_id)
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -1099,7 +1106,7 @@ def post_inline(
             summary_fallback_groups.append(group)
             continue
 
-        post_group = group
+        post_group: dict[str, Any] = dict(group)
         force_create_at_remapped_anchor = False
         if existing is not None:
             if existing["issue_id"] != group.get("issue_id"):
@@ -1170,7 +1177,7 @@ def post_inline(
             result["updated_discussions"] += 1
             result["posted_discussions"].append(
                 {
-                    "issue_id": post_group["issue_id"],
+                    "issue_id": str(post_group["issue_id"]),
                     "action": "updated",
                     "discussion_id": existing_discussion_id,
                     "root_note_id": existing_root_note_id,
@@ -1234,7 +1241,7 @@ def post_inline(
             planned_record["last_posted_body_hash"] = body_hash
         result["posted_discussions"].append(
             {
-                "issue_id": post_group["issue_id"],
+                "issue_id": str(post_group["issue_id"]),
                 "action": "created",
                 "discussion_id": str(discussion["id"]),
                 "root_note_id": root_note_id,
@@ -1255,8 +1262,8 @@ def finalize_state(
     result: PostResult,
     state_plan: StatePlan,
     raw_discussions: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     *,
     fallback_to_summary: bool,
     fyi_mode: str,
@@ -1452,9 +1459,9 @@ def post_consensus(
         inline_multiline=inline_multiline,
         max_surface=max_surface,
     )
-    inline_candidates = cast(list[dict[str, Any]], classification.inline_candidates)
-    summary_fallback_groups = cast(list[dict[str, Any]], classification.summary_fallback_groups)
-    fyi_groups = cast(list[dict[str, Any]], classification.fyi_groups)
+    inline_candidates = classification.inline_candidates
+    summary_fallback_groups = classification.summary_fallback_groups
+    fyi_groups = classification.fyi_groups
     result["warnings"].extend(classification.warnings)
 
     state_plan = plan_state(
