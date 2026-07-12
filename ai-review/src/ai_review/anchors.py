@@ -234,20 +234,22 @@ def _path_matches(anchor: dict[str, Any], old_path: str | None, new_path: str | 
 
 def _target_matches(side: str, target_start: dict[str, Any], line: DiffLine) -> bool:
     if side == "new":
-        return line.new_line == target_start.get("new_line")
+        return line.kind in {"added", "context"} and line.new_line == target_start.get("new_line")
     if side == "old":
-        return line.old_line == target_start.get("old_line")
-    return line.old_line == target_start.get("old_line") and line.new_line == target_start.get(
-        "new_line"
+        return line.kind in {"removed", "context"} and line.old_line == target_start.get("old_line")
+    return (
+        line.kind == "context"
+        and line.old_line == target_start.get("old_line")
+        and line.new_line == target_start.get("new_line")
     )
 
 
 def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
     if side == "new":
-        return line.new_line is not None
+        return line.kind in {"added", "context"}
     if side == "old":
-        return line.old_line is not None
-    return line.old_line is not None and line.new_line is not None
+        return line.kind in {"removed", "context"}
+    return line.kind == "context"
 
 
 def context_hash_from_unified_diff(
