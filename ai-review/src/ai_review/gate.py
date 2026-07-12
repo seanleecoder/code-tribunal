@@ -71,10 +71,15 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
 
+    consensus = load_json_file(args.consensus)
+    validate_instance(consensus, "consensus.schema.json")
+    post_result = load_json_file(args.post_result)
+    validate_instance(post_result, "post_result.schema.json")
+
     result, exit_code = evaluate_gate(
         load_config(args.config),
-        cast(Consensus, load_json_file(args.consensus)),
-        cast(PostResult, load_json_file(args.post_result)),
+        cast(Consensus, consensus),
+        cast(PostResult, post_result),
     )
     validate_instance(result, "gate_result.schema.json")
     write_canonical_json(args.out, result)
