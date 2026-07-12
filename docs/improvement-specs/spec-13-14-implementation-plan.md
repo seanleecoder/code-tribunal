@@ -69,19 +69,29 @@ previous guardrails and type improvements.
 
 ### Current implementation status
 
-As of the current SPEC-13/14 continuation PR:
+As of the current SPEC-13/14 continuation PR, the planned implementation steps
+are complete:
 
-- Steps 1 and 2 are substantially implemented for the reducer path: domain
-  `TypedDict` shapes exist and strict mypy covers `consensus`, `memory`,
-  `render`, and `schema`.
-- Step 3 is in progress beyond the reducer path: strict mypy now also covers
-  `anchors`, `gitlab_client`, `gate`, and `post`, with `Consensus`,
-  `PostResult`, `GateResult`, and `State` threaded through the post/gate seams.
+- Steps 1 and 2 are implemented for the reducer path: domain `TypedDict`
+  shapes exist and strict mypy covers `consensus`, `memory`, `render`, and
+  `schema`.
+- Step 3 is implemented for the selected posting/client slice: strict mypy also
+  covers `anchors`, `gitlab_client`, `gate`, and `post`, with `Consensus`,
+  `PostResult`, `GateResult`, `FindingGroup`, and `State` threaded through
+  post/gate/state-matching seams.
 - Steps 4 and 5 are implemented: severity ranking is centralized and unified
   diff parsing is shared by anchor/remap and mock-reviewer code.
-- Steps 6 and 7 are in progress: `post_consensus` now delegates to named
-  context loading, group classification, state planning, inline posting, and
-  finalization phases, with focused unit tests around those seams.
+- Steps 6 and 7 are implemented for the current GitLab posting path:
+  `post_consensus` delegates to named context loading, group classification,
+  state planning, inline posting, and finalization phases, with focused unit
+  tests around those seams.
+- SPEC-14's last-resort matching requirement is implemented by documenting and
+  enforcing deterministic persisted-state matching in `memory.py`; semantic
+  text similarity remains consensus-only and is not used as a state recovery
+  fallback.
+- The SPEC-14d refactor reduced `post_consensus` from roughly 250 lines before
+  extraction to roughly 100 lines, with extracted helpers covering context
+  loading, state planning, inline posting, and finalization.
 
 
 ## SPEC-13 detailed plan
