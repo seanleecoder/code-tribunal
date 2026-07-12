@@ -7,18 +7,33 @@ from pathlib import Path
 
 from .canonical import sha256_hex
 from .config import effective_config_summary, load_config
-from .gitlab_client import GitLabClient, current_user_id
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
     prior_decisions_from_state,
     state_aliases_from_state,
 )
+from .platform.gitlab import GitLabReviewPlatform
 from .schema import now_iso, write_canonical_json
 
 
 class BundleError(RuntimeError):
     pass
+
+
+def _current_user_id(client: object) -> int | None:
+    current_user_id_fn = getattr(client, "current_user_id", None)
+    if callable(current_user_id_fn):
+        return current_user_id_fn()
+    current_user_fn = getattr(client, "current_user", None)
+    if not callable(current_user_fn):
+        return None
+    try:
+        current_user = current_user_fn()
+    except Exception:
+        return None
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    return user_id if isinstance(user_id, int) else None
 
 
 def _enforce_diff_limits(diff_text: str, config: dict) -> None:
@@ -116,7 +131,6 @@ def prepare_local_bundle(
     return out_path
 
 
-
 def _external_fork_secrets_blocked(config: dict) -> str | None:
     source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
     project_id = os.environ.get("CI_PROJECT_ID")
@@ -130,7 +144,6 @@ def _external_fork_secrets_blocked(config: dict) -> str | None:
         "security.allow_external_fork_secrets is false "
         f"(source_project_id={source_project_id}, project_id={project_id})"
     )
-
 
 
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
@@ -149,7 +162,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
-    client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
+    client = GitLabReviewPlatform(api_url, token, token_header="PRIVATE-TOKEN")
     version = client.fetch_latest_mr_version(project_id, mr_iid)
     diff_text = client.fetch_mr_diff(project_id, mr_iid)
     _enforce_diff_limits(diff_text, config_dict)
@@ -198,7 +211,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
     if state_config.get("backend") == "gitlab_mr_state_note":
         try:
-            bot_author_id = current_user_id(client)
+            bot_author_id = _current_user_id(client)
             if bot_author_id is None:
                 raise BundleError(
                     "state backend requires GitLab current_user lookup to verify state-note author"

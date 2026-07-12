@@ -3,7 +3,12 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ai_review.gitlab_client import MergeRequestVersion
+from ai_review.gitlab_client import (
+    MergeRequestVersion,
+    build_position,
+    current_user_id,
+    root_note_id_from_discussion,
+)
 
 
 class FakeGitLabClient:
@@ -153,6 +158,21 @@ class FakeGitLabClient:
     def project_member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int:
         return self.access_level
 
+    def build_position(
+        self,
+        anchor: dict[str, Any],
+        version: MergeRequestVersion,
+        *,
+        multiline: bool = False,
+    ) -> dict[str, Any]:
+        return build_position(anchor, version, multiline=multiline)
+
+    def current_user_id(self) -> int | None:
+        return current_user_id(self)
+
+    def root_note_id_from_discussion(self, response: dict[str, Any]) -> int:
+        return root_note_id_from_discussion(response)
+
     def discussion_count(self) -> int:
         return sum(
             1
@@ -162,9 +182,7 @@ class FakeGitLabClient:
 
     def summary_notes(self) -> list[dict[str, Any]]:
         return [
-            note
-            for note in self.mr_notes
-            if "ai-review-summary:v1" in str(note.get("body", ""))
+            note for note in self.mr_notes if "ai-review-summary:v1" in str(note.get("body", ""))
         ]
 
     def state_notes(self) -> list[dict[str, Any]]:
