@@ -1001,6 +1001,13 @@ def plan_state(
     )
 
 
+@dataclass(frozen=True)
+class InlinePostOutcome:
+    result: PostResult
+    state_plan: StatePlan
+    summary_fallback_groups: list[dict[str, Any]]
+
+
 def post_inline(
     client: GitLabClient,
     manifest: dict[str, Any],
@@ -1014,7 +1021,14 @@ def post_inline(
     inline_multiline: bool,
     current_diff_text: str | None,
     dry_run: bool,
-) -> None:
+) -> InlinePostOutcome:
+    """Post inline discussions and return the mutated posting/state phase outputs.
+
+    The monolithic posting path historically updated the result counters,
+    planned state records, and summary fallback list in one pass. Returning the
+    mutated objects makes that seam explicit for callers and direct tests while
+    preserving the in-place behavior expected by the finalization phase.
+    """
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
         anchor = group["representative_anchor"]
@@ -1180,6 +1194,11 @@ def post_inline(
                 "root_note_id": root_note_id,
             }
         )
+    return InlinePostOutcome(
+        result=result,
+        state_plan=state_plan,
+        summary_fallback_groups=summary_fallback_groups,
+    )
 
 
 def finalize_state(
@@ -1380,7 +1399,7 @@ def post_consensus(
         result["status"] = "state_overflow"
         result["warnings"].append(state_plan.outcome.overflow)
         return result
-    post_inline(
+    inline_outcome = post_inline(
         client,
         manifest,
         consensus,
@@ -1399,10 +1418,10 @@ def post_consensus(
         config,
         manifest,
         consensus,
-        result,
-        state_plan,
+        inline_outcome.result,
+        inline_outcome.state_plan,
         raw_discussions,
-        summary_fallback_groups,
+        inline_outcome.summary_fallback_groups,
         fyi_groups,
         fallback_to_summary=fallback_to_summary,
         fyi_mode=fyi_mode,
