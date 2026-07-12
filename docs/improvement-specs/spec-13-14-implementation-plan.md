@@ -66,6 +66,24 @@ and updated with the documented golden-update workflow.
 Keep each PR small. If a later step fails, revert only that step while keeping the
 previous guardrails and type improvements.
 
+
+### Current implementation status
+
+As of the current SPEC-13/14 continuation PR:
+
+- Steps 1 and 2 are substantially implemented for the reducer path: domain
+  `TypedDict` shapes exist and strict mypy covers `consensus`, `memory`,
+  `render`, and `schema`.
+- Step 3 is in progress beyond the reducer path: strict mypy now also covers
+  `anchors`, `gitlab_client`, `gate`, and `post`, with `Consensus`,
+  `PostResult`, `GateResult`, and `State` threaded through the post/gate seams.
+- Steps 4 and 5 are implemented: severity ranking is centralized and unified
+  diff parsing is shared by anchor/remap and mock-reviewer code.
+- Steps 6 and 7 are in progress: `post_consensus` now delegates to named
+  context loading, group classification, state planning, inline posting, and
+  finalization phases, with focused unit tests around those seams.
+
+
 ## SPEC-13 detailed plan
 
 ### 1. Add the domain module
