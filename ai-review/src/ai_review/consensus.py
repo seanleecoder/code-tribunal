@@ -12,7 +12,7 @@ from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
 from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
-from .types import FindingGroup, State
+from .types import Consensus, FindingGroup, PanelStatus, State
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
@@ -525,7 +525,7 @@ def build_consensus(
     config: dict[str, Any],
     state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> Consensus:
     enabled = sorted(enabled_reviewers(config))
     successful = sorted(
         batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success"
@@ -653,8 +653,8 @@ def build_consensus(
         "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
         "successful_reviewers": successful,
         "failed_reviewers": failed,
-        "panel_status": status,
-        "groups": groups,
+        "panel_status": cast(PanelStatus, status),
+        "groups": cast(list[FindingGroup], groups),
         "summary": {
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
