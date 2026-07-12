@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -106,7 +107,7 @@ class GitLabClient:
         self.token = token
         self.token_header = token_header
         if session is None:
-            import requests  # type: ignore[import-not-found]
+            import requests
 
             session = requests.Session()
         self.session = session
@@ -136,6 +137,18 @@ class GitLabClient:
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         return self._parse(self._send(method, path, **kwargs))
 
+    def _request_object(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        parsed = self._request(method, path, **kwargs)
+        if not isinstance(parsed, dict):
+            raise GitLabApiError(f"GitLab API {method} {path} response was not an object")
+        return dict(parsed)
+
+    def _request_object_list(self, method: str, path: str, **kwargs: Any) -> list[dict[str, Any]]:
+        parsed = self._request(method, path, **kwargs)
+        if not isinstance(parsed, list):
+            raise GitLabApiError(f"GitLab API {method} {path} response was not a list")
+        return [dict(item) for item in parsed if isinstance(item, Mapping)]
+
     @staticmethod
     def _next_page(response: Any) -> int | None:
         """Return GitLab's next page from the X-Next-Page header, or None if absent.
@@ -153,10 +166,10 @@ class GitLabClient:
         text = str(raw).strip()
         return int(text) if text.isdigit() else 0
 
-    def _get_all_pages(self, path: str, **kwargs: Any) -> list[Any]:
+    def _get_all_pages(self, path: str, **kwargs: Any) -> list[dict[str, Any]]:
         params = dict(kwargs.pop("params", {}))
         per_page = int(params.pop("per_page", 100))
-        items: list[Any] = []
+        items: list[dict[str, Any]] = []
         page = 1
         # Bounded loop guards against a server that ignores paging and always returns
         # a full page; 100 pages * per_page covers any realistic MR. The for/else warns
@@ -170,7 +183,7 @@ class GitLabClient:
                 break
             if not isinstance(batch, list):
                 raise GitLabApiError(f"GitLab paginated GET {path} returned a non-list page")
-            items.extend(batch)
+            items.extend(dict(item) for item in batch if isinstance(item, Mapping))
             next_page = self._next_page(response)
             if next_page is not None:
                 if next_page == 0:
@@ -244,7 +257,7 @@ class GitLabClient:
         body: str,
         position: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "POST",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/discussions",
             json={"body": body, "position": position},
@@ -267,7 +280,7 @@ class GitLabClient:
         note_id: int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}"
             f"/discussions/{discussion_id}/notes/{note_id}",
@@ -281,7 +294,7 @@ class GitLabClient:
         discussion_id: str,
         resolved: bool = True,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}"
             f"/discussions/{discussion_id}",
@@ -303,7 +316,7 @@ class GitLabClient:
         merge_request_iid: str | int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "POST",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
             json={"body": body},
@@ -316,7 +329,7 @@ class GitLabClient:
         note_id: int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes/{note_id}",
             json={"body": body},

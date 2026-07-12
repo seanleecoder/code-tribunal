@@ -50,5 +50,8 @@ module = [
   "ai_review.memory",
   "ai_review.render",
   "ai_review.schema",
+  "ai_review.anchors",
+  "ai_review.gitlab_client",
+  "ai_review.post",
 ]
 strict = true

@@ -211,7 +211,7 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
 
 def _state_enabled(config: dict[str, Any]) -> bool:
     state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return state_config.get("backend") == "gitlab_mr_state_note"
+    return bool(state_config.get("backend") == "gitlab_mr_state_note")
 
 
 def _list_mr_notes_if_supported(
@@ -221,7 +221,8 @@ def _list_mr_notes_if_supported(
 ) -> list[dict[str, Any]]:
     list_notes = getattr(client, "list_mr_notes", None)
     if callable(list_notes):
-        return list_notes(project_id, mr_iid)
+        notes = list_notes(project_id, mr_iid)
+        return notes if isinstance(notes, list) else []
     return []
 
 
@@ -314,8 +315,10 @@ def _record_for_group(
     remap_status: str = "exact",
 ) -> dict[str, Any]:
     previous = existing or {}
-    match_keys = group.get("match_keys") if isinstance(group.get("match_keys"), dict) else {}
-    aliases = previous.get("aliases") if isinstance(previous.get("aliases"), dict) else {}
+    raw_match_keys = group.get("match_keys")
+    match_keys = raw_match_keys if isinstance(raw_match_keys, dict) else {}
+    raw_aliases = previous.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     merged_aliases = {
         "candidate_issue_signatures": sorted(
             set(aliases.get("candidate_issue_signatures", []))
@@ -387,7 +390,8 @@ def _author_access_level(
     if not callable(member_access):
         return None
     try:
-        return member_access(project_id, user_id)
+        access_level = member_access(project_id, user_id)
+        return access_level if isinstance(access_level, int) else None
     except Exception:
         return None
 
@@ -415,7 +419,8 @@ def collect_human_commands(
             command_matches = COMMAND_RE.findall(note["body"])
             if not command_matches:
                 continue
-            author = note.get("author") if isinstance(note.get("author"), dict) else {}
+            raw_author = note.get("author")
+            author = raw_author if isinstance(raw_author, dict) else {}
             access_level = _author_access_level(client, project_id, author)
             if access_level is None or access_level < 30:
                 continue
@@ -450,7 +455,8 @@ def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
     line_range = position.get("line_range")
     if isinstance(line_range, dict) and isinstance(line_range.get("start"), dict):
         start = _line_from_position(line_range["start"])
-        end = _line_from_position(line_range.get("end", line_range["start"]))
+        raw_end = line_range.get("end", line_range["start"])
+        end = _line_from_position(raw_end if isinstance(raw_end, dict) else line_range["start"])
     else:
         start = _line_from_position(position)
         end = dict(start)
@@ -551,7 +557,8 @@ def position_side(position: dict[str, Any]) -> str | None:
 
 def _anchor_location(anchor: dict[str, Any]) -> str:
     path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
-    start = anchor.get("start") if isinstance(anchor.get("start"), dict) else {}
+    raw_start = anchor.get("start")
+    start = raw_start if isinstance(raw_start, dict) else {}
     line = start.get("new_line") or start.get("old_line")
     return f"{path}:{line}" if isinstance(line, int) else path
 
@@ -646,7 +653,7 @@ def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | No
 
 def _note_id_from_response(response: Any) -> int | None:
     if isinstance(response, dict) and isinstance(response.get("id"), int):
-        return response["id"]
+        return int(response["id"])
     return None
 
 
@@ -782,7 +789,8 @@ def _load_current_diff_text(
     if not callable(fetch_mr_diff):
         return None
     try:
-        return fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
+        fetched = fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
+        return fetched if isinstance(fetched, str) else None
     except Exception as exc:
         warnings.append(
             f"diff_fetch_failed: inline remap skipped, anchors may be stale ({type(exc).__name__})"
