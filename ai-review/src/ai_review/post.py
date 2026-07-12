@@ -22,12 +22,8 @@ from .memory import (
     normalize_state_record,
     state_overflow_reason,
 )
-from .platform import ReviewPlatform
-from .platform.gitlab import (
-    GitLabReviewPlatform,
-    ReviewPlatformApiError,
-    build_platform_position,
-)
+from .platform import ReviewPlatform, ReviewPlatformError
+from .platform.factory import create_gitlab_platform
 from .render import (
     compute_body_hash as _compute_body_hash,
 )
@@ -45,6 +41,7 @@ from .render import (
 )
 from .schema import load_json_file, now_iso, write_canonical_json
 from .types import (
+    Anchor,
     Consensus,
     FindingGroup,
     PostResult,
@@ -86,47 +83,6 @@ SUMMARY_MARKER_RE = re.compile(
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
-
-
-def _platform_current_user_id(client: ReviewPlatform) -> int | None:
-    current_user_id_fn = getattr(client, "current_user_id", None)
-    if callable(current_user_id_fn):
-        return cast(int | None, current_user_id_fn())
-    current_user_fn = getattr(client, "current_user", None)
-    if not callable(current_user_fn):
-        return None
-    try:
-        current_user = current_user_fn()
-    except Exception:
-        return None
-    user_id = current_user.get("id") if isinstance(current_user, dict) else None
-    return user_id if isinstance(user_id, int) else None
-
-
-def _platform_build_position(
-    client: ReviewPlatform,
-    anchor: dict[str, Any],
-    version: Any,
-    *,
-    multiline: bool = False,
-) -> dict[str, Any]:
-    build_position_fn = getattr(client, "build_position", None)
-    if callable(build_position_fn):
-        return cast(dict[str, Any], build_position_fn(anchor, version, multiline=multiline))
-    return build_platform_position(anchor, version, multiline=multiline)
-
-
-def _platform_root_note_id(client: ReviewPlatform, response: dict[str, Any]) -> int:
-    root_note_id_fn = getattr(client, "root_note_id_from_discussion", None)
-    if callable(root_note_id_fn):
-        return cast(int, root_note_id_fn(response))
-    notes = response.get("notes")
-    if not isinstance(notes, list) or not notes or not isinstance(notes[0], dict):
-        raise ReviewPlatformApiError("discussion response did not include root note")
-    note_id = notes[0].get("id")
-    if not isinstance(note_id, int):
-        raise ReviewPlatformApiError("discussion root note did not include integer id")
-    return note_id
 
 
 @dataclass
@@ -284,7 +240,7 @@ def load_persisted_state(
     if not _state_enabled(config):
         return None, []
     state_config = config.get("state", {})
-    bot_author_id = _platform_current_user_id(client)
+    bot_author_id = client.current_user_id()
     if bot_author_id is None:
         raise RuntimeError(
             "state backend requires GitLab current_user lookup to verify state-note author"
@@ -325,18 +281,18 @@ def write_persisted_state(
     body = encode_state_note(state_without_hash)
     note_id = state.get("state_note_id")
     if isinstance(note_id, int):
-        return client.update_mr_note(
+        return client.update_state_note(
             manifest["project_id"],
             manifest["merge_request_iid"],
             note_id,
             body,
         )
-    created = client.create_mr_note(manifest["project_id"], manifest["merge_request_iid"], body)
+    created = client.create_state_note(manifest["project_id"], manifest["merge_request_iid"], body)
     created_id = created.get("id") if isinstance(created, dict) else None
     if isinstance(created_id, int):
         state_with_id = dict(state_without_hash, state_note_id=created_id)
         body_with_id = encode_state_note(state_with_id)
-        return client.update_mr_note(
+        return client.update_state_note(
             manifest["project_id"],
             manifest["merge_request_iid"],
             created_id,
@@ -436,7 +392,7 @@ def _author_access_level(
     user_id = author.get("id")
     if user_id is None:
         return None
-    member_access = getattr(client, "project_member_access_level", None)
+    member_access = getattr(client, "member_access_level", None)
     if not callable(member_access):
         return None
     try:
@@ -581,7 +537,7 @@ def recover_state_from_discussions(
     from the authenticated bot user and are converted into the same deterministic
     alias/fingerprint state shape consumed by find_matching_record.
     """
-    bot_author_id = None if dry_run else _platform_current_user_id(client)
+    bot_author_id = None if dry_run else client.current_user_id()
     if not dry_run and bot_author_id is None:
         raise RuntimeError(
             "discussion-marker recovery requires GitLab current_user lookup to verify author"
@@ -732,7 +688,7 @@ def upsert_summary_comment(
         return summary
     existing = find_summary_note(raw_discussions)
     if existing is None:
-        response = client.create_mr_note(
+        response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
         )
         summary["action"] = "created"
@@ -743,7 +699,7 @@ def upsert_summary_comment(
     if existing_hash == body_hash:
         summary["action"] = "unchanged"
         return summary
-    client.update_mr_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
+    client.update_state_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
     summary["action"] = "updated"
     return summary
 
@@ -840,11 +796,8 @@ def _load_current_diff_text(
 ) -> str | None:
     if diff_text is not None:
         return diff_text
-    fetch_mr_diff = getattr(client, "fetch_mr_diff", None)
-    if not callable(fetch_mr_diff):
-        return None
     try:
-        fetched = fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
+        fetched = client.fetch_diff(manifest["project_id"], manifest["merge_request_iid"])
         return fetched if isinstance(fetched, str) else None
     except Exception as exc:
         warnings.append(
@@ -1150,14 +1103,14 @@ def _create_inline_discussion(
     summary_fallback_groups: list[FindingGroup],
 ) -> tuple[dict[str, Any], int] | None:
     try:
-        discussion = client.create_discussion(
+        discussion = client.create_inline_comment(
             manifest["project_id"],
             manifest["merge_request_iid"],
             body,
             position,
         )
-    except ReviewPlatformApiError as exc:
-        if not isinstance(position.get("line_range"), dict):
+    except ReviewPlatformError as exc:
+        if not client.can_retry_as_single_line(position):
             result["warnings"].append(
                 f"create_discussion for {post_group['issue_id']} failed: {exc}"
             )
@@ -1167,16 +1120,15 @@ def _create_inline_discussion(
         result["warnings"].append(
             f"multiline create failed for {issue_id}; retrying single-line: {exc}"
         )
-        single_line_position = dict(position)
-        single_line_position.pop("line_range", None)
+        single_line_position = client.single_line_position(position)
         try:
-            discussion = client.create_discussion(
+            discussion = client.create_inline_comment(
                 manifest["project_id"],
                 manifest["merge_request_iid"],
                 body,
                 single_line_position,
             )
-        except ReviewPlatformApiError as retry_exc:
+        except ReviewPlatformError as retry_exc:
             result["warnings"].append(
                 f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
             )
@@ -1188,8 +1140,8 @@ def _create_inline_discussion(
         )
         return None
     try:
-        return discussion, _platform_root_note_id(client, discussion)
-    except ReviewPlatformApiError as exc:
+        return discussion, client.root_note_id_from_thread(discussion)
+    except ReviewPlatformError as exc:
         result["warnings"].append(
             f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
         )
@@ -1212,7 +1164,7 @@ def _update_existing_inline_discussion(
     if existing.get("last_posted_body_hash") == body_hash:
         result["skipped_unchanged"] += 1
         return
-    client.update_discussion_note(
+    client.update_comment(
         manifest["project_id"],
         manifest["merge_request_iid"],
         existing_discussion_id,
@@ -1262,7 +1214,7 @@ def post_inline(
         if not isinstance(issue_id, str):
             continue
         anchor = group["representative_anchor"]
-        position = _platform_build_position(client, anchor, version, multiline=inline_multiline)
+        position = client.build_position(cast(Anchor, anchor), version, multiline=inline_multiline)
         planned_record = state_plan.planned_by_issue.get(issue_id)
         if issue_id in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
@@ -1301,8 +1253,8 @@ def post_inline(
                         planned_record["anchor"] = remapped_anchor
                         planned_record["remap_status"] = "remapped"
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
-                    position = _platform_build_position(
-                        client, remapped_anchor, version, multiline=inline_multiline
+                    position = client.build_position(
+                        cast(Anchor, remapped_anchor), version, multiline=inline_multiline
                     )
                     force_create_at_remapped_anchor = True
                 elif remap_status == "missing":
@@ -1417,7 +1369,7 @@ def finalize_state(
         ),
     )
     if _state_enabled(config):
-        resolve_discussion = getattr(client, "resolve_discussion", None)
+        resolve_discussion = getattr(client, "resolve_thread", None)
         if callable(resolve_discussion):
             prior_status = {
                 record["issue_id"]: record.get("status") for record in state_plan.base_records
@@ -1490,12 +1442,12 @@ def prepare_post_context(
     dry_run: bool,
     diff_text: str | None,
 ) -> PostContext:
-    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
+    version = client.fetch_version(manifest["project_id"], manifest["merge_request_iid"])
     current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
     raw_discussions = (
         []
         if dry_run
-        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
+        else client.list_threads(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
     state_warnings: list[str] = []
@@ -1546,7 +1498,7 @@ def post_consensus(
     dry_run: bool = False,
     diff_text: str | None = None,
 ) -> PostResult:
-    current_head_sha = client.fetch_current_mr_head_sha(
+    current_head_sha = client.fetch_current_head_sha(
         manifest["project_id"],
         manifest["merge_request_iid"],
     )
@@ -1654,7 +1606,7 @@ def cli(argv: list[str] | None = None) -> int:
         or os.environ.get("GITLAB_API_URL")
         or "https://gitlab.example.com/api/v4"
     )
-    client = GitLabReviewPlatform(api_url, token, token_header="PRIVATE-TOKEN")
+    client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
     diff_path = Path(args.inputs) / "mr.diff"
     diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(

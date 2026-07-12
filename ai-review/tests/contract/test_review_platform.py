@@ -28,7 +28,7 @@ def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
         version,
     )
     discussion = platform.create_discussion("project", 1, "body", position)
-    assert platform.root_note_id_from_discussion(discussion) == 100
+    assert platform.root_note_id_from_thread(discussion) == 100
     assert platform.current_user_id() == 10
 
 

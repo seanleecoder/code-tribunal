@@ -1,12 +1,19 @@
 """Platform-neutral review posting port."""
 
-from .base import Anchor, InlineComment, Position, ReviewPlatform, ReviewStateNote, Thread
+from .base import (
+    InlineComment,
+    Position,
+    ReviewPlatform,
+    ReviewPlatformError,
+    ReviewStateNote,
+    Thread,
+)
 
 __all__ = [
-    "Anchor",
     "InlineComment",
     "Position",
     "ReviewPlatform",
+    "ReviewPlatformError",
     "ReviewStateNote",
     "Thread",
 ]
