@@ -11,9 +11,11 @@ from ai_review.post import (
     _classify_post_groups,
     _desired_discussion_resolved,
     _initial_post_result,
+    finalize_state,
     load_persisted_state,
     plan_state,
     post_consensus,
+    post_inline,
     render_body,
     source_hash,
 )
@@ -561,6 +563,102 @@ class PostTests(unittest.TestCase):
         )
         self.assertEqual(plan.outcome.warnings, [])
         self.assertEqual(plan.planned_by_issue, {})
+
+
+    def test_post_inline_returns_phase_outputs_for_direct_seam_testing(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        client = FakePostClient("head")
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            self._state_with_records([]),
+            [group],
+            [],
+            [],
+            {},
+        )
+        summary_fallback_groups: list[dict[str, Any]] = []
+
+        outcome = post_inline(
+            client,
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [group],
+            summary_fallback_groups,
+            MergeRequestVersion("base", "start", "head"),
+            inline_multiline=False,
+            current_diff_text=None,
+            dry_run=False,
+        )
+
+        self.assertIs(outcome.result, result)
+        self.assertIs(outcome.state_plan, state_plan)
+        self.assertIs(outcome.summary_fallback_groups, summary_fallback_groups)
+        self.assertEqual(outcome.result["created_discussions"], 1)
+        self.assertEqual(outcome.result["posted_discussions"][0]["action"], "created")
+        planned_record = outcome.state_plan.planned_by_issue[group["issue_id"]]
+        self.assertEqual(planned_record["discussion_id"], "discussion")
+        self.assertEqual(planned_record["root_note_id"], 123)
+        self.assertEqual(client.created_positions, [self._position("head")])
+
+    def test_finalize_state_returns_result_after_summary_resolution_and_state_write(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        persisted_state = self._state_with_records([previous_record])
+        client = StatePostClient("head", persisted_state)
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "resolve"},
+        )
+
+        finalized = finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        self.assertIs(finalized, result)
+        self.assertEqual(finalized["summary_comment"]["action"], "created")
+        self.assertEqual(finalized["resolved_discussions"], 1)
+        self.assertEqual(
+            client.resolve_calls,
+            [{"discussion_id": "existing-discussion", "resolved": True}],
+        )
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "resolved")
 
     def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
         base_record = self._state_record(self._consensus()["groups"][0])
