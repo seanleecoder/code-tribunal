@@ -20,6 +20,9 @@ type Category = Literal[
 type AnchorSide = Literal["new", "old", "unchanged"]
 type Decision = Literal["surface", "fyi", "drop"]
 type ReviewerId = str
+type RunId = str
+type ProjectId = str
+type MergeRequestIid = str
 type PanelStatus = Literal["full", "degraded", "advisory_only", "failed"]
 type IssueIdSource = Literal["matched_state", "new_signature", "ambiguous_unassigned"]
 type StateMatchStatus = Literal["matched", "new", "ambiguous"]
@@ -117,7 +120,7 @@ class Finding(TypedDict):
 
 class FindingBatch(TypedDict):
     schema_version: Literal["finding_batch.v1"]
-    run_id: str
+    run_id: RunId
     reviewer: ReviewerId
     adapter_status: AdapterStatus
     model: str
@@ -200,9 +203,9 @@ class ConsensusSummary(TypedDict):
 
 class Consensus(TypedDict):
     schema_version: Literal["consensus.v1"]
-    run_id: str
-    project_id: str
-    merge_request_iid: str
+    run_id: RunId
+    project_id: ProjectId
+    merge_request_iid: MergeRequestIid
     head_sha: str
     input_manifest_sha256: str
     successful_reviewers: list[ReviewerId]
@@ -239,13 +242,13 @@ class StateRecord(TypedDict, total=False):
     updated_by_pipeline_id: str
     human_disposition: HumanDisposition | None
     remap_status: RemapStatus
-    last_matched_run_id: str | None
+    last_matched_run_id: RunId | None
 
 
 class State(TypedDict, total=False):
     state_schema_version: Literal[1]
-    project_id: str
-    merge_request_iid: str
+    project_id: ProjectId
+    merge_request_iid: MergeRequestIid
     last_head_sha: str
     state_note_id: int | None
     written_by_pipeline_id: str
@@ -271,7 +274,7 @@ class SummaryComment(TypedDict):
 
 class PostResult(TypedDict, total=False):
     schema_version: Required[Literal["post_result.v1"]]
-    run_id: Required[str]
+    run_id: Required[RunId]
     status: Required[PostStatus]
     head_sha: Required[str]
     current_head_sha: Required[str]
@@ -289,7 +292,7 @@ class PostResult(TypedDict, total=False):
 
 class GateResult(TypedDict):
     schema_version: Literal["gate_result.v1"]
-    run_id: str
+    run_id: RunId
     status: GateStatus
     block_merge: bool
     reason: str
