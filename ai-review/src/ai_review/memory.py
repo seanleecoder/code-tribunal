@@ -3,12 +3,12 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
-from .types import MatchPrecedence, StateMatchStatus
+from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
 STATE_MATCHING_STRATEGY = (
     "Persisted state matching is intentionally limited to deterministic issue IDs, "
@@ -40,8 +40,8 @@ STATE_NOTE_LEGACY_RE = re.compile(
 @dataclass(frozen=True)
 class StateMatchResult:
     status: StateMatchStatus
-    record: dict[str, Any] | None
-    records: list[dict[str, Any]]
+    record: StateRecord | None
+    records: list[StateRecord]
     precedence: MatchPrecedence | None
 
 
@@ -546,7 +546,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
     raise ValueError(f"unknown state match precedence: {precedence}")
 
 
-def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) -> StateMatchResult:
+def find_matching_record(group: FindingGroup, state: State | None) -> StateMatchResult:
     """Match a consensus group to persisted state using the documented deterministic strategy."""
     records = [
         record
@@ -556,7 +556,13 @@ def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) ->
         and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:
-        matches = [record for record in records if _matches_precedence(record, group, precedence)]
+        matches = [
+            record
+            for record in records
+            if _matches_precedence(
+                cast(dict[str, Any], record), cast(dict[str, Any], group), precedence
+            )
+        ]
         if len(matches) == 1:
             return StateMatchResult(
                 status="matched",

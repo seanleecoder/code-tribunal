@@ -871,7 +871,7 @@ def plan_state(
                 if record.get("discussion_id") not in planning_used_discussion_ids
             ]
         }
-        state_match = find_matching_record(group, state_for_match)
+        state_match = find_matching_record(cast(FindingGroup, group), cast(State, state_for_match))
         if state_match.status == "ambiguous":
             ambiguous_issue_ids.add(group["issue_id"])
             candidate_ids = [

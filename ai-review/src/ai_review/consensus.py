@@ -12,7 +12,7 @@ from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
 from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
-from .types import FindingGroup
+from .types import FindingGroup, State
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
@@ -614,7 +614,7 @@ def build_consensus(
                     "precedence": None,
                 },
             }
-            state_match = find_matching_record(group, state)
+            state_match = find_matching_record(cast(FindingGroup, group), cast(State | None, state))
             if state_match.status == "matched" and state_match.record is not None:
                 group["issue_id"] = state_match.record["issue_id"]
                 group["issue_id_source"] = "matched_state"
