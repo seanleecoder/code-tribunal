@@ -45,7 +45,15 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup, PostResult, State, StateRecord, StateRecordStatus, SummaryComment
+from .types import (
+    Consensus,
+    FindingGroup,
+    PostResult,
+    State,
+    StateRecord,
+    StateRecordStatus,
+    SummaryComment,
+)
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -371,7 +379,7 @@ def _record_for_group(
     )
 
 
-def _has_resolution_quorum(config: dict[str, Any], consensus: dict[str, Any]) -> bool:
+def _has_resolution_quorum(config: dict[str, Any], consensus: Consensus) -> bool:
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     required = int(panel.get("min_successful_reviewers_for_resolution", 2))
     return len(consensus.get("successful_reviewers", [])) >= required
@@ -700,7 +708,7 @@ def upsert_summary_comment(
 
 def _initial_post_result(
     *,
-    consensus: dict[str, Any],
+    consensus: Consensus,
     manifest: dict[str, Any],
     current_head_sha: str,
 ) -> PostResult:
@@ -825,7 +833,7 @@ def _desired_discussion_resolved(
 def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     persisted_state: dict[str, Any],
     inline_candidates: list[dict[str, Any]],
     summary_fallback_groups: list[dict[str, Any]],
@@ -1044,7 +1052,7 @@ class InlinePostOutcome:
 def post_inline(
     client: GitLabClient,
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
     inline_candidates: list[dict[str, Any]],
@@ -1238,7 +1246,7 @@ def finalize_state(
     client: GitLabClient,
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
     raw_discussions: list[dict[str, Any]],
@@ -1331,7 +1339,7 @@ def post_consensus(
     client: GitLabClient,
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     *,
     dry_run: bool = False,
     diff_text: str | None = None,
@@ -1401,7 +1409,7 @@ def post_consensus(
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
     classified_inline, classified_fallback, classified_fyi, classification_warnings = (
         _classify_post_groups(
-            cast(list[FindingGroup], consensus.get("groups", [])),
+            consensus.get("groups", []),
             inline_sides=inline_sides,
             inline_multiline=inline_multiline,
             max_surface=max_surface,
@@ -1470,7 +1478,7 @@ def cli(argv: list[str] | None = None) -> int:
 
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
-    consensus = load_json_file(args.consensus)
+    consensus = cast(Consensus, load_json_file(args.consensus))
     token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
     api_url = (
         os.environ.get("CI_API_V4_URL")
