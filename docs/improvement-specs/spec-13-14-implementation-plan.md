@@ -69,9 +69,8 @@ previous guardrails and type improvements.
 
 ### Current implementation status
 
-As of the current SPEC-13/14 continuation PR, the behavior-preserving typing and
-phase-extraction slice is complete. A few broader Phase 2 correctness and
-cleanup acceptance bars remain explicit follow-ups rather than hidden claims:
+As of the current SPEC-13/14 continuation PR, the typing, phase-extraction, and
+Phase 2 posting-state cleanup slice is complete:
 
 - Steps 1 and 2 are implemented for the reducer path: domain `TypedDict`
   shapes exist and strict mypy covers `consensus`, `memory`, `render`, and
@@ -94,14 +93,15 @@ cleanup acceptance bars remain explicit follow-ups rather than hidden claims:
 - The SPEC-14d refactor reduced `post_consensus` from roughly 250 lines before
   extraction to roughly 100 lines, with extracted helpers covering context
   loading, state planning, inline posting, and finalization.
-- Known open Phase 2 follow-ups: `plan_state` still performs the pre-posting
-  normalize/compact/overflow pass and `finalize_state` repeats that pass after
-  inline mutations; a unit test now characterizes this as current behavior.
-  Removing the double pass should be a separate correctness PR because it can
-  change failure timing and state-write behavior.
-- Known open cleanup follow-up: the delegated `plan_state` and `post_inline`
-  helpers remain above the Phase 2 target of roughly 150 lines. They should be
-  decomposed further after the behavior-preserving seams have settled.
+- The SPEC-14 state-processing cleanup is implemented: `plan_state` now builds
+  the planned state without running the full normalize/compact/overflow pass,
+  and `finalize_state` performs that pass exactly once after inline mutations
+  have updated discussion ids and body hashes. This intentionally reports state
+  overflow after mutation rather than as a pre-posting fail-closed condition.
+- The extracted `plan_state`, `post_inline`, `post_consensus`, and
+  `finalize_state` functions are all within the Phase 2 target of roughly 150
+  lines, with smaller helpers covering stale-record planning and GitLab update
+  / create sub-steps.
 
 
 ## SPEC-13 detailed plan
