@@ -20,7 +20,7 @@ mypy
 
 - Summarize the change and link the finding/spec ID when applicable.
 - Add or update tests for behavior changes.
-- Keep `ruff` and `pytest` green; `mypy` is currently a visible non-blocking CI signal until SPEC-13 completes the strict typing cleanup.
+- Keep `ruff` and `pytest` green; `mypy` currently checks the whole package as a visible non-blocking CI signal, with strict mode enabled for the SPEC-13 reducer slice while posting/client typing gaps are closed incrementally.
 - Document new configuration and mark reserved/inert options honestly.
 - Avoid exposing GitLab, Jira, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
 

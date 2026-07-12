@@ -9,6 +9,12 @@ from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
 
+STATE_MATCHING_STRATEGY = (
+    "Persisted state matching is intentionally limited to deterministic issue IDs, "
+    "source finding aliases, context/title fingerprints, anchors, and symbols. "
+    "Consensus-only semantic text similarity is not a state recovery fallback."
+)
+
 MATCH_PRECEDENCE = (
     "exact_issue_id",
     "source_finding_id",
@@ -540,6 +546,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
 
 
 def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) -> StateMatchResult:
+    """Match a consensus group to persisted state using the documented deterministic strategy."""
     records = [
         record
         for record in (state or {}).get("records", [])
