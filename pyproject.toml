@@ -42,5 +42,19 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 python_version = "3.12"
+mypy_path = "ai-review/src"
+files = [
+  "ai-review/src/ai_review/consensus.py",
+  "ai-review/src/ai_review/memory.py",
+  "ai-review/src/ai_review/render.py",
+  "ai-review/src/ai_review/schema.py",
+]
+
+[[tool.mypy.overrides]]
+module = [
+  "ai_review.consensus",
+  "ai_review.memory",
+  "ai_review.render",
+  "ai_review.schema",
+]
 strict = true
-packages = ["ai_review"]

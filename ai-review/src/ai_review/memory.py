@@ -83,8 +83,10 @@ def normalize_state_record(
     manifest: dict[str, Any] | None = None,
     pipeline_id: str = "",
 ) -> dict[str, Any]:
-    anchor = record.get("anchor") if isinstance(record.get("anchor"), dict) else {}
-    aliases = record.get("aliases") if isinstance(record.get("aliases"), dict) else {}
+    raw_anchor = record.get("anchor")
+    anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
+    raw_aliases = record.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     title_fp = title_fingerprint(str(record.get("title", ""))) if record.get("title") else None
     normalized_aliases = {
         "candidate_issue_signatures": sorted(_as_set(aliases.get("candidate_issue_signatures"))),
