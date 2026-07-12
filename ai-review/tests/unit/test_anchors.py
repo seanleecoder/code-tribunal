@@ -59,8 +59,13 @@ class AnchorRemapTests(unittest.TestCase):
         self.assertEqual(files[0].old_path, "src/foo.py")
         self.assertEqual(files[0].new_path, "src/foo.py")
         self.assertEqual(
-            [(line.old_line, line.new_line, line.text) for line in files[0].lines],
-            [(1, 1, "keep"), (2, None, "old"), (None, 2, "new"), (None, 3, "extra")],
+            [(line.old_line, line.new_line, line.text, line.kind) for line in files[0].lines],
+            [
+                (1, 1, "keep", "context"),
+                (2, None, "old", "removed"),
+                (None, 2, "new", "added"),
+                (None, 3, "extra", "added"),
+            ],
         )
         self.assertTrue(all(line.hunk_header == "@@ -1,2 +1,3 @@" for line in files[0].lines))
         self.assertEqual(files[1].old_path, "src/empty.py")

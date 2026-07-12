@@ -4,7 +4,7 @@ import hashlib
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
 
@@ -14,12 +14,16 @@ HUNK_RE = re.compile(
 )
 
 
+DiffLineKind = Literal["context", "added", "removed"]
+
+
 @dataclass(frozen=True)
 class DiffLine:
     old_line: int | None
     new_line: int | None
     text: str
     hunk_header: str
+    kind: DiffLineKind
 
 
 @dataclass(frozen=True)
@@ -205,13 +209,13 @@ def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
         prefix = raw_line[:1]
         text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
         if prefix == "+":
-            lines.append(DiffLine(None, new_line, text, hunk_header))
+            lines.append(DiffLine(None, new_line, text, hunk_header, "added"))
             new_line += 1
         elif prefix == "-":
-            lines.append(DiffLine(old_line, None, text, hunk_header))
+            lines.append(DiffLine(old_line, None, text, hunk_header, "removed"))
             old_line += 1
         else:
-            lines.append(DiffLine(old_line, new_line, text, hunk_header))
+            lines.append(DiffLine(old_line, new_line, text, hunk_header, "context"))
             old_line += 1
             new_line += 1
 
