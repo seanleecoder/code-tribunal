@@ -17,6 +17,7 @@ from ai_review.post import (
     plan_state,
     post_consensus,
     post_inline,
+    prepare_post_context,
     recover_state_from_discussions,
     render_body,
     source_hash,
@@ -620,6 +621,43 @@ class PostTests(unittest.TestCase):
         self.assertEqual(plan.outcome.warnings, [])
         self.assertEqual(plan.planned_by_issue, {})
 
+    def test_prepare_post_context_loads_state_discussions_and_commands(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        persisted_state = self._state_with_records([self._state_record(group)])
+        client = StatePostClient("head", persisted_state)
+        discussion = self._existing_discussion(group)
+        discussion["notes"].append(
+            {
+                "id": 124,
+                "body": "/ai-review resolve",
+                "author": {"id": 42, "access_level": 40},
+                "created_at": "2026-07-11T00:00:01Z",
+            }
+        )
+        client.discussions = [discussion]
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+
+        context = prepare_post_context(
+            client,
+            self._state_config(),
+            manifest,
+            result,
+            dry_run=False,
+            diff_text="diff text",
+        )
+
+        self.assertEqual(context.version, MergeRequestVersion("base", "start", "head"))
+        self.assertEqual(context.current_diff_text, "diff text")
+        self.assertEqual(context.raw_discussions, [discussion])
+        self.assertEqual(context.persisted_state["records"][0]["issue_id"], group["issue_id"])
+        self.assertEqual(context.human_commands, {group["issue_id"]: "resolve"})
+        self.assertEqual(result["warnings"], [])
 
     def test_post_inline_returns_phase_outputs_for_direct_seam_testing(self) -> None:
         consensus = self._consensus()
