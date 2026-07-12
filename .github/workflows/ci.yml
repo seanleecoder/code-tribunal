@@ -23,9 +23,15 @@ jobs:
         run: ruff check ai-review/src ai-review/tests
       - name: Tests with coverage
         run: pytest ai-review/tests --cov=ai_review --cov-report=term-missing
-      # Mypy checks the whole ai_review package as a visible non-blocking signal.
-      # SPEC-13 currently enables strict mode only for the reducer slice via
-      # per-module overrides while later PRs close posting/client typing gaps.
-      - name: Mypy strict reality check
+      - name: Mypy strict reducer slice
+        run: >-
+          mypy
+          ai-review/src/ai_review/consensus.py
+          ai-review/src/ai_review/memory.py
+          ai-review/src/ai_review/render.py
+          ai-review/src/ai_review/schema.py
+      # Mypy also checks the whole ai_review package as a visible non-blocking signal
+      # while later PRs close posting/client typing gaps.
+      - name: Mypy whole-package reality check
         continue-on-error: true
         run: mypy

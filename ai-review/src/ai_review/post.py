@@ -512,6 +512,31 @@ def state_from_existing_discussions(
     return {"state_schema_version": 1, "records": records}
 
 
+def recover_state_from_discussions(
+    client: GitLabClient,
+    manifest: dict[str, Any],
+    existing_discussions: list[ExistingReviewDiscussion],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Recover state from trusted AI-review discussion markers.
+
+    This is the only discussion-marker recovery seam: markers are accepted only
+    from the authenticated bot user and are converted into the same deterministic
+    alias/fingerprint state shape consumed by find_matching_record.
+    """
+    bot_author_id = None if dry_run else current_user_id(client)
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
+    return state_from_existing_discussions(
+        existing_discussions,
+        current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
+    )
+
+
 def position_side(position: dict[str, Any]) -> str | None:
     has_old = position.get("old_line") is not None
     has_new = position.get("new_line") is not None
@@ -1333,18 +1358,14 @@ def post_consensus(
         else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
-    bot_author_id = None if dry_run else current_user_id(client)
-    if not dry_run and bot_author_id is None:
-        raise RuntimeError(
-            "discussion-marker recovery requires GitLab current_user lookup to verify author"
-        )
     state_warnings: list[str] = []
     persisted_state, load_warnings = load_persisted_state(client, config, manifest)
     state_warnings.extend(load_warnings)
-    recovered_state = state_from_existing_discussions(
+    recovered_state = recover_state_from_discussions(
+        client,
+        manifest,
         existing_discussions,
-        current_head_sha=manifest["head_sha"],
-        expected_author_id=bot_author_id,
+        dry_run=dry_run,
     )
     if persisted_state is None:
         state_config = config.get("state", {}) if isinstance(config, dict) else {}

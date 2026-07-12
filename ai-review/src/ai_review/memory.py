@@ -8,6 +8,7 @@ from typing import Any
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
+from .types import MatchPrecedence, StateMatchStatus
 
 STATE_MATCHING_STRATEGY = (
     "Persisted state matching is intentionally limited to deterministic issue IDs, "
@@ -15,7 +16,7 @@ STATE_MATCHING_STRATEGY = (
     "Consensus-only semantic text similarity is not a state recovery fallback."
 )
 
-MATCH_PRECEDENCE = (
+MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "exact_issue_id",
     "source_finding_id",
     "context_hash",
@@ -38,10 +39,10 @@ STATE_NOTE_LEGACY_RE = re.compile(
 
 @dataclass(frozen=True)
 class StateMatchResult:
-    status: str
+    status: StateMatchStatus
     record: dict[str, Any] | None
     records: list[dict[str, Any]]
-    precedence: str | None
+    precedence: MatchPrecedence | None
 
 
 def compute_state_hash(state: dict[str, Any]) -> str:
