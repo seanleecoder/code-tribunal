@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -143,12 +142,6 @@ class GitLabClient:
             raise GitLabApiError(f"GitLab API {method} {path} response was not an object")
         return dict(parsed)
 
-    def _request_object_list(self, method: str, path: str, **kwargs: Any) -> list[dict[str, Any]]:
-        parsed = self._request(method, path, **kwargs)
-        if not isinstance(parsed, list):
-            raise GitLabApiError(f"GitLab API {method} {path} response was not a list")
-        return [dict(item) for item in parsed if isinstance(item, Mapping)]
-
     @staticmethod
     def _next_page(response: Any) -> int | None:
         """Return GitLab's next page from the X-Next-Page header, or None if absent.
@@ -183,7 +176,12 @@ class GitLabClient:
                 break
             if not isinstance(batch, list):
                 raise GitLabApiError(f"GitLab paginated GET {path} returned a non-list page")
-            items.extend(dict(item) for item in batch if isinstance(item, Mapping))
+            for item in batch:
+                if not isinstance(item, dict):
+                    raise GitLabApiError(
+                        f"GitLab paginated GET {path} returned a non-object item"
+                    )
+                items.append(dict(item))
             next_page = self._next_page(response)
             if next_page is not None:
                 if next_page == 0:
