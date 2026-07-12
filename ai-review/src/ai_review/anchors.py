@@ -4,7 +4,7 @@ import hashlib
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
 
@@ -14,12 +14,16 @@ HUNK_RE = re.compile(
 )
 
 
+DiffLineKind = Literal["context", "added", "removed"]
+
+
 @dataclass(frozen=True)
 class DiffLine:
     old_line: int | None
     new_line: int | None
     text: str
     hunk_header: str
+    kind: DiffLineKind
 
 
 @dataclass(frozen=True)
@@ -205,13 +209,37 @@ def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
         prefix = raw_line[:1]
         text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
         if prefix == "+":
-            lines.append(DiffLine(None, new_line, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=None,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="added",
+                )
+            )
             new_line += 1
         elif prefix == "-":
-            lines.append(DiffLine(old_line, None, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=None,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="removed",
+                )
+            )
             old_line += 1
         else:
-            lines.append(DiffLine(old_line, new_line, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="context",
+                )
+            )
             old_line += 1
             new_line += 1
 
@@ -230,20 +258,22 @@ def _path_matches(anchor: dict[str, Any], old_path: str | None, new_path: str | 
 
 def _target_matches(side: str, target_start: dict[str, Any], line: DiffLine) -> bool:
     if side == "new":
-        return line.new_line == target_start.get("new_line")
+        return line.kind in {"added", "context"} and line.new_line == target_start.get("new_line")
     if side == "old":
-        return line.old_line == target_start.get("old_line")
-    return line.old_line == target_start.get("old_line") and line.new_line == target_start.get(
-        "new_line"
+        return line.kind in {"removed", "context"} and line.old_line == target_start.get("old_line")
+    return (
+        line.kind == "context"
+        and line.old_line == target_start.get("old_line")
+        and line.new_line == target_start.get("new_line")
     )
 
 
 def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
     if side == "new":
-        return line.new_line is not None
+        return line.kind in {"added", "context"}
     if side == "old":
-        return line.old_line is not None
-    return line.old_line is not None and line.new_line is not None
+        return line.kind in {"removed", "context"}
+    return line.kind == "context"
 
 
 def context_hash_from_unified_diff(

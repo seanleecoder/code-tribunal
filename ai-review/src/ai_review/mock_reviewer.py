@@ -13,7 +13,7 @@ from .anchors import parse_unified_diff
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
     for diff_file in parse_unified_diff(diff_text):
         for line in diff_file.lines:
-            if line.old_line is not None or line.new_line is None:
+            if line.kind != "added":
                 continue
             if "records[0]" in line.text or "data[0]" in line.text:
                 return {
