@@ -87,7 +87,7 @@ class ReviewPlatform(Protocol):
 
     def build_position(
         self,
-        anchor: Anchor | dict[str, Any],
+        anchor: dict[str, Any],
         version: Any,
         *,
         multiline: bool = False,

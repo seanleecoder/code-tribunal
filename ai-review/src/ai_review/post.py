@@ -91,7 +91,7 @@ REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*
 def _platform_current_user_id(client: ReviewPlatform) -> int | None:
     current_user_id_fn = getattr(client, "current_user_id", None)
     if callable(current_user_id_fn):
-        return current_user_id_fn()
+        return cast(int | None, current_user_id_fn())
     current_user_fn = getattr(client, "current_user", None)
     if not callable(current_user_fn):
         return None
@@ -112,14 +112,14 @@ def _platform_build_position(
 ) -> dict[str, Any]:
     build_position_fn = getattr(client, "build_position", None)
     if callable(build_position_fn):
-        return build_position_fn(anchor, version, multiline=multiline)
+        return cast(dict[str, Any], build_position_fn(anchor, version, multiline=multiline))
     return build_platform_position(anchor, version, multiline=multiline)
 
 
 def _platform_root_note_id(client: ReviewPlatform, response: dict[str, Any]) -> int:
     root_note_id_fn = getattr(client, "root_note_id_from_discussion", None)
     if callable(root_note_id_fn):
-        return root_note_id_fn(response)
+        return cast(int, root_note_id_fn(response))
     notes = response.get("notes")
     if not isinstance(notes, list) or not notes or not isinstance(notes[0], dict):
         raise ReviewPlatformApiError("discussion response did not include root note")

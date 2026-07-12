@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import cast
 
 from ai_review.platform import ReviewPlatform
 from ai_review.platform.gitlab import GitLabReviewPlatform
 
-from tests.support.fake_gitlab import FakeGitLabClient
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.fake_gitlab import FakeGitLabClient
 
 
 def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
