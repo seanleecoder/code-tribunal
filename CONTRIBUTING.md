@@ -13,14 +13,15 @@ Run the local quality checks before opening a pull request:
 ```bash
 make test
 ruff check ai-review/src ai-review/tests
-mypy
+mypy ai-review/src/ai_review/consensus.py ai-review/src/ai_review/memory.py ai-review/src/ai_review/render.py ai-review/src/ai_review/schema.py
+mypy  # non-blocking whole-package debt signal; currently expected to report posting/client errors
 ```
 
 ## Pull Request Checklist
 
 - Summarize the change and link the finding/spec ID when applicable.
 - Add or update tests for behavior changes.
-- Keep `ruff` and `pytest` green; `mypy` is currently a visible non-blocking CI signal until SPEC-13 completes the strict typing cleanup.
+- Keep `ruff` and `pytest` green; the scoped reducer `mypy` command is blocking, and the whole-package `mypy` command remains a visible non-blocking CI signal while posting/client typing gaps are closed incrementally.
 - Document new configuration and mark reserved/inert options honestly.
 - Avoid exposing GitLab, Jira, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
 

@@ -12,10 +12,12 @@ from ai_review.post import (
     _desired_discussion_resolved,
     _initial_post_result,
     finalize_state,
+    index_ai_review_discussions,
     load_persisted_state,
     plan_state,
     post_consensus,
     post_inline,
+    recover_state_from_discussions,
     render_body,
     source_hash,
 )
@@ -303,6 +305,54 @@ class PostTests(unittest.TestCase):
                 self._manifest("head"),
                 self._consensus(),
             )
+
+    def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
+        group = self._consensus()["groups"][0]
+        body, _body_hash = render_body(group, 1, "run")
+        discussions = index_ai_review_discussions([
+            {
+                "id": "trusted",
+                "resolved": False,
+                "notes": [
+                    {
+                        "id": 321,
+                        "body": body,
+                        "author": {"id": 10},
+                        "position": {
+                            "head_sha": "head",
+                            "new_path": "src/foo.py",
+                            "old_path": "src/foo.py",
+                            "new_line": 1,
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "forged",
+                "resolved": False,
+                "notes": [
+                    {
+                        "id": 654,
+                        "body": body,
+                        "author": {"id": 99},
+                        "position": {
+                            "head_sha": "head",
+                            "new_path": "src/foo.py",
+                            "old_path": "src/foo.py",
+                            "new_line": 1,
+                        },
+                    }
+                ],
+            },
+        ])
+
+        recovered = recover_state_from_discussions(
+            FakePostClient("head"),
+            self._manifest("head"),
+            discussions,
+        )
+
+        self.assertEqual([record["discussion_id"] for record in recovered["records"]], ["trusted"])
 
     def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
         body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")

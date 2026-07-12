@@ -81,7 +81,7 @@ def load_schema(schema_name: str) -> dict[str, Any]:
 def validate_instance(instance: Any, schema_name: str) -> None:
     schema = load_schema(schema_name)
     try:
-        import jsonschema  # type: ignore[import-not-found]
+        import jsonschema  # type: ignore[import-untyped]
     except ModuleNotFoundError:
         _validate_subset(instance, schema, schema, "$")
         return
@@ -391,7 +391,7 @@ def finalize_finding_batch(
     diff_text = _load_diff(input_dir)
     raw_findings = batch.get("findings", [])
     ranked_findings = _rank_findings_for_cap(raw_findings, max_findings)
-    findings = []
+    findings: list[dict[str, Any]] = []
     finding_keys = {
         "anchor",
         "severity",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-from ai_review.memory import find_matching_record
+from ai_review.memory import STATE_MATCHING_STRATEGY, find_matching_record
 
 
 def _anchor(path: str = "src/foo.py", line: int = 10, symbol: str | None = "handle") -> dict:
@@ -113,6 +113,25 @@ class FindMatchingRecordTests(unittest.TestCase):
         self.assertEqual(result.status, "new")
         self.assertIsNone(result.record)
         self.assertEqual(result.records, [])
+
+
+    def test_title_text_alone_is_not_state_matching_fallback(self) -> None:
+        group = _group()
+        group["title"] = "same user-visible title"
+        group["match_keys"]["context_hashes"] = ["e" * 64]
+        group["match_keys"]["title_fingerprints"] = ["f" * 64]
+        group["match_keys"]["symbols"] = []
+        group["all_anchors"] = [_anchor(path="src/new.py", line=22, symbol=None)]
+        group["representative_anchor"] = _anchor(path="src/new.py", line=22, symbol=None)
+        record = _record()
+        record["title"] = "same user-visible title"
+
+        result = find_matching_record(group, {"records": [record]})
+
+        self.assertEqual(result.status, "new")
+        self.assertIsNone(result.record)
+        self.assertIn("deterministic", STATE_MATCHING_STRATEGY)
+        self.assertIn("semantic text similarity is not", STATE_MATCHING_STRATEGY)
 
     def test_ambiguous_duplicate_records_at_same_precedence(self) -> None:
         first = _record("1" * 64)

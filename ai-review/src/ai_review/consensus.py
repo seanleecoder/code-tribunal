@@ -55,6 +55,8 @@ def _normalized_issue_tokens(finding: dict[str, Any]) -> set[str]:
     return set(words) | shingles
 
 
+# Text similarity is only an opt-in consensus grouping signal. Persisted state
+# recovery remains governed by ai_review.memory.STATE_MATCHING_STRATEGY.
 def _issue_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
     a_tokens = _normalized_issue_tokens(a)
     b_tokens = _normalized_issue_tokens(b)

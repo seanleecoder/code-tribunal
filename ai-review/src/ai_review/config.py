@@ -103,7 +103,7 @@ def _parse_block(tokens: list[tuple[int, str]], index: int, indent: int) -> tupl
         return {}, index
     is_list = tokens[index][0] == indent and tokens[index][1].startswith("- ")
     if is_list:
-        values: list[Any] = []
+        list_values: list[Any] = []
         while index < len(tokens):
             line_indent, text = tokens[index]
             if line_indent < indent:
@@ -112,14 +112,14 @@ def _parse_block(tokens: list[tuple[int, str]], index: int, indent: int) -> tupl
                 break
             item = text[2:].strip()
             if item:
-                values.append(_parse_scalar(item))
+                list_values.append(_parse_scalar(item))
                 index += 1
             else:
                 nested, index = _parse_block(tokens, index + 1, indent + 2)
-                values.append(nested)
-        return values, index
+                list_values.append(nested)
+        return list_values, index
 
-    values: dict[str, Any] = {}
+    mapping_values: dict[str, Any] = {}
     while index < len(tokens):
         line_indent, text = tokens[index]
         if line_indent < indent:
@@ -132,17 +132,17 @@ def _parse_block(tokens: list[tuple[int, str]], index: int, indent: int) -> tupl
         key = key.strip()
         raw_value = raw_value.strip()
         if raw_value:
-            values[key] = _parse_scalar(raw_value)
+            mapping_values[key] = _parse_scalar(raw_value)
             index += 1
         else:
             nested, index = _parse_block(tokens, index + 1, indent + 2)
-            values[key] = nested
-    return values, index
+            mapping_values[key] = nested
+    return mapping_values, index
 
 
 def load_yaml_subset(text: str) -> dict[str, Any]:
     try:
-        import yaml  # type: ignore[import-not-found]
+        import yaml  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:
         tokens = _tokenize_yaml_subset(text)
         parsed, index = _parse_block(tokens, 0, 0)

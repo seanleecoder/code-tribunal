@@ -8,8 +8,15 @@ from typing import Any
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
+from .types import MatchPrecedence, StateMatchStatus
 
-MATCH_PRECEDENCE = (
+STATE_MATCHING_STRATEGY = (
+    "Persisted state matching is intentionally limited to deterministic issue IDs, "
+    "source finding aliases, context/title fingerprints, anchors, and symbols. "
+    "Consensus-only semantic text similarity is not a state recovery fallback."
+)
+
+MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "exact_issue_id",
     "source_finding_id",
     "context_hash",
@@ -32,10 +39,10 @@ STATE_NOTE_LEGACY_RE = re.compile(
 
 @dataclass(frozen=True)
 class StateMatchResult:
-    status: str
+    status: StateMatchStatus
     record: dict[str, Any] | None
     records: list[dict[str, Any]]
-    precedence: str | None
+    precedence: MatchPrecedence | None
 
 
 def compute_state_hash(state: dict[str, Any]) -> str:
@@ -83,8 +90,10 @@ def normalize_state_record(
     manifest: dict[str, Any] | None = None,
     pipeline_id: str = "",
 ) -> dict[str, Any]:
-    anchor = record.get("anchor") if isinstance(record.get("anchor"), dict) else {}
-    aliases = record.get("aliases") if isinstance(record.get("aliases"), dict) else {}
+    raw_anchor = record.get("anchor")
+    anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
+    raw_aliases = record.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     title_fp = title_fingerprint(str(record.get("title", ""))) if record.get("title") else None
     normalized_aliases = {
         "candidate_issue_signatures": sorted(_as_set(aliases.get("candidate_issue_signatures"))),
@@ -538,6 +547,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
 
 
 def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) -> StateMatchResult:
+    """Match a consensus group to persisted state using the documented deterministic strategy."""
     records = [
         record
         for record in (state or {}).get("records", [])
