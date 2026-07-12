@@ -66,6 +66,46 @@ and updated with the documented golden-update workflow.
 Keep each PR small. If a later step fails, revert only that step while keeping the
 previous guardrails and type improvements.
 
+
+### Current implementation status
+
+As of the current SPEC-13/14 continuation PR, the typing and phase-extraction
+slice is complete, with one explicit Phase 2 correctness tradeoff kept for
+posting safety:
+
+- Steps 1 and 2 are implemented for the reducer path: domain `TypedDict`
+  shapes exist and strict mypy covers `consensus`, `memory`, `render`, and
+  `schema`.
+- Step 3 is implemented for the selected posting/client slice: strict mypy also
+  covers `anchors`, `gitlab_client`, `gate`, and `post`, with `Consensus`,
+  `PostResult`, `GateResult`, `FindingGroup`, and `State` threaded through
+  post/gate/state-matching seams.
+- Steps 4 and 5 are implemented: severity ranking is centralized and unified
+  diff parsing is shared by anchor/remap and mock-reviewer code.
+- Steps 6 and 7 are implemented for the current GitLab posting path as a
+  behavior-preserving extraction:
+  `post_consensus` delegates to named context loading, group classification,
+  state planning, inline posting, and finalization phases, with focused unit
+  tests around those seams.
+- SPEC-14's last-resort matching requirement is implemented by documenting and
+  enforcing deterministic persisted-state matching in `memory.py`; semantic
+  text similarity remains consensus-only and is not used as a state recovery
+  fallback.
+- The SPEC-14d refactor reduced `post_consensus` from roughly 250 lines before
+  extraction to roughly 100 lines, with extracted helpers covering context
+  loading, state planning, inline posting, and finalization.
+- The SPEC-14 state-processing cleanup keeps the pre-write overflow guard by
+  design: `plan_state` performs a compacted state-size check before any GitLab
+  writes so overflow remains fail-closed, and `finalize_state` re-checks after
+  inline mutations add discussion ids and body hashes. This intentionally
+  preserves fail-closed GitLab write behavior over a literal single overflow
+  check.
+- The extracted `plan_state`, `post_inline`, `post_consensus`, and
+  `finalize_state` functions are all within the Phase 2 target of roughly 150
+  lines, with smaller helpers covering stale-record planning and GitLab update
+  / create sub-steps.
+
+
 ## SPEC-13 detailed plan
 
 ### 1. Add the domain module

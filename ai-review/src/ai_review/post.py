@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast, overload
@@ -45,7 +46,15 @@ from .render import (
     validate_suggestion as _validate_suggestion,
 )
 from .schema import load_json_file, now_iso, write_canonical_json
-from .types import FindingGroup, PostResult, State, StateRecord, StateRecordStatus, SummaryComment
+from .types import (
+    Consensus,
+    FindingGroup,
+    PostResult,
+    State,
+    StateRecord,
+    StateRecordStatus,
+    SummaryComment,
+)
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -211,7 +220,7 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
 
 def _state_enabled(config: dict[str, Any]) -> bool:
     state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return state_config.get("backend") == "gitlab_mr_state_note"
+    return bool(state_config.get("backend") == "gitlab_mr_state_note")
 
 
 def _list_mr_notes_if_supported(
@@ -221,7 +230,8 @@ def _list_mr_notes_if_supported(
 ) -> list[dict[str, Any]]:
     list_notes = getattr(client, "list_mr_notes", None)
     if callable(list_notes):
-        return list_notes(project_id, mr_iid)
+        notes = list_notes(project_id, mr_iid)
+        return notes if isinstance(notes, list) else []
     return []
 
 
@@ -294,7 +304,7 @@ def write_persisted_state(
     return created if isinstance(created, dict) else None
 
 
-def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
+def _candidate_signature_hashes(group: Mapping[str, Any]) -> list[str]:
     values = group.get("candidate_issue_signature_hashes")
     if not isinstance(values, list):
         values = group.get("_candidate_issue_signature_hashes", [])
@@ -302,7 +312,7 @@ def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
 
 
 def _record_for_group(
-    group: dict[str, Any],
+    group: Mapping[str, Any],
     *,
     manifest: dict[str, Any],
     pipeline_id: str,
@@ -314,8 +324,10 @@ def _record_for_group(
     remap_status: str = "exact",
 ) -> dict[str, Any]:
     previous = existing or {}
-    match_keys = group.get("match_keys") if isinstance(group.get("match_keys"), dict) else {}
-    aliases = previous.get("aliases") if isinstance(previous.get("aliases"), dict) else {}
+    raw_match_keys = group.get("match_keys")
+    match_keys = raw_match_keys if isinstance(raw_match_keys, dict) else {}
+    raw_aliases = previous.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     merged_aliases = {
         "candidate_issue_signatures": sorted(
             set(aliases.get("candidate_issue_signatures", []))
@@ -368,7 +380,7 @@ def _record_for_group(
     )
 
 
-def _has_resolution_quorum(config: dict[str, Any], consensus: dict[str, Any]) -> bool:
+def _has_resolution_quorum(config: dict[str, Any], consensus: Consensus) -> bool:
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     required = int(panel.get("min_successful_reviewers_for_resolution", 2))
     return len(consensus.get("successful_reviewers", [])) >= required
@@ -387,7 +399,8 @@ def _author_access_level(
     if not callable(member_access):
         return None
     try:
-        return member_access(project_id, user_id)
+        access_level = member_access(project_id, user_id)
+        return access_level if isinstance(access_level, int) else None
     except Exception:
         return None
 
@@ -415,7 +428,8 @@ def collect_human_commands(
             command_matches = COMMAND_RE.findall(note["body"])
             if not command_matches:
                 continue
-            author = note.get("author") if isinstance(note.get("author"), dict) else {}
+            raw_author = note.get("author")
+            author = raw_author if isinstance(raw_author, dict) else {}
             access_level = _author_access_level(client, project_id, author)
             if access_level is None or access_level < 30:
                 continue
@@ -450,7 +464,8 @@ def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
     line_range = position.get("line_range")
     if isinstance(line_range, dict) and isinstance(line_range.get("start"), dict):
         start = _line_from_position(line_range["start"])
-        end = _line_from_position(line_range.get("end", line_range["start"]))
+        raw_end = line_range.get("end", line_range["start"])
+        end = _line_from_position(raw_end if isinstance(raw_end, dict) else line_range["start"])
     else:
         start = _line_from_position(position)
         end = dict(start)
@@ -551,7 +566,8 @@ def position_side(position: dict[str, Any]) -> str | None:
 
 def _anchor_location(anchor: dict[str, Any]) -> str:
     path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
-    start = anchor.get("start") if isinstance(anchor.get("start"), dict) else {}
+    raw_start = anchor.get("start")
+    start = raw_start if isinstance(raw_start, dict) else {}
     line = start.get("new_line") or start.get("old_line")
     return f"{path}:{line}" if isinstance(line, int) else path
 
@@ -563,7 +579,7 @@ def _one_line(text: str, *, max_length: int) -> str:
     return collapsed
 
 
-def _summary_line(group: dict[str, Any]) -> str:
+def _summary_line(group: Mapping[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
     location = _anchor_location(anchor)
     severity = str(group.get("final_severity") or "").upper()
@@ -598,8 +614,8 @@ def _sort_groups(groups: list[Any]) -> list[Any]:
 
 def render_summary_body(
     run_id: str,
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
 ) -> tuple[str, str]:
     lines = ["**AI review summary**", ""]
@@ -646,7 +662,7 @@ def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | No
 
 def _note_id_from_response(response: Any) -> int | None:
     if isinstance(response, dict) and isinstance(response.get("id"), int):
-        return response["id"]
+        return int(response["id"])
     return None
 
 
@@ -655,8 +671,8 @@ def upsert_summary_comment(
     manifest: dict[str, Any],
     run_id: str,
     raw_discussions: list[dict[str, Any]],
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
     dry_run: bool = False,
@@ -693,7 +709,7 @@ def upsert_summary_comment(
 
 def _initial_post_result(
     *,
-    consensus: dict[str, Any],
+    consensus: Consensus,
     manifest: dict[str, Any],
     current_head_sha: str,
 ) -> PostResult:
@@ -721,12 +737,12 @@ def _initial_post_result(
     }
 
 
-type PostGroupClassification = tuple[
-    list[FindingGroup],
-    list[FindingGroup],
-    list[FindingGroup],
-    list[str],
-]
+@dataclass(frozen=True)
+class PostGroupClassification:
+    inline_candidates: list[FindingGroup]
+    summary_fallback_groups: list[FindingGroup]
+    fyi_groups: list[FindingGroup]
+    warnings: list[str]
 
 
 def _classify_post_groups(
@@ -767,7 +783,12 @@ def _classify_post_groups(
                 f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
             )
             summary_fallback_groups.append(group)
-    return inline_candidates, summary_fallback_groups, fyi_groups, warnings
+    return PostGroupClassification(
+        inline_candidates=inline_candidates,
+        summary_fallback_groups=summary_fallback_groups,
+        fyi_groups=fyi_groups,
+        warnings=warnings,
+    )
 
 
 def _load_current_diff_text(
@@ -782,7 +803,8 @@ def _load_current_diff_text(
     if not callable(fetch_mr_diff):
         return None
     try:
-        return fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
+        fetched = fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
+        return fetched if isinstance(fetched, str) else None
     except Exception as exc:
         warnings.append(
             f"diff_fetch_failed: inline remap skipped, anchors may be stale ({type(exc).__name__})"
@@ -814,14 +836,117 @@ def _desired_discussion_resolved(
     return None
 
 
+def _plan_stale_records(
+    *,
+    base_records: list[StateRecord],
+    planned_records: list[StateRecord],
+    planned_issue_ids: set[str],
+    protected_issue_ids: set[str],
+    human_commands: dict[str, str],
+    resolution_quorum: bool,
+    manifest: dict[str, Any],
+    pipeline_id: str,
+    outcome: PlanOutcome,
+) -> None:
+    for record in base_records:
+        issue_id = record["issue_id"]
+        if issue_id in planned_issue_ids:
+            continue
+        updated = dict(record)
+        if issue_id in protected_issue_ids:
+            if updated.get("status") == "open":
+                updated["status"] = "stale"
+                updated["remap_status"] = "ambiguous"
+        else:
+            command = human_commands.get(issue_id)
+            if command == "reopen":
+                updated["status"] = "open"
+                updated["human_disposition"] = "reopen"
+            elif command == "wontfix":
+                updated["status"] = "wontfix"
+                updated["human_disposition"] = "wontfix"
+            elif command == "resolve":
+                updated["status"] = "resolved"
+                updated["human_disposition"] = "resolve"
+            elif record.get("status") == "open":
+                updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
+                if not resolution_quorum:
+                    outcome.stale_unverified += 1
+        planned_records.append(
+            cast(
+                StateRecord,
+                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+            )
+        )
+        planned_issue_ids.add(issue_id)
+
+
+def _planned_by_issue(
+    planned_records: list[StateRecord],
+    planned_matches: dict[str, StateRecord],
+) -> dict[str, StateRecord]:
+    planned_by_issue = {record["issue_id"]: record for record in planned_records}
+    for group_issue_id, existing in planned_matches.items():
+        existing_issue_id = existing.get("issue_id")
+        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
+            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    return planned_by_issue
+
+
+def _state_retention(config: dict[str, Any]) -> dict[str, Any]:
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
+    return retention if isinstance(retention, dict) else {}
+
+
+def _planned_state_payload(
+    persisted_state: State,
+    *,
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    pipeline_id: str,
+    planned_records: list[StateRecord],
+) -> dict[str, Any]:
+    return {
+        **persisted_state,
+        "last_head_sha": manifest["head_sha"],
+        "written_by_pipeline_id": pipeline_id,
+        "updated_at": now_iso(),
+        "records": planned_records,
+        "run_history": (
+            persisted_state.get("run_history", [])
+            if isinstance(persisted_state.get("run_history"), list)
+            else []
+        )
+        + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
+    }
+
+
+def _process_state_for_persistence(
+    state: dict[str, Any],
+    *,
+    manifest: dict[str, Any],
+    pipeline_id: str,
+    retention: dict[str, Any],
+) -> tuple[State, str | None]:
+    processed_state = normalize_state(state, manifest=manifest, pipeline_id=pipeline_id)
+    processed_state = compact_state(processed_state, retention)
+    overflow = state_overflow_reason(
+        processed_state,
+        max_records=int(retention.get("max_records", 200)),
+        max_state_bytes=int(retention.get("max_state_bytes", 50000)),
+    )
+    return cast(State, processed_state), overflow
+
+
 def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
-    persisted_state: dict[str, Any],
-    inline_candidates: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    consensus: Consensus,
+    persisted_state: State,
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     human_commands: dict[str, str],
 ) -> StatePlan:
     outcome = PlanOutcome(warnings=[])
@@ -843,6 +968,7 @@ def plan_state(
         if isinstance(group.get("issue_id"), str)
     ]
     for group in all_current_groups:
+        issue_id = cast(str, group["issue_id"])
         state_for_match = {
             "records": [
                 record
@@ -850,9 +976,9 @@ def plan_state(
                 if record.get("discussion_id") not in planning_used_discussion_ids
             ]
         }
-        state_match = find_matching_record(group, state_for_match)
+        state_match = find_matching_record(group, cast(State, state_for_match))
         if state_match.status == "ambiguous":
-            ambiguous_issue_ids.add(group["issue_id"])
+            ambiguous_issue_ids.add(issue_id)
             candidate_ids = [
                 record["issue_id"]
                 for record in state_match.records
@@ -860,7 +986,7 @@ def plan_state(
             ]
             protected_issue_ids.update(candidate_ids)
             outcome.warnings.append(
-                f"ambiguous existing record match for {group['issue_id']}; "
+                f"ambiguous existing record match for {issue_id}; "
                 f"protected {len(candidate_ids)} candidate record(s)"
             )
             for candidate in state_match.records:
@@ -882,14 +1008,14 @@ def plan_state(
             cast(StateRecord, state_match.record) if state_match.status == "matched" else None
         )
         if previous is not None:
-            planned_matches[group["issue_id"]] = previous
+            planned_matches[issue_id] = previous
             if isinstance(previous.get("issue_id"), str):
                 protected_issue_ids.add(previous["issue_id"])
             if previous.get("discussion_id") is not None:
                 planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
         human_disposition = previous.get("human_disposition") if previous else None
-        command = human_commands.get(group["issue_id"])
+        command = human_commands.get(issue_id)
         if command is None and previous is not None:
             command = human_commands.get(str(previous.get("issue_id") or ""))
         if command == "wontfix":
@@ -917,111 +1043,50 @@ def plan_state(
                 ),
             )
         )
-        planned_issue_ids.add(group["issue_id"])
+        planned_issue_ids.add(issue_id)
         if previous is not None and isinstance(previous.get("issue_id"), str):
             planned_issue_ids.add(previous["issue_id"])
 
-    resolution_quorum = _has_resolution_quorum(config, consensus)
-    for record in base_records:
-        issue_id = record["issue_id"]
-        if issue_id in planned_issue_ids:
-            continue
-        if issue_id in protected_issue_ids:
-            updated = dict(record)
-            if updated.get("status") == "open":
-                updated["status"] = "stale"
-                updated["remap_status"] = (
-                    "ambiguous" if issue_id in protected_issue_ids else updated.get("remap_status")
-                )
-            planned_records.append(
-                cast(
-                    StateRecord,
-                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
-                )
-            )
-            planned_issue_ids.add(issue_id)
-            continue
-        command = human_commands.get(issue_id)
-        updated = dict(record)
-        if command == "reopen":
-            updated["status"] = "open"
-            updated["human_disposition"] = "reopen"
-        elif command == "wontfix":
-            updated["status"] = "wontfix"
-            updated["human_disposition"] = "wontfix"
-        elif command == "resolve":
-            updated["status"] = "resolved"
-            updated["human_disposition"] = "resolve"
-        elif record.get("status") == "open":
-            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
-            if not resolution_quorum:
-                outcome.stale_unverified += 1
-        planned_records.append(
-            cast(
-                StateRecord,
-                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
-            )
-        )
-    planned_state = normalize_state(
-        {
-            **persisted_state,
-            "last_head_sha": manifest["head_sha"],
-            "written_by_pipeline_id": pipeline_id,
-            "updated_at": now_iso(),
-            "records": planned_records,
-            "run_history": (
-                persisted_state.get("run_history", [])
-                if isinstance(persisted_state.get("run_history"), list)
-                else []
-            )
-            + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
-        },
+    _plan_stale_records(
+        base_records=base_records,
+        planned_records=planned_records,
+        planned_issue_ids=planned_issue_ids,
+        protected_issue_ids=protected_issue_ids,
+        human_commands=human_commands,
+        resolution_quorum=_has_resolution_quorum(config, consensus),
         manifest=manifest,
         pipeline_id=pipeline_id,
+        outcome=outcome,
     )
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
-    planned_state = compact_state(planned_state, retention if isinstance(retention, dict) else {})
-    if _state_enabled(config):
-        overflow = state_overflow_reason(
-            planned_state,
-            max_records=int(retention.get("max_records", 200))
-            if isinstance(retention, dict)
-            else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
-        )
-        if overflow is not None:
-            outcome.overflow = overflow
-            return StatePlan(
-                persisted_state=cast(State, persisted_state),
-                base_records=cast(list[StateRecord], base_records),
-                planned_records=planned_records,
-                planned_by_issue={},
-                planned_matches=planned_matches,
-                ambiguous_issue_ids=ambiguous_issue_ids,
-                pipeline_id=pipeline_id,
-                planned_state=cast(State, planned_state),
-                retention=retention if isinstance(retention, dict) else {},
-                outcome=outcome,
-            )
-
-    planned_by_issue = {record["issue_id"]: record for record in planned_records}
-    for group_issue_id, existing in planned_matches.items():
-        existing_issue_id = existing.get("issue_id")
-        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
-            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
-    return StatePlan(
-        persisted_state=cast(State, persisted_state),
-        base_records=cast(list[StateRecord], base_records),
+    planned_state = _planned_state_payload(
+        persisted_state,
+        manifest=manifest,
+        consensus=consensus,
+        pipeline_id=pipeline_id,
         planned_records=planned_records,
-        planned_by_issue=planned_by_issue,
+    )
+    retention = _state_retention(config)
+    processed_state, overflow = _process_state_for_persistence(
+        planned_state,
+        manifest=manifest,
+        pipeline_id=pipeline_id,
+        retention=retention,
+    )
+    if _state_enabled(config) and overflow is not None:
+        outcome.overflow = overflow
+
+    return StatePlan(
+        persisted_state=persisted_state,
+        base_records=base_records,
+        planned_records=planned_records,
+        planned_by_issue={}
+        if outcome.overflow is not None
+        else _planned_by_issue(planned_records, planned_matches),
         planned_matches=planned_matches,
         ambiguous_issue_ids=ambiguous_issue_ids,
         pipeline_id=pipeline_id,
-        planned_state=cast(State, planned_state),
-        retention=retention if isinstance(retention, dict) else {},
+        planned_state=processed_state,
+        retention=retention,
         outcome=outcome,
     )
 
@@ -1030,17 +1095,113 @@ def plan_state(
 class InlinePostOutcome:
     result: PostResult
     state_plan: StatePlan
-    summary_fallback_groups: list[dict[str, Any]]
+    summary_fallback_groups: list[FindingGroup]
+
+
+def _create_inline_discussion(
+    client: GitLabClient,
+    manifest: dict[str, Any],
+    result: PostResult,
+    group: FindingGroup,
+    post_group: Mapping[str, Any],
+    body: str,
+    position: dict[str, Any],
+    summary_fallback_groups: list[FindingGroup],
+) -> tuple[dict[str, Any], int] | None:
+    try:
+        discussion = client.create_discussion(
+            manifest["project_id"],
+            manifest["merge_request_iid"],
+            body,
+            position,
+        )
+    except GitLabApiError as exc:
+        if not isinstance(position.get("line_range"), dict):
+            result["warnings"].append(
+                f"create_discussion for {post_group['issue_id']} failed: {exc}"
+            )
+            summary_fallback_groups.append(group)
+            return None
+        issue_id = post_group["issue_id"]
+        result["warnings"].append(
+            f"multiline create failed for {issue_id}; retrying single-line: {exc}"
+        )
+        single_line_position = dict(position)
+        single_line_position.pop("line_range", None)
+        try:
+            discussion = client.create_discussion(
+                manifest["project_id"],
+                manifest["merge_request_iid"],
+                body,
+                single_line_position,
+            )
+        except GitLabApiError as retry_exc:
+            result["warnings"].append(
+                f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
+            )
+            summary_fallback_groups.append(group)
+            return None
+    if not isinstance(discussion, dict) or discussion.get("id") is None:
+        result["warnings"].append(
+            f"create_discussion for {group['issue_id']} returned no response body; skipped"
+        )
+        return None
+    try:
+        return discussion, root_note_id_from_discussion(discussion)
+    except GitLabApiError as exc:
+        result["warnings"].append(
+            f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
+        )
+        return None
+
+
+def _update_existing_inline_discussion(
+    client: GitLabClient,
+    manifest: dict[str, Any],
+    result: PostResult,
+    existing: StateRecord,
+    planned_record: StateRecord | None,
+    post_group: Mapping[str, Any],
+    body: str,
+    body_hash: str,
+    used_discussion_ids: set[Any],
+) -> None:
+    existing_discussion_id = str(existing["discussion_id"])
+    existing_root_note_id = cast(int, existing["root_note_id"])
+    if existing.get("last_posted_body_hash") == body_hash:
+        result["skipped_unchanged"] += 1
+        return
+    client.update_discussion_note(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+        existing_discussion_id,
+        existing_root_note_id,
+        body,
+    )
+    used_discussion_ids.add(existing["discussion_id"])
+    if planned_record is not None:
+        planned_record["discussion_id"] = existing_discussion_id
+        planned_record["root_note_id"] = existing_root_note_id
+        planned_record["last_posted_body_hash"] = body_hash
+    result["updated_discussions"] += 1
+    result["posted_discussions"].append(
+        {
+            "issue_id": str(post_group["issue_id"]),
+            "action": "updated",
+            "discussion_id": existing_discussion_id,
+            "root_note_id": existing_root_note_id,
+        }
+    )
 
 
 def post_inline(
     client: GitLabClient,
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    inline_candidates: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
     version: MergeRequestVersion,
     *,
     inline_multiline: bool,
@@ -1056,10 +1217,13 @@ def post_inline(
     """
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
+        issue_id = group["issue_id"]
+        if not isinstance(issue_id, str):
+            continue
         anchor = group["representative_anchor"]
         position = build_position(anchor, version, multiline=inline_multiline)
-        planned_record = state_plan.planned_by_issue.get(group["issue_id"])
-        if group["issue_id"] in state_plan.ambiguous_issue_ids:
+        planned_record = state_plan.planned_by_issue.get(issue_id)
+        if issue_id in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
                 "skipped inline creation"
@@ -1069,7 +1233,7 @@ def post_inline(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = state_plan.planned_matches.get(group["issue_id"])
+        existing = state_plan.planned_matches.get(issue_id)
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -1078,7 +1242,7 @@ def post_inline(
             summary_fallback_groups.append(group)
             continue
 
-        post_group = group
+        post_group: dict[str, Any] = dict(group)
         force_create_at_remapped_anchor = False
         if existing is not None:
             if existing["issue_id"] != group.get("issue_id"):
@@ -1129,82 +1293,34 @@ def post_inline(
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
-            existing_discussion_id = str(existing["discussion_id"])
-            existing_root_note_id = cast(int, existing["root_note_id"])
-            if existing.get("last_posted_body_hash") == body_hash:
-                result["skipped_unchanged"] += 1
-                continue
-            client.update_discussion_note(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                existing_discussion_id,
-                existing_root_note_id,
+            _update_existing_inline_discussion(
+                client,
+                manifest,
+                result,
+                existing,
+                planned_record,
+                post_group,
                 body,
-            )
-            used_discussion_ids.add(existing["discussion_id"])
-            if planned_record is not None:
-                planned_record["discussion_id"] = existing_discussion_id
-                planned_record["root_note_id"] = existing_root_note_id
-                planned_record["last_posted_body_hash"] = body_hash
-            result["updated_discussions"] += 1
-            result["posted_discussions"].append(
-                {
-                    "issue_id": post_group["issue_id"],
-                    "action": "updated",
-                    "discussion_id": existing_discussion_id,
-                    "root_note_id": existing_root_note_id,
-                }
+                body_hash,
+                used_discussion_ids,
             )
             continue
         if dry_run:
             result["created_discussions"] += 1
             continue
-        try:
-            discussion = client.create_discussion(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                body,
-                position,
-            )
-        except GitLabApiError as exc:
-            if isinstance(position.get("line_range"), dict):
-                issue_id = post_group["issue_id"]
-                result["warnings"].append(
-                    f"multiline create failed for {issue_id}; retrying single-line: {exc}"
-                )
-                single_line_position = dict(position)
-                single_line_position.pop("line_range", None)
-                try:
-                    discussion = client.create_discussion(
-                        manifest["project_id"],
-                        manifest["merge_request_iid"],
-                        body,
-                        single_line_position,
-                    )
-                except GitLabApiError as retry_exc:
-                    result["warnings"].append(
-                        f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
-                    )
-                    summary_fallback_groups.append(group)
-                    continue
-            else:
-                result["warnings"].append(
-                    f"create_discussion for {post_group['issue_id']} failed: {exc}"
-                )
-                summary_fallback_groups.append(group)
-                continue
-        if not isinstance(discussion, dict) or discussion.get("id") is None:
-            result["warnings"].append(
-                f"create_discussion for {group['issue_id']} returned no response body; skipped"
-            )
+        created = _create_inline_discussion(
+            client,
+            manifest,
+            result,
+            group,
+            post_group,
+            body,
+            position,
+            summary_fallback_groups,
+        )
+        if created is None:
             continue
-        try:
-            root_note_id = root_note_id_from_discussion(discussion)
-        except GitLabApiError as exc:
-            result["warnings"].append(
-                f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
-            )
-            continue
+        discussion, root_note_id = created
         result["created_discussions"] += 1
         used_discussion_ids.add(discussion["id"])
         if planned_record is not None:
@@ -1213,7 +1329,7 @@ def post_inline(
             planned_record["last_posted_body_hash"] = body_hash
         result["posted_discussions"].append(
             {
-                "issue_id": post_group["issue_id"],
+                "issue_id": str(post_group["issue_id"]),
                 "action": "created",
                 "discussion_id": str(discussion["id"]),
                 "root_note_id": root_note_id,
@@ -1230,12 +1346,12 @@ def finalize_state(
     client: GitLabClient,
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
     raw_discussions: list[dict[str, Any]],
-    summary_fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     *,
     fallback_to_summary: bool,
     fyi_mode: str,
@@ -1279,7 +1395,7 @@ def finalize_state(
                 )
                 if desired:
                     result["resolved_discussions"] += 1
-        final_state = normalize_state(
+        final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,
                 "records": state_plan.planned_records,
@@ -1287,12 +1403,7 @@ def finalize_state(
             },
             manifest=manifest,
             pipeline_id=state_plan.pipeline_id,
-        )
-        final_state = compact_state(final_state, state_plan.retention)
-        overflow = state_overflow_reason(
-            final_state,
-            max_records=int(state_plan.retention.get("max_records", 200)),
-            max_state_bytes=int(state_plan.retention.get("max_state_bytes", 50000)),
+            retention=state_plan.retention,
         )
         if overflow is not None:
             result["status"] = "partial_failed"
@@ -1303,7 +1414,7 @@ def finalize_state(
                 client,
                 config,
                 manifest,
-                final_state,
+                cast(dict[str, Any], final_state),
                 dry_run=dry_run,
             )
         except Exception as exc:
@@ -1319,39 +1430,26 @@ def finalize_state(
     return result
 
 
-def post_consensus(
+@dataclass(frozen=True)
+class PostContext:
+    version: MergeRequestVersion
+    current_diff_text: str | None
+    raw_discussions: list[dict[str, Any]]
+    persisted_state: State
+    human_commands: dict[str, str]
+
+
+def prepare_post_context(
     client: GitLabClient,
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
+    result: PostResult,
     *,
-    dry_run: bool = False,
-    diff_text: str | None = None,
-) -> PostResult:
-    current_head_sha = client.fetch_current_mr_head_sha(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    result = _initial_post_result(
-        consensus=consensus,
-        manifest=manifest,
-        current_head_sha=current_head_sha,
-    )
-    posting = config.get("posting", {})
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
-        result["status"] = "stale_head"
-        return result
-
+    dry_run: bool,
+    diff_text: str | None,
+) -> PostContext:
     version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
     current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
-    max_fyi = int(limits.get("max_fyi_findings", 50))
-
     raw_discussions = (
         []
         if dry_run
@@ -1388,31 +1486,76 @@ def post_consensus(
         manifest["project_id"],
         raw_discussions,
     )
+    return PostContext(
+        version=version,
+        current_diff_text=current_diff_text,
+        raw_discussions=raw_discussions,
+        persisted_state=cast(State, persisted_state),
+        human_commands=human_commands,
+    )
+
+
+def post_consensus(
+    client: GitLabClient,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    *,
+    dry_run: bool = False,
+    diff_text: str | None = None,
+) -> PostResult:
+    current_head_sha = client.fetch_current_mr_head_sha(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+    )
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+        result["status"] = "stale_head"
+        return result
+
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+    context = prepare_post_context(
+        client,
+        config,
+        manifest,
+        result,
+        dry_run=dry_run,
+        diff_text=diff_text,
+    )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
-    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
-        _classify_post_groups(
-            cast(list[FindingGroup], consensus.get("groups", [])),
-            inline_sides=inline_sides,
-            inline_multiline=inline_multiline,
-            max_surface=max_surface,
-        )
+    classification = _classify_post_groups(
+        consensus.get("groups", []),
+        inline_sides=inline_sides,
+        inline_multiline=inline_multiline,
+        max_surface=max_surface,
     )
-    inline_candidates = cast(list[dict[str, Any]], classified_inline)
-    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
-    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
-    result["warnings"].extend(classification_warnings)
+    inline_candidates = classification.inline_candidates
+    summary_fallback_groups = classification.summary_fallback_groups
+    fyi_groups = classification.fyi_groups
+    result["warnings"].extend(classification.warnings)
 
     state_plan = plan_state(
         config,
         manifest,
         consensus,
-        persisted_state,
+        context.persisted_state,
         inline_candidates,
         summary_fallback_groups,
         fyi_groups,
-        human_commands,
+        context.human_commands,
     )
     result["warnings"].extend(state_plan.outcome.warnings)
     result["stale_unverified"] += state_plan.outcome.stale_unverified
@@ -1428,9 +1571,9 @@ def post_consensus(
         state_plan,
         inline_candidates,
         summary_fallback_groups,
-        version,
+        context.version,
         inline_multiline=inline_multiline,
-        current_diff_text=current_diff_text,
+        current_diff_text=context.current_diff_text,
         dry_run=dry_run,
     )
 
@@ -1441,7 +1584,7 @@ def post_consensus(
         consensus,
         inline_outcome.result,
         inline_outcome.state_plan,
-        raw_discussions,
+        context.raw_discussions,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         fallback_to_summary=fallback_to_summary,
@@ -1462,7 +1605,7 @@ def cli(argv: list[str] | None = None) -> int:
 
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
-    consensus = load_json_file(args.consensus)
+    consensus = cast(Consensus, load_json_file(args.consensus))
     token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
     api_url = (
         os.environ.get("CI_API_V4_URL")

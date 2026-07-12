@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
-from .types import MatchPrecedence, StateMatchStatus
+from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
 STATE_MATCHING_STRATEGY = (
     "Persisted state matching is intentionally limited to deterministic issue IDs, "
@@ -40,8 +41,8 @@ STATE_NOTE_LEGACY_RE = re.compile(
 @dataclass(frozen=True)
 class StateMatchResult:
     status: StateMatchStatus
-    record: dict[str, Any] | None
-    records: list[dict[str, Any]]
+    record: StateRecord | None
+    records: list[StateRecord]
     precedence: MatchPrecedence | None
 
 
@@ -416,7 +417,7 @@ def _retention_sort_key(item: dict[str, Any]) -> tuple[str, int, int, str, str, 
     )
 
 
-def _group_match_keys(group: dict[str, Any]) -> dict[str, Any]:
+def _group_match_keys(group: Mapping[str, Any]) -> dict[str, Any]:
     match_keys = group.get("match_keys")
     if isinstance(match_keys, dict):
         return match_keys
@@ -434,18 +435,18 @@ def _group_match_keys(group: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_category(record: dict[str, Any]) -> str:
+def _record_category(record: Mapping[str, Any]) -> str:
     category = record.get("category")
     return str(category) if category is not None else ""
 
 
-def _group_category(group: dict[str, Any]) -> str:
+def _group_category(group: Mapping[str, Any]) -> str:
     match_keys = _group_match_keys(group)
     category = match_keys.get("category", group.get("category"))
     return str(category) if category is not None else ""
 
 
-def _record_path_keys(record: dict[str, Any]) -> set[str]:
+def _record_path_keys(record: Mapping[str, Any]) -> set[str]:
     values: set[str] = set()
     anchor = record.get("anchor")
     if isinstance(anchor, dict):
@@ -459,14 +460,14 @@ def _record_path_keys(record: dict[str, Any]) -> set[str]:
     return {value for value in values if value}
 
 
-def _record_aliases(record: dict[str, Any], key: str) -> set[str]:
+def _record_aliases(record: Mapping[str, Any], key: str) -> set[str]:
     aliases = record.get("aliases")
     if not isinstance(aliases, dict):
         return set()
     return _as_set(aliases.get(key))
 
 
-def _group_values(group: dict[str, Any], key: str) -> set[str]:
+def _group_values(group: Mapping[str, Any], key: str) -> set[str]:
     match_keys = _group_match_keys(group)
     return _as_set(match_keys.get(key))
 
@@ -491,7 +492,7 @@ def _anchor_key(anchor: Any) -> AnchorMatchKey | None:
     )
 
 
-def _group_anchor_keys(group: dict[str, Any]) -> set[AnchorMatchKey]:
+def _group_anchor_keys(group: Mapping[str, Any]) -> set[AnchorMatchKey]:
     anchors = group.get("all_anchors")
     if not isinstance(anchors, list):
         anchors = [group.get("representative_anchor")]
@@ -499,11 +500,11 @@ def _group_anchor_keys(group: dict[str, Any]) -> set[AnchorMatchKey]:
     return {key for key in keys if key is not None}
 
 
-def _same_category(record: dict[str, Any], group: dict[str, Any]) -> bool:
+def _same_category(record: Mapping[str, Any], group: Mapping[str, Any]) -> bool:
     return bool(_record_category(record)) and _record_category(record) == _group_category(group)
 
 
-def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedence: str) -> bool:
+def _matches_precedence(record: StateRecord, group: FindingGroup, precedence: str) -> bool:
     if precedence == "exact_issue_id":
         issue_id = group.get("issue_id")
         return isinstance(issue_id, str) and issue_id == record.get("issue_id")
@@ -546,7 +547,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
     raise ValueError(f"unknown state match precedence: {precedence}")
 
 
-def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) -> StateMatchResult:
+def find_matching_record(group: FindingGroup, state: State | None) -> StateMatchResult:
     """Match a consensus group to persisted state using the documented deterministic strategy."""
     records = [
         record
@@ -556,7 +557,11 @@ def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) ->
         and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:
-        matches = [record for record in records if _matches_precedence(record, group, precedence)]
+        matches = [
+            record
+            for record in records
+            if _matches_precedence(record, group, precedence)
+        ]
         if len(matches) == 1:
             return StateMatchResult(
                 status="matched",

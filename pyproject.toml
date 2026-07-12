@@ -21,6 +21,7 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.5",
   "mypy>=1.10",
+  "types-requests>=2.32",
 ]
 
 [tool.setuptools.packages.find]
@@ -50,5 +51,9 @@ module = [
   "ai_review.memory",
   "ai_review.render",
   "ai_review.schema",
+  "ai_review.anchors",
+  "ai_review.gitlab_client",
+  "ai_review.gate",
+  "ai_review.post",
 ]
 strict = true

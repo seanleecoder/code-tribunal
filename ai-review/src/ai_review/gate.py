@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import Any, cast
 
 from .config import load_config
 from .schema import load_json_file, validate_instance, write_canonical_json
-from .types import GateResult
+from .types import Consensus, GateResult, PostResult
 
 
 def evaluate_gate(
     config: dict[str, Any],
-    consensus: dict[str, Any],
-    post_result: dict[str, Any],
+    consensus: Consensus,
+    post_result: PostResult,
 ) -> tuple[GateResult, int]:
     if config.get("merge_gate", {}).get("enabled") is False:
         disabled_result: GateResult = {
@@ -23,7 +23,7 @@ def evaluate_gate(
         }
         return disabled_result, 0
 
-    if post_result.get("status") == "stale_head":
+    if post_result["status"] == "stale_head":
         stale_head_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
@@ -33,17 +33,17 @@ def evaluate_gate(
         }
         return stale_head_result, 0
 
-    if post_result.get("status") in {"failed", "partial_failed", "state_overflow"}:
+    if post_result["status"] in {"failed", "partial_failed", "state_overflow"}:
         post_failure_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
             "status": "failed_post_result",
             "block_merge": True,
-            "reason": str(post_result.get("status")),
+            "reason": post_result["status"],
         }
         return post_failure_result, 7
 
-    if consensus.get("summary", {}).get("block_merge") is True:
+    if consensus["summary"]["block_merge"] is True:
         blocking_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
@@ -71,10 +71,15 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
 
+    consensus = load_json_file(args.consensus)
+    validate_instance(consensus, "consensus.schema.json")
+    post_result = load_json_file(args.post_result)
+    validate_instance(post_result, "post_result.schema.json")
+
     result, exit_code = evaluate_gate(
         load_config(args.config),
-        load_json_file(args.consensus),
-        load_json_file(args.post_result),
+        cast(Consensus, consensus),
+        cast(PostResult, post_result),
     )
     validate_instance(result, "gate_result.schema.json")
     write_canonical_json(args.out, result)

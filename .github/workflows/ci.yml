@@ -23,15 +23,19 @@ jobs:
         run: ruff check ai-review/src ai-review/tests
       - name: Tests with coverage
         run: pytest ai-review/tests --cov=ai_review --cov-report=term-missing
-      - name: Mypy strict reducer slice
+      - name: Mypy strict SPEC-13/14 slice
         run: >-
           mypy
           ai-review/src/ai_review/consensus.py
           ai-review/src/ai_review/memory.py
           ai-review/src/ai_review/render.py
           ai-review/src/ai_review/schema.py
+          ai-review/src/ai_review/anchors.py
+          ai-review/src/ai_review/gitlab_client.py
+          ai-review/src/ai_review/gate.py
+          ai-review/src/ai_review/post.py
       # Mypy also checks the whole ai_review package as a visible non-blocking signal
-      # while later PRs close posting/client typing gaps.
+      # while remaining package-wide typing debt is closed incrementally.
       - name: Mypy whole-package reality check
         continue-on-error: true
         run: mypy

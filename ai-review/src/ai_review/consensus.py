@@ -12,7 +12,7 @@ from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
 from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
-from .types import FindingGroup
+from .types import Consensus, FindingGroup, PanelStatus, State
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
@@ -523,9 +523,9 @@ def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     config: dict[str, Any],
-    state: dict[str, Any] | None = None,
+    state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> Consensus:
     enabled = sorted(enabled_reviewers(config))
     successful = sorted(
         batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success"
@@ -614,7 +614,7 @@ def build_consensus(
                     "precedence": None,
                 },
             }
-            state_match = find_matching_record(group, state)
+            state_match = find_matching_record(cast(FindingGroup, group), state)
             if state_match.status == "matched" and state_match.record is not None:
                 group["issue_id"] = state_match.record["issue_id"]
                 group["issue_id_source"] = "matched_state"
@@ -653,8 +653,8 @@ def build_consensus(
         "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
         "successful_reviewers": successful,
         "failed_reviewers": failed,
-        "panel_status": status,
-        "groups": groups,
+        "panel_status": cast(PanelStatus, status),
+        "groups": cast(list[FindingGroup], groups),
         "summary": {
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
@@ -707,11 +707,11 @@ def cli(argv: list[str] | None = None) -> int:
     batches = []
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))
-    state = load_json_file(args.state) if args.state else None
+    state = cast(State | None, load_json_file(args.state)) if args.state else None
     if state is None:
         aliases_path = inputs / "state_aliases.json"
         if aliases_path.exists():
-            state = state_from_aliases(load_json_file(aliases_path))
+            state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
     critique_batches = []
     if _critique_enabled(config):
         for path in sorted(Path(args.critiques_dir).glob("*.json")):
