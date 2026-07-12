@@ -23,7 +23,7 @@ def evaluate_gate(
         }
         return disabled_result, 0
 
-    if post_result.get("status") == "stale_head":
+    if post_result["status"] == "stale_head":
         stale_head_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
@@ -33,17 +33,17 @@ def evaluate_gate(
         }
         return stale_head_result, 0
 
-    if post_result.get("status") in {"failed", "partial_failed", "state_overflow"}:
+    if post_result["status"] in {"failed", "partial_failed", "state_overflow"}:
         post_failure_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
             "status": "failed_post_result",
             "block_merge": True,
-            "reason": str(post_result.get("status")),
+            "reason": post_result["status"],
         }
         return post_failure_result, 7
 
-    if consensus.get("summary", {}).get("block_merge") is True:
+    if consensus["summary"]["block_merge"] is True:
         blocking_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
