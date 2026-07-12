@@ -523,7 +523,7 @@ def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     config: dict[str, Any],
-    state: dict[str, Any] | None = None,
+    state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     enabled = sorted(enabled_reviewers(config))
@@ -614,7 +614,7 @@ def build_consensus(
                     "precedence": None,
                 },
             }
-            state_match = find_matching_record(cast(FindingGroup, group), cast(State | None, state))
+            state_match = find_matching_record(cast(FindingGroup, group), state)
             if state_match.status == "matched" and state_match.record is not None:
                 group["issue_id"] = state_match.record["issue_id"]
                 group["issue_id_source"] = "matched_state"
@@ -707,11 +707,11 @@ def cli(argv: list[str] | None = None) -> int:
     batches = []
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))
-    state = load_json_file(args.state) if args.state else None
+    state = cast(State | None, load_json_file(args.state)) if args.state else None
     if state is None:
         aliases_path = inputs / "state_aliases.json"
         if aliases_path.exists():
-            state = state_from_aliases(load_json_file(aliases_path))
+            state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
     critique_batches = []
     if _critique_enabled(config):
         for path in sorted(Path(args.critiques_dir).glob("*.json")):
