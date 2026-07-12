@@ -209,13 +209,37 @@ def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
         prefix = raw_line[:1]
         text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
         if prefix == "+":
-            lines.append(DiffLine(None, new_line, text, hunk_header, "added"))
+            lines.append(
+                DiffLine(
+                    old_line=None,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="added",
+                )
+            )
             new_line += 1
         elif prefix == "-":
-            lines.append(DiffLine(old_line, None, text, hunk_header, "removed"))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=None,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="removed",
+                )
+            )
             old_line += 1
         else:
-            lines.append(DiffLine(old_line, new_line, text, hunk_header, "context"))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="context",
+                )
+            )
             old_line += 1
             new_line += 1
 
