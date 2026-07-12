@@ -224,21 +224,23 @@ class PostTests(unittest.TestCase):
         fyi["issue_id"] = "4" * 64
         fyi["decision"] = "fyi"
 
-        inline, fallback, fyi_groups, warnings = _classify_post_groups(
+        classification = _classify_post_groups(
             [surface, unsupported, multiline, fyi],
             inline_sides={"new"},
             inline_multiline=False,
             max_surface=25,
         )
 
-        self.assertEqual([group["issue_id"] for group in inline], ["1" * 64])
         self.assertEqual(
-            [group["issue_id"] for group in fallback],
+            [group["issue_id"] for group in classification.inline_candidates], ["1" * 64]
+        )
+        self.assertEqual(
+            [group["issue_id"] for group in classification.summary_fallback_groups],
             ["2" * 64, "3" * 64],
         )
-        self.assertEqual([group["issue_id"] for group in fyi_groups], ["4" * 64])
+        self.assertEqual([group["issue_id"] for group in classification.fyi_groups], ["4" * 64])
         self.assertEqual(
-            warnings,
+            classification.warnings,
             [
                 "summary fallback required for unsupported side: old",
                 "summary fallback required for multiline anchor",
@@ -254,18 +256,22 @@ class PostTests(unittest.TestCase):
         blocker["issue_id"] = "2" * 64
         blocker["final_severity"] = "blocker"
 
-        inline, fallback, fyi_groups, warnings = _classify_post_groups(
+        classification = _classify_post_groups(
             [minor, blocker],
             inline_sides={"new"},
             inline_multiline=False,
             max_surface=1,
         )
 
-        self.assertEqual([group["issue_id"] for group in inline], ["2" * 64])
-        self.assertEqual([group["issue_id"] for group in fallback], ["1" * 64])
-        self.assertEqual(fyi_groups, [])
         self.assertEqual(
-            warnings,
+            [group["issue_id"] for group in classification.inline_candidates], ["2" * 64]
+        )
+        self.assertEqual(
+            [group["issue_id"] for group in classification.summary_fallback_groups], ["1" * 64]
+        )
+        self.assertEqual(classification.fyi_groups, [])
+        self.assertEqual(
+            classification.warnings,
             ["surface fallback to summary: max_posted_surface_findings (1) reached"],
         )
 

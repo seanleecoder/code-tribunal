@@ -736,12 +736,12 @@ def _initial_post_result(
     }
 
 
-type PostGroupClassification = tuple[
-    list[FindingGroup],
-    list[FindingGroup],
-    list[FindingGroup],
-    list[str],
-]
+@dataclass(frozen=True)
+class PostGroupClassification:
+    inline_candidates: list[FindingGroup]
+    summary_fallback_groups: list[FindingGroup]
+    fyi_groups: list[FindingGroup]
+    warnings: list[str]
 
 
 def _classify_post_groups(
@@ -782,7 +782,12 @@ def _classify_post_groups(
                 f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
             )
             summary_fallback_groups.append(group)
-    return inline_candidates, summary_fallback_groups, fyi_groups, warnings
+    return PostGroupClassification(
+        inline_candidates=inline_candidates,
+        summary_fallback_groups=summary_fallback_groups,
+        fyi_groups=fyi_groups,
+        warnings=warnings,
+    )
 
 
 def _load_current_diff_text(
@@ -1407,18 +1412,16 @@ def post_consensus(
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
-    classified_inline, classified_fallback, classified_fyi, classification_warnings = (
-        _classify_post_groups(
-            consensus.get("groups", []),
-            inline_sides=inline_sides,
-            inline_multiline=inline_multiline,
-            max_surface=max_surface,
-        )
+    classification = _classify_post_groups(
+        consensus.get("groups", []),
+        inline_sides=inline_sides,
+        inline_multiline=inline_multiline,
+        max_surface=max_surface,
     )
-    inline_candidates = cast(list[dict[str, Any]], classified_inline)
-    summary_fallback_groups = cast(list[dict[str, Any]], classified_fallback)
-    fyi_groups = cast(list[dict[str, Any]], classified_fyi)
-    result["warnings"].extend(classification_warnings)
+    inline_candidates = cast(list[dict[str, Any]], classification.inline_candidates)
+    summary_fallback_groups = cast(list[dict[str, Any]], classification.summary_fallback_groups)
+    fyi_groups = cast(list[dict[str, Any]], classification.fyi_groups)
+    result["warnings"].extend(classification.warnings)
 
     state_plan = plan_state(
         config,
