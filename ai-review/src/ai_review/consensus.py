@@ -9,12 +9,10 @@ from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import effective_config_summary, enabled_reviewers, load_config
 from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
-from .memory import STATE_MATCHING_STRATEGY, find_matching_record, state_from_aliases
+from .memory import find_matching_record, state_from_aliases
 from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
 from .types import FindingGroup
-
-CONSENSUS_STATE_MATCHING_BOUNDARY = STATE_MATCHING_STRATEGY
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
@@ -58,7 +56,7 @@ def _normalized_issue_tokens(finding: dict[str, Any]) -> set[str]:
 
 
 # Text similarity is only an opt-in consensus grouping signal. Persisted state
-# recovery remains governed by CONSENSUS_STATE_MATCHING_BOUNDARY.
+# recovery remains governed by ai_review.memory.STATE_MATCHING_STRATEGY.
 def _issue_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
     a_tokens = _normalized_issue_tokens(a)
     b_tokens = _normalized_issue_tokens(b)
