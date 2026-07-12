@@ -19,6 +19,7 @@ type Category = Literal[
 ]
 type AnchorSide = Literal["new", "old", "unchanged"]
 type Decision = Literal["surface", "fyi", "drop"]
+type ReviewerId = str
 type PanelStatus = Literal["full", "degraded", "advisory_only", "failed"]
 type IssueIdSource = Literal["matched_state", "new_signature", "ambiguous_unassigned"]
 type StateMatchStatus = Literal["matched", "new", "ambiguous"]
@@ -117,7 +118,7 @@ class Finding(TypedDict):
 class FindingBatch(TypedDict):
     schema_version: Literal["finding_batch.v1"]
     run_id: str
-    reviewer: str
+    reviewer: ReviewerId
     adapter_status: AdapterStatus
     model: str
     started_at: str
@@ -127,7 +128,7 @@ class FindingBatch(TypedDict):
 
 class Critique(TypedDict, total=False):
     target_source_finding_id: str
-    reviewer: str
+    reviewer: ReviewerId
     verdict: Literal["agree", "dispute", "noise", "duplicate"]
     rationale: str
     duplicate_of: str | None
@@ -136,7 +137,7 @@ class Critique(TypedDict, total=False):
 
 class CritiqueBatch(TypedDict, total=False):
     schema_version: str
-    reviewer: str
+    reviewer: ReviewerId
     status: str
     critiques: list[Critique]
     error: str | None
@@ -177,7 +178,7 @@ class FindingGroup(TypedDict, total=False):
     vote_count: int
     critique_support_count: int
     critique_noise_count: int
-    contributing_reviewers: list[str]
+    contributing_reviewers: list[ReviewerId]
     source_finding_ids: list[str]
     candidate_issue_signature_hashes: list[str]
     critique_summary: CritiqueSummary
@@ -204,8 +205,8 @@ class Consensus(TypedDict):
     merge_request_iid: str
     head_sha: str
     input_manifest_sha256: str
-    successful_reviewers: list[str]
-    failed_reviewers: list[str]
+    successful_reviewers: list[ReviewerId]
+    failed_reviewers: list[ReviewerId]
     panel_status: PanelStatus
     groups: list[FindingGroup]
     summary: ConsensusSummary
