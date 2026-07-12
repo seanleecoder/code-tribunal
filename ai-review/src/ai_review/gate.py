@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import Any, cast
 
 from .config import load_config
 from .schema import load_json_file, validate_instance, write_canonical_json
-from .types import GateResult
+from .types import Consensus, GateResult, PostResult
 
 
 def evaluate_gate(
     config: dict[str, Any],
-    consensus: dict[str, Any],
-    post_result: dict[str, Any],
+    consensus: Consensus,
+    post_result: PostResult,
 ) -> tuple[GateResult, int]:
     if config.get("merge_gate", {}).get("enabled") is False:
         disabled_result: GateResult = {
@@ -73,8 +73,8 @@ def cli(argv: list[str] | None = None) -> int:
 
     result, exit_code = evaluate_gate(
         load_config(args.config),
-        load_json_file(args.consensus),
-        load_json_file(args.post_result),
+        cast(Consensus, load_json_file(args.consensus)),
+        cast(PostResult, load_json_file(args.post_result)),
     )
     validate_instance(result, "gate_result.schema.json")
     write_canonical_json(args.out, result)
