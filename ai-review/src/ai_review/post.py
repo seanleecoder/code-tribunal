@@ -1340,39 +1340,26 @@ def finalize_state(
     return result
 
 
-def post_consensus(
+@dataclass(frozen=True)
+class PostContext:
+    version: MergeRequestVersion
+    current_diff_text: str | None
+    raw_discussions: list[dict[str, Any]]
+    persisted_state: dict[str, Any]
+    human_commands: dict[str, str]
+
+
+def prepare_post_context(
     client: GitLabClient,
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: Consensus,
+    result: PostResult,
     *,
-    dry_run: bool = False,
-    diff_text: str | None = None,
-) -> PostResult:
-    current_head_sha = client.fetch_current_mr_head_sha(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    result = _initial_post_result(
-        consensus=consensus,
-        manifest=manifest,
-        current_head_sha=current_head_sha,
-    )
-    posting = config.get("posting", {})
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
-        result["status"] = "stale_head"
-        return result
-
+    dry_run: bool,
+    diff_text: str | None,
+) -> PostContext:
     version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
     current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
-    max_fyi = int(limits.get("max_fyi_findings", 50))
-
     raw_discussions = (
         []
         if dry_run
@@ -1409,6 +1396,53 @@ def post_consensus(
         manifest["project_id"],
         raw_discussions,
     )
+    return PostContext(
+        version=version,
+        current_diff_text=current_diff_text,
+        raw_discussions=raw_discussions,
+        persisted_state=persisted_state,
+        human_commands=human_commands,
+    )
+
+
+def post_consensus(
+    client: GitLabClient,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    *,
+    dry_run: bool = False,
+    diff_text: str | None = None,
+) -> PostResult:
+    current_head_sha = client.fetch_current_mr_head_sha(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+    )
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+        result["status"] = "stale_head"
+        return result
+
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+    context = prepare_post_context(
+        client,
+        config,
+        manifest,
+        result,
+        dry_run=dry_run,
+        diff_text=diff_text,
+    )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
     # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
@@ -1427,11 +1461,11 @@ def post_consensus(
         config,
         manifest,
         consensus,
-        persisted_state,
+        context.persisted_state,
         inline_candidates,
         summary_fallback_groups,
         fyi_groups,
-        human_commands,
+        context.human_commands,
     )
     result["warnings"].extend(state_plan.outcome.warnings)
     result["stale_unverified"] += state_plan.outcome.stale_unverified
@@ -1447,9 +1481,9 @@ def post_consensus(
         state_plan,
         inline_candidates,
         summary_fallback_groups,
-        version,
+        context.version,
         inline_multiline=inline_multiline,
-        current_diff_text=current_diff_text,
+        current_diff_text=context.current_diff_text,
         dry_run=dry_run,
     )
 
@@ -1460,7 +1494,7 @@ def post_consensus(
         consensus,
         inline_outcome.result,
         inline_outcome.state_plan,
-        raw_discussions,
+        context.raw_discussions,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         fallback_to_summary=fallback_to_summary,
