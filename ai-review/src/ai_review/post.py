@@ -839,7 +839,7 @@ def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
     consensus: Consensus,
-    persisted_state: dict[str, Any],
+    persisted_state: State,
     inline_candidates: list[dict[str, Any]],
     summary_fallback_groups: list[dict[str, Any]],
     fyi_groups: list[dict[str, Any]],
@@ -1016,8 +1016,8 @@ def plan_state(
         if overflow is not None:
             outcome.overflow = overflow
             return StatePlan(
-                persisted_state=cast(State, persisted_state),
-                base_records=cast(list[StateRecord], base_records),
+                persisted_state=persisted_state,
+                base_records=base_records,
                 planned_records=planned_records,
                 planned_by_issue={},
                 planned_matches=planned_matches,
@@ -1034,8 +1034,8 @@ def plan_state(
         if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
             planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
     return StatePlan(
-        persisted_state=cast(State, persisted_state),
-        base_records=cast(list[StateRecord], base_records),
+        persisted_state=persisted_state,
+        base_records=base_records,
         planned_records=planned_records,
         planned_by_issue=planned_by_issue,
         planned_matches=planned_matches,
@@ -1345,7 +1345,7 @@ class PostContext:
     version: MergeRequestVersion
     current_diff_text: str | None
     raw_discussions: list[dict[str, Any]]
-    persisted_state: dict[str, Any]
+    persisted_state: State
     human_commands: dict[str, str]
 
 
@@ -1400,7 +1400,7 @@ def prepare_post_context(
         version=version,
         current_diff_text=current_diff_text,
         raw_discussions=raw_discussions,
-        persisted_state=persisted_state,
+        persisted_state=cast(State, persisted_state),
         human_commands=human_commands,
     )
 
