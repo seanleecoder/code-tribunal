@@ -191,6 +191,7 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
     - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
+    - ``AI_REVIEW_PANEL_STRATEGY`` -> ``panel.strategy`` (``full`` or opt-in ``adaptive``)
     - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` ->
       ``panel.grouping.semantic.enabled``
     - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` ->
@@ -228,6 +229,12 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         merge_gate = config.setdefault("merge_gate", {})
         if isinstance(merge_gate, dict):
             merge_gate["enabled"] = flag
+
+    strategy_env = os.environ.get("AI_REVIEW_PANEL_STRATEGY")
+    if strategy_env is not None and strategy_env.strip():
+        panel = config.setdefault("panel", {})
+        if isinstance(panel, dict):
+            panel["strategy"] = strategy_env.strip()
 
     semantic_enabled_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED")
     semantic_threshold_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD")
@@ -281,6 +288,12 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
         "state_backend": state.get("backend") if isinstance(state, dict) else None,
+        "panel_strategy": str(panel.get("strategy", "full")) if isinstance(panel, dict) else "full",
+        "panel_adaptive_first_pass_reviewers": (
+            list(panel.get("adaptive", {}).get("first_pass_reviewers", []))
+            if isinstance(panel, dict) and isinstance(panel.get("adaptive"), dict)
+            else []
+        ),
         "panel_grouping_semantic_enabled": bool(
             isinstance(semantic, dict) and semantic.get("enabled") is True
         ),
@@ -387,6 +400,22 @@ def validate_config(config: dict[str, Any]) -> None:
     if enabled_count < 1:
         raise ConfigError("at least one reviewer must be enabled")
     panel = config.get("panel", {})
+    if not isinstance(panel, dict):
+        raise ConfigError("panel must be a mapping")
+    strategy = panel.setdefault("strategy", "full")
+    if strategy not in {"full", "adaptive"}:
+        raise ConfigError("panel.strategy must be full or adaptive")
+    adaptive = panel.setdefault("adaptive", {})
+    if not isinstance(adaptive, dict):
+        raise ConfigError("panel.adaptive must be a mapping")
+    first_pass = adaptive.setdefault("first_pass_reviewers", [])
+    if not isinstance(first_pass, list) or not all(isinstance(item, str) for item in first_pass):
+        raise ConfigError("panel.adaptive.first_pass_reviewers must be a list of reviewer names")
+    threshold_adaptive = adaptive.setdefault("high_confidence_threshold", 0.8)
+    if not isinstance(threshold_adaptive, int | float) or not (
+        0.0 <= float(threshold_adaptive) <= 1.0
+    ):
+        raise ConfigError("panel.adaptive.high_confidence_threshold must be between 0.0 and 1.0")
     min_successful = panel.get("min_successful_reviewers_for_blocking")
     if not isinstance(min_successful, int) or not (1 <= min_successful <= enabled_count):
         raise ConfigError(
