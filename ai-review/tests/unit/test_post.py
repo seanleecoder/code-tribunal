@@ -134,6 +134,9 @@ class FakePostClient:
         )
         return {"id": note_id, "body": body}
 
+    def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return list(self.mr_notes)
+
     def create_state_note(self, project_id: str, change_id: str, body: str) -> dict[str, Any]:
         return self.create_mr_note(project_id, change_id, body)
 

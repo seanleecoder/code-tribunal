@@ -220,16 +220,13 @@ def _state_enabled(config: dict[str, Any]) -> bool:
     return bool(state_config.get("backend") == "gitlab_mr_state_note")
 
 
-def _list_mr_notes_if_supported(
+def _list_state_notes(
     client: ReviewPlatform,
     project_id: str,
-    mr_iid: str,
+    change_id: str,
 ) -> list[dict[str, Any]]:
-    list_notes = getattr(client, "list_mr_notes", None)
-    if callable(list_notes):
-        notes = list_notes(project_id, mr_iid)
-        return notes if isinstance(notes, list) else []
-    return []
+    notes = client.list_state_notes(project_id, change_id)
+    return notes if isinstance(notes, list) else []
 
 
 def load_persisted_state(
@@ -242,10 +239,8 @@ def load_persisted_state(
     state_config = config.get("state", {})
     bot_author_id = client.current_user_id()
     if bot_author_id is None:
-        raise RuntimeError(
-            "state backend requires GitLab current_user lookup to verify state-note author"
-        )
-    notes = _list_mr_notes_if_supported(
+        raise RuntimeError("state backend requires current_user lookup to verify state-note author")
+    notes = _list_state_notes(
         client,
         manifest["project_id"],
         manifest["merge_request_iid"],
@@ -392,11 +387,8 @@ def _author_access_level(
     user_id = author.get("id")
     if user_id is None:
         return None
-    member_access = getattr(client, "member_access_level", None)
-    if not callable(member_access):
-        return None
     try:
-        access_level = member_access(project_id, user_id)
+        access_level = client.member_access_level(project_id, user_id)
         return access_level if isinstance(access_level, int) else None
     except Exception:
         return None
@@ -1369,26 +1361,24 @@ def finalize_state(
         ),
     )
     if _state_enabled(config):
-        resolve_discussion = getattr(client, "resolve_thread", None)
-        if callable(resolve_discussion):
-            prior_status = {
-                record["issue_id"]: record.get("status") for record in state_plan.base_records
-            }
-            for record in state_plan.planned_records:
-                discussion_id = record.get("discussion_id")
-                if discussion_id is None:
-                    continue
-                desired = _desired_discussion_resolved(record, prior_status)
-                if desired is None or dry_run:
-                    continue
-                resolve_discussion(
-                    manifest["project_id"],
-                    manifest["merge_request_iid"],
-                    str(discussion_id),
-                    desired,
-                )
-                if desired:
-                    result["resolved_discussions"] += 1
+        prior_status = {
+            record["issue_id"]: record.get("status") for record in state_plan.base_records
+        }
+        for record in state_plan.planned_records:
+            discussion_id = record.get("discussion_id")
+            if discussion_id is None:
+                continue
+            desired = _desired_discussion_resolved(record, prior_status)
+            if desired is None or dry_run:
+                continue
+            client.resolve_thread(
+                manifest["project_id"],
+                manifest["merge_request_iid"],
+                str(discussion_id),
+                desired,
+            )
+            if desired:
+                result["resolved_discussions"] += 1
         final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,

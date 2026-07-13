@@ -16,7 +16,7 @@ def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
 
     assert isinstance(fake, ReviewPlatform)
     platform = cast(ReviewPlatform, fake)
-    version = platform.fetch_latest_mr_version("project", 1)
+    version = platform.fetch_version("project", 1)
     position = platform.build_position(
         {
             "old_path": "a.py",
@@ -27,9 +27,13 @@ def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
         },
         version,
     )
-    discussion = platform.create_discussion("project", 1, "body", position)
+    assert platform.can_retry_as_single_line({"line_range": {}})
+    assert "line_range" not in platform.single_line_position({"line_range": {}, "new_line": 2})
+    discussion = platform.create_inline_comment("project", 1, "body", position)
     assert platform.root_note_id_from_thread(discussion) == 100
     assert platform.current_user_id() == 10
+    assert platform.member_access_level("project", 10) == 40
+    assert platform.list_threads("project", 1)
 
 
 def test_gitlab_adapter_exposes_review_platform_protocol() -> None:
