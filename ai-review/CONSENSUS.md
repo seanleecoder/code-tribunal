@@ -114,7 +114,9 @@ Same inputs → identical `consensus.json`, every time.
    enabled — see below). Only `success`-status critique batches count, and a critic
    **cannot critique its own finding**. Majority non-author `noise` verdicts drop a
    group; a `duplicate` verdict only merges findings when a *third-party* critic's
-   link is validated; severity downgrade and advisory escalation are both opt-in.
+   link is validated. Severity downgrade is opt-in; advisory escalation is
+   enabled by default and only promotes peer-supported `fyi` findings to the
+   non-blocking `surface` decision.
    All disputes against a group are capped at **one total severity level** of
    downgrade, regardless of how many critics dispute it, and critique adjustment
    may never downgrade a `blocker` into a non-blocking severity.

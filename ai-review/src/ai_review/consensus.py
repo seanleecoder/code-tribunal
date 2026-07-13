@@ -488,7 +488,7 @@ def _apply_critiques(
                 downgrades.setdefault(group_index, []).append(adjusted)
 
     allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
-    allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", False))
+    allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", True))
     for index, group in enumerate(groups):
         if group.get("issue_id_source") == "ambiguous_unassigned":
             continue

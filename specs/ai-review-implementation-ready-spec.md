@@ -1,8 +1,15 @@
 # Multi-Agent Consensus Code Review - Implementation-Ready Build Spec
 
-Version: 1.0
-Verified: 2026-06-29  
+Version: 1.1
+Verified: 2026-07-13
 Target platform: GitLab merge requests, optional Jira Cloud integration in v1, Jira Data Center deferred unless explicitly needed
+
+Implementation status: the core build phases are implemented. A private GitLab
+18.6.2 downstream run on 2026-07-13 validated the complete mirrored child DAG,
+all three review and critique adapters, deterministic consensus, one inline
+discussion, one FYI summary, and a passing mirrored gate. This document now
+serves as the normative architecture record; executable schemas, tests, and CI
+templates are authoritative where older phase wording is historical.
 
 ## 1. Purpose
 
@@ -322,7 +329,7 @@ critique:
   max_rounds: 1
   blind_reviewer_identity: true
   can_add_quorum_votes: false
-  allow_advisory_escalation: false
+  allow_advisory_escalation: true
 
 posting:
   mode: gitlab_discussions
@@ -413,17 +420,17 @@ Validation rules:
 
 ## 8. Runtime architecture
 
-### 8.1 Pipeline stages
+### 8.1 Pipeline DAG
 
 ```text
-prepare -> review -> critique_optional -> consensus -> post -> gate
+ai_review stage: prepare -> review -> critique_optional -> consensus -> post -> gate
 ```
 
-### 8.2 Stage responsibilities
+### 8.2 Logical phase responsibilities
 
-| Stage | Side effects | Credentials | Output artifacts |
+| Phase | Side effects | Credentials | Output artifacts |
 | --- | --- | --- | --- |
-| `prepare` | GitLab read only | `GITLAB_READ_TOKEN` | `inputs/` bundle, `out/status/prepare.json` |
+| `prepare` | GitLab read only | `GITLAB_READ_TOKEN` | `inputs/` bundle |
 | `review_*` | None outside job | One provider key only | `out/findings/<reviewer>.json`, `out/status/<reviewer>.json` |
 | `critique_*` | None outside job | One provider key only | `out/critiques/<reviewer>.json`, `out/status/critique-<reviewer>.json` |
 | `consensus` | None outside job | No provider, GitLab, or Jira token | `out/consensus/consensus.json` |
@@ -2050,208 +2057,47 @@ If `AI_FLOW_EVENT=thread_reply`:
 <!-- ai-review-response:v1 run_id=<run_id> discussion_id=<discussion_id> -->
 ```
 
-## 20. CI template
+## 20. CI templates
 
-`ci/review.gitlab-ci.yml` must follow this structure.
+The executable templates are the only source of truth for CI syntax:
 
-```yaml
-stages:
-  - prepare
-  - review
-  - critique
-  - consensus
-  - post
-  - gate
+- [`ai-review/ci/review.gitlab-ci.yml`](../ai-review/ci/review.gitlab-ci.yml)
+  defines the review DAG.
+- [`ai-review/ci/review-child.gitlab-ci.yml`](../ai-review/ci/review-child.gitlab-ci.yml)
+  supplies the child pipeline's single stage.
+- The [GitLab integration guide](../README.md#gitlab-ci-integration-guide--image-pinning)
+  and [trusted-CI runbook](../docs/improvement-specs/spec-06-trusted-ci-runbook.md)
+  contain consumer examples.
 
-variables:
-  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:<base-image-digest>
-  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:<reviewer-image-digest>
-  AI_REVIEW_TRUSTED_IMAGE_SHA: <source-commit-sha>
-  AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
-  AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
-  PYTHONPATH: /opt/ai-review/src
+This specification intentionally does not embed a copy of the executable YAML.
+The following invariants are normative:
 
-.ai_review_rules:
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-
-prepare_ai_review:
-  stage: prepare
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: true
-  script:
-    - python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - inputs/
-      - out/status/prepare.json
-
-.review_template:
-  stage: review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
-  interruptible: true
-  allow_failure: true
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-  script:
-    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - out/findings/
-      - out/status/
-
-review_claude:
-  extends: .review_template
-  variables:
-    REVIEWER: claude
-
-review_codex:
-  extends: .review_template
-  variables:
-    REVIEWER: codex
-
-review_opencode:
-  extends: .review_template
-  variables:
-    REVIEWER: opencode
-
-.critique_template:
-  stage: critique
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
-  interruptible: true
-  allow_failure: true
-  rules:
-    - if: '$AI_REVIEW_CRITIQUE_ENABLED == "true"'
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: review_claude
-      artifacts: true
-      optional: true
-    - job: review_codex
-      artifacts: true
-      optional: true
-    - job: review_opencode
-      artifacts: true
-      optional: true
-  script:
-    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - out/critiques/
-      - out/status/
-
-critique_claude:
-  extends: .critique_template
-  variables:
-    REVIEWER: claude
-
-critique_codex:
-  extends: .critique_template
-  variables:
-    REVIEWER: codex
-
-critique_opencode:
-  extends: .critique_template
-  variables:
-    REVIEWER: opencode
-
-consensus_ai_review:
-  stage: consensus
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: true
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: review_claude
-      artifacts: true
-      optional: true
-    - job: review_codex
-      artifacts: true
-      optional: true
-    - job: review_opencode
-      artifacts: true
-      optional: true
-    - job: critique_claude
-      artifacts: true
-      optional: true
-    - job: critique_codex
-      artifacts: true
-      optional: true
-    - job: critique_opencode
-      artifacts: true
-      optional: true
-  script:
-    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --out out/consensus/consensus.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/consensus/
-      - out/status/consensus.json
-
-post_ai_review:
-  stage: post
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: false
-  resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: consensus_ai_review
-      artifacts: true
-  script:
-    - python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/post/
-      - out/status/post.json
-
-ai_review_gate:
-  stage: gate
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: false
-  needs:
-    - job: consensus_ai_review
-      artifacts: true
-    - job: post_ai_review
-      artifacts: true
-  script:
-    - python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/gate/
-      - out/status/gate.json
-```
-
-Notes:
-
-- Reviewer jobs have no `resource_group`.
-- Reviewer jobs use `allow_failure: true`.
-- `consensus`, `post`, and `gate` must not use `allow_failure: true`.
-- Wrapper timeouts must fire before GitLab job timeouts so artifacts can be written.
-- `needs` entries that may not exist use `optional: true`.
-- Jobs using `needs` must declare `artifacts: true` for artifact transfer.
-- Configure the `resource_group` process mode as `newest_ready_first` or `newest_first` through GitLab API if available for the deployment. Jobs under this lock must be idempotent.
+- All logical phases share one `ai_review` stage and are ordered by `needs`;
+  `prepare_ai_review` has `needs: []`.
+- Reviewer and critique jobs use `allow_failure: true`, have no
+  `resource_group`, and use trailing `[reviewer]` identities so GitLab groups
+  them without hiding the adapter. Consensus, posting, and gating are not
+  allowed to fail.
+- Optional jobs use `optional: true`, and every artifact dependency explicitly
+  enables artifact transfer.
+- Wrapper timeouts fire before GitLab job timeouts so status artifacts can be
+  written. Posting remains serialized and idempotent under its MR-scoped
+  `resource_group`.
+- Child mode uses exactly two `trigger:include:project` entries: the exact child
+  wrapper and DAG paths, from the configured trusted project, at the same full
+  40-character commit SHA, with `strategy: mirror`. Extra, duplicate, string,
+  local, remote, component, and template entries are forbidden. The bridge
+  defines no variables, sets `inherit:variables: false`, and explicitly disables
+  `trigger:forward:yaml_variables` and `pipeline_variables`; parent values must
+  not override trusted child images, configuration, endpoints, or mock controls.
+- Direct mode requires the exact DAG project include at the configured full
+  commit SHA and forbids local definitions of Code Tribunal jobs. Because it
+  shares the parent pipeline's configuration namespace, it also requires
+  protected CI configuration and review of every other include; child mode is
+  the preferred isolation boundary for secret-bearing review jobs.
+- Configure the posting `resource_group` process mode as `newest_ready_first`
+  or `newest_first` through the GitLab API when available. Jobs under the lock
+  must remain idempotent.
 
 ## 21. Build phases and acceptance criteria
 
@@ -2286,7 +2132,7 @@ Acceptance:
 
 Deliverables:
 
-- `prepare_ai_review`, `review_claude`, `consensus_ai_review`, `post_ai_review`, and `ai_review_gate` jobs.
+- `prepare_ai_review`, `AI review: [claude]`, `consensus_ai_review`, `post_ai_review`, and `ai_review_gate` jobs.
 - `gitlab_client.py` with MR version fetching and single-line added-line discussion create/update/resolve.
 - Single-reviewer consensus path.
 - Inline posting for added lines only.
@@ -2386,7 +2232,10 @@ Acceptance:
 
 - Two non-author `noise` critiques drop a finding before posting.
 - Non-author `agree` critiques do not increase `vote_count` and cannot create quorum.
-- With `critique.allow_advisory_escalation=false`, Phase 5 output matches Phase 3 except for critique metadata and drops/downgrades.
+- With an explicit `critique.allow_advisory_escalation=false`, Phase 5 output
+  matches Phase 3 except for critique metadata and drops/downgrades; the shipped
+  default is `true` so peer-supported advisory findings are surfaced without
+  becoming merge-blocking.
 - `critique.rounds=0` exactly matches Phase 3 behavior.
 - Failed critique jobs do not fail consensus.
 - No critic sees peer critiques from the same round.

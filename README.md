@@ -31,13 +31,13 @@ Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pr
 
 ```mermaid
 flowchart TD
-    MR[GitLab Merge Request Event] --> Prepare[Stage 1: prepare\nBuild Immutable Input Bundle]
-    Prepare -->|input_bundle/| Reviewers[Stage 2: review\nParallel Reviewer Fan-Out]
+    MR[GitLab Merge Request Event] --> Prepare[ai_review DAG: prepare\nBuild Immutable Input Bundle]
+    Prepare -->|input_bundle/| Reviewers[ai_review DAG: review\nParallel Reviewer Fan-Out]
 
     subgraph Panel ["Reviewer Panel (Isolated Containers)"]
-        Claude[review_claude\nClaude Haiku 4.5\nclaude-code CLI]
-        Codex[review_codex\nGPT-5.4-mini\ncodex exec CLI]
-        OpenCode[review_opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
+        Claude[AI review: claude\nClaude Haiku 4.5\nclaude-code CLI]
+        Codex[AI review: codex\nGPT-5.4-mini\ncodex exec CLI]
+        OpenCode[AI review: opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
     end
 
     Reviewers --> Claude
@@ -49,20 +49,23 @@ flowchart TD
     OpenCode -->|out/findings/opencode.json| Critique
 
     subgraph CritiqueStage ["Critique Phase (Optional Phase 5)"]
-        Critique[Stage 3: critique\nBlind Cross-Examination]
+        Critique[ai_review DAG: critique\nBlind Cross-Examination]
     end
 
-    Critique -->|pooled_findings & critiques| Consensus[Stage 4: consensus\nCanonical Hashing & Quorum Voting]
-    Consensus -->|Canonical Hashing & Deduplication| Post[Stage 5: post\nGitLab Discussions & State Note]
-    Post -->|Discussion Threads & State Note| Gate[Stage 6: gate\nCI Pipeline Gate Evaluation]
+    Critique -->|pooled_findings & critiques| Consensus[ai_review DAG: consensus\nCanonical Hashing & Quorum Voting]
+    Consensus -->|Canonical Hashing & Deduplication| Post[ai_review DAG: post\nGitLab Discussions & State Note]
+    Post -->|Discussion Threads & State Note| Gate[ai_review DAG: gate\nCI Pipeline Gate Evaluation]
     Gate -->|CI Job Pass / Fail| Verdict{Merge Gate Decision}
 ```
 
 ---
 
-## 6-Stage CI Pipeline Execution Lifecycle
+## Single-Stage CI DAG Execution Lifecycle
 
-The pipeline executes sequentially across 6 distinct stages defined in [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
+The pipeline uses one `ai_review` stage with six logical phases ordered by
+`needs`. This keeps consumer pipelines compact without sacrificing artifact or
+failure dependencies. The same DAG can run directly or in a mirrored child
+pipeline.
 
 ### 1. `prepare` (Input Bundle Packaging)
 - Executed by `python -m ai_review.input_bundle prepare`.
@@ -73,16 +76,15 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
   - `manifest.json`: Commit SHAs, project/MR IDs, target branch metadata.
   - `state_aliases.json`: Historical issue context hashes and discussion IDs.
   - `config.review.yaml`: Active runtime configuration.
-- Outputs `out/status/prepare.json`.
 
 ### 2. `review` (Parallel Reviewer Fan-Out)
-- Executes `review_claude`, `review_codex`, and `review_opencode` in parallel (`allow_failure: true`).
+- Executes `AI review: [claude]`, `AI review: [codex]`, and `AI review: [opencode]` in parallel (`allow_failure: true`). The bracket suffixes preserve reviewer identity while allowing GitLab's regular pipeline graph to collapse the jobs into one group.
 - Each reviewer job runs inside `$AI_REVIEW_REVIEWER_IMAGE` executing wrapper scripts ([ai-review/adapters/run_reviewer.sh](ai-review/adapters/run_reviewer.sh)).
 - Output findings are strictly validated against [ai-review/schemas/finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json).
 - Status reports are saved to `out/status/<reviewer>.json`.
 
 ### 3. `critique` (Blind Cross-Examination - Optional)
-- Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes `critique_claude`, `critique_codex`, and `critique_opencode`. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
+- Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes the grouped `AI critique: [claude|codex|opencode]` jobs. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
 - Reviewers evaluate peer findings, producing agreement (`agree`), dispute (`dispute`), noise (`noise`), or duplicate (`duplicate`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
@@ -225,7 +227,7 @@ critique:
   max_rounds: 1 # Max critique iteration rounds allowed
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: false # Security default: do not let critique promote advisory findings
+  allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
   allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
@@ -422,24 +424,87 @@ make validate-local
 
 To integrate Code Tribunal into downstream projects:
 
-1. **Declare Stages & Include the Trusted CI Template**: Add the AI review stages to your root `.gitlab-ci.yml` `stages:` list and include the review template from a protected repository/ref that merge-request authors cannot edit:
+> **Unreleased compatibility note:** the grouped job names replace
+> `review_<reviewer>` and `critique_<reviewer>`. Consumers with custom `needs`,
+> overrides, dashboards, or scripts that reference those identifiers must move
+> to `AI review: [reviewer]` and `AI critique: [reviewer]` before adopting this
+> template revision.
+
+| Previous job | Grouped job |
+|---|---|
+| `review_claude` | `AI review: [claude]` |
+| `review_codex` | `AI review: [codex]` |
+| `review_opencode` | `AI review: [opencode]` |
+| `critique_claude` | `AI critique: [claude]` |
+| `critique_codex` | `AI critique: [codex]` |
+| `critique_opencode` | `AI critique: [opencode]` |
+
+1. **Choose direct or child-pipeline integration from a trusted template project.**
+
+   Direct mode adds one stage to the consumer pipeline:
+
    ```yaml
    stages:
-     - prepare
-     - review
-     - critique
-     - consensus
-     - post
-     - gate
-     # ... your existing pipeline stages (e.g. build, test, deploy)
+     # ... existing stages
+     - ai_review
+     # ... later stages such as deploy
 
    include:
      - project: 'org/code-tribunal-ci'
-       ref: 'v1.0.0' # protected tag or protected branch
-       file: '/review.gitlab-ci.yml'
+       ref: '<40-character-template-commit-sha>'
+       file: '/ai-review/ci/review.gitlab-ci.yml'
    ```
 
-   **Do not use `include: local` for secret-bearing AI review jobs in merge-request pipelines.** GitLab resolves local includes from the MR source branch, so an attacker could rewrite the review, post, or gate job definitions before protected tokens are consumed. Host `review.gitlab-ci.yml` in a separate protected template repository or protected branch/tag, require CODEOWNERS approval for changes, and pin consumers to a reviewed ref.
+   Child-pipeline mode keeps the parent graph to one mirrored bridge job. The
+   bridge starts immediately, while later stages still wait for the child gate:
+
+   ```yaml
+   stages:
+     # ... existing stages
+     - ai_review
+     # ... later stages such as deploy
+
+   ai_review:
+     stage: ai_review
+     needs: []
+     inherit:
+       variables: false
+     rules:
+       - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+       - if: '$CI_PIPELINE_SOURCE == "web"'
+       - if: '$CI_PIPELINE_SOURCE == "api"'
+     trigger:
+       include:
+         - project: 'org/code-tribunal-ci'
+           ref: '<40-character-template-commit-sha>'
+           file: '/ai-review/ci/review-child.gitlab-ci.yml'
+         - project: 'org/code-tribunal-ci'
+           ref: '<same-40-character-template-commit-sha>'
+           file: '/ai-review/ci/review.gitlab-ci.yml'
+       strategy: mirror
+       forward:
+         yaml_variables: false
+         pipeline_variables: false
+   ```
+
+   **Child mode must use exactly those two project includes.** Do not add string,
+   local, remote, component, template, duplicate, or third project entries to
+   `trigger:include`. Host the templates in a separate protected project,
+   require CODEOWNERS approval, and pin both files to the same reviewed full
+   commit SHA.
+
+   The bridge must not define `variables`, and both forwarding flags must remain
+   explicitly disabled. Forwarded values become high-precedence downstream
+   pipeline variables and could otherwise replace trusted image, configuration,
+   endpoint, or mock-mode settings. Root variables for unrelated parent jobs are
+   safe only because `inherit:variables: false` and the two forwarding guards
+   isolate them from the child.
+
+   Direct mode shares the parent pipeline's configuration namespace. Other
+   top-level or transitive includes can redefine jobs after a local audit, so
+   use child mode for the strongest isolation. If direct mode is required,
+   protect the root CI configuration and every included source with approval or
+   a GitLab pipeline execution policy.
 
 2. **Image Variables & Cutover State**:
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
@@ -468,7 +533,20 @@ To integrate Code Tribunal into downstream projects:
 | `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
 | `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |
 
-Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file with `scripts/verify_pipeline_trust.py path/to/.gitlab-ci.yml` before rollout.
+Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
+
+```bash
+PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+  path/to/.gitlab-ci.yml \
+  --mode child \
+  --template-project org/code-tribunal-ci \
+  --template-sha <40-character-template-commit-sha>
+```
+
+Use `--mode direct` for direct integration. Supply the expected project and SHA
+from protected deployment configuration, not from merge-request-controlled CI
+variables. The auditor validates the local composition; it does not inspect the
+expanded contents of unrelated or transitive includes.
 
 
 ### Upgrade note: render body hash v1
@@ -521,6 +599,11 @@ changes with `make update-golden`; review the resulting fixture diff before merg
 >   the same value. The prepare stage records the effective config into
 >   `inputs/manifest.json`, and the consensus stage re-derives it and **warns** if its
 >   own view disagrees — a signal that a variable was scoped to only some jobs.
+> - Child mode deliberately does not accept YAML, manual, scheduled, API, or
+>   trigger pipeline variables from its parent. Configure approved runtime
+>   options as protected project/group variables in GitLab settings. Introduce
+>   typed child-pipeline inputs for any future per-run option; do not re-enable
+>   general forwarding.
 
 ---
 

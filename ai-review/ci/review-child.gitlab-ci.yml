@@ -1,0 +1,6 @@
+# Protected child-pipeline stage wrapper. A consumer trigger must combine this
+# file with review.gitlab-ci.yml using two include:project entries pinned to the
+# same trusted ref. Do not add a nested local include: GitLab can resolve it in
+# the consuming project instead of the template project.
+stages:
+  - ai_review
