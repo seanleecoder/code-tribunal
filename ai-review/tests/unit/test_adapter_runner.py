@@ -743,7 +743,12 @@ def _write_adapter(adapter_dir: Path, reviewer: str, script: str) -> None:
 
 class AdapterStatusEndToEndTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._env_keys = ["AI_REVIEW_INPUT_DIR", "AI_REVIEW_OUTPUT_DIR", "AI_REVIEW_CONFIG"]
+        self._env_keys = [
+            "AI_REVIEW_INPUT_DIR",
+            "AI_REVIEW_OUTPUT_DIR",
+            "AI_REVIEW_CONFIG",
+            "AI_REVIEW_ADAPTIVE_FULL_PASS",
+        ]
         self._previous = {key: os.environ.get(key) for key in self._env_keys}
 
     def tearDown(self) -> None:
@@ -757,6 +762,108 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         os.environ["AI_REVIEW_INPUT_DIR"] = str(paths["input_dir"])
         os.environ["AI_REVIEW_OUTPUT_DIR"] = str(paths["output_dir"])
         os.environ["AI_REVIEW_CONFIG"] = str(config_path)
+
+
+
+    def _write_adaptive_config(self, paths: dict[str, Path]) -> Path:
+        config_path = paths["config_dir"] / "review.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "schema_version: review_config.v1",
+                    "reviewers:",
+                    "  first:",
+                    "    enabled: true",
+                    "    adapter: adapters/first.sh",
+                    "    model: first-model",
+                    "    effort: medium",
+                    "    timeout_seconds: 30",
+                    "    max_findings: 50",
+                    "    credential_variable: FIRST_KEY",
+                    "  later:",
+                    "    enabled: true",
+                    "    adapter: adapters/later.sh",
+                    "    model: later-model",
+                    "    effort: medium",
+                    "    timeout_seconds: 30",
+                    "    max_findings: 50",
+                    "    credential_variable: LATER_KEY",
+                    "panel:",
+                    "  strategy: adaptive",
+                    "  adaptive:",
+                    "    first_pass_reviewers: [first]",
+                    "    first_pass_effort: low",
+                    "    high_confidence_threshold: 0.8",
+                    "  expected_reviewers: 2",
+                    "  min_successful_reviewers_for_blocking: 1",
+                    "  min_successful_reviewers_for_resolution: 1",
+                    "  quorum:",
+                    "    mode: absolute",
+                    "    votes_required: 2",
+                    *(_CONFIG_TAIL[7:]),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return config_path
+
+    def test_adaptive_first_pass_skips_non_first_pass_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = self._write_adaptive_config(paths)
+            sentinel = paths["output_dir"] / "later_ran.txt"
+            _write_adapter(
+                paths["adapter_dir"],
+                "later",
+                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("later", "review"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "later.json")
+            self.assertEqual(batch["adapter_status"], "skipped")
+            status = load_json_file(paths["output_dir"] / "status" / "later.json")
+            self.assertEqual(status["status"], "skipped")
+            self.assertEqual(status["error_class"], "AdaptiveFirstPass")
+            self.assertFalse(sentinel.exists())
+
+    def test_adaptive_full_pass_bypasses_first_pass_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = self._write_adaptive_config(paths)
+            sentinel = paths["output_dir"] / "later_ran.txt"
+            _write_adapter(
+                paths["adapter_dir"],
+                "later",
+                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+            )
+            self._set_env(paths, config_path)
+            os.environ["AI_REVIEW_ADAPTIVE_FULL_PASS"] = "1"
+
+            self.assertEqual(run_adapter("later", "review"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "later.json")
+            self.assertEqual(batch["adapter_status"], "success")
+            self.assertTrue(sentinel.exists())
+
+    def test_adaptive_first_pass_effort_overrides_reviewer_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = self._write_adaptive_config(paths)
+            seen = paths["output_dir"] / "first_effort.txt"
+            _write_adapter(
+                paths["adapter_dir"],
+                "first",
+                "#!/bin/sh\n"
+                f'printf "%s" "${{AI_REVIEW_EFFORT:-<unset>}}" > "{seen}"\n'
+                "printf '{\"findings\":[]}'\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("first", "review"), 0)
+
+            self.assertEqual(seen.read_text(encoding="utf-8"), "low")
 
     def test_status_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

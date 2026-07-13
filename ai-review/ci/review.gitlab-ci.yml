@@ -219,6 +219,8 @@ review_full_opencode:
     - job: review_opencode
       artifacts: true
       optional: true
+    - job: adaptive_panel_decision
+      artifacts: true
     - job: review_full_claude
       artifacts: true
       optional: true

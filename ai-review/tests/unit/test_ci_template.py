@@ -218,6 +218,23 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
         self.assertNotIn("optional: true", prepare_need.group(1))
 
+    def test_critique_needs_adaptive_decision_dotenv(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^\.critique_template:\n(.*?)(?=^\S)", text)
+        self.assertIsNotNone(match, "critique template block not found")
+        critique_block = match.group(1)
+
+        adaptive_need = re.search(
+            r"(?ms)^    - job: adaptive_panel_decision\n(.*?)(?=^    - job:|\Z)",
+            critique_block,
+        )
+        self.assertIsNotNone(
+            adaptive_need,
+            "critique must need adaptive_panel_decision so GitLab injects dotenv gating vars",
+        )
+        self.assertIn("artifacts: true", adaptive_need.group(1))
+        self.assertNotIn("optional: true", adaptive_need.group(1))
+
     def test_gitlab_image_build_uses_repo_pins(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("image_validate", text)

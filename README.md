@@ -60,9 +60,9 @@ flowchart TD
 
 ---
 
-## 6-Stage CI Pipeline Execution Lifecycle
+## 8-Stage CI Pipeline Execution Lifecycle
 
-The pipeline executes sequentially across 6 distinct stages defined in [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
+The pipeline executes sequentially across 8 distinct stages defined in [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
 
 ### 1. `prepare` (Input Bundle Packaging)
 - Executed by `python -m ai_review.input_bundle prepare`.
@@ -81,12 +81,24 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 - Output findings are strictly validated against [ai-review/schemas/finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json).
 - Status reports are saved to `out/status/<reviewer>.json`.
 
-### 3. `critique` (Blind Cross-Examination - Optional)
+### 3. `adaptive_decision` (Adaptive Escalation Decision)
+- Executed by `python -m ai_review.adaptive decide`.
+- Reads first-pass `out/findings/*.json` batches and writes `out/status/adaptive_decision.json` plus dotenv exports.
+- In `panel.strategy: full`, this is an audit/no-op decision and full panel behavior remains unchanged.
+- In `panel.strategy: adaptive`, clean first passes skip `review_full_*` model work and critique; risky or ambiguous first-pass output escalates.
+
+### 4. `review_full` (Conditional Full-Panel Review)
+- Executes `review_full_claude`, `review_full_codex`, and `review_full_opencode`.
+- Jobs exit before LLM execution unless adaptive escalation requires reviewer work not already done in the first pass.
+- The established full-panel consensus path is preserved after escalation.
+
+### 5. `critique` (Blind Cross-Examination - Optional)
 - Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes `critique_claude`, `critique_codex`, and `critique_opencode`. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
+- In `panel.strategy: adaptive`, critique exits early when `adaptive_decision` reports a clean first pass with no escalation.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
 - Reviewers evaluate peer findings, producing agreement (`agree`), dispute (`dispute`), noise (`noise`), or duplicate (`duplicate`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
-### 4. `consensus` (Deduplication & Quorum Voting)
+### 6. `consensus` (Deduplication & Quorum Voting)
 - Executed by `python -m ai_review.consensus`.
 - Reads all finding batches and critique reports.
 - Normalizes file paths and line anchors.
@@ -99,7 +111,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 - Outputs `out/consensus/consensus.json` conforming to [ai-review/schemas/consensus.schema.json](ai-review/schemas/consensus.schema.json).
 - For a full walkthrough of the "LLMs propose, deterministic Python decides" model — how differently-shaped reviewer output is normalized and how the vote/severity/critique logic reaches a reproducible decision — see [ai-review/CONSENSUS.md](ai-review/CONSENSUS.md).
 
-### 5. `post` (Idempotent Upsert & State Persistence)
+### 7. `post` (Idempotent Upsert & State Persistence)
 - Executed by `python -m ai_review.post`.
 - Acquires GitLab resource lock (`ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}`).
 - Matches consensus findings against prior state records using line remapping (`anchors.py` and `memory.py`).
@@ -112,7 +124,7 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 - Writes an updated hidden state note (`ai-review-state:v1`) containing base64url-encoded state payload with SHA-256 integrity checksum.
 - Outputs `out/post/post_result.json` matching [ai-review/schemas/post_result.schema.json](ai-review/schemas/post_result.schema.json).
 
-### 6. `gate` (CI Pipeline Gate Enforcement)
+### 8. `gate` (Merge Blocking)
 - Executed by `python -m ai_review.gate`.
 - Reads `consensus.json` and `post_result.json`.
 - Enforces merge policy: if `block_merge: true` and active blocking findings exist, exits with non-zero exit code (`1`), blocking the MR pipeline.
@@ -427,6 +439,8 @@ To integrate Code Tribunal into downstream projects:
    stages:
      - prepare
      - review
+     - adaptive_decision
+     - review_full
      - critique
      - consensus
      - post
@@ -440,6 +454,8 @@ To integrate Code Tribunal into downstream projects:
    ```
 
    **Do not use `include: local` for secret-bearing AI review jobs in merge-request pipelines.** GitLab resolves local includes from the MR source branch, so an attacker could rewrite the review, post, or gate job definitions before protected tokens are consumed. Host `review.gitlab-ci.yml` in a separate protected template repository or protected branch/tag, require CODEOWNERS approval for changes, and pin consumers to a reviewed ref.
+
+   **Compatibility note:** this template version requires the `adaptive_decision` and `review_full` stages above. `AI_REVIEW_PANEL_STRATEGY=adaptive` is currently implemented in the GitLab CI template; the GitHub Actions template remains on the full-panel flow.
 
 2. **Image Variables & Cutover State**:
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
@@ -464,6 +480,7 @@ To integrate Code Tribunal into downstream projects:
 | `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
 | `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes | Yes |
 | `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes | Yes |
+| `AI_REVIEW_PANEL_STRATEGY` | Optional panel strategy override (`full` default, `adaptive` for GitLab two-step first-pass/full-panel escalation). | No | Optional | Optional |
 | `JIRA_EMAIL` | Jira Cloud user email (if Jira integration enabled). | No | Optional | Optional |
 | `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
 | `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |

@@ -38,7 +38,7 @@ reviewers:
 
 # Panel voting and consensus aggregation rules
 panel:
-  strategy: full # Panel strategy: full (default) or adaptive (opt-in; used for escalation planning/measurement until CI can safely rerun full-panel escalation)
+  strategy: full # Panel strategy: full (default) or adaptive (opt-in first pass, then conditional full-panel review + critique on escalation)
   adaptive:
     first_pass_reviewers: [claude] # Initial reviewer set for adaptive escalation analysis; full strategy ignores this
     first_pass_effort: low # Optional lower effort for adaptive first-pass reviewer jobs (low|medium|high|xhigh|max)
