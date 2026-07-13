@@ -1,17 +1,38 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     import yaml  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal envs
     yaml = None
 
-SECRET_JOB_KEYWORDS = ("review", "critique", "prepare", "post", "gate", "ai_review")
-REVIEW_TEMPLATE_NAMES = {"review.gitlab-ci.yml", "review-child.gitlab-ci.yml"}
+IntegrationMode = Literal["child", "direct"]
+
+REVIEW_DAG_PATH = "/ai-review/ci/review.gitlab-ci.yml"
+REVIEW_CHILD_PATH = "/ai-review/ci/review-child.gitlab-ci.yml"
+REVIEW_TEMPLATE_PATHS = {REVIEW_DAG_PATH, REVIEW_CHILD_PATH}
+PROJECT_INCLUDE_KEYS = {"project", "ref", "file"}
+FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
+RESERVED_DIRECT_JOB_NAMES = {
+    ".ai_review_rules",
+    ".critique_template",
+    ".review_template",
+    "AI critique: [claude]",
+    "AI critique: [codex]",
+    "AI critique: [opencode]",
+    "AI review: [claude]",
+    "AI review: [codex]",
+    "AI review: [opencode]",
+    "ai_review_gate",
+    "consensus_ai_review",
+    "post_ai_review",
+    "prepare_ai_review",
+}
 
 
 def _load_yaml(path: Path) -> Any:
@@ -26,111 +47,190 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
-def _is_review_template(value: str) -> bool:
-    return Path(value).name in REVIEW_TEMPLATE_NAMES
-
-
-def _review_include_issues(value: Any, *, location: str) -> list[str]:
+def _validate_expected_trust_root(project: str, sha: str) -> list[str]:
     issues: list[str] = []
-    for include in _as_list(value):
-        if isinstance(include, str):
-            if _is_review_template(include):
-                issues.append(
-                    f"{location} uses a string/local Code Tribunal review template; "
-                    "use project + pinned ref"
-                )
-            continue
-        if not isinstance(include, dict):
-            continue
-        local = include.get("local")
-        if isinstance(local, str) and _is_review_template(local):
+    if not project.strip():
+        issues.append("trusted template project must be non-empty")
+    if FULL_SHA_RE.fullmatch(sha) is None:
+        issues.append("trusted template ref must be an exact 40-character lowercase commit SHA")
+    return issues
+
+
+def _validate_project_entry(
+    entry: dict[str, Any],
+    *,
+    location: str,
+    expected_project: str,
+    expected_sha: str,
+) -> list[str]:
+    issues: list[str] = []
+    keys = set(entry)
+    if keys != PROJECT_INCLUDE_KEYS:
+        issues.append(
+            f"{location} must contain exactly project, ref, and file; got {sorted(keys)}"
+        )
+    if entry.get("project") != expected_project:
+        issues.append(f"{location} must use trusted project {expected_project!r}")
+    ref = entry.get("ref")
+    if not isinstance(ref, str) or FULL_SHA_RE.fullmatch(ref) is None:
+        issues.append(f"{location} ref must be a full 40-character lowercase commit SHA")
+    elif ref != expected_sha:
+        issues.append(f"{location} must use trusted commit SHA {expected_sha}")
+    return issues
+
+
+def _validate_child_mode(
+    config: dict[str, Any], *, expected_project: str, expected_sha: str
+) -> list[str]:
+    issues: list[str] = []
+    bridge = config.get("ai_review")
+    if not isinstance(bridge, dict):
+        return ["child mode requires an ai_review bridge job"]
+    trigger = bridge.get("trigger")
+    if not isinstance(trigger, dict):
+        return ["child mode ai_review job requires a trigger mapping"]
+    if trigger.get("strategy") != "mirror":
+        issues.append("child mode ai_review trigger.strategy must be 'mirror'")
+
+    includes = _as_list(trigger.get("include"))
+    if len(includes) != 2:
+        issues.append(
+            "child mode trigger:include must contain exactly two entries; "
+            f"got {len(includes)}"
+        )
+
+    path_counts = {REVIEW_CHILD_PATH: 0, REVIEW_DAG_PATH: 0}
+    for index, entry in enumerate(includes):
+        location = f"ai_review trigger:include[{index}]"
+        if not isinstance(entry, dict):
             issues.append(
-                f"{location}:local {local!r} is unsafe for secret-bearing AI review jobs"
+                f"{location} must be a project include; string, local, remote, "
+                "component, and template includes are forbidden"
             )
-        project = include.get("project")
-        ref = include.get("ref")
-        file_value = include.get("file")
-        files = [str(item) for item in _as_list(file_value)]
-        if project and any(_is_review_template(item) for item in files) and not ref:
+            continue
+        forbidden_kinds = {"local", "remote", "component", "template"}.intersection(entry)
+        if forbidden_kinds:
             issues.append(
-                f"trusted {location}:project for the Code Tribunal review template must pin ref"
+                f"{location} uses forbidden include kind(s) {sorted(forbidden_kinds)}; "
+                "only project includes are allowed"
+            )
+            continue
+        issues.extend(
+            _validate_project_entry(
+                entry,
+                location=location,
+                expected_project=expected_project,
+                expected_sha=expected_sha,
+            )
+        )
+        file_value = entry.get("file")
+        if not isinstance(file_value, str) or file_value not in REVIEW_TEMPLATE_PATHS:
+            issues.append(
+                f"{location} file must be exactly {REVIEW_CHILD_PATH!r} or {REVIEW_DAG_PATH!r}"
+            )
+            continue
+        path_counts[file_value] += 1
+
+    for path, count in path_counts.items():
+        if count != 1:
+            issues.append(f"child mode trigger must include {path!r} exactly once; got {count}")
+    return issues
+
+
+def _include_file(entry: Any) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("file")
+    return value if isinstance(value, str) else None
+
+
+def _validate_direct_mode(
+    config: dict[str, Any], *, expected_project: str, expected_sha: str
+) -> list[str]:
+    issues: list[str] = []
+    includes = _as_list(config.get("include"))
+    review_entries = [entry for entry in includes if _include_file(entry) == REVIEW_DAG_PATH]
+    if len(review_entries) != 1:
+        issues.append(
+            f"direct mode must include {REVIEW_DAG_PATH!r} exactly once; got {len(review_entries)}"
+        )
+    else:
+        issues.extend(
+            _validate_project_entry(
+                review_entries[0],
+                location="direct review include",
+                expected_project=expected_project,
+                expected_sha=expected_sha,
+            )
+        )
+
+    for entry in includes:
+        file_value = _include_file(entry)
+        if file_value == REVIEW_CHILD_PATH:
+            issues.append("direct mode must not include the child stage wrapper")
+        if isinstance(file_value, str) and Path(file_value).name in {
+            Path(path).name for path in REVIEW_TEMPLATE_PATHS
+        } and file_value not in REVIEW_TEMPLATE_PATHS:
+            issues.append(f"Code Tribunal template path must be exact; got {file_value!r}")
+
+    for name in RESERVED_DIRECT_JOB_NAMES:
+        if name in config:
+            issues.append(
+                f"direct mode consumer must not redefine reserved Code Tribunal job {name!r}"
             )
     return issues
 
 
-def _child_bundle_issues(value: Any, *, job_name: str) -> list[str]:
-    entries = [entry for entry in _as_list(value) if isinstance(entry, dict)]
-    wrappers = [
-        entry
-        for entry in entries
-        if any(
-            Path(str(item)).name == "review-child.gitlab-ci.yml"
-            for item in _as_list(entry.get("file"))
+def find_trust_issues(
+    config: dict[str, Any],
+    *,
+    mode: IntegrationMode,
+    expected_template_project: str,
+    expected_template_sha: str,
+) -> list[str]:
+    issues = _validate_expected_trust_root(expected_template_project, expected_template_sha)
+    if mode == "child":
+        issues.extend(
+            _validate_child_mode(
+                config,
+                expected_project=expected_template_project,
+                expected_sha=expected_template_sha,
+            )
         )
-    ]
-    if not wrappers:
-        return []
-    dags = [
-        entry
-        for entry in entries
-        if any(
-            Path(str(item)).name == "review.gitlab-ci.yml"
-            for item in _as_list(entry.get("file"))
+    else:
+        issues.extend(
+            _validate_direct_mode(
+                config,
+                expected_project=expected_template_project,
+                expected_sha=expected_template_sha,
+            )
         )
-    ]
-    issues: list[str] = []
-    for wrapper in wrappers:
-        if not any(
-            dag.get("project") == wrapper.get("project")
-            and dag.get("ref") == wrapper.get("ref")
-            for dag in dags
-        ):
-            issues.append(
-                f"job {job_name!r} child trigger must include review.gitlab-ci.yml "
-                "from the same protected project/ref as review-child.gitlab-ci.yml"
-            )
-    return issues
-
-
-def find_trust_issues(config: dict[str, Any]) -> list[str]:
-    issues = _review_include_issues(config.get("include"), location="include")
-    for name, job in config.items():
-        if not isinstance(name, str) or name.startswith(".") or not isinstance(job, dict):
-            continue
-        trigger = job.get("trigger")
-        if isinstance(trigger, dict):
-            trigger_include = trigger.get("include")
-            issues.extend(
-                _review_include_issues(
-                    trigger_include, location=f"job {name!r} trigger:include"
-                )
-            )
-            issues.extend(_child_bundle_issues(trigger_include, job_name=name))
-        lowered = name.lower()
-        if (
-            any(keyword in lowered for keyword in SECRET_JOB_KEYWORDS)
-            and job.get("script")
-            and "include" not in config
-        ):
-            issues.append(
-                f"job {name!r} is defined directly in this CI file; secret-bearing AI review "
-                "jobs should come from a protected template include"
-            )
     return issues
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audit GitLab CI AI review template trust")
     parser.add_argument("path", type=Path, help="Path to a consumer .gitlab-ci.yml")
+    parser.add_argument("--mode", choices=("child", "direct"), required=True)
+    parser.add_argument("--template-project", required=True)
+    parser.add_argument("--template-sha", required=True)
     args = parser.parse_args(argv)
     config = _load_yaml(args.path)
     if not isinstance(config, dict):
         print("CI config root must be a mapping", file=sys.stderr)
         return 2
-    issues = find_trust_issues(config)
+    issues = find_trust_issues(
+        config,
+        mode=args.mode,
+        expected_template_project=args.template_project,
+        expected_template_sha=args.template_sha,
+    )
     for issue in issues:
         print(f"ERROR: {issue}", file=sys.stderr)
     if issues:
         return 1
-    print("OK: no unsafe AI review local include patterns detected")
+    print(
+        f"OK: trusted Code Tribunal {args.mode} integration uses "
+        f"{args.template_project}@{args.template_sha}"
+    )
     return 0

@@ -10,7 +10,8 @@ to the SPEC-06 implementation PR.
 1. Create a protected template project, for example `org/code-tribunal-ci`.
 2. Mirror `ai-review/ci/review.gitlab-ci.yml` and
    `ai-review/ci/review-child.gitlab-ci.yml` at their repository paths.
-3. Protect the branch or tag used by consumers, for example `v1.0.0`.
+3. Record the reviewed template commit's full 40-character SHA. Consumers must
+   pin to this immutable SHA, even when a protected release tag identifies it.
 4. Require CODEOWNERS approval for both template files.
 5. In each consumer project, choose direct mode or a mirrored child pipeline.
    Direct mode uses a protected project include:
@@ -18,7 +19,7 @@ to the SPEC-06 implementation PR.
    ```yaml
    include:
      - project: 'org/code-tribunal-ci'
-       ref: '<protected-tag-or-full-commit-sha>'
+       ref: '<40-character-template-commit-sha>'
        file: '/ai-review/ci/review.gitlab-ci.yml'
    ```
 
@@ -33,20 +34,39 @@ to the SPEC-06 implementation PR.
      trigger:
        include:
          - project: 'org/code-tribunal-ci'
-           ref: '<protected-tag-or-full-commit-sha>'
+           ref: '<40-character-template-commit-sha>'
            file: '/ai-review/ci/review-child.gitlab-ci.yml'
          - project: 'org/code-tribunal-ci'
-           ref: '<same-protected-tag-or-full-commit-sha>'
+           ref: '<same-40-character-template-commit-sha>'
            file: '/ai-review/ci/review.gitlab-ci.yml'
        strategy: mirror
        forward:
          pipeline_variables: true
    ```
 
-Do not use top-level `include: local`, consumer-controlled
-`trigger:include:local`, or a nested local include in the remote stage wrapper.
-Both child files must be explicit `include:project` entries at the same pinned
-ref.
+Child mode is a closed allowlist: both files must be explicit
+`include:project` entries from the configured trusted project at the same full
+commit SHA. Do not add string, local, remote, component, template, duplicate, or
+third project entries.
+
+Direct mode shares the parent configuration namespace. The audit can reject
+local definitions of known Code Tribunal jobs, but it cannot inspect expanded
+contents from unrelated or transitive includes. Protect the root CI file and
+every included source with approval or a GitLab pipeline execution policy; use
+child mode when this cannot be guaranteed.
+
+Audit each consumer using trusted operator-supplied values:
+
+```bash
+PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+  path/to/.gitlab-ci.yml \
+  --mode child \
+  --template-project org/code-tribunal-ci \
+  --template-sha <40-character-template-commit-sha>
+```
+
+Use `--mode direct` for direct integration. Do not source the expected project
+or SHA from merge-request-controlled variables.
 
 ## Required variables
 

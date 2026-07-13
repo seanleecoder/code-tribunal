@@ -430,6 +430,15 @@ To integrate Code Tribunal into downstream projects:
 > to `AI review: [reviewer]` and `AI critique: [reviewer]` before adopting this
 > template revision.
 
+| Previous job | Grouped job |
+|---|---|
+| `review_claude` | `AI review: [claude]` |
+| `review_codex` | `AI review: [codex]` |
+| `review_opencode` | `AI review: [opencode]` |
+| `critique_claude` | `AI critique: [claude]` |
+| `critique_codex` | `AI critique: [codex]` |
+| `critique_opencode` | `AI critique: [opencode]` |
+
 1. **Choose direct or child-pipeline integration from a trusted template project.**
 
    Direct mode adds one stage to the consumer pipeline:
@@ -442,7 +451,7 @@ To integrate Code Tribunal into downstream projects:
 
    include:
      - project: 'org/code-tribunal-ci'
-       ref: '<protected-tag-or-full-commit-sha>'
+       ref: '<40-character-template-commit-sha>'
        file: '/ai-review/ci/review.gitlab-ci.yml'
    ```
 
@@ -465,21 +474,27 @@ To integrate Code Tribunal into downstream projects:
      trigger:
        include:
          - project: 'org/code-tribunal-ci'
-           ref: '<protected-tag-or-full-commit-sha>'
+           ref: '<40-character-template-commit-sha>'
            file: '/ai-review/ci/review-child.gitlab-ci.yml'
          - project: 'org/code-tribunal-ci'
-           ref: '<same-protected-tag-or-full-commit-sha>'
+           ref: '<same-40-character-template-commit-sha>'
            file: '/ai-review/ci/review.gitlab-ci.yml'
        strategy: mirror
        forward:
          pipeline_variables: true
    ```
 
-   **Do not use either top-level `include: local` or consumer-controlled
-   `trigger:include:local` for secret-bearing AI review jobs in merge-request
-   pipelines.** GitLab resolves those files from the MR source branch. Host the
-   templates in a separate protected project/ref, require CODEOWNERS approval,
-   and pin consumers to a reviewed tag or full commit SHA.
+   **Child mode must use exactly those two project includes.** Do not add string,
+   local, remote, component, template, duplicate, or third project entries to
+   `trigger:include`. Host the templates in a separate protected project,
+   require CODEOWNERS approval, and pin both files to the same reviewed full
+   commit SHA.
+
+   Direct mode shares the parent pipeline's configuration namespace. Other
+   top-level or transitive includes can redefine jobs after a local audit, so
+   use child mode for the strongest isolation. If direct mode is required,
+   protect the root CI configuration and every included source with approval or
+   a GitLab pipeline execution policy.
 
 2. **Image Variables & Cutover State**:
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
@@ -508,7 +523,20 @@ To integrate Code Tribunal into downstream projects:
 | `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
 | `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |
 
-Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file with `scripts/verify_pipeline_trust.py path/to/.gitlab-ci.yml` before rollout.
+Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
+
+```bash
+PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+  path/to/.gitlab-ci.yml \
+  --mode child \
+  --template-project org/code-tribunal-ci \
+  --template-sha <40-character-template-commit-sha>
+```
+
+Use `--mode direct` for direct integration. Supply the expected project and SHA
+from protected deployment configuration, not from merge-request-controlled CI
+variables. The auditor validates the local composition; it does not inspect the
+expanded contents of unrelated or transitive includes.
 
 
 ### Upgrade note: render body hash v1

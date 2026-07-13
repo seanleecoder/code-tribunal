@@ -15,7 +15,9 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 ### Changed
 
 - The GitLab review DAG now uses one `ai_review` stage and identity-preserving grouped reviewer job names.
-- Pipeline trust auditing now checks nested child-pipeline trigger includes.
+- Pipeline trust auditing now treats child `trigger:include` as a closed
+  two-entry allowlist and requires an operator-supplied trusted project and full
+  commit SHA.
 - GitLab artifact declarations no longer reference status files that commands do not create.
 
 ## [0.3.0] - 2026-07-12

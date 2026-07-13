@@ -2057,225 +2057,44 @@ If `AI_FLOW_EVENT=thread_reply`:
 <!-- ai-review-response:v1 run_id=<run_id> discussion_id=<discussion_id> -->
 ```
 
-## 20. CI template
+## 20. CI templates
 
-The executable source of truth is `ai-review/ci/review.gitlab-ci.yml`. All
-logical phases share one `ai_review` stage and are ordered by `needs`. The
-representative composition below includes the child stage wrapper; direct
-consumers declare `ai_review` in their own root stage list.
+The executable templates are the only source of truth for CI syntax:
 
-```yaml
-stages:
-  - ai_review
+- [`ai-review/ci/review.gitlab-ci.yml`](../ai-review/ci/review.gitlab-ci.yml)
+  defines the review DAG.
+- [`ai-review/ci/review-child.gitlab-ci.yml`](../ai-review/ci/review-child.gitlab-ci.yml)
+  supplies the child pipeline's single stage.
+- The [GitLab integration guide](../README.md#gitlab-ci-integration-guide--image-pinning)
+  and [trusted-CI runbook](../docs/improvement-specs/spec-06-trusted-ci-runbook.md)
+  contain consumer examples.
 
-variables:
-  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:<base-image-digest>
-  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:<reviewer-image-digest>
-  AI_REVIEW_TRUSTED_IMAGE_SHA: <source-commit-sha>
-  AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
-  AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
-  PYTHONPATH: /opt/ai-review/src
+This specification intentionally does not embed a copy of the executable YAML.
+The following invariants are normative:
 
-.ai_review_rules:
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-
-prepare_ai_review:
-  stage: ai_review
-  needs: []
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID && $AI_REVIEW_MANUAL == "true"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $AI_REVIEW_MANUAL == "true"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: true
-  script:
-    - python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - inputs/
-
-.review_template:
-  stage: ai_review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
-  interruptible: true
-  allow_failure: true
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-  script:
-    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - out/findings/
-      - out/status/
-
-"AI review: [claude]":
-  extends: .review_template
-  variables:
-    REVIEWER: claude
-
-"AI review: [codex]":
-  extends: .review_template
-  variables:
-    REVIEWER: codex
-
-"AI review: [opencode]":
-  extends: .review_template
-  variables:
-    REVIEWER: opencode
-
-.critique_template:
-  stage: ai_review
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
-  interruptible: true
-  allow_failure: true
-  rules:
-    - if: '$AI_REVIEW_CRITIQUE_ENABLED != "true"'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: "AI review: [claude]"
-      artifacts: true
-      optional: true
-    - job: "AI review: [codex]"
-      artifacts: true
-      optional: true
-    - job: "AI review: [opencode]"
-      artifacts: true
-      optional: true
-  script:
-    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - out/critiques/
-      - out/status/
-
-"AI critique: [claude]":
-  extends: .critique_template
-  variables:
-    REVIEWER: claude
-
-"AI critique: [codex]":
-  extends: .critique_template
-  variables:
-    REVIEWER: codex
-
-"AI critique: [opencode]":
-  extends: .critique_template
-  variables:
-    REVIEWER: opencode
-
-consensus_ai_review:
-  stage: ai_review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: true
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: "AI review: [claude]"
-      artifacts: true
-      optional: true
-    - job: "AI review: [codex]"
-      artifacts: true
-      optional: true
-    - job: "AI review: [opencode]"
-      artifacts: true
-      optional: true
-    - job: "AI critique: [claude]"
-      artifacts: true
-      optional: true
-    - job: "AI critique: [codex]"
-      artifacts: true
-      optional: true
-    - job: "AI critique: [opencode]"
-      artifacts: true
-      optional: true
-  script:
-    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --out out/consensus/consensus.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/consensus/
-
-post_ai_review:
-  stage: ai_review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: false
-  resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
-  needs:
-    - job: prepare_ai_review
-      artifacts: true
-    - job: consensus_ai_review
-      artifacts: true
-  script:
-    - python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/post/
-
-ai_review_gate:
-  stage: ai_review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: false
-  needs:
-    - job: consensus_ai_review
-      artifacts: true
-    - job: post_ai_review
-      artifacts: true
-  script:
-    - python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/gate/
-```
-
-Notes:
-
-- Reviewer jobs have no `resource_group`.
-- Reviewer jobs use `allow_failure: true`.
-- `consensus`, `post`, and `gate` must not use `allow_failure: true`.
-- Wrapper timeouts must fire before GitLab job timeouts so artifacts can be written.
-- `needs` entries that may not exist use `optional: true`.
-- Jobs using `needs` must declare `artifacts: true` for artifact transfer.
-- Child mode combines `ai-review/ci/review-child.gitlab-ci.yml` (stage wrapper)
-  and `ai-review/ci/review.gitlab-ci.yml` (DAG) as two
-  `trigger:include:project` entries at the same pinned `ref`, with
-  `strategy: mirror`. Consumer-controlled and nested local includes are
-  forbidden.
-- Reviewer and critique job names use trailing `[reviewer]` identities so
-  GitLab's regular graph groups them without hiding which adapter ran.
-- Configure the `resource_group` process mode as `newest_ready_first` or `newest_first` through GitLab API if available for the deployment. Jobs under this lock must be idempotent.
+- All logical phases share one `ai_review` stage and are ordered by `needs`;
+  `prepare_ai_review` has `needs: []`.
+- Reviewer and critique jobs use `allow_failure: true`, have no
+  `resource_group`, and use trailing `[reviewer]` identities so GitLab groups
+  them without hiding the adapter. Consensus, posting, and gating are not
+  allowed to fail.
+- Optional jobs use `optional: true`, and every artifact dependency explicitly
+  enables artifact transfer.
+- Wrapper timeouts fire before GitLab job timeouts so status artifacts can be
+  written. Posting remains serialized and idempotent under its MR-scoped
+  `resource_group`.
+- Child mode uses exactly two `trigger:include:project` entries: the exact child
+  wrapper and DAG paths, from the configured trusted project, at the same full
+  40-character commit SHA, with `strategy: mirror`. Extra, duplicate, string,
+  local, remote, component, and template entries are forbidden.
+- Direct mode requires the exact DAG project include at the configured full
+  commit SHA and forbids local definitions of Code Tribunal jobs. Because it
+  shares the parent pipeline's configuration namespace, it also requires
+  protected CI configuration and review of every other include; child mode is
+  the preferred isolation boundary for secret-bearing review jobs.
+- Configure the posting `resource_group` process mode as `newest_ready_first`
+  or `newest_first` through the GitLab API when available. Jobs under the lock
+  must remain idempotent.
 
 ## 21. Build phases and acceptance criteria
 

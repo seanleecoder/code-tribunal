@@ -25,20 +25,20 @@ protects the wrong layer. This defeats every downstream control.
 ### Scope
 - **In:** a new integration model and its docs; a reference "trusted parent
   pipeline"; hard requirements on CI/CD variable protection; changes to the
-  integration guide in `README.md`. Optionally a validator that detects the
-  unsafe pattern.
+  integration guide in `README.md`; and a validator that detects unsafe
+  composition.
 - **Out:** GitLab-server configuration the project can't ship (document it).
 
 ### Implementation
 Deliver the secret-bearing (`review`, `critique`, `prepare`) and gate/post jobs
 from a location the MR branch **cannot edit**. Pick and document one of:
 
-1. **`include: project` + pinned `ref` (recommended default).** Host the CI
-   template in a **separate, protected** repository/branch and have consumers
-   `include: { project: 'org/code-tribunal-ci', ref: '<tag-or-protected-branch>',
-   file: 'review.gitlab-ci.yml' }`. Because `include: project` resolves against
-   the *named ref*, not the MR branch, an MR author cannot alter the job
-   definitions. Provide a `codeowners`/protected-branch checklist.
+1. **`include: project` + full commit SHA.** Host the CI template in a
+   **separate, protected** repository and have consumers
+   `include: { project: 'org/code-tribunal-ci', ref: '<40-character-sha>',
+   file: '/ai-review/ci/review.gitlab-ci.yml' }`. Because `include: project`
+   resolves against the immutable named commit, not the MR branch, an MR author
+   cannot alter the job definitions. Provide a CODEOWNERS checklist.
 2. **Parent/child pipeline with a trusted child.** The consumer's root pipeline
    is minimal and triggers a child pipeline whose config comes from the pinned
    trusted ref; secrets live only in the child.
@@ -52,8 +52,10 @@ In all variants:
 - **Kill the `local:` instructions.** Replace the `include: local:` snippet in
   `README.md` with the trusted-ref pattern and a bold warning that `local:` is
   insecure for secret-bearing jobs.
-- Optional hardening: a small `scripts/verify_pipeline_trust.py` that a
-  maintainer can run to flag a consumer using `local:` for secret jobs.
+- `scripts/verify_pipeline_trust.py` validates the selected direct or child
+  topology against operator-supplied trusted project and full-SHA inputs. Child
+  mode permits exactly the wrapper and DAG project includes and rejects every
+  extra include kind or entry.
 
 ### Acceptance criteria
 - Documented, reproducible integration where a hostile MR that edits the pipeline
@@ -64,7 +66,8 @@ In all variants:
 
 ### Tests
 - Manual/scripted validation on a scratch GitLab project (documented runbook in
-  the spec's PR). Add `verify_pipeline_trust.py` unit tests if implemented.
+  the spec's PR), plus negative trust-auditor tests for mismatched refs/projects,
+  movable refs, duplicate or extra entries, and local/remote/component inputs.
 
 ### Risk / rollback
 - High blast radius on *integration UX* (consumers must restructure). Mitigate
