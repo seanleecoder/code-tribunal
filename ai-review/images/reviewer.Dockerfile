@@ -1,4 +1,4 @@
-ARG AI_REVIEW_BASE_IMAGE
+ARG AI_REVIEW_BASE_IMAGE=python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
 FROM node:22-bookworm-slim AS reviewer-clis
 
 WORKDIR /opt/ai-review/reviewer-clis
@@ -6,9 +6,9 @@ COPY ai-review/images/package.json ai-review/images/package-lock.json ./
 
 RUN npm ci --omit=dev \
     && npm cache clean --force \
-    && claude --version \
-    && codex --version \
-    && opencode --version
+    && ./node_modules/.bin/claude --version \
+    && ./node_modules/.bin/codex --version \
+    && ./node_modules/.bin/opencode --version
 
 FROM ${AI_REVIEW_BASE_IMAGE}
 
