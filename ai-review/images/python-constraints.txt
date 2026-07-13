@@ -1,0 +1,6 @@
+# Pinned Python inputs for ai-review/images/base.Dockerfile.
+# Refresh with: python -m pip index versions <package>, then run image tests.
+jsonschema==4.25.1
+PyYAML==6.0.3
+python-gitlab==7.0.0
+requests==2.32.5
