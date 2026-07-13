@@ -6,10 +6,13 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-13
+
 ### Added
 
 - Protected child-pipeline entry point for compact GitLab parent pipelines.
-- GitHub platform adapter and safe GitHub Actions integration guidance.
+- Platform-neutral review contracts, a GitHub platform adapter, and a safe
+  GitHub Actions review workflow.
 - Reproducible reviewer-image inputs and supply-chain pin validation.
 
 ### Changed
@@ -23,6 +26,25 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Peer-supported advisory findings are surfaced by default through
   `critique.allow_advisory_escalation`; this does not add quorum votes or block
   merges.
+
+### Fixed
+
+- Package metadata now reports the release version instead of the original
+  `0.1.0` baseline.
+- Runtime-image preflight skips repository-only specification checks that are
+  intentionally absent from the production image.
+
+### Migration
+
+- Reviewer jobs were renamed from `review_<reviewer>` and
+  `critique_<reviewer>` to `AI review: [reviewer]` and
+  `AI critique: [reviewer]`; update custom `needs`, overrides, dashboards, and
+  scripts.
+- The trust-audit CLI now requires `--mode`, `--template-project`, and
+  `--template-sha`. Child mode requires two exact project includes pinned to one
+  full commit SHA.
+- Child bridges must set `inherit:variables: false`, define no bridge variables,
+  and explicitly disable both YAML-variable and pipeline-variable forwarding.
 
 ## [0.3.0] - 2026-07-12
 

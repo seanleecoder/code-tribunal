@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-review"
-version = "0.1.0"
+version = "0.3.1"
 description = "CI-native multi-agent consensus code review for GitLab merge requests"
 readme = "ai-review/README.md"
 requires-python = ">=3.12"
