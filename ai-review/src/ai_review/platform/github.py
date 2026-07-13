@@ -48,7 +48,7 @@ class GitHubReviewPlatform:
         self.token = token
         self._bot_login = bot_login
         if session is None:
-            import requests
+            import requests  # type: ignore[import-untyped]
 
             session = requests.Session()
         self.session = session
@@ -223,9 +223,22 @@ class GitHubReviewPlatform:
         return value if isinstance(value, str) else None
 
     def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int | None:
-        # GitHub REST comments identify authors by login, while ai-review command
-        # authorization uses GitLab-style numeric levels.  Return maintainer-level
-        # only when the caller passed a collaborator permission object in tests.
+        if isinstance(user_id, int) or str(user_id).isdigit():
+            return None
+        collaborator = self._request(
+            "GET",
+            f"/repos/{self._repo(project_id_or_path)}/collaborators/"
+            f"{quote(str(user_id), safe='')}/permission",
+        )
+        if not isinstance(collaborator, dict):
+            return None
+        permission = collaborator.get("permission")
+        if permission in {"admin", "maintain", "write"}:
+            return 40
+        if permission == "triage":
+            return 20
+        if permission == "read":
+            return 10
         return None
 
     def build_position(
@@ -309,7 +322,10 @@ class GitHubReviewPlatform:
             "author": {
                 "id": comment.get("user", {}).get("id")
                 if isinstance(comment.get("user"), dict)
-                else None
+                else None,
+                "username": comment.get("user", {}).get("login")
+                if isinstance(comment.get("user"), dict)
+                else None,
             },
             "resolved": False,
         }

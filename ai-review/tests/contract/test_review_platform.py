@@ -13,6 +13,11 @@ from support.fake_github import FakeGitHubClient
 from support.fake_gitlab import FakeGitLabClient
 
 
+class _NoopSession:
+    def request(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("contract protocol test must not issue HTTP requests")
+
+
 def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
     fake = FakeGitLabClient(head_sha="1" * 40, diff_text="diff --git a/a b/a\n")
 
@@ -39,7 +44,9 @@ def test_fake_gitlab_satisfies_review_platform_protocol() -> None:
 
 
 def test_gitlab_adapter_exposes_review_platform_protocol() -> None:
-    adapter = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token")
+    adapter = GitLabReviewPlatform(
+        "https://gitlab.example.com/api/v4", "token", session=_NoopSession()
+    )
 
     assert isinstance(adapter, ReviewPlatform)
 
@@ -67,6 +74,8 @@ def test_fake_github_satisfies_review_platform_protocol() -> None:
 
 
 def test_github_adapter_exposes_review_platform_protocol() -> None:
-    adapter = GitHubReviewPlatform("https://api.github.com", "token", bot_login="bot")
+    adapter = GitHubReviewPlatform(
+        "https://api.github.com", "token", bot_login="bot", session=_NoopSession()
+    )
 
     assert isinstance(adapter, ReviewPlatform)

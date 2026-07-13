@@ -197,6 +197,8 @@ class LoadConfigOverrideTests(unittest.TestCase):
         summary = effective_config_summary(config)
         self.assertTrue(summary["panel_grouping_semantic_enabled"])
         self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
+        self.assertEqual(summary["posting_mode"], "gitlab_discussions")
+        self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
 
 
 class PostingModeConfigTests(unittest.TestCase):

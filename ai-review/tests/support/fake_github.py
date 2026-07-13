@@ -116,7 +116,9 @@ class FakeGitHubClient:
         return self.bot_id
 
     def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int | None:
-        return 40 if int(user_id) == self.bot_id else None
+        if user_id == self.bot_id or user_id == self.bot_login:
+            return 40
+        return None
 
     def build_position(
         self, anchor: dict[str, Any], version: PullRequestVersion, *, multiline: bool = False
@@ -159,7 +161,7 @@ class FakeGitHubClient:
                 "old_line": None,
                 "head_sha": comment["commit_id"],
             },
-            "author": {"id": comment["user"]["id"]},
+            "author": {"id": comment["user"]["id"], "username": comment["user"]["login"]},
             "resolved": False,
         }
         return {

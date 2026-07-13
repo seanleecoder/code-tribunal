@@ -186,5 +186,5 @@ Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions;
 it mirrors the prepare → review → consensus → post → gate flow. Keep write-token
 jobs on `pull_request` for trusted in-repository workflow YAML; do not use unsafe
 `pull_request_target` patterns that execute pull-request code with repository
-secrets. Maintainer slash-command authorization is not implemented for GitHub
-yet, so `/ai-review ...` commands fail closed rather than trusting commenters.
+secrets. Maintainer slash-command authorization checks GitHub collaborator
+permissions and accepts `write`, `maintain`, or `admin` as command-capable roles.

@@ -261,6 +261,8 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
     merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
+    posting = config.get("posting", {}) if isinstance(config, dict) else {}
+    state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     grouping = panel.get("grouping", {}) if isinstance(panel, dict) else {}
     semantic = grouping.get("semantic", {}) if isinstance(grouping, dict) else {}
@@ -277,6 +279,8 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "critique_enabled": bool(critique.get("enabled")),
         "critique_rounds": int(critique.get("rounds", 0) or 0),
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
+        "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
+        "state_backend": state.get("backend") if isinstance(state, dict) else None,
         "panel_grouping_semantic_enabled": bool(
             isinstance(semantic, dict) and semantic.get("enabled") is True
         ),

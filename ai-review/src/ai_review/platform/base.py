@@ -1,8 +1,50 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
 
 from ai_review.types import Anchor
+
+
+class PositionShape(TypedDict, total=False):
+    position_type: str
+    base_sha: str
+    start_sha: str
+    head_sha: str
+    commit_id: str
+    old_path: str | None
+    new_path: str | None
+    path: str | None
+    old_line: int | None
+    new_line: int | None
+    line: int | None
+    side: str
+    start_line: int | None
+    start_side: str
+    line_range: dict[str, Any]
+
+
+class InlineCommentShape(TypedDict, total=False):
+    id: int
+    body: str
+    author: dict[str, Any]
+    user: dict[str, Any]
+    position: PositionShape
+    resolved: bool
+
+
+class ThreadShape(TypedDict, total=False):
+    id: str | int
+    notes: list[InlineCommentShape]
+    resolved: bool
+    position: PositionShape
+
+
+class ReviewStateNoteShape(TypedDict, total=False):
+    id: int
+    body: str
+    author: dict[str, Any]
+    user: NotRequired[dict[str, Any]]
+
 
 Position = dict[str, Any]
 InlineComment = dict[str, Any]

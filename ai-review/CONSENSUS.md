@@ -176,3 +176,18 @@ idempotent re-run scenarios. The reusable in-memory client lives in
 [`tests/support/fake_gitlab.py`](tests/support/fake_gitlab.py) so SPEC-14 and
 SPEC-15 refactors can assert posting and gate behavior without contacting a real
 GitLab instance.
+
+
+## GitHub Review Harness
+
+GitHub reviews use the same deterministic consensus artifacts as GitLab. Set
+`posting.mode: github_reviews` and `state.backend: github_pr_comment` before
+running `python -m ai_review.input_bundle prepare` in a GitHub Actions
+`pull_request` workflow. The prepare stage reads `GITHUB_EVENT_PATH`,
+`GITHUB_REPOSITORY`, and `GITHUB_TOKEN`, writes the same `manifest.json`,
+`prior_decisions.json`, and `state_aliases.json` bundle files, and then the
+reviewer, consensus, post, and gate stages consume those artifacts exactly like
+the GitLab harness. Persisted state is stored in a bot-authored PR issue comment
+with both the encoded `ai-review-state:v1` payload and a GitHub backend marker;
+summary comments share the PR issue-comment channel but intentionally do not use
+the state marker.

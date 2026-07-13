@@ -106,7 +106,7 @@ class GitLabClient:
         self.token = token
         self.token_header = token_header
         if session is None:
-            import requests
+            import requests  # type: ignore[import-untyped]
 
             session = requests.Session()
         self.session = session

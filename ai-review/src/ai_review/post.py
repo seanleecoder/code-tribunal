@@ -384,14 +384,17 @@ def _author_access_level(
     access_level = author.get("access_level")
     if isinstance(access_level, int):
         return access_level
-    user_id = author.get("id")
-    if user_id is None:
-        return None
-    try:
-        access_level = client.member_access_level(project_id, user_id)
-        return access_level if isinstance(access_level, int) else None
-    except Exception:
-        return None
+    candidate_ids = [author.get("id"), author.get("username"), author.get("login")]
+    for user_id in candidate_ids:
+        if user_id is None:
+            continue
+        try:
+            access_level = client.member_access_level(project_id, user_id)
+        except Exception:
+            continue
+        if isinstance(access_level, int):
+            return access_level
+    return None
 
 
 def collect_human_commands(
