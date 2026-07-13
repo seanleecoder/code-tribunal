@@ -2086,7 +2086,10 @@ The following invariants are normative:
 - Child mode uses exactly two `trigger:include:project` entries: the exact child
   wrapper and DAG paths, from the configured trusted project, at the same full
   40-character commit SHA, with `strategy: mirror`. Extra, duplicate, string,
-  local, remote, component, and template entries are forbidden.
+  local, remote, component, and template entries are forbidden. The bridge
+  defines no variables, sets `inherit:variables: false`, and explicitly disables
+  `trigger:forward:yaml_variables` and `pipeline_variables`; parent values must
+  not override trusted child images, configuration, endpoints, or mock controls.
 - Direct mode requires the exact DAG project include at the configured full
   commit SHA and forbids local definitions of Code Tribunal jobs. Because it
   shares the parent pipeline's configuration namespace, it also requires

@@ -86,11 +86,22 @@ def _validate_child_mode(
     bridge = config.get("ai_review")
     if not isinstance(bridge, dict):
         return ["child mode requires an ai_review bridge job"]
+    inherit = bridge.get("inherit")
+    if not isinstance(inherit, dict) or inherit.get("variables") is not False:
+        issues.append("child mode ai_review job must set inherit:variables to false")
+    if "variables" in bridge:
+        issues.append("child mode ai_review job must not define bridge variables")
     trigger = bridge.get("trigger")
     if not isinstance(trigger, dict):
         return ["child mode ai_review job requires a trigger mapping"]
     if trigger.get("strategy") != "mirror":
         issues.append("child mode ai_review trigger.strategy must be 'mirror'")
+    expected_forward = {"yaml_variables": False, "pipeline_variables": False}
+    if trigger.get("forward") != expected_forward:
+        issues.append(
+            "child mode ai_review trigger.forward must explicitly disable "
+            "yaml_variables and pipeline_variables"
+        )
 
     includes = _as_list(trigger.get("include"))
     if len(includes) != 2:

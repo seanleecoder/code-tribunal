@@ -467,6 +467,8 @@ To integrate Code Tribunal into downstream projects:
    ai_review:
      stage: ai_review
      needs: []
+     inherit:
+       variables: false
      rules:
        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
        - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -481,7 +483,8 @@ To integrate Code Tribunal into downstream projects:
            file: '/ai-review/ci/review.gitlab-ci.yml'
        strategy: mirror
        forward:
-         pipeline_variables: true
+         yaml_variables: false
+         pipeline_variables: false
    ```
 
    **Child mode must use exactly those two project includes.** Do not add string,
@@ -489,6 +492,13 @@ To integrate Code Tribunal into downstream projects:
    `trigger:include`. Host the templates in a separate protected project,
    require CODEOWNERS approval, and pin both files to the same reviewed full
    commit SHA.
+
+   The bridge must not define `variables`, and both forwarding flags must remain
+   explicitly disabled. Forwarded values become high-precedence downstream
+   pipeline variables and could otherwise replace trusted image, configuration,
+   endpoint, or mock-mode settings. Root variables for unrelated parent jobs are
+   safe only because `inherit:variables: false` and the two forwarding guards
+   isolate them from the child.
 
    Direct mode shares the parent pipeline's configuration namespace. Other
    top-level or transitive includes can redefine jobs after a local audit, so
@@ -589,6 +599,11 @@ changes with `make update-golden`; review the resulting fixture diff before merg
 >   the same value. The prepare stage records the effective config into
 >   `inputs/manifest.json`, and the consensus stage re-derives it and **warns** if its
 >   own view disagrees — a signal that a variable was scoped to only some jobs.
+> - Child mode deliberately does not accept YAML, manual, scheduled, API, or
+>   trigger pipeline variables from its parent. Configure approved runtime
+>   options as protected project/group variables in GitLab settings. Introduce
+>   typed child-pipeline inputs for any future per-run option; do not re-enable
+>   general forwarding.
 
 ---
 

@@ -18,12 +18,17 @@ def _child_config() -> dict:
         "ai_review": {
             "stage": "ai_review",
             "needs": [],
+            "inherit": {"variables": False},
             "trigger": {
                 "include": [
                     _project_include("/ai-review/ci/review-child.gitlab-ci.yml"),
                     _project_include("/ai-review/ci/review.gitlab-ci.yml"),
                 ],
                 "strategy": "mirror",
+                "forward": {
+                    "yaml_variables": False,
+                    "pipeline_variables": False,
+                },
             },
         }
     }
@@ -183,6 +188,56 @@ def test_flags_missing_mirror_strategy() -> None:
     config["ai_review"]["trigger"].pop("strategy")
     issues = _issues(config)
     assert any("trigger.strategy must be 'mirror'" in issue for issue in issues)
+
+
+def test_flags_missing_variable_inheritance_boundary() -> None:
+    config = _child_config()
+    config["ai_review"].pop("inherit")
+    issues = _issues(config)
+    assert any("inherit:variables to false" in issue for issue in issues)
+
+
+def test_allows_other_safe_inheritance_controls() -> None:
+    config = _child_config()
+    config["ai_review"]["inherit"]["default"] = False
+    assert _issues(config) == []
+
+
+def test_flags_bridge_variables_even_when_forwarding_is_disabled() -> None:
+    config = _child_config()
+    config["ai_review"]["variables"] = {"AI_REVIEW_REVIEWER_IMAGE": "attacker/evil:latest"}
+    issues = _issues(config)
+    assert any("must not define bridge variables" in issue for issue in issues)
+
+
+def test_flags_omitted_forward_block_because_yaml_forwarding_defaults_true() -> None:
+    config = _child_config()
+    config["ai_review"]["trigger"].pop("forward")
+    issues = _issues(config)
+    assert any("trigger.forward must explicitly disable" in issue for issue in issues)
+
+
+def test_flags_yaml_variable_forwarding() -> None:
+    config = _child_config()
+    config["ai_review"]["trigger"]["forward"]["yaml_variables"] = True
+    issues = _issues(config)
+    assert any("trigger.forward must explicitly disable" in issue for issue in issues)
+
+
+def test_flags_pipeline_variable_forwarding() -> None:
+    config = _child_config()
+    config["ai_review"]["trigger"]["forward"]["pipeline_variables"] = True
+    issues = _issues(config)
+    assert any("trigger.forward must explicitly disable" in issue for issue in issues)
+
+
+def test_allows_parent_variables_when_bridge_is_isolated() -> None:
+    config = _child_config()
+    config["variables"] = {
+        "AI_REVIEW_REVIEWER_IMAGE": "attacker/evil:latest",
+        "AI_REVIEW_LOCAL_MOCK": "1",
+    }
+    assert _issues(config) == []
 
 
 def test_flags_missing_child_bridge() -> None:

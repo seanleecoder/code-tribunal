@@ -29,6 +29,8 @@ to the SPEC-06 implementation PR.
    ai_review:
      stage: ai_review
      needs: []
+     inherit:
+       variables: false
      rules:
        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
      trigger:
@@ -41,13 +43,23 @@ to the SPEC-06 implementation PR.
            file: '/ai-review/ci/review.gitlab-ci.yml'
        strategy: mirror
        forward:
-         pipeline_variables: true
+         yaml_variables: false
+         pipeline_variables: false
    ```
 
 Child mode is a closed allowlist: both files must be explicit
 `include:project` entries from the configured trusted project at the same full
 commit SHA. Do not add string, local, remote, component, template, duplicate, or
-third project entries.
+third project entries. The bridge must not define `variables`; it must disable
+default-variable inheritance and explicitly disable both YAML-variable and
+pipeline-variable forwarding. Forwarded values have sufficient precedence to
+override trusted child job variables, including image and mock-mode controls.
+
+Configure approved operational overrides as protected project/group variables,
+which are resolved normally for the same-project child pipeline. Do not use root
+YAML, manual, scheduled, API, or trigger variables to configure the child. A
+future per-run option must use a typed, audited child-pipeline input rather than
+general variable forwarding.
 
 Direct mode shares the parent configuration namespace. The audit can reject
 local definitions of known Code Tribunal jobs, but it cannot inspect expanded
@@ -101,6 +113,10 @@ the PR evidence.
 6. Re-run after changing the MR branch's local review template and child trigger
    include; confirm the trust audit rejects local wiring and protected template
    job definitions do not change.
+7. Add root and bridge variables that attempt to replace
+   `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_CONFIG`, and
+   `AI_REVIEW_LOCAL_MOCK`; confirm the trust audit rejects an open forwarding
+   boundary and the isolated child retains its trusted values.
 
 ## Evidence to attach before marking SPEC-06 complete
 

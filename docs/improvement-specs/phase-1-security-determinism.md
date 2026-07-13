@@ -55,7 +55,9 @@ In all variants:
 - `scripts/verify_pipeline_trust.py` validates the selected direct or child
   topology against operator-supplied trusted project and full-SHA inputs. Child
   mode permits exactly the wrapper and DAG project includes and rejects every
-  extra include kind or entry.
+  extra include kind or entry. It also requires the bridge to disable inherited
+  YAML and forwarded pipeline variables so MR-controlled values cannot override
+  the trusted child runtime.
 
 ### Acceptance criteria
 - Documented, reproducible integration where a hostile MR that edits the pipeline
@@ -67,7 +69,8 @@ In all variants:
 ### Tests
 - Manual/scripted validation on a scratch GitLab project (documented runbook in
   the spec's PR), plus negative trust-auditor tests for mismatched refs/projects,
-  movable refs, duplicate or extra entries, and local/remote/component inputs.
+  movable refs, duplicate or extra entries, local/remote/component inputs, and
+  root/bridge variable injection.
 
 ### Risk / rollback
 - High blast radius on *integration UX* (consumers must restructure). Mitigate
