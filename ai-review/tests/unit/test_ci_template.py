@@ -218,6 +218,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
         self.assertNotIn("optional: true", prepare_need.group(1))
 
+    def test_gitlab_image_build_uses_repo_pins(self) -> None:
+        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("image_validate", text)
+        self.assertIn("validate_ai_review_supply_chain_pins", text)
+        self.assertIn("python scripts/check_supply_chain_pins.py", text)
+        self.assertNotRegex(text, r"AI_REVIEW_(CLAUDE|CODEX|OPENCODE)_VERSION")
+        self.assertNotIn("CLAUDE_VERSION=", text)
+        self.assertNotIn("CODEX_VERSION=", text)
+        self.assertNotIn("OPENCODE_VERSION=", text)
+
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
             self.skipTest("GitHub publish workflow is not present in this checkout")
@@ -252,14 +262,19 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("ghcr.io", text)
         self.assertIn("seanleecoder/code-tribunal", text)
         self.assertIn('IMAGE_VERSION: "1.0"', text)
-        self.assertIn("AI_REVIEW_CLAUDE_VERSION: ${{ vars.AI_REVIEW_CLAUDE_VERSION }}", text)
-        self.assertIn("AI_REVIEW_CODEX_VERSION: ${{ vars.AI_REVIEW_CODEX_VERSION }}", text)
-        self.assertIn("AI_REVIEW_OPENCODE_VERSION: ${{ vars.AI_REVIEW_OPENCODE_VERSION }}", text)
+        self.assertIn("Validate supply-chain pins", build_preflight)
+        self.assertIn("python scripts/check_supply_chain_pins.py", build_preflight)
+        self.assertNotIn("vars.AI_REVIEW_", text)
+        self.assertNotIn("CLAUDE_VERSION=", text)
+        self.assertNotIn("CODEX_VERSION=", text)
+        self.assertNotIn("OPENCODE_VERSION=", text)
         self.assertIn("github.event_name != 'pull_request'", text)
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertIn("actions/upload-artifact@v4", build_preflight)
+        self.assertRegex(build_preflight, r"uses: actions/upload-artifact@[0-9a-f]{40}")
         self.assertIn("docker save", build_preflight)
         self.assertIn("actions/download-artifact@v4", publish)
+        self.assertRegex(publish, r"uses: actions/download-artifact@[0-9a-f]{40}")
         self.assertIn("docker load", publish)
         self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
         self.assertIn('docker image inspect "$AI_REVIEW_REVIEWER_TAG"', publish)
@@ -272,6 +287,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
         self.assertIn("actions/attest@v4", text)
+        self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
+        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)
         self.assertNotRegex(text, r":1\.0(?:\s|\"|$)")
 

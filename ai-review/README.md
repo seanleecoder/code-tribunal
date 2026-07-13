@@ -130,7 +130,7 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 ### Bootstrap Refs & GHCR Cutover Sequence
 
 1. **Bootstrap State**: The first public GHCR publish has succeeded and is verified (see [PHASE_5_5_ACCEPTANCE.md](PHASE_5_5_ACCEPTANCE.md)), and [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) has been cut over from the temporary Phase 5.5 private bootstrap refs to the published GHCR `@sha256:` digests.
-2. **CLI Version Pinning**: Before the first public publish, set repository variables to the exact CLI versions validated during phase testing: `AI_REVIEW_CLAUDE_VERSION`, `AI_REVIEW_CODEX_VERSION`, and `AI_REVIEW_OPENCODE_VERSION`. Package defaults remain `@anthropic-ai/claude-code`, `@openai/codex`, and `opencode-ai`.
+2. **CLI Version Pinning**: Reviewer CLI versions are pinned in `images/package.json` and `images/package-lock.json`, installed with `npm ci`, and checked by `scripts/check_supply_chain_pins.py`. Update CLI versions through a reviewed lockfile change, not repository variables.
 3. **Public Registry Change**: After the workflow runs on `main`, change both GHCR packages to public in package settings, verify anonymous pulls by digest, then bump `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and `AI_REVIEW_TRUSTED_IMAGE_SHA` together from the workflow summary.
 4. **Preflight Audit**: The reviewer image preflight probes `claude --version`, `codex --version`, and `opencode --version`, then validates local mock fan-out and consensus calculation. Do not run MR smoke against images that install CLIs inside the smoke job.
 

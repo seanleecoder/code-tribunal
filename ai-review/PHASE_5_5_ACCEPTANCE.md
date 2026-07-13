@@ -5,15 +5,12 @@
 - Status: accepted — first public publish completed.
 - Workflow run: [`publish-ai-review-images.yml`](../.github/workflows/publish-ai-review-images.yml), run ID `28745175173`, triggered by commit `f7f1490` ("enable critique") pushed to `main`.
 - Source commit SHA: `f7f149089b85516c004e31255e6e57ac461ffed7`.
-- CLI versions observed in the `Build and preflight` step:
-  - `AI_REVIEW_CLAUDE_VERSION`: `2.1.201`.
-  - `AI_REVIEW_CODEX_VERSION`: `0.142.5`.
-  - `AI_REVIEW_OPENCODE_VERSION`: `1.17.13`.
+- CLI versions observed in the `Build and preflight` step were recorded from the reviewer image. Current builds pin these versions through `images/package.json` and `images/package-lock.json`, not repository variables.
 - Base tag: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7`.
 - Reviewer tag: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f7f149089b85516c004e31255e6e57ac461ffed7`.
 - Base digest: `sha256:00caceacc7e86c59007cf4fd1b6dfd81bfe615122a6667e874c23b90ac8bde66`.
 - Reviewer digest: `sha256:8006f10aab52783697c474a4a5c51e0253b16fa1dd432f98b09dbb2100318fd5`.
-- Attestation status: created for both images via `actions/attest@v4`.
+- Attestation status: created for both images via the pinned `actions/attest` workflow action.
   - Base: https://github.com/seanleecoder/code-tribunal/attestations/33941346
   - Reviewer: https://github.com/seanleecoder/code-tribunal/attestations/33941351
 - Package visibility: public, confirmed by an anonymous (unauthenticated) pull — see Registry Acceptance below.

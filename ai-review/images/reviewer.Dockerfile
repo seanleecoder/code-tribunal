@@ -1,23 +1,14 @@
-ARG AI_REVIEW_BASE_IMAGE
-FROM node:22-bookworm-slim AS reviewer-clis
+ARG AI_REVIEW_BASE_IMAGE=python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
+FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS reviewer-clis
 
-ARG CLAUDE_VERSION
-ARG CODEX_VERSION
-ARG OPENCODE_VERSION
-ARG CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code
-ARG CODEX_NPM_PACKAGE=@openai/codex
-ARG OPENCODE_NPM_PACKAGE=opencode-ai
+WORKDIR /opt/ai-review/reviewer-clis
+COPY ai-review/images/package.json ai-review/images/package-lock.json ./
 
-RUN test -n "$CLAUDE_VERSION" \
-    && test -n "$CODEX_VERSION" \
-    && test -n "$OPENCODE_VERSION" \
-    && npm install -g \
-      "${CLAUDE_NPM_PACKAGE}@${CLAUDE_VERSION}" \
-      "${CODEX_NPM_PACKAGE}@${CODEX_VERSION}" \
-      "${OPENCODE_NPM_PACKAGE}@${OPENCODE_VERSION}" \
-    && claude --version \
-    && codex --version \
-    && opencode --version
+RUN npm ci --omit=dev \
+    && npm cache clean --force \
+    && ./node_modules/.bin/claude --version \
+    && ./node_modules/.bin/codex --version \
+    && ./node_modules/.bin/opencode --version
 
 FROM ${AI_REVIEW_BASE_IMAGE}
 
@@ -28,7 +19,7 @@ ARG OPENCODE_NPM_PACKAGE=opencode-ai
 COPY --from=reviewer-clis /usr/local/bin/node /usr/local/bin/node
 COPY --from=reviewer-clis /usr/local/bin/npm /usr/local/bin/npm
 COPY --from=reviewer-clis /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=reviewer-clis /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=reviewer-clis /opt/ai-review/reviewer-clis/node_modules /usr/local/lib/node_modules
 
 RUN node -e 'const fs = require("fs"); \
 const path = require("path"); \
