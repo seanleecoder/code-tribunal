@@ -20,6 +20,9 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   commit SHA. Child bridges must also disable inherited YAML variables and all
   downstream variable forwarding.
 - GitLab artifact declarations no longer reference status files that commands do not create.
+- Peer-supported advisory findings are surfaced by default through
+  `critique.allow_advisory_escalation`; this does not add quorum votes or block
+  merges.
 
 ## [0.3.0] - 2026-07-12
 

@@ -329,7 +329,7 @@ critique:
   max_rounds: 1
   blind_reviewer_identity: true
   can_add_quorum_votes: false
-  allow_advisory_escalation: false
+  allow_advisory_escalation: true
 
 posting:
   mode: gitlab_discussions
@@ -2232,7 +2232,10 @@ Acceptance:
 
 - Two non-author `noise` critiques drop a finding before posting.
 - Non-author `agree` critiques do not increase `vote_count` and cannot create quorum.
-- With `critique.allow_advisory_escalation=false`, Phase 5 output matches Phase 3 except for critique metadata and drops/downgrades.
+- With an explicit `critique.allow_advisory_escalation=false`, Phase 5 output
+  matches Phase 3 except for critique metadata and drops/downgrades; the shipped
+  default is `true` so peer-supported advisory findings are surfaced without
+  becoming merge-blocking.
 - `critique.rounds=0` exactly matches Phase 3 behavior.
 - Failed critique jobs do not fail consensus.
 - No critic sees peer critiques from the same round.

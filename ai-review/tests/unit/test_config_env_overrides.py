@@ -120,6 +120,20 @@ class LoadConfigOverrideTests(unittest.TestCase):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["reviewers"]["claude"]["effort"], "medium")
 
+    def test_repo_config_enables_nonblocking_advisory_escalation(self) -> None:
+        config = load_config(_REPO_CONFIG)
+
+        self.assertTrue(config["critique"]["allow_advisory_escalation"])
+        self.assertFalse(config["critique"]["allow_severity_downgrade"])
+
+    def test_missing_advisory_escalation_uses_enabled_default(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["critique"].pop("allow_advisory_escalation")
+
+        validate_config(config)
+
+        self.assertTrue(config["critique"]["allow_advisory_escalation"])
+
     def test_effort_override_applies_and_validates(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "xhigh"}):
             config = load_config(_REPO_CONFIG)

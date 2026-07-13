@@ -153,9 +153,8 @@ CONSENSUS.md §5 says downgrade is "capped at one level," but
 `consensus.py:418-425` applies `_severity_after_one_level_downgrade` **once per
 disputing critic**, so two third-party disputers take `blocker→major→minor`.
 Because the gate blocks only on `blocker`, two biased/prompt-injected peers can
-un-block a genuine blocker. Shipped `review.yaml` enables
-`allow_severity_downgrade`/`allow_advisory_escalation` even though schema defaults
-are `false`.
+un-block a genuine blocker. At the time of this review, shipped `review.yaml`
+enabled both `allow_severity_downgrade` and `allow_advisory_escalation`.
 
 ### Scope
 - **In:** `ai-review/src/ai_review/consensus.py` (`_apply_critiques` downgrade
@@ -191,6 +190,13 @@ are `false`.
 - Low. Behavior becomes stricter (safer). If a deployment wants the old
   permissive behavior, it can re-enable the flags explicitly and accept the
   documented risk — but the boundary guard stays.
+
+### Follow-up policy decision
+
+`allow_advisory_escalation` is enabled by default again. It only changes a
+peer-supported finding from `fyi` to the non-blocking `surface` decision and
+does not add quorum votes or permit merge blocking. `allow_severity_downgrade`
+remains disabled by default, and the blocker-boundary guard remains enforced.
 
 ---
 

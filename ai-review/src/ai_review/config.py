@@ -376,7 +376,7 @@ def validate_config(config: dict[str, Any]) -> None:
     critique.setdefault("max_rounds", 1)
     critique.setdefault("blind_reviewer_identity", True)
     critique.setdefault("can_add_quorum_votes", False)
-    critique.setdefault("allow_advisory_escalation", False)
+    critique.setdefault("allow_advisory_escalation", True)
     critique.setdefault("allow_severity_downgrade", False)
     rounds = critique.get("rounds")
     if rounds not in {0, 1}:

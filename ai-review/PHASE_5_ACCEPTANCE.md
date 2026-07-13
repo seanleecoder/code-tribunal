@@ -55,7 +55,11 @@ Artifact checks:
 
 - Status: accepted
 - Decision reversal: the critique phase shipped in the trusted config as **permanently enabled**, not disabled-by-default as originally planned above. Commit `f7f1490` ("enable critique") flipped `critique.enabled: false → true`, `rounds: 0 → 1`, `allow_advisory_escalation: false → true`, and `allow_severity_downgrade: false → true` in [config/review.yaml](config/review.yaml).
-- This is the config now documented in the root [README.md](../README.md) configuration reference.
+- Follow-up policy keeps `allow_advisory_escalation=true` so peer-supported
+  advisory findings are surfaced, while restoring
+  `allow_severity_downgrade=false`; critique cannot downgrade a blocker across
+  the merge-blocking boundary. This is the configuration documented in the root
+  [README.md](../README.md) reference.
 
 ## Live Verification of the Enabled-by-Default Config
 
