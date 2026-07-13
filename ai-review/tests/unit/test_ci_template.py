@@ -428,6 +428,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("opencode --version", text)
 
     def test_implementation_spec_links_to_ci_source_without_copying_it(self) -> None:
+        if not _IMPLEMENTATION_SPEC.exists():
+            self.skipTest("repository-level specification is not copied into runtime images")
         text = _IMPLEMENTATION_SPEC.read_text(encoding="utf-8")
         section = text.split("## 20. CI templates", 1)[1].split("## 21.", 1)[0]
 
