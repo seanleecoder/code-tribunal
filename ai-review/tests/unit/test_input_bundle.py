@@ -71,11 +71,14 @@ class InputBundleLimitTests(unittest.TestCase):
             def __init__(self, *args: object, **kwargs: object) -> None:
                 pass
 
-            def fetch_latest_mr_version(self, project_id: str, mr_iid: str) -> MergeRequestVersion:
+            def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
                 return MergeRequestVersion("base", "start", "head")
 
-            def fetch_mr_diff(self, project_id: str, mr_iid: str) -> str:
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
                 return "diff --git a/f.py b/f.py\n"
+
+            def current_user_id(self) -> int | None:
+                return None
 
             def current_user(self) -> dict[str, object]:
                 raise RuntimeError("user lookup failed")
@@ -101,7 +104,7 @@ class InputBundleLimitTests(unittest.TestCase):
                     }
                 },
             ),
-            mock.patch("ai_review.input_bundle.GitLabClient", BrokenUserClient),
+            mock.patch("ai_review.input_bundle.create_gitlab_platform", BrokenUserClient),
             mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),

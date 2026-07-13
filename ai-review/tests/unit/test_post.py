@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 import ai_review.post as post_module
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.gitlab_client import MergeRequestVersion
+from ai_review.gitlab_client import (
+    MergeRequestVersion,
+    build_position,
+    root_note_id_from_discussion,
+)
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
 from ai_review.post import (
     _classify_post_groups,
@@ -45,6 +49,46 @@ class FakePostClient:
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
 
+    def current_user_id(self) -> int | None:
+        try:
+            user = self.current_user()
+        except Exception:
+            return None
+        user_id = user.get("id")
+        return user_id if isinstance(user_id, int) else None
+
+    def fetch_current_head_sha(self, project_id: str, change_id: str) -> str:
+        return self.fetch_current_mr_head_sha(project_id, change_id)
+
+    def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
+        return self.fetch_latest_mr_version(project_id, change_id)
+
+    def fetch_diff(self, project_id: str, change_id: str) -> str:
+        return ""
+
+    def build_position(
+        self,
+        anchor: dict[str, Any],
+        version: MergeRequestVersion,
+        *,
+        multiline: bool = False,
+    ) -> dict[str, Any]:
+        return build_position(anchor, version, multiline=multiline)
+
+    def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
+        return isinstance(position.get("line_range"), dict)
+
+    def single_line_position(self, position: dict[str, Any]) -> dict[str, Any]:
+        single_line_position = dict(position)
+        single_line_position.pop("line_range", None)
+        return single_line_position
+
+    def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
+        return root_note_id_from_discussion(response)
+
+    def member_access_level(self, project_id: str, user_id: str | int) -> int | None:
+        return 40
+
     def fetch_latest_mr_version(self, project_id: str, mr_iid: str) -> MergeRequestVersion:
         return MergeRequestVersion("base", "start", self.current_head_sha)
 
@@ -63,6 +107,19 @@ class FakePostClient:
     def list_mr_discussions(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
         return self.discussions
 
+    def list_threads(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return self.list_mr_discussions(project_id, change_id)
+
+    def create_inline_comment(
+        self, project_id: str, change_id: str, body: str, position: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.create_discussion(project_id, change_id, body, position)
+
+    def update_comment(
+        self, project_id: str, change_id: str, thread_id: str, comment_id: int, body: str
+    ) -> dict[str, Any]:
+        return self.update_discussion_note(project_id, change_id, thread_id, comment_id, body)
+
     def update_discussion_note(
         self,
         project_id: str,
@@ -76,6 +133,17 @@ class FakePostClient:
             {"discussion_id": discussion_id, "note_id": note_id, "body": body}
         )
         return {"id": note_id, "body": body}
+
+    def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return list(self.mr_notes)
+
+    def create_state_note(self, project_id: str, change_id: str, body: str) -> dict[str, Any]:
+        return self.create_mr_note(project_id, change_id, body)
+
+    def update_state_note(
+        self, project_id: str, change_id: str, note_id: int, body: str
+    ) -> dict[str, Any]:
+        return self.update_mr_note(project_id, change_id, note_id, body)
 
     def create_mr_note(self, project_id: str, mr_iid: str, body: str) -> dict[str, Any]:
         note_id = 900 + len(self.mr_notes)
@@ -98,6 +166,9 @@ class FakePostClient:
 
 
 class DiffFailPostClient(FakePostClient):
+    def fetch_diff(self, project_id: str, change_id: str) -> str:
+        raise RuntimeError("diff unavailable")
+
     def fetch_mr_diff(self, project_id: str, mr_iid: str) -> str:
         raise RuntimeError("diff unavailable")
 
@@ -110,6 +181,18 @@ class StatePostClient(FakePostClient):
 
     def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
         return list(self.mr_notes)
+
+    def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return self.list_mr_notes(project_id, change_id)
+
+    def resolve_thread(
+        self,
+        project_id: str,
+        change_id: str,
+        thread_id: str,
+        resolved: bool = True,
+    ) -> dict[str, Any]:
+        return self.resolve_discussion(project_id, change_id, thread_id, resolved)
 
     def resolve_discussion(
         self,
@@ -318,42 +401,44 @@ class PostTests(unittest.TestCase):
     def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
         group = self._consensus()["groups"][0]
         body, _body_hash = render_body(group, 1, "run")
-        discussions = index_ai_review_discussions([
-            {
-                "id": "trusted",
-                "resolved": False,
-                "notes": [
-                    {
-                        "id": 321,
-                        "body": body,
-                        "author": {"id": 10},
-                        "position": {
-                            "head_sha": "head",
-                            "new_path": "src/foo.py",
-                            "old_path": "src/foo.py",
-                            "new_line": 1,
-                        },
-                    }
-                ],
-            },
-            {
-                "id": "forged",
-                "resolved": False,
-                "notes": [
-                    {
-                        "id": 654,
-                        "body": body,
-                        "author": {"id": 99},
-                        "position": {
-                            "head_sha": "head",
-                            "new_path": "src/foo.py",
-                            "old_path": "src/foo.py",
-                            "new_line": 1,
-                        },
-                    }
-                ],
-            },
-        ])
+        discussions = index_ai_review_discussions(
+            [
+                {
+                    "id": "trusted",
+                    "resolved": False,
+                    "notes": [
+                        {
+                            "id": 321,
+                            "body": body,
+                            "author": {"id": 10},
+                            "position": {
+                                "head_sha": "head",
+                                "new_path": "src/foo.py",
+                                "old_path": "src/foo.py",
+                                "new_line": 1,
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": "forged",
+                    "resolved": False,
+                    "notes": [
+                        {
+                            "id": 654,
+                            "body": body,
+                            "author": {"id": 99},
+                            "position": {
+                                "head_sha": "head",
+                                "new_path": "src/foo.py",
+                                "old_path": "src/foo.py",
+                                "new_line": 1,
+                            },
+                        }
+                    ],
+                },
+            ]
+        )
 
         recovered = recover_state_from_discussions(
             FakePostClient("head"),
@@ -531,7 +616,6 @@ class PostTests(unittest.TestCase):
             "resolved": resolved,
             "notes": [note],
         }
-
 
     def test_plan_state_marks_ambiguous_matches_stale_without_result_mutation(self) -> None:
         consensus = self._consensus()
@@ -1331,6 +1415,18 @@ class PostTests(unittest.TestCase):
         class StateClient(FakePostClient):
             def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
                 return list(self.mr_notes)
+
+            def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+                return self.list_mr_notes(project_id, change_id)
+
+            def resolve_thread(
+                self,
+                project_id: str,
+                change_id: str,
+                thread_id: str,
+                resolved: bool = True,
+            ) -> dict[str, Any]:
+                return self.resolve_discussion(project_id, change_id, thread_id, resolved)
 
             def resolve_discussion(
                 self,

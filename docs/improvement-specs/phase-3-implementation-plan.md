@@ -84,6 +84,11 @@ state persistence or package naming needs revision.
 
 ### Step 2 — SPEC-15b: GitHub adapter and integration guidance
 
+Before or during this step, tighten the remaining platform response aliases
+(`Position`, `InlineComment`, `Thread`, and `ReviewStateNote`) from
+`dict[str, Any]` into concrete `TypedDict` shapes once the GitHub response
+translation requirements are known.
+
 1. Implement `platform/github.py` against GitHub pull-request review APIs using
    neutral positions translated to `path`, `line`, `side`, and optional
    `start_line` / `start_side` fields.

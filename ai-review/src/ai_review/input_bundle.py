@@ -4,16 +4,17 @@ import argparse
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 from .canonical import sha256_hex
 from .config import effective_config_summary, load_config
-from .gitlab_client import GitLabClient, current_user_id
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
     prior_decisions_from_state,
     state_aliases_from_state,
 )
+from .platform.factory import create_gitlab_platform
 from .schema import now_iso, write_canonical_json
 
 
@@ -21,7 +22,7 @@ class BundleError(RuntimeError):
     pass
 
 
-def _enforce_diff_limits(diff_text: str, config: dict) -> None:
+def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
     """Reject oversized diffs before they are sent to reviewer models.
 
     Mirrors the ``max_prompt_bytes`` guard in prompt_render: a diff that exceeds
@@ -116,8 +117,7 @@ def prepare_local_bundle(
     return out_path
 
 
-
-def _external_fork_secrets_blocked(config: dict) -> str | None:
+def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
     source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
     project_id = os.environ.get("CI_PROJECT_ID")
     if not source_project_id or not project_id or source_project_id == project_id:
@@ -130,7 +130,6 @@ def _external_fork_secrets_blocked(config: dict) -> str | None:
         "security.allow_external_fork_secrets is false "
         f"(source_project_id={source_project_id}, project_id={project_id})"
     )
-
 
 
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
@@ -149,9 +148,9 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
-    client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
-    version = client.fetch_latest_mr_version(project_id, mr_iid)
-    diff_text = client.fetch_mr_diff(project_id, mr_iid)
+    client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
+    version = client.fetch_version(project_id, mr_iid)
+    diff_text = client.fetch_diff(project_id, mr_iid)
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
@@ -198,12 +197,12 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
     if state_config.get("backend") == "gitlab_mr_state_note":
         try:
-            bot_author_id = current_user_id(client)
+            bot_author_id = client.current_user_id()
             if bot_author_id is None:
                 raise BundleError(
                     "state backend requires GitLab current_user lookup to verify state-note author"
                 )
-            notes = client.list_mr_notes(project_id, mr_iid)
+            notes = client.list_state_notes(project_id, mr_iid)
             loaded, warnings = newest_valid_state_from_notes(
                 notes,
                 checksum_required=bool(state_config.get("checksum_required", True)),

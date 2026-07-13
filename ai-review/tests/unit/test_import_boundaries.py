@@ -35,6 +35,24 @@ class ImportBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(completed.stdout.strip(), "full")
 
+    def test_product_code_does_not_import_gitlab_adapter_directly(self) -> None:
+        src = Path(__file__).resolve().parents[2] / "src" / "ai_review"
+        allowed = {
+            Path("platform/gitlab.py"),
+            Path("platform/factory.py"),
+            Path("gitlab_client.py"),
+        }
+        needles = ("gitlab_client", "GitLabReviewPlatform", "GitLabApiError")
+        offenders: list[str] = []
+        for path in src.rglob("*.py"):
+            rel = path.relative_to(src)
+            if rel in allowed:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if any(needle in text for needle in needles):
+                offenders.append(str(rel))
+        self.assertEqual(offenders, [])
+
 
 if __name__ == "__main__":
     unittest.main()
