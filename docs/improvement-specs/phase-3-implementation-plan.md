@@ -1,5 +1,8 @@
 # Phase 3 Implementation Plan — Platform + Scale
 
+> Current status: Steps 1–3 (SPEC-15a, SPEC-15b, and SPEC-16) are complete on
+> `main`. Steps 4–7 (SPEC-17 and SPEC-18) remain active roadmap work.
+
 This plan turns `phase-3-platform-scale.md` into a landing sequence that expands
 Code Tribunal beyond its initial GitLab implementation without losing the
 deterministic reducer and E2E safety net established in Phases 1–2. It assumes

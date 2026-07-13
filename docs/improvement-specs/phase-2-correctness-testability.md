@@ -1,5 +1,7 @@
 # Phase 2 — Correctness + Testability (Month 2)
 
+> Status: complete; released as `v0.3.0`. Retained as decision history.
+
 Makes the flagship consensus feature actually converge, and puts a safety net
 under the untested half of the pipeline before the Phase 3 refactors. Assumes
 Phase 0–1 landed (CI gate, render decoupling).

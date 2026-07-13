@@ -1,5 +1,8 @@
 # Phase 3 — Platform + Scale (Month 3)
 
+> Status: in progress. SPEC-15 (platform adapters) and SPEC-16 (supply-chain
+> pinning) are implemented on `main`; SPEC-17 and SPEC-18 remain planned.
+
 Unlocks the largest market (GitHub), makes builds reproducible, cuts cost via an
 adaptive panel, and extracts the defensible IP. Assumes Phases 0–2 landed —
 especially the platform seam that SPEC-14's decomposition and SPEC-13's types
@@ -8,6 +11,8 @@ create.
 ---
 
 ## SPEC-15 — `ReviewPlatform` interface + GitHub adapter
+
+**Implementation status:** complete on `main`.
 
 - **Severity:** Medium (M3) · **Effort:** L · **ROI rank:** 15
 - **Depends on:** SPEC-13, SPEC-14 (need typed shapes + a clean `post` seam)
@@ -72,6 +77,8 @@ the I/O edge is GitLab-shaped.
 
 ## SPEC-16 — Supply-chain pinning
 
+**Implementation status:** complete on `main`.
+
 - **Severity:** Medium (M8) · **Effort:** M · **ROI rank:** 17
 - **Depends on:** SPEC-03
 
@@ -121,6 +128,8 @@ keep them.)
 ---
 
 ## SPEC-17 — Adaptive panel + wire-or-cut budget/Jira + label reserved config
+
+**Implementation status:** planned.
 
 - **Severity:** Medium (M10) + cost/latency (vision) · **Effort:** M · **ROI rank:** 20
 - **Depends on:** SPEC-12 (measure cost/quality impact), SPEC-02 (docs)
@@ -177,6 +186,8 @@ shipped as "features" but are a stub / unwired.
 ---
 
 ## SPEC-18 — Extract the deterministic reducer as a standalone package + publish the finding schema
+
+**Implementation status:** planned.
 
 - **Severity:** Strategic (vision: hidden opportunity) · **Effort:** L · **ROI rank:** —
 - **Depends on:** SPEC-09, SPEC-13, SPEC-14 (needs a clean, typed, decoupled core)

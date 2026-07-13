@@ -8,21 +8,45 @@ to the SPEC-06 implementation PR.
 ## Required topology
 
 1. Create a protected template project, for example `org/code-tribunal-ci`.
-2. Copy `ai-review/ci/review.gitlab-ci.yml` into that project as
-   `/review.gitlab-ci.yml`.
+2. Mirror `ai-review/ci/review.gitlab-ci.yml` and
+   `ai-review/ci/review-child.gitlab-ci.yml` at their repository paths.
 3. Protect the branch or tag used by consumers, for example `v1.0.0`.
-4. Require CODEOWNERS approval for `/review.gitlab-ci.yml` changes in the
-   template project.
-5. In each consumer project, include the template by protected project/ref:
+4. Require CODEOWNERS approval for both template files.
+5. In each consumer project, choose direct mode or a mirrored child pipeline.
+   Direct mode uses a protected project include:
 
    ```yaml
    include:
      - project: 'org/code-tribunal-ci'
-       ref: 'v1.0.0'
-       file: '/review.gitlab-ci.yml'
+       ref: '<protected-tag-or-full-commit-sha>'
+       file: '/ai-review/ci/review.gitlab-ci.yml'
    ```
 
-Do not use `include: local` for secret-bearing jobs in merge-request pipelines.
+   Child mode uses one parent bridge and the protected child entry point:
+
+   ```yaml
+   ai_review:
+     stage: ai_review
+     needs: []
+     rules:
+       - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+     trigger:
+       include:
+         - project: 'org/code-tribunal-ci'
+           ref: '<protected-tag-or-full-commit-sha>'
+           file: '/ai-review/ci/review-child.gitlab-ci.yml'
+         - project: 'org/code-tribunal-ci'
+           ref: '<same-protected-tag-or-full-commit-sha>'
+           file: '/ai-review/ci/review.gitlab-ci.yml'
+       strategy: mirror
+       forward:
+         pipeline_variables: true
+   ```
+
+Do not use top-level `include: local`, consumer-controlled
+`trigger:include:local`, or a nested local include in the remote stage wrapper.
+Both child files must be explicit `include:project` entries at the same pinned
+ref.
 
 ## Required variables
 
@@ -45,8 +69,8 @@ the PR evidence.
 1. Create a merge request that edits the consumer repository's root
    `.gitlab-ci.yml` and attempts to replace the AI review jobs with jobs that
    print protected variable names or write a forged `out/gate/gate_result.json`.
-2. Confirm GitLab resolves the AI review job definitions from the protected
-   template project/ref, not from the MR branch.
+2. Confirm GitLab resolves the direct template or child entry point from the
+   protected template project/ref, not from the MR branch.
 3. Confirm `prepare_ai_review`, reviewer, consensus, post, and gate jobs either
    run from the protected template or are withheld from the unprotected fork
    because Protected variables are unavailable.
@@ -54,8 +78,9 @@ the PR evidence.
    `GITLAB_WRITE_TOKEN` values.
 5. Download artifacts and confirm any `gate_result.json` was produced by the
    trusted gate job, not by an MR-controlled job definition.
-6. Re-run the same MR after changing only the MR branch's local CI template file;
-   confirm the trusted template job definitions do not change.
+6. Re-run after changing the MR branch's local review template and child trigger
+   include; confirm the trust audit rejects local wiring and protected template
+   job definitions do not change.
 
 ## Evidence to attach before marking SPEC-06 complete
 
@@ -67,4 +92,5 @@ the PR evidence.
 - Screenshot or copied GitLab settings showing the required variables are
   Protected and Masked.
 
-SPEC-06 is not accepted until this evidence exists for a scratch GitLab project.
+The trusted delivery implementation is complete, but each deployment must retain
+this evidence for its own protected template project and consumer settings.

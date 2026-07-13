@@ -68,9 +68,9 @@ Reviewer models (default **Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **O
 
 ### Required CI Project Variables
 
-- `OPENROUTER_API_KEY`: Masked and Protected project variable, shared by `review_claude`, `review_codex`, and `review_opencode`.
+- `OPENROUTER_API_KEY`: Masked and Protected project variable, shared by the three `AI review: [reviewer]` jobs.
 - `OPENROUTER_BASE_URL`: Defaults to `https://openrouter.ai/api/v1` in the CI template; only override for a non-default OpenRouter deployment. This endpoint remains a **hard boundary** for the Codex/OpenCode adapters even though the model is no longer pinned.
-- `ANTHROPIC_BASE_URL`: Set by the CI template for `review_claude` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` only when this value is exactly `https://openrouter.ai/api` (no trailing slash or host aliases).
+- `ANTHROPIC_BASE_URL`: Set by the CI template for `AI review: [claude]` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` only when this value is exactly `https://openrouter.ai/api` (no trailing slash or host aliases).
 
 ### Runtime Overrides (no rebuild)
 

@@ -1,5 +1,7 @@
 # Phase 1 — Security + Determinism (Month 1)
 
+> Status: complete; released as `v0.2.0`. Retained as decision history.
+
 Closes the structural security gaps the review flagged as the existential risks
 for a *security* tool, plus the one architectural leak that undermines the
 reproducible-gate promise. Every spec here assumes SPEC-03 (CI gate) is live.

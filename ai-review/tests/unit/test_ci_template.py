@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
+_CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _PUBLISH_WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
@@ -37,7 +38,7 @@ def _template_variables() -> dict[str, dict[str, str]]:
         indent = len(raw_line) - len(raw_line.lstrip(" "))
         stripped = raw_line.strip()
         if indent == 0 and stripped.endswith(":"):
-            current_job = stripped[:-1]
+            current_job = _strip_yaml_string(stripped[:-1])
             in_variables = False
             variables.setdefault(current_job, {})
             continue
@@ -151,6 +152,57 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertLess(manual_idx, when_idx)
         self.assertLess(when_idx, allow_idx)
         self.assertLess(allow_idx, plain_rule_idx)
+
+    def test_template_uses_one_stage_and_same_stage_needs_dag(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        child_text = _CHILD_CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertEqual(text.count("stage: ai_review"), 6)
+        self.assertRegex(child_text, r"(?m)^stages:\n  - ai_review$")
+        self.assertNotRegex(child_text, r"(?m)^include:")
+        for retired_stage in ("prepare", "review", "critique", "consensus", "post", "gate"):
+            self.assertNotIn(f"stage: {retired_stage}\n", text)
+        prepare = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
+        self.assertIsNotNone(prepare)
+        self.assertIn("needs: []", prepare.group(1))
+
+    def test_reviewer_jobs_use_identity_preserving_group_names(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        for phase in ("review", "critique"):
+            for reviewer in ("claude", "codex", "opencode"):
+                self.assertIn(f'"AI {phase}: [{reviewer}]":', text)
+        for old_name in (
+            "review_claude",
+            "review_codex",
+            "review_opencode",
+            "critique_claude",
+            "critique_codex",
+            "critique_opencode",
+        ):
+            self.assertNotIn(old_name, text)
+
+    def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn('$CI_PIPELINE_SOURCE == "parent_pipeline"', text)
+        self.assertIn(
+            '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID '
+            '&& $AI_REVIEW_MANUAL == "true"',
+            text,
+        )
+
+    def test_template_only_declares_artifacts_that_commands_write(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        for stale_path in (
+            "out/status/prepare.json",
+            "out/status/consensus.json",
+            "out/status/post.json",
+            "out/status/gate.json",
+        ):
+            self.assertNotIn(stale_path, text)
+        self.assertIn("out/status/", text)
 
     def test_critique_source_gate_stays_within_prepare_so_needs_never_dangles(self) -> None:
         # Regression: `.critique_template` once used `extends: .ai_review_rules`
@@ -368,8 +420,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("critique_antigravity", text)
         self.assertNotIn("antigravity", text)
         self.assertNotRegex(text, r"\bagy\b")
-        self.assertIn("review_opencode", text)
-        self.assertIn("critique_opencode", text)
+        self.assertIn('"AI review: [opencode]"', text)
+        self.assertIn('"AI critique: [opencode]"', text)
         self.assertIn("opencode --version", text)
 
     def test_secret_bearing_jobs_use_trusted_image_code_and_config(self) -> None:
@@ -388,7 +440,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
 
     def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
-        variables = _effective_variables(_template_variables(), "review_claude")
+        variables = _effective_variables(_template_variables(), "AI review: [claude]")
 
         self.assertEqual(variables["REVIEWER"], "claude")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
@@ -401,14 +453,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         template = _template_variables()
 
         for reviewer in ("codex", "opencode"):
-            variables = _effective_variables(template, f"review_{reviewer}")
+            variables = _effective_variables(template, f"AI review: [{reviewer}]")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
     def test_opencode_requires_real_opencode_cli(self) -> None:
-        variables = _effective_variables(_template_variables(), "review_opencode")
+        variables = _effective_variables(_template_variables(), "AI review: [opencode]")
 
         self.assertEqual(variables["REVIEWER"], "opencode")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
@@ -418,7 +470,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
         template = _template_variables()
 
-        claude = _effective_critique_variables(template, "critique_claude")
+        claude = _effective_critique_variables(template, "AI critique: [claude]")
         self.assertEqual(claude["REVIEWER"], "claude")
         self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
@@ -426,12 +478,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(claude["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
 
         for reviewer in ("codex", "opencode"):
-            variables = _effective_critique_variables(template, f"critique_{reviewer}")
+            variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        opencode = _effective_critique_variables(template, "critique_opencode")
+        opencode = _effective_critique_variables(template, "AI critique: [opencode]")
         self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
