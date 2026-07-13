@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from . import budget
-from .adaptive import is_adaptive_first_pass_reviewer
 from .canonical import json_loads_no_duplicates
 from .config import ConfigError, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -659,23 +658,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
             _write_status(
                 output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
-            )
-            return 0
-
-        if stage == "review" and not is_adaptive_first_pass_reviewer(config, reviewer):
-            _write_empty(
-                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "skipped",
-                started_at,
-                started_monotonic,
-                output_file,
-                error_class="AdaptiveFirstPass",
-                error_message="reviewer deferred by panel.strategy=adaptive first pass",
             )
             return 0
 

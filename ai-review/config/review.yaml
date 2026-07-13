@@ -38,10 +38,10 @@ reviewers:
 
 # Panel voting and consensus aggregation rules
 panel:
-  strategy: full # Panel execution strategy: full (default) or adaptive (opt-in first pass with deterministic escalation measurement)
+  strategy: full # Panel strategy: full (default) or adaptive (opt-in; used for escalation planning/measurement until CI can safely rerun full-panel escalation)
   adaptive:
-    first_pass_reviewers: [claude] # Initial reviewer set when strategy=adaptive; full strategy ignores this
-    high_confidence_threshold: 0.8 # First-pass findings at or above this confidence trigger full-panel escalation
+    first_pass_reviewers: [claude] # Initial reviewer set for adaptive escalation analysis; full strategy ignores this
+    high_confidence_threshold: 0.8 # First-pass findings at or above this confidence require full-panel escalation
   expected_reviewers: 3 # Number of configured reviewers expected to execute
   min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
   min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
