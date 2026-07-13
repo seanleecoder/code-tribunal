@@ -29,3 +29,15 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
 - `ai-review/ci/review.gitlab-ci.yml` now pins `AI_REVIEW_BASE_IMAGE` / `AI_REVIEW_REVIEWER_IMAGE` to the public GHCR digests above (`AI_REVIEW_TRUSTED_IMAGE_SHA=f7f149089b85516c004e31255e6e57ac461ffed7`), replacing the private bootstrap registry image (`ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7`) — the GHCR Cutover Procedure step 3 in the root [README.md](../README.md#gitlab-ci-integration-guide--image-pinning) has been performed. Both digests were re-verified with an anonymous, unauthenticated `ghcr.io/token` pull immediately before the cutover landed.
 - External GitLab MR smoke: still outstanding — requires a live GitLab runner/project to trigger a pipeline against the new digests; not something this environment can execute. Pipeline `179684` (see [PHASE_5_ACCEPTANCE.md](PHASE_5_ACCEPTANCE.md)) still ran on the private bootstrap image and has not been re-run.
 - Expected result once that MR smoke runs: GitLab runners pull the public GHCR digest images without registry credentials and the AI Review jobs reach the same Phase 5 behavior.
+
+## v0.3.1 Image Refresh
+
+- Source merge commit: `93bb8a1b859f77d268dcfc314dc613208dc526e2`.
+- Publication workflow: GitHub Actions run `29261609916`; both preflight and
+  publish/attestation jobs passed.
+- Base image digest:
+  `sha256:b15a88afec89f825dbfde8d1ad0d5a3204ea02bb5a84da1b739fe808cc11320a`.
+- Reviewer image digest:
+  `sha256:ca7a7bb17c1c3744d040fb078df51d36c0405609c2a9e6721379b389e04968fe`.
+- Both images were built once, preflighted, published from the saved artifact,
+  and attested before the v0.3.1 release pin update.
