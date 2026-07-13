@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from .base import ReviewPlatform
-from .gitlab import GitLabReviewPlatform
 from .github import GitHubReviewPlatform
+from .gitlab import GitLabReviewPlatform
 
 
 def create_gitlab_platform(
