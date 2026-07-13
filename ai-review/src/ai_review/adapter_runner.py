@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget
+from .adaptive import is_adaptive_first_pass_reviewer, panel_strategy
 from .canonical import json_loads_no_duplicates
 from .config import ConfigError, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -661,6 +662,27 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
             return 0
 
+        if (
+            stage == "review"
+            and os.environ.get("AI_REVIEW_ADAPTIVE_FULL_PASS") != "1"
+            and not is_adaptive_first_pass_reviewer(config, reviewer)
+        ):
+            _write_empty(
+                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+            )
+            _write_status(
+                output_dir,
+                reviewer,
+                stage,
+                "skipped",
+                started_at,
+                started_monotonic,
+                output_file,
+                error_class="AdaptiveFirstPass",
+                error_message="reviewer deferred until adaptive escalation decision",
+            )
+            return 0
+
         critique_config = config.get("critique", {})
         if stage == "critique" and (
             critique_config.get("enabled") is not True or int(critique_config.get("rounds", 0)) == 0
@@ -672,6 +694,19 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
             )
             return 0
+
+        panel_config = config.get("panel", {})
+        adaptive_config = panel_config.get("adaptive", {}) if isinstance(panel_config, dict) else {}
+        if (
+            stage == "review"
+            and panel_strategy(config) == "adaptive"
+            and os.environ.get("AI_REVIEW_ADAPTIVE_FULL_PASS") != "1"
+            and is_adaptive_first_pass_reviewer(config, reviewer)
+            and isinstance(adaptive_config, dict)
+            and adaptive_config.get("first_pass_effort")
+        ):
+            reviewer_config = dict(reviewer_config)
+            reviewer_config["effort"] = adaptive_config["first_pass_effort"]
 
         if (validation_error := _cli_reviewer_validation_error(reviewer, model)) is not None:
             _write_empty(

@@ -411,6 +411,27 @@ def validate_config(config: dict[str, Any]) -> None:
     first_pass = adaptive.setdefault("first_pass_reviewers", [])
     if not isinstance(first_pass, list) or not all(isinstance(item, str) for item in first_pass):
         raise ConfigError("panel.adaptive.first_pass_reviewers must be a list of reviewer names")
+    first_pass_effort = adaptive.get("first_pass_effort")
+    if first_pass_effort is not None and first_pass_effort not in EFFORT_LEVELS:
+        raise ConfigError(
+            f"panel.adaptive.first_pass_effort must be one of {sorted(EFFORT_LEVELS)}"
+        )
+    reviewer_names = set(reviewers)
+    unknown_first_pass = sorted(set(first_pass) - reviewer_names)
+    if unknown_first_pass:
+        raise ConfigError(
+            f"panel.adaptive.first_pass_reviewers unknown reviewers: {unknown_first_pass}"
+        )
+    disabled_first_pass = sorted(
+        name
+        for name in first_pass
+        if isinstance(reviewers.get(name), dict) and reviewers[name].get("enabled") is not True
+    )
+    if disabled_first_pass:
+        raise ConfigError(
+            "panel.adaptive.first_pass_reviewers contains disabled reviewers: "
+            f"{disabled_first_pass}"
+        )
     threshold_adaptive = adaptive.setdefault("high_confidence_threshold", 0.8)
     if not isinstance(threshold_adaptive, int | float) or not (
         0.0 <= float(threshold_adaptive) <= 1.0

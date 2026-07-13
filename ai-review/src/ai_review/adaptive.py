@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import argparse
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from .config import enabled_reviewers, load_config
 from .constants import SEVERITY_RANK
+from .schema import load_json_file, write_canonical_json
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,8 @@ def escalation_decision(
     for batch in finding_batches:
         status = str(batch.get("adapter_status", ""))
         if status != "success":
+            if status in {"skipped", "budget_skipped"}:
+                continue
             if status in {
                 "schema_error",
                 "model_error",
@@ -77,6 +84,8 @@ def escalation_decision(
                 "internal_error",
             }:
                 reasons.add(f"first_pass_{status}")
+            else:
+                reasons.add("ambiguous_first_pass_status")
             continue
         for finding in batch.get("findings", []):
             if not isinstance(finding, dict):
@@ -97,3 +106,95 @@ def escalation_decision(
             if confidence >= threshold:
                 reasons.add("high_confidence")
     return EscalationDecision(bool(reasons), tuple(sorted(reasons)))
+
+
+
+def _load_finding_batches(findings_dir: Path) -> list[dict[str, Any]]:
+    batches: list[dict[str, Any]] = []
+    if not findings_dir.exists():
+        return batches
+    for path in sorted(findings_dir.glob("*.json")):
+        batch = load_json_file(path)
+        if isinstance(batch, dict):
+            batches.append(batch)
+    return batches
+
+
+def decision_artifact(
+    finding_batches: list[dict[str, Any]], config: dict[str, Any]
+) -> dict[str, Any]:
+    enabled = sorted(enabled_reviewers(config))
+    first_pass = adaptive_first_pass_reviewers(config, enabled)
+    decision = escalation_decision(finding_batches, config)
+    strategy = panel_strategy(config)
+    return {
+        "schema_version": "adaptive_decision.v1",
+        "strategy": strategy,
+        "first_pass_reviewers": first_pass if strategy == "adaptive" else enabled,
+        "escalate": bool(decision.escalate),
+        "reasons": list(decision.reasons),
+        "observed_batches": sorted(str(batch.get("reviewer", "")) for batch in finding_batches),
+    }
+
+
+def should_run_reviewer_in_full_pass(
+    reviewer: str, finding_batches: list[dict[str, Any]], config: dict[str, Any]
+) -> bool:
+    if panel_strategy(config) != "adaptive":
+        return False
+    enabled = sorted(enabled_reviewers(config))
+    if reviewer not in enabled:
+        return False
+    if reviewer in adaptive_first_pass_reviewers(config, enabled):
+        return False
+    return escalation_decision(finding_batches, config).escalate
+
+
+def _write_dotenv(path: Path, artifact: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                f"AI_REVIEW_ADAPTIVE_STRATEGY={artifact['strategy']}",
+                f"AI_REVIEW_ADAPTIVE_ESCALATE={'true' if artifact['escalate'] else 'false'}",
+                f"AI_REVIEW_ADAPTIVE_REASONS={','.join(artifact['reasons'])}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    decide = sub.add_parser("decide")
+    decide.add_argument(
+        "--config", default=os.environ.get("AI_REVIEW_CONFIG", "config/review.yaml")
+    )
+    decide.add_argument("--findings-dir", default="out/findings")
+    decide.add_argument("--out", default="out/status/adaptive_decision.json")
+    decide.add_argument("--dotenv", default="out/status/adaptive_decision.env")
+
+    run_full = sub.add_parser("should-run-full")
+    run_full.add_argument("reviewer")
+    run_full.add_argument(
+        "--config", default=os.environ.get("AI_REVIEW_CONFIG", "config/review.yaml")
+    )
+    run_full.add_argument("--findings-dir", default="out/findings")
+
+    args = parser.parse_args(argv)
+    config = load_config(args.config)
+    batches = _load_finding_batches(Path(args.findings_dir))
+    if args.command == "decide":
+        artifact = decision_artifact(batches, config)
+        write_canonical_json(Path(args.out), artifact)
+        _write_dotenv(Path(args.dotenv), artifact)
+        return 0
+    if args.command == "should-run-full":
+        return 0 if should_run_reviewer_in_full_pass(args.reviewer, batches, config) else 2
+    raise AssertionError(args.command)
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

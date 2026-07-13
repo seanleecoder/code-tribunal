@@ -79,8 +79,20 @@ The per-reviewer model is supplied via `AI_REVIEW_MODEL` (resolved from config, 
 — set `AI_REVIEW_CLAUDE_MODEL`, `AI_REVIEW_CODEX_MODEL`, or `AI_REVIEW_OPENCODE_MODEL`
 to change a model at runtime. Reviewer enablement, critique, and the merge gate are
 likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
-`AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
+`AI_REVIEW_MERGE_GATE_ENABLED`, `AI_REVIEW_PANEL_STRATEGY`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
+
+### Adaptive Panel Strategy
+
+`panel.strategy` defaults to `full`, which runs the established full reviewer panel
+and critique flow. Setting `AI_REVIEW_PANEL_STRATEGY=adaptive` enables a two-step
+flow in the GitLab template: first-pass reviewers run, `adaptive_panel_decision`
+records whether escalation is required, and `review_full_*` / critique jobs exit
+early unless the first pass finds a conservative escalation trigger. The default
+first pass is `panel.adaptive.first_pass_reviewers` at
+`panel.adaptive.first_pass_effort`; escalation preserves the existing full-panel
+consensus path. Keep `full` as the production default until SPEC-12 corpus metrics
+show blocker recall is preserved.
 
 ### Debugging a slow or stuck reviewer
 
@@ -139,7 +151,7 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 ## Concurrency, Failure Isolation & Budget Controls
 
 ### Parallel Runner Execution
-The three `review_*` jobs run in parallel against the same immutable input bundle and have no `resource_group`, so they are never serialized by GitLab. A GitLab Runner with at least 3 concurrent job slots achieves true parallel execution; with fewer slots, jobs queue safely.
+With `panel.strategy: full`, the three `review_*` jobs run in parallel against the same immutable input bundle and have no `resource_group`, so they are never serialized by GitLab. A GitLab Runner with at least 3 concurrent job slots achieves true parallel execution; with fewer slots, jobs queue safely. With `panel.strategy: adaptive`, only configured first-pass reviewers perform model work in the `review` stage; deferred reviewers write skipped artifacts, then `review_full_*` jobs perform model work only when `adaptive_panel_decision` requires escalation.
 
 ### Fault Tolerance & Panel Degradation
 Each reviewer writes strictly to its own output files (`out/findings/<reviewer>.json` and `out/status/<reviewer>.json`). A failing reviewer does not fail its CI job (`allow_failure: true`), and `consensus_ai_review` treats every review job as `optional: true`. `panel.min_successful_reviewers_for_blocking` and `panel.degraded_behavior` in [config/review.yaml](config/review.yaml) control how consensus degrades when reviewers fail:

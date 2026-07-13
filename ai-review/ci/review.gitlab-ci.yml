@@ -1,5 +1,5 @@
 # Consuming repos must declare these stages in their root .gitlab-ci.yml:
-# prepare, review, critique, consensus, post, gate
+# prepare, review, adaptive_decision, review_full, critique, consensus, post, gate
 
 variables:
   # Public GHCR images, cut over from the Phase 5.5 private bootstrap refs.
@@ -93,6 +93,94 @@ review_opencode:
     REVIEWER: opencode
     AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
+
+adaptive_panel_decision:
+  stage: adaptive_decision
+  extends: .ai_review_rules
+  image: "$AI_REVIEW_BASE_IMAGE"
+  interruptible: true
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+    - job: review_claude
+      artifacts: true
+      optional: true
+    - job: review_codex
+      artifacts: true
+      optional: true
+    - job: review_opencode
+      artifacts: true
+      optional: true
+  script:
+    - python -m ai_review.adaptive decide --config "$AI_REVIEW_CONFIG" --findings-dir out/findings --out out/status/adaptive_decision.json --dotenv out/status/adaptive_decision.env
+  artifacts:
+    when: always
+    expire_in: 7 days
+    reports:
+      dotenv: out/status/adaptive_decision.env
+    paths:
+      - out/status/adaptive_decision.json
+      - out/status/adaptive_decision.env
+
+.review_full_template:
+  stage: review_full
+  extends: .ai_review_rules
+  image: "$AI_REVIEW_REVIEWER_IMAGE"
+  interruptible: true
+  allow_failure: true
+  variables:
+    AI_REVIEW_INPUT_DIR: inputs
+    AI_REVIEW_OUTPUT_DIR: out
+    AI_REVIEW_LOCAL_MOCK: "0"
+    AI_REVIEW_ADAPTIVE_FULL_PASS: "1"
+    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+  needs:
+    - job: prepare_ai_review
+      artifacts: true
+    - job: adaptive_panel_decision
+      artifacts: true
+    - job: review_claude
+      artifacts: true
+      optional: true
+    - job: review_codex
+      artifacts: true
+      optional: true
+    - job: review_opencode
+      artifacts: true
+      optional: true
+  script:
+    - |
+      if python -m ai_review.adaptive should-run-full "$REVIEWER" --config "$AI_REVIEW_CONFIG" --findings-dir out/findings; then
+        /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
+      else
+        echo "ai-review: adaptive full-panel pass not required for $REVIEWER"
+      fi
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - out/findings/
+      - out/status/
+
+review_full_claude:
+  extends: .review_full_template
+  variables:
+    REVIEWER: claude
+    AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+    ANTHROPIC_BASE_URL: https://openrouter.ai/api
+
+review_full_codex:
+  extends: .review_full_template
+  variables:
+    REVIEWER: codex
+
+review_full_opencode:
+  extends: .review_full_template
+  variables:
+    REVIEWER: opencode
+    AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+
 .critique_template:
   stage: critique
   image: "$AI_REVIEW_REVIEWER_IMAGE"
@@ -131,8 +219,22 @@ review_opencode:
     - job: review_opencode
       artifacts: true
       optional: true
+    - job: review_full_claude
+      artifacts: true
+      optional: true
+    - job: review_full_codex
+      artifacts: true
+      optional: true
+    - job: review_full_opencode
+      artifacts: true
+      optional: true
   script:
-    - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
+    - |
+      if [ "$AI_REVIEW_ADAPTIVE_STRATEGY" = "adaptive" ] && [ "$AI_REVIEW_ADAPTIVE_ESCALATE" != "true" ]; then
+        echo "ai-review: adaptive first pass clean; skipping critique for $REVIEWER"
+        exit 0
+      fi
+      /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
   artifacts:
     when: always
     expire_in: 7 days
@@ -174,6 +276,18 @@ consensus_ai_review:
       artifacts: true
       optional: true
     - job: review_opencode
+      artifacts: true
+      optional: true
+    - job: adaptive_panel_decision
+      artifacts: true
+      optional: true
+    - job: review_full_claude
+      artifacts: true
+      optional: true
+    - job: review_full_codex
+      artifacts: true
+      optional: true
+    - job: review_full_opencode
       artifacts: true
       optional: true
     - job: critique_claude

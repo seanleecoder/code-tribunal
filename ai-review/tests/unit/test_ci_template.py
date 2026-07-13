@@ -126,8 +126,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertEqual(base_bootstrap.group(1), trusted_sha.group(1))
             self.assertEqual(reviewer_bootstrap.group(1), trusted_sha.group(1))
 
-        self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 4)
-        self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 2)
+        self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 5)
+        self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 3)
 
     def test_prepare_job_supports_manual_trigger_variable(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
