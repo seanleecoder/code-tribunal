@@ -98,7 +98,7 @@ critique:
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
-  mode: gitlab_discussions # Integration backend target for discussions
+  mode: gitlab_discussions # Integration backend target for discussions; set github_reviews with state.backend=github_pr_comment for GitHub Actions
   v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
   inline_multiline: true # Support multiline diff range comments
   fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
@@ -117,7 +117,7 @@ merge_gate:
 
 # Persistent state management across pipeline runs
 state:
-  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR)
+  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR); use github_pr_comment with posting.mode=github_reviews
   marker_version: ai-review-state:v1 # State note payload version identifier
   recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
   checksum_required: true # Require SHA256 integrity check on state note content

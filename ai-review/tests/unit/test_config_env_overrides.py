@@ -197,6 +197,25 @@ class LoadConfigOverrideTests(unittest.TestCase):
         summary = effective_config_summary(config)
         self.assertTrue(summary["panel_grouping_semantic_enabled"])
         self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
+        self.assertEqual(summary["posting_mode"], "gitlab_discussions")
+        self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
+
+
+class PostingModeConfigTests(unittest.TestCase):
+    def test_github_reviews_requires_github_state_backend(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["posting"]["mode"] = "github_reviews"
+        config["state"]["backend"] = "gitlab_mr_state_note"
+
+        with self.assertRaisesRegex(ConfigError, "github_reviews requires state.backend"):
+            validate_config(config)
+
+    def test_github_reviews_accepts_github_state_backend(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["posting"]["mode"] = "github_reviews"
+        config["state"]["backend"] = "github_pr_comment"
+
+        validate_config(config)
 
 
 if __name__ == "__main__":

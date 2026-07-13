@@ -8,6 +8,7 @@ from .base import (
     ReviewStateNote,
     Thread,
 )
+from .github import GitHubReviewPlatform, GitHubReviewPlatformError, PullRequestVersion
 
 __all__ = [
     "InlineComment",
@@ -16,4 +17,7 @@ __all__ = [
     "ReviewPlatformError",
     "ReviewStateNote",
     "Thread",
+    "GitHubReviewPlatform",
+    "GitHubReviewPlatformError",
+    "PullRequestVersion",
 ]

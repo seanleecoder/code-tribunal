@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 from pathlib import Path
@@ -14,7 +15,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
-from .platform.factory import create_gitlab_platform
+from .platform.factory import create_github_platform, create_gitlab_platform
 from .schema import now_iso, write_canonical_json
 
 
@@ -132,6 +133,136 @@ def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
     )
 
 
+def _load_platform_state(
+    client: Any,
+    config: dict[str, Any],
+    default_state: dict[str, Any],
+    *,
+    project_id: str,
+    change_id: str,
+    backend_name: str,
+) -> dict[str, Any]:
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    if state_config.get("backend") not in {"gitlab_mr_state_note", "github_pr_comment"}:
+        return default_state
+    try:
+        bot_author_id = client.current_user_id()
+        if bot_author_id is None:
+            raise BundleError(
+                f"state backend requires {backend_name} current_user lookup "
+                "to verify state-note author"
+            )
+        notes = client.list_state_notes(project_id, change_id)
+        loaded, warnings = newest_valid_state_from_notes(
+            notes,
+            checksum_required=bool(state_config.get("checksum_required", True)),
+            expected_author_id=bot_author_id,
+        )
+        for warning in warnings:
+            print(f"ai-review prepare: {warning}")
+        return loaded if loaded is not None else default_state
+    except Exception as exc:
+        if state_config.get("overflow_behavior") == "fail_closed":
+            raise
+        print(f"ai-review prepare: state load failed: {exc}")
+        return default_state
+
+
+def _github_event_pull_request() -> dict[str, Any]:
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        raise SystemExit("prepare requires GITHUB_EVENT_PATH for github_reviews mode")
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    pull_request = event.get("pull_request")
+    if not isinstance(pull_request, dict):
+        raise SystemExit("prepare requires a pull_request GitHub event payload")
+    return pull_request
+
+
+def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
+    out_path = Path(out)
+    out_path.mkdir(parents=True, exist_ok=True)
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    api_url = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
+    if not repo or not token:
+        raise SystemExit(
+            "prepare requires GITHUB_REPOSITORY and GITHUB_TOKEN for github_reviews mode"
+        )
+    config_dict = load_config(config)
+    pull_request = _github_event_pull_request()
+    pr_number = str(
+        pull_request.get("number") or os.environ.get("GITHUB_REF_NAME", "").split("/")[0]
+    )
+    if not pr_number or not pr_number.isdigit():
+        raise SystemExit("prepare requires pull_request.number in the GitHub event payload")
+
+    client = create_github_platform(api_url, token)
+    version = client.fetch_version(repo, pr_number)
+    diff_text = client.fetch_diff(repo, pr_number)
+    _enforce_diff_limits(diff_text, config_dict)
+    (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
+
+    config_path = Path(config)
+    shutil.copy2(config_path, out_path / "config.review.yaml")
+    source_rules = config_path.parent.parent / "rules"
+    source_prompts = config_path.parent.parent / "prompts"
+    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
+    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
+
+    snapshot_dir = out_path / "repo_snapshot"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    ignore_names = {".git", ".ai-review-local", out_path.name}
+
+    def ignore(_directory: str, names: list[str]) -> set[str]:
+        return set(names) & ignore_names
+
+    shutil.copytree(Path.cwd(), snapshot_dir, dirs_exist_ok=True, ignore=ignore)
+    diff_sha = sha256_hex(diff_text)
+    raw_head = pull_request.get("head")
+    head = raw_head if isinstance(raw_head, dict) else {}
+    raw_base = pull_request.get("base")
+    base = raw_base if isinstance(raw_base, dict) else {}
+    manifest = {
+        "schema_version": "input_manifest.v1",
+        "run_id": (
+            f"gh-{os.environ.get('GITHUB_RUN_ID', '0')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '0')}"
+        ),
+        "project_id": repo,
+        "project_path": repo,
+        "merge_request_iid": pr_number,
+        "source_branch": str(head.get("ref") or ""),
+        "target_branch": str(base.get("ref") or ""),
+        "base_sha": version.base_sha,
+        "start_sha": version.base_sha,
+        "head_sha": version.head_sha,
+        "diff_sha256": diff_sha,
+        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
+        "config_sha256": _file_sha256(config_path),
+        "rules_sha256": _directory_sha256(source_rules),
+        "effective_config": effective_config_summary(config_dict),
+        "created_at": now_iso(),
+    }
+    state = empty_state(
+        project_id=repo,
+        merge_request_iid=pr_number,
+        head_sha=version.head_sha,
+        pipeline_id=os.environ.get("GITHUB_RUN_ID", ""),
+    )
+    state = _load_platform_state(
+        client,
+        config_dict,
+        state,
+        project_id=repo,
+        change_id=pr_number,
+        backend_name="GitHub",
+    )
+    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
+    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
+    write_canonical_json(out_path / "manifest.json", manifest)
+    return out_path
+
+
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -194,28 +325,14 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         head_sha=version.head_sha,
         pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
     )
-    state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
-    if state_config.get("backend") == "gitlab_mr_state_note":
-        try:
-            bot_author_id = client.current_user_id()
-            if bot_author_id is None:
-                raise BundleError(
-                    "state backend requires GitLab current_user lookup to verify state-note author"
-                )
-            notes = client.list_state_notes(project_id, mr_iid)
-            loaded, warnings = newest_valid_state_from_notes(
-                notes,
-                checksum_required=bool(state_config.get("checksum_required", True)),
-                expected_author_id=bot_author_id,
-            )
-            if loaded is not None:
-                state = loaded
-            for warning in warnings:
-                print(f"ai-review prepare: {warning}")
-        except Exception as exc:
-            if state_config.get("overflow_behavior") == "fail_closed":
-                raise
-            print(f"ai-review prepare: state load failed: {exc}")
+    state = _load_platform_state(
+        client,
+        config_dict,
+        state,
+        project_id=str(project_id),
+        change_id=str(mr_iid),
+        backend_name="GitLab",
+    )
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
     write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
     write_canonical_json(out_path / "manifest.json", manifest)
@@ -240,7 +357,12 @@ def cli(argv: list[str] | None = None) -> int:
         prepare_local_bundle(args.config, args.diff, args.repo, args.out)
         return 0
     if args.command == "prepare":
-        prepare_gitlab_bundle(args.config, args.out)
+        config_dict = load_config(args.config)
+        posting = config_dict.get("posting", {}) if isinstance(config_dict, dict) else {}
+        if posting.get("mode") == "github_reviews":
+            prepare_github_bundle(args.config, args.out)
+        else:
+            prepare_gitlab_bundle(args.config, args.out)
         return 0
     raise AssertionError(args.command)
 

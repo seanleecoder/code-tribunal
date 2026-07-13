@@ -23,7 +23,7 @@ from .memory import (
     state_overflow_reason,
 )
 from .platform import ReviewPlatform, ReviewPlatformError
-from .platform.factory import create_gitlab_platform
+from .platform.factory import create_github_platform, create_gitlab_platform
 from .render import (
     compute_body_hash as _compute_body_hash,
 )
@@ -217,7 +217,7 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
 
 def _state_enabled(config: dict[str, Any]) -> bool:
     state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return bool(state_config.get("backend") == "gitlab_mr_state_note")
+    return state_config.get("backend") in {"gitlab_mr_state_note", "github_pr_comment"}
 
 
 def _list_state_notes(
@@ -384,14 +384,17 @@ def _author_access_level(
     access_level = author.get("access_level")
     if isinstance(access_level, int):
         return access_level
-    user_id = author.get("id")
-    if user_id is None:
-        return None
-    try:
-        access_level = client.member_access_level(project_id, user_id)
-        return access_level if isinstance(access_level, int) else None
-    except Exception:
-        return None
+    candidate_ids = [author.get("id"), author.get("username"), author.get("login")]
+    for user_id in candidate_ids:
+        if user_id is None:
+            continue
+        try:
+            access_level = client.member_access_level(project_id, user_id)
+        except Exception:
+            continue
+        if isinstance(access_level, int):
+            return access_level
+    return None
 
 
 def collect_human_commands(
@@ -1590,13 +1593,20 @@ def cli(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
     consensus = cast(Consensus, load_json_file(args.consensus))
-    token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
-    api_url = (
-        os.environ.get("CI_API_V4_URL")
-        or os.environ.get("GITLAB_API_URL")
-        or "https://gitlab.example.com/api/v4"
-    )
-    client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
+    posting = config.get("posting", {}) if isinstance(config, dict) else {}
+    mode = posting.get("mode", "gitlab_discussions")
+    if mode == "github_reviews":
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "dry-run-token"
+        api_url = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
+        client = create_github_platform(api_url, token)
+    else:
+        token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
+        api_url = (
+            os.environ.get("CI_API_V4_URL")
+            or os.environ.get("GITLAB_API_URL")
+            or "https://gitlab.example.com/api/v4"
+        )
+        client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
     diff_path = Path(args.inputs) / "mr.diff"
     diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(

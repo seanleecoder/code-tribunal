@@ -20,6 +20,7 @@ TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
+FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
 
 FIXTURE_ROOT = TESTS_ROOT / "fixtures"
 AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
@@ -43,9 +44,7 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertIs(gate_result["block_merge"], True)
 
     def test_fyi_only_consensus_posts_summary_and_passes_gate(self) -> None:
-        client, consensus, post_result, gate_result, exit_code = self._run_e2e(
-            self._fyi_batches()
-        )
+        client, consensus, post_result, gate_result, exit_code = self._run_e2e(self._fyi_batches())
 
         self.assertEqual(consensus["summary"]["surface_count"], 0)
         self.assertEqual(consensus["summary"]["fyi_count"], 1)
@@ -58,6 +57,71 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(gate_result["status"], "passed")
         self.assertIs(gate_result["block_merge"], False)
+
+    def test_github_reviews_posts_inline_and_blocks_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+            config["posting"]["mode"] = "github_reviews"
+            config["state"]["backend"] = "github_pr_comment"
+            manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            consensus = build_consensus(manifest, self._blocking_batches(), config)
+            validate_instance(consensus, "consensus.schema.json")
+
+            post_result = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            gate_result, exit_code = evaluate_gate(config, consensus, post_result)
+
+        validate_instance(post_result, "post_result.schema.json")
+        validate_instance(gate_result, "gate_result.schema.json")
+        self.assertEqual(post_result["status"], "success")
+        self.assertEqual(post_result["created_discussions"], 1)
+        self.assertEqual(client.review_comment_count(), 1)
+        self.assertEqual(client.state_comment_count(), 1)
+        self.assertEqual(exit_code, 7)
+        self.assertEqual(gate_result["status"], "failed_blocking_findings")
+
+    def test_github_fyi_summary_updates_on_rerun_and_passes_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+            config["posting"]["mode"] = "github_reviews"
+            config["state"]["backend"] = "github_pr_comment"
+            manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            consensus = build_consensus(manifest, self._fyi_batches(), config)
+
+            first_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            second_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            gate_result, exit_code = evaluate_gate(config, consensus, second_post)
+
+        validate_instance(first_post, "post_result.schema.json")
+        validate_instance(second_post, "post_result.schema.json")
+        validate_instance(gate_result, "gate_result.schema.json")
+        self.assertEqual(first_post["summary_comment"]["action"], "created")
+        self.assertEqual(second_post["summary_comment"]["action"], "unchanged")
+        self.assertEqual(client.review_comment_count(), 0)
+        self.assertEqual(client.state_comment_count(), 2)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(gate_result["status"], "passed")
+
+    def test_github_rerun_with_unchanged_state_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+            config["posting"]["mode"] = "github_reviews"
+            config["state"]["backend"] = "github_pr_comment"
+            manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            consensus = build_consensus(manifest, self._blocking_batches(), config)
+
+            first_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            second_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+
+        validate_instance(first_post, "post_result.schema.json")
+        validate_instance(second_post, "post_result.schema.json")
+        self.assertEqual(first_post["created_discussions"], 1)
+        self.assertEqual(second_post["created_discussions"], 0)
+        self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
+        self.assertEqual(client.review_comment_count(), 1)
+        self.assertEqual(client.state_comment_count(), 1)
 
     def test_rerun_with_unchanged_state_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,7 +168,7 @@ class PostGateEndToEndTests(unittest.TestCase):
             "def extract_name(records):\n"
             "    if not records:\n"
             "        return None\n"
-            "    return records[0][\"name\"]\n",
+            '    return records[0]["name"]\n',
             encoding="utf-8",
         )
         bundle = prepare_local_bundle(
@@ -195,7 +259,7 @@ class PostGateEndToEndTests(unittest.TestCase):
             "category": "correctness",
             "title": title,
             "body": body,
-            "evidence": ["value = records[0][\"name\"]"],
+            "evidence": ['value = records[0]["name"]'],
             "suggestion": "Move the empty-records guard before indexing records[0].",
             "confidence": 0.9,
             "fingerprints": {

@@ -441,5 +441,24 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"', text)
 
 
+class GitHubActionsTemplateTests(unittest.TestCase):
+    def test_github_actions_template_is_safe_and_runnable(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertIn("pull_request:", text)
+        active_yaml = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn("pull_request_target", active_yaml)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("python -m ai_review.input_bundle prepare", text)
+        self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
+        self.assertIn("python -m ai_review.consensus", text)
+        self.assertIn("python -m ai_review.post", text)
+        self.assertIn("python -m ai_review.gate", text)
+        self.assertNotIn('echo "Run prepare/reviewer/consensus/post/gate stages here."', text)
+
+
 if __name__ == "__main__":
     unittest.main()
