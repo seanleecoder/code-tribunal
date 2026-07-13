@@ -1,0 +1,31 @@
+# Safe GitHub Actions template for Code Tribunal / ai-review.
+# Run secret-bearing review jobs on pull_request after the repository's checked-in
+# workflow has been selected by GitHub. Do not move this job to pull_request_target:
+# attacker-controlled pull request code could then run with write credentials.
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-review:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run ai-review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          AI_REVIEW_CONFIG: ai-review/config/review.yaml
+        run: |
+          echo "Run prepare/reviewer/consensus/post/gate stages here."
+          echo "Configure posting.mode=github_reviews and state.backend=github_pr_comment."

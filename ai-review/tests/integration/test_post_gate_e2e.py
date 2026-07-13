@@ -20,6 +20,7 @@ TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
+FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
 
 FIXTURE_ROOT = TESTS_ROOT / "fixtures"
 AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +59,29 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(gate_result["status"], "passed")
         self.assertIs(gate_result["block_merge"], False)
+
+
+    def test_github_reviews_posts_inline_and_blocks_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+            config["posting"]["mode"] = "github_reviews"
+            config["state"]["backend"] = "github_pr_comment"
+            manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            consensus = build_consensus(manifest, self._blocking_batches(), config)
+            validate_instance(consensus, "consensus.schema.json")
+
+            post_result = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            gate_result, exit_code = evaluate_gate(config, consensus, post_result)
+
+        validate_instance(post_result, "post_result.schema.json")
+        validate_instance(gate_result, "gate_result.schema.json")
+        self.assertEqual(post_result["status"], "success")
+        self.assertEqual(post_result["created_discussions"], 1)
+        self.assertEqual(client.review_comment_count(), 1)
+        self.assertEqual(client.state_comment_count(), 1)
+        self.assertEqual(exit_code, 7)
+        self.assertEqual(gate_result["status"], "failed_blocking_findings")
 
     def test_rerun_with_unchanged_state_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

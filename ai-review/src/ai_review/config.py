@@ -294,7 +294,6 @@ def load_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
-
 def _validate_severity_policy(config: dict[str, Any]) -> None:
     policy = config.get("severity_policy")
     if not isinstance(policy, dict):
@@ -313,6 +312,7 @@ def _validate_severity_policy(config: dict[str, Any]) -> None:
     if not isinstance(quorum.get("block_merge"), bool):
         raise ConfigError("severity_policy.quorum_blocker.block_merge must be a boolean")
 
+
 def enabled_reviewers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     reviewers = config.get("reviewers", {})
     if not isinstance(reviewers, dict):
@@ -324,6 +324,26 @@ def enabled_reviewers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _validate_posting(config: dict[str, Any]) -> None:
+    posting = config.setdefault("posting", {})
+    if not isinstance(posting, dict):
+        raise ConfigError("posting must be a mapping")
+    mode = posting.setdefault("mode", "gitlab_discussions")
+    if mode not in {"gitlab_discussions", "github_reviews"}:
+        raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
+    state = config.setdefault("state", {})
+    if not isinstance(state, dict):
+        raise ConfigError("state must be a mapping")
+    backend = state.setdefault(
+        "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
+    )
+    allowed = {"gitlab_mr_state_note", "github_pr_comment"}
+    if backend not in allowed:
+        raise ConfigError(f"state.backend must be one of {sorted(allowed)}")
+    if mode == "github_reviews" and backend != "github_pr_comment":
+        raise ConfigError("posting.mode github_reviews requires state.backend github_pr_comment")
+
+
 def validate_config(config: dict[str, Any]) -> None:
     unknown = set(config) - TOP_LEVEL_KEYS
     if unknown:
@@ -331,6 +351,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if config.get("schema_version") != "review_config.v1":
         raise ConfigError("schema_version must be review_config.v1")
     _validate_severity_policy(config)
+    _validate_posting(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict) or not reviewers:
         raise ConfigError("at least one reviewer must be configured")

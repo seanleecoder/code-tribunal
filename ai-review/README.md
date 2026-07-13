@@ -170,3 +170,16 @@ For a concrete, artifact-backed walkthrough of every stage on one real pipeline 
 ## Implemented vs Reserved Configuration
 
 Budget and Jira settings are currently planned/experimental. `post.py` does not import `jira_client`, Jira comment counters remain `0`, and the default budget backend is `none`. Several policy knobs remain reserved for later cleanup, including alternate quorum/degraded behavior, expected reviewer counts, majority-noise severity policy, merge-gate project-setting automation, most container-level `security.*` controls, per-reviewer `cli_version`, and `limits.max_findings_per_reviewer`.
+
+### GitHub pull request reviews
+
+Set `posting.mode: github_reviews` and `state.backend: github_pr_comment` to post
+AI review findings to GitHub pull requests. The GitHub adapter translates neutral
+anchors to GitHub review-comment fields (`path`, `line`, `side`, and optional
+`start_line` / `start_side`) and stores persisted state in a bot-authored PR
+comment guarded by an HTML marker and authenticated bot author verification.
+
+Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions.
+Keep write-token jobs on `pull_request` for trusted in-repository workflow YAML;
+do not use unsafe `pull_request_target` patterns that execute pull-request code
+with repository secrets.
