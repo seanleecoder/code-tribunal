@@ -46,8 +46,9 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         original = check_supply_chain_pins.GITLAB_BUILD_TEMPLATE
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "build-images.gitlab-ci.yml"
+            stale_version_check = '\n    - test -n "$AI_REVIEW_CLAUDE_VERSION"\n'
             mutated.write_text(
-                original.read_text(encoding="utf-8") + '\n    - test -n "$AI_REVIEW_CLAUDE_VERSION"\n',
+                original.read_text(encoding="utf-8") + stale_version_check,
                 encoding="utf-8",
             )
             check_supply_chain_pins.GITLAB_BUILD_TEMPLATE = mutated

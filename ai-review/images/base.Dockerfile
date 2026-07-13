@@ -26,6 +26,7 @@ COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src /opt/ai-review/src
 COPY ai-review/tests /opt/ai-review/tests
+COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY ai-review/PHASE_2_ACCEPTANCE.md /opt/ai-review/PHASE_2_ACCEPTANCE.md
 COPY ai-review/README.md /opt/ai-review/README.md
 
