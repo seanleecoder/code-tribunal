@@ -1595,11 +1595,7 @@ def cli(argv: list[str] | None = None) -> int:
     if mode == "github_reviews":
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "dry-run-token"
         api_url = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
-        client = create_github_platform(
-            api_url,
-            token,
-            bot_login=os.environ.get("GITHUB_ACTOR"),
-        )
+        client = create_github_platform(api_url, token)
     else:
         token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
         api_url = (

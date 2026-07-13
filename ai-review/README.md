@@ -177,9 +177,14 @@ Set `posting.mode: github_reviews` and `state.backend: github_pr_comment` to pos
 AI review findings to GitHub pull requests. The GitHub adapter translates neutral
 anchors to GitHub review-comment fields (`path`, `line`, `side`, and optional
 `start_line` / `start_side`) and stores persisted state in a bot-authored PR
-comment guarded by an HTML marker and authenticated bot author verification.
+comment. State comments carry the normal encoded `ai-review-state:v1` payload plus
+a GitHub backend marker, and are accepted only when authored by the authenticated
+token identity. Summary comments share GitHub's PR issue-comment channel but do
+not carry the state marker.
 
-Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions.
-Keep write-token jobs on `pull_request` for trusted in-repository workflow YAML;
-do not use unsafe `pull_request_target` patterns that execute pull-request code
-with repository secrets.
+Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions;
+it mirrors the prepare → review → consensus → post → gate flow. Keep write-token
+jobs on `pull_request` for trusted in-repository workflow YAML; do not use unsafe
+`pull_request_target` patterns that execute pull-request code with repository
+secrets. Maintainer slash-command authorization is not implemented for GitHub
+yet, so `/ai-review ...` commands fail closed rather than trusting commenters.

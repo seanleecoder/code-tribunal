@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.platform.github import PullRequestVersion
+from ai_review.memory import STATE_NOTE_SPEC_RE
+from ai_review.platform.github import STATE_MARKER, PullRequestVersion
 
 
 class FakeGitHubClient:
@@ -33,7 +34,9 @@ class FakeGitHubClient:
     def list_threads(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> list[dict[str, Any]]:
-        return [self._thread(comment) for comment in self._comments]
+        return [self._thread(comment) for comment in self._comments] + [
+            self._issue_thread(comment) for comment in self._issue_comments
+        ]
 
     def create_inline_comment(
         self,
@@ -80,26 +83,30 @@ class FakeGitHubClient:
     def list_state_notes(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> list[dict[str, Any]]:
-        return list(self._issue_comments)
+        return [
+            self._normalize_issue_comment(comment)
+            for comment in self._issue_comments
+            if STATE_MARKER in str(comment.get("body", ""))
+        ]
 
     def create_state_note(
         self, project_id_or_path: str | int, change_id: str | int, body: str
     ) -> dict[str, Any]:
         note = {
             "id": self._id(),
-            "body": body,
+            "body": self._with_state_marker(body),
             "user": {"id": self.bot_id, "login": self.bot_login},
         }
         self._issue_comments.append(note)
-        return note
+        return self._normalize_issue_comment(note)
 
     def update_state_note(
         self, project_id_or_path: str | int, change_id: str | int, note_id: int, body: str
     ) -> dict[str, Any]:
         for note in self._issue_comments:
             if note["id"] == note_id:
-                note["body"] = body
-                return note
+                note["body"] = self._with_state_marker(body)
+                return self._normalize_issue_comment(note)
         raise RuntimeError("missing note")
 
     def current_user(self) -> dict[str, Any]:
@@ -161,3 +168,21 @@ class FakeGitHubClient:
             "resolved": False,
             "position": note["position"],
         }
+
+    @staticmethod
+    def _with_state_marker(body: str) -> str:
+        if STATE_NOTE_SPEC_RE.search(body) is None:
+            return body
+        return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
+
+    @staticmethod
+    def _normalize_issue_comment(comment: dict[str, Any]) -> dict[str, Any]:
+        raw_user = comment.get("user")
+        user = raw_user if isinstance(raw_user, dict) else {}
+        return {**comment, "author": {"id": user.get("id"), "username": user.get("login")}}
+
+    @classmethod
+    def _issue_thread(cls, comment: dict[str, Any]) -> dict[str, Any]:
+        note = cls._normalize_issue_comment(comment)
+        note.setdefault("resolved", False)
+        return {"id": str(comment["id"]), "notes": [note], "resolved": False}

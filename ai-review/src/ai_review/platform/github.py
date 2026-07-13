@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from ai_review.memory import STATE_NOTE_SPEC_RE
 from ai_review.types import Anchor
 
 from .base import Position, ReviewPlatformError, ReviewStateNote, Thread
@@ -122,7 +123,15 @@ class GitHubReviewPlatform:
         comments = self._get_all_pages(
             f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}/comments"
         )
-        return [self._thread_from_comment(comment) for comment in comments]
+        issue_comments = self._get_all_pages(
+            f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments"
+        )
+        # GitHub summary comments live in PR issue comments rather than PR review
+        # comments. Include issue comments as thread-shaped notes so shared summary
+        # upsert code can discover and update an existing summary marker.
+        return [self._thread_from_comment(comment) for comment in comments] + [
+            self._thread_from_issue_comment(comment) for comment in issue_comments
+        ]
 
     def create_inline_comment(
         self, project_id_or_path: str | int, change_id: str | int, body: str, position: Position
@@ -173,7 +182,11 @@ class GitHubReviewPlatform:
         notes = self._get_all_pages(
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments"
         )
-        return [note for note in notes if self._is_bot_state_note(note, bot)]
+        return [
+            self._normalize_issue_comment(note)
+            for note in notes
+            if self._is_bot_state_note(note, bot)
+        ]
 
     def create_state_note(
         self, project_id_or_path: str | int, change_id: str | int, body: str
@@ -183,7 +196,7 @@ class GitHubReviewPlatform:
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments",
             json={"body": self._with_state_marker(body)},
         )
-        return note if isinstance(note, dict) else {}
+        return self._normalize_issue_comment(note) if isinstance(note, dict) else {}
 
     def update_state_note(
         self, project_id_or_path: str | int, change_id: str | int, note_id: int, body: str
@@ -193,7 +206,7 @@ class GitHubReviewPlatform:
             f"/repos/{self._repo(project_id_or_path)}/issues/comments/{note_id}",
             json={"body": self._with_state_marker(body)},
         )
-        return note if isinstance(note, dict) else {}
+        return self._normalize_issue_comment(note) if isinstance(note, dict) else {}
 
     def current_user(self) -> dict[str, Any]:
         user = self._request("GET", "/user")
@@ -251,6 +264,8 @@ class GitHubReviewPlatform:
 
     @staticmethod
     def _with_state_marker(body: str) -> str:
+        if STATE_NOTE_SPEC_RE.search(body) is None:
+            return body
         return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
 
     @staticmethod
@@ -258,7 +273,26 @@ class GitHubReviewPlatform:
         body = note.get("body")
         raw_user = note.get("user")
         user = raw_user if isinstance(raw_user, dict) else {}
-        return isinstance(body, str) and STATE_MARKER in body and user.get("login") == bot_login
+        return (
+            isinstance(body, str)
+            and STATE_MARKER in body
+            and STATE_NOTE_SPEC_RE.search(body) is not None
+            and user.get("login") == bot_login
+        )
+
+    @staticmethod
+    def _normalize_issue_comment(comment: dict[str, Any]) -> dict[str, Any]:
+        raw_user = comment.get("user")
+        user = raw_user if isinstance(raw_user, dict) else {}
+        normalized = dict(comment)
+        normalized["author"] = {"id": user.get("id"), "username": user.get("login")}
+        return normalized
+
+    @classmethod
+    def _thread_from_issue_comment(cls, comment: dict[str, Any]) -> Thread:
+        note = cls._normalize_issue_comment(comment)
+        note.setdefault("resolved", False)
+        return {"id": str(comment.get("id")), "notes": [note], "resolved": False}
 
     @staticmethod
     def _thread_from_comment(comment: dict[str, Any]) -> Thread:

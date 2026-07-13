@@ -13,19 +13,121 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: ai-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:00caceacc7e86c59007cf4fd1b6dfd81bfe615122a6667e874c23b90ac8bde66
+  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:8006f10aab52783697c474a4a5c51e0253b16fa1dd432f98b09dbb2100318fd5
+  AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
+  PYTHONPATH: /opt/ai-review/src
+  AI_REVIEW_CRITIQUE_ENABLED: "true"
+
 jobs:
-  ai-review:
+  prepare:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_BASE_IMAGE }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Run ai-review
+      - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
-          AI_REVIEW_CONFIG: ai-review/config/review.yaml
-        run: |
-          echo "Run prepare/reviewer/consensus/post/gate stages here."
-          echo "Configure posting.mode=github_reviews and state.backend=github_pr_comment."
+        run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-inputs
+          path: inputs/
+
+  review:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_REVIEWER_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        reviewer: [claude, codex, opencode]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - name: Run reviewer
+        env:
+          REVIEWER: ${{ matrix.reviewer }}
+          AI_REVIEW_INPUT_DIR: inputs
+          AI_REVIEW_OUTPUT_DIR: out
+          AI_REVIEW_LOCAL_MOCK: "0"
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+          ANTHROPIC_BASE_URL: https://openrouter.ai/api
+        run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-review-review-${{ matrix.reviewer }}
+          path: out/
+
+  consensus:
+    needs: [prepare, review]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_BASE_IMAGE }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ai-review-review-*
+          path: reviewer-artifacts
+          merge-multiple: true
+      - name: Build consensus
+        run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-consensus
+          path: out/consensus/
+
+  post:
+    needs: [prepare, consensus]
+    runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_BASE_IMAGE }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-consensus
+          path: out/consensus
+      - name: Post GitHub review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-review-post
+          path: out/post/
+
+  gate:
+    needs: [consensus, post]
+    runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_BASE_IMAGE }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-consensus
+          path: out/consensus
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review-post
+          path: out/post
+      - name: Evaluate gate
+        run: python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
