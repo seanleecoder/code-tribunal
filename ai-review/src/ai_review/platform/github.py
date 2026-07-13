@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -48,9 +49,7 @@ class GitHubReviewPlatform:
         self.token = token
         self._bot_login = bot_login
         if session is None:
-            import requests  # type: ignore[import-untyped]
-
-            session = requests.Session()
+            session = importlib.import_module("requests").Session()
         self.session = session
 
     def _url(self, path: str) -> str:

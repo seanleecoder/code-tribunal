@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -106,9 +107,7 @@ class GitLabClient:
         self.token = token
         self.token_header = token_header
         if session is None:
-            import requests  # type: ignore[import-untyped]
-
-            session = requests.Session()
+            session = importlib.import_module("requests").Session()
         self.session = session
 
     def _project(self, project_id_or_path: str | int) -> str:
@@ -178,9 +177,7 @@ class GitLabClient:
                 raise GitLabApiError(f"GitLab paginated GET {path} returned a non-list page")
             for item in batch:
                 if not isinstance(item, dict):
-                    raise GitLabApiError(
-                        f"GitLab paginated GET {path} returned a non-object item"
-                    )
+                    raise GitLabApiError(f"GitLab paginated GET {path} returned a non-object item")
                 items.append(dict(item))
             next_page = self._next_page(response)
             if next_page is not None:
