@@ -27,6 +27,12 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_optional(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return _read(path)
+
+
 def _python_base_image(text: str) -> str | None:
     match = re.search(r"^FROM (python:3\.12-slim-bookworm@sha256:[0-9a-f]{64})$", text, re.M)
     return match.group(1) if match else None
@@ -49,7 +55,7 @@ def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
-    workflow = _read(PUBLISH_WORKFLOW)
+    workflow = _read_optional(PUBLISH_WORKFLOW)
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))
@@ -70,7 +76,8 @@ def main() -> int:
     elif base_image is not None and reviewer_default.group(1) != base_image:
         error("reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile")
         failures += 1
-    if not re.search(r"^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64} AS reviewer-clis$", reviewer, re.M):
+    node_from_pattern = r"^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64} AS reviewer-clis$"
+    if not re.search(node_from_pattern, reviewer, re.M):
         error("reviewer.Dockerfile must pin node:22-bookworm-slim by sha256 digest")
         failures += 1
     if ">=" in base or "pip install --no-cache-dir \\\n      \"" in base:
@@ -97,15 +104,24 @@ def main() -> int:
     if package.get("dependencies") != lock.get("packages", {}).get("", {}).get("dependencies"):
         error("package.json dependencies differ from package-lock.json root dependencies")
         failures += 1
-    for action in ("actions/checkout", "actions/upload-artifact", "actions/download-artifact", "actions/attest"):
-        if re.search(rf"uses:\s*{re.escape(action)}@v\d+", workflow):
-            error(f"{action} must be pinned to a full commit SHA, not a mutable major tag")
-            failures += 1
-        if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
-            error(f"{action} full-SHA pin not found")
-            failures += 1
-    combined_ci = workflow + "\n" + gitlab_build
-    if "vars.AI_REVIEW_" in workflow or re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci):
+    pinned_actions = (
+        "actions/checkout",
+        "actions/upload-artifact",
+        "actions/download-artifact",
+        "actions/attest",
+    )
+    if workflow is not None:
+        for action in pinned_actions:
+            if re.search(rf"uses:\s*{re.escape(action)}@v\d+", workflow):
+                error(f"{action} must be pinned to a full commit SHA, not a mutable major tag")
+                failures += 1
+            if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
+                error(f"{action} full-SHA pin not found")
+                failures += 1
+    combined_ci = (workflow or "") + "\n" + gitlab_build
+    has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
+    has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
+    if has_repo_cli_vars or has_ci_cli_vars:
         error("reviewer CLI versions must come from package-lock.json, not CI/repository variables")
         failures += 1
     for obsolete_arg in ("CLAUDE_VERSION", "CODEX_VERSION", "OPENCODE_VERSION"):
