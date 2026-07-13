@@ -218,6 +218,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
         self.assertNotIn("optional: true", prepare_need.group(1))
 
+    def test_gitlab_image_build_uses_repo_pins(self) -> None:
+        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("image_validate", text)
+        self.assertIn("validate_ai_review_supply_chain_pins", text)
+        self.assertIn("python scripts/check_supply_chain_pins.py", text)
+        self.assertNotRegex(text, r"AI_REVIEW_(CLAUDE|CODEX|OPENCODE)_VERSION")
+        self.assertNotIn("CLAUDE_VERSION=", text)
+        self.assertNotIn("CODEX_VERSION=", text)
+        self.assertNotIn("OPENCODE_VERSION=", text)
+
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
             self.skipTest("GitHub publish workflow is not present in this checkout")

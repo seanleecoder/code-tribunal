@@ -2410,8 +2410,7 @@ Deliverables:
 
 Acceptance:
 
-- GitHub repository variables pin `AI_REVIEW_CLAUDE_VERSION`,
-  `AI_REVIEW_CODEX_VERSION`, and `AI_REVIEW_OPENCODE_VERSION`.
+- Reviewer CLI versions are pinned in `ai-review/images/package.json` and `ai-review/images/package-lock.json` and installed with `npm ci`; CI does not source CLI versions from mutable repository variables.
 - Publisher uses `GITHUB_TOKEN` with read contents, package write,
   attestation write, and OIDC token permissions.
 - Preflight runs unit tests, compileall, provider CLI version probes, local mock
