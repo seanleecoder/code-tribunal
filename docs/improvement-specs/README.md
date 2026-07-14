@@ -2,8 +2,9 @@
 
 These documents began as agent-ready work units derived from the Staff+ and
 security review. Phases 0–3 are retained as implementation and decision history.
-There is no active follow-on roadmap in this directory; paused ideas are stored
-under [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
+Paused ideas are stored under
+[`../archived-improvement-plans/`](../archived-improvement-plans/README.md);
+new proposals are listed under [Proposed](#proposed) below.
 
 Each spec follows the same template so an agent can execute it without extra
 context:
@@ -32,6 +33,12 @@ reasoning and security invariants are not lost.
 | **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
+
+## Proposed
+
+| Spec | Title | Status |
+|---|---|---|
+| [SPEC-19](project-rules-and-learning-spec.md) | Project review rules from the target branch + human-gated learning loop + rule-level tracing (rule-trace interop) | Proposed design; phases A0–E not started. |
 
 ## Downstream validation
 
