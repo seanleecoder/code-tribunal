@@ -67,6 +67,14 @@ class PlatformRuntimeTests(unittest.TestCase):
             bot_login="github-actions[bot]",
         )
 
+    def test_github_actions_requires_explicit_bot_login(self) -> None:
+        with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
+            create_runtime_platform(
+                {"posting": {"mode": "github_reviews"}},
+                access="write",
+                env={"GITHUB_TOKEN": "x", "GITHUB_ACTIONS": "true"},
+            )
+
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
             create_runtime_platform(

@@ -68,6 +68,33 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
+    def test_detects_one_stale_github_job_container_pin(self) -> None:
+        text = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
+        base_pin = next(
+            line.strip().removeprefix("container: ")
+            for line in text.splitlines()
+            if "container: ghcr.io/" in line and "/ai-review-base:" in line
+        )
+        mutated = text.replace(base_pin, base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1"), 1)
+
+        self.assertIn(
+            "GitHub review base job containers must use one identical image pin",
+            check_supply_chain_pins._github_review_container_issues(mutated),
+        )
+
+    def test_github_review_workflow_rejects_dead_image_variables(self) -> None:
+        text = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
+        mutated = text.replace(
+            "env:\n",
+            "env:\n  AI_REVIEW_BASE_IMAGE: ghcr.io/example/base@sha256:" + "0" * 64 + "\n",
+            1,
+        )
+
+        self.assertIn(
+            "GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables",
+            check_supply_chain_pins._github_review_container_issues(mutated),
+        )
+
     def test_detects_mislabeled_action_pin(self) -> None:
         text = (
             "steps:\n"

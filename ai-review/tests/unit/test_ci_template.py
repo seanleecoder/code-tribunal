@@ -527,7 +527,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
-        self.assertIn('AI_REVIEW_MERGE_GATE_ENABLED: "false"', text)
+        self.assertIn('AI_REVIEW_MERGE_GATE_ENABLED: "true"', text)
+        self.assertNotIn("AI_REVIEW_BASE_IMAGE:", text)
+        self.assertNotIn("AI_REVIEW_REVIEWER_IMAGE:", text)
         self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
         self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
         self.assertIn(
@@ -553,7 +555,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertNotIn("container: ${{ env.", text)
         self.assertEqual(text.count("container: ghcr.io/"), 6)
-        self.assertEqual(text.count("@sha256:"), 8)
+        self.assertEqual(text.count("@sha256:"), 6)
 
     def test_github_actions_template_runs_full_critique_panel(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

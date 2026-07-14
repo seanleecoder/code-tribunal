@@ -79,3 +79,21 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   `sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d`.
 - This refresh contains the Actions bot identity, Codex snapshot, critique
   status artifact, and advisory-gate fixes discovered by run `29336790596`.
+
+### Manual-dispatch images
+
+- Source merge commit: `e0ad996aafa40ceceb420014ce62a0e7b3105275`.
+- Publication workflow: GitHub Actions run `29344428539`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb`.
+- Reviewer image digest:
+  `sha256:9a6cc3bd985599ee7625006391f9f2ea1e0052fb123af82604afbe25dfb4647e`.
+- This refresh contains the manual GitHub review dispatch input handling merged
+  in PR #32. The GitHub and GitLab templates were advanced together so manual
+  dispatch does not execute pull-request-controlled Python under write-token
+  jobs.
+- Manual dogfood run `29345802433` pulled these digests and completed prepare,
+  a full three-reviewer panel, all three critiques, consensus, two exact-anchor
+  inline posts, authenticated state persistence, and the enforcing gate on
+  PR #33.

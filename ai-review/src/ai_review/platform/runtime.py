@@ -34,6 +34,11 @@ def create_runtime_platform(
             raise PlatformRuntimeError("github_reviews requires GITHUB_TOKEN or GH_TOKEN")
         api_url = runtime_env.get("GITHUB_API_URL") or "https://api.github.com"
         bot_login = runtime_env.get("AI_REVIEW_GITHUB_BOT_LOGIN")
+        if runtime_env.get("GITHUB_ACTIONS") == "true" and not bot_login:
+            raise PlatformRuntimeError(
+                "github_reviews under GitHub Actions requires "
+                "AI_REVIEW_GITHUB_BOT_LOGIN to verify state-comment ownership"
+            )
         if bot_login:
             return create_github_platform(
                 api_url,

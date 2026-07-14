@@ -131,6 +131,36 @@ def _workflow_action_issues(text: str) -> list[str]:
     return issues
 
 
+def _github_review_container_issues(text: str) -> list[str]:
+    """Require every GitHub review job to use one of two consistent image pins."""
+    issues: list[str] = []
+    if re.search(r"^\s+AI_REVIEW_(?:BASE|REVIEWER)_IMAGE:", text, re.M):
+        issues.append(
+            "GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables"
+        )
+
+    containers = re.findall(r"^\s+container:\s+(\S+)\s*$", text, re.M)
+    classified = {
+        "base": [image for image in containers if "/ai-review-base:" in image],
+        "reviewer": [image for image in containers if "/ai-review-reviewer:" in image],
+    }
+    if len(containers) != 6 or len(classified["base"]) != 4 or len(classified["reviewer"]) != 2:
+        issues.append(
+            "GitHub review workflow must contain four base and two reviewer job containers"
+        )
+    if len(set(classified["base"])) > 1:
+        issues.append("GitHub review base job containers must use one identical image pin")
+    if len(set(classified["reviewer"])) > 1:
+        issues.append("GitHub reviewer job containers must use one identical image pin")
+    for image in containers:
+        if not re.fullmatch(
+            r"ghcr\.io/[^\s]+/ai-review-(?:base|reviewer):[^\s@]+@sha256:[0-9a-f]{64}",
+            image,
+        ):
+            issues.append(f"GitHub review job container is not digest-pinned: {image}")
+    return issues
+
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -153,6 +183,16 @@ def main() -> int:
     ):
         error(".github/workflows/ai-review.yml must match the canonical GitHub template")
         failures += 1
+    for path, review_workflow in (
+        (GITHUB_REVIEW_WORKFLOW, canonical_review_workflow),
+        (INSTALLED_GITHUB_REVIEW_WORKFLOW, installed_review_workflow),
+    ):
+        if review_workflow is None:
+            continue
+        display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+        for issue in _github_review_container_issues(review_workflow):
+            error(f"{display_path}: {issue}")
+            failures += 1
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))

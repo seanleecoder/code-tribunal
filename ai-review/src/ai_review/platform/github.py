@@ -116,14 +116,17 @@ class GitHubReviewPlatform:
         return pr
 
     def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
-        return str(
-            self._request(
-                "GET",
-                f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}",
-                headers={"Accept": "application/vnd.github.v3.diff"},
-                raw_text=True,
-            )
+        diff = self._request(
+            "GET",
+            f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}",
+            headers={"Accept": "application/vnd.github.v3.diff"},
+            raw_text=True,
         )
+        if diff is None:
+            return ""
+        if not isinstance(diff, str):
+            raise GitHubReviewPlatformError("pull request diff response was not text")
+        return diff
 
     def fetch_current_head_sha(self, project_id_or_path: str | int, change_id: str | int) -> str:
         return self.fetch_version(project_id_or_path, change_id).head_sha
@@ -205,7 +208,7 @@ class GitHubReviewPlatform:
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments",
             json={"body": self._with_state_marker(body)},
         )
-        return self._normalize_issue_comment(note) if isinstance(note, dict) else {}
+        return self._verified_state_write(note, action="create")
 
     def update_state_note(
         self, project_id_or_path: str | int, change_id: str | int, note_id: int, body: str
@@ -215,7 +218,7 @@ class GitHubReviewPlatform:
             f"/repos/{self._repo(project_id_or_path)}/issues/comments/{note_id}",
             json={"body": self._with_state_marker(body)},
         )
-        return self._normalize_issue_comment(note) if isinstance(note, dict) else {}
+        return self._verified_state_write(note, action="update")
 
     def current_user(self) -> dict[str, Any]:
         path = (
@@ -223,7 +226,14 @@ class GitHubReviewPlatform:
             if self._bot_login
             else "/user"
         )
-        user = self._request("GET", path)
+        try:
+            user = self._request("GET", path)
+        except GitHubReviewPlatformError as exc:
+            if self._bot_login:
+                raise GitHubReviewPlatformError(
+                    f"configured GitHub bot login {self._bot_login!r} could not be resolved"
+                ) from exc
+            raise
         return user if isinstance(user, dict) else {}
 
     def current_user_id(self) -> int | None:
@@ -313,6 +323,20 @@ class GitHubReviewPlatform:
         user = raw_user if isinstance(raw_user, dict) else {}
         normalized = dict(comment)
         normalized["author"] = {"id": user.get("id"), "username": user.get("login")}
+        return normalized
+
+    def _verified_state_write(self, note: Any, *, action: str) -> ReviewStateNote:
+        if not isinstance(note, dict):
+            raise GitHubReviewPlatformError(
+                f"GitHub state-comment {action} response was not an object"
+            )
+        normalized = self._normalize_issue_comment(note)
+        actual_login = normalized["author"].get("username")
+        if self._bot_login and actual_login != self._bot_login:
+            raise GitHubReviewPlatformError(
+                f"GitHub state-comment {action} was authored by {actual_login!r}; "
+                f"expected configured bot login {self._bot_login!r}"
+            )
         return normalized
 
     @classmethod

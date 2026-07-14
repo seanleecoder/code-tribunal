@@ -24,15 +24,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
-  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
   AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_STATE_BACKEND: github_pr_comment
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
   AI_REVIEW_CRITIQUE_ENABLED: "true"
-  AI_REVIEW_MERGE_GATE_ENABLED: "false"
+  AI_REVIEW_MERGE_GATE_ENABLED: "true"
 
 jobs:
   prepare:
@@ -44,7 +42,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
@@ -67,7 +65,7 @@ jobs:
     # succeeds, so this does not turn a total panel failure into a green gate.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:9a6cc3bd985599ee7625006391f9f2ea1e0052fb123af82604afbe25dfb4647e
     strategy:
       fail-fast: false
       matrix:
@@ -102,7 +100,7 @@ jobs:
     # over otherwise valid reviewer findings.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:9a6cc3bd985599ee7625006391f9f2ea1e0052fb123af82604afbe25dfb4647e
     strategy:
       fail-fast: false
       matrix:
@@ -143,7 +141,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -175,7 +173,7 @@ jobs:
   post:
     needs: [prepare, consensus]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -198,7 +196,7 @@ jobs:
   gate:
     needs: [consensus, post]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

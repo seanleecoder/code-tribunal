@@ -309,9 +309,9 @@ To integrate Code Tribunal into downstream projects:
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
    ```yaml
    variables:
-     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0"
-     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d"
-     AI_REVIEW_TRUSTED_IMAGE_SHA: "b79f29f69d053f87f1a205a82cefe0f3e1b93bef"
+     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:88be139786e9ceaa14884daec4d7651f2812551e0db758dc46858b5eee9139eb"
+     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-e0ad996aafa40ceceb420014ce62a0e7b3105275@sha256:9a6cc3bd985599ee7625006391f9f2ea1e0052fb123af82604afbe25dfb4647e"
+     AI_REVIEW_TRUSTED_IMAGE_SHA: "e0ad996aafa40ceceb420014ce62a0e7b3105275"
    ```
    **GHCR Cutover Procedure**: When [.github/workflows/publish-ai-review-images.yml](.github/workflows/publish-ai-review-images.yml) runs on `main` and publishes a newer commit, update these 3 variables together in `ai-review/ci/review.gitlab-ci.yml` to use the new immutable GHCR `@sha256:` digest refs provided in the workflow summary:
    ```yaml
@@ -374,7 +374,7 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
 | `AI_REVIEW_POSTING_MODE` | `posting.mode` | Select `gitlab_discussions` or `github_reviews`; set consistently in every job. |
 | `AI_REVIEW_STATE_BACKEND` | `state.backend` | Select the matching state backend; GitHub workflows use `github_pr_comment`. |
-| `AI_REVIEW_GITHUB_BOT_LOGIN` | GitHub state-author lookup | Set to the bot account that owns Code Tribunal comments. The installed Actions workflow uses `github-actions[bot]` because its installation token cannot call the user-token `/user` endpoint. |
+| `AI_REVIEW_GITHUB_BOT_LOGIN` | GitHub state-author lookup | Required under GitHub Actions. Set it to the bot account that owns Code Tribunal comments; writes are rejected if GitHub attributes them to a different account. The installed workflow uses `github-actions[bot]` because its installation token cannot call the user-token `/user` endpoint. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
 | `AI_REVIEW_MANUAL` | Review trigger mode | In GitLab, set the CI/CD variable to `"true"` for a non-blocking manual entry job. In GitHub, set the Actions repository variable (not a secret) to `true` to skip automatic PR reviews, then run **AI Review** manually with a PR number. Unset = auto-run. |
