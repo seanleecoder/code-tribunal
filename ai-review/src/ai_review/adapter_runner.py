@@ -234,6 +234,11 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
         return str(event)
 
 
+def _is_adapter_error_event(event: dict[str, Any]) -> bool:
+    """Recognize terminal error envelopes emitted by supported reviewer CLIs."""
+    return event.get("is_error") is True or event.get("type") == "error"
+
+
 def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -329,11 +334,10 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         # fallback below must stay.
         if (
             isinstance(event.get("structured_output"), (dict, list))
-            and event.get("is_error") is not True
-            and event.get("type") != "error"
+            and not _is_adapter_error_event(event)
         ):
             structured_result = event["structured_output"]
-        if event.get("is_error") is True or event.get("type") == "error":
+        if _is_adapter_error_event(event):
             # Record the terminal error but keep scanning: the model may have
             # already emitted valid findings in an earlier assistant message and
             # only *then* hit a terminal error (e.g. error_max_turns). We only
@@ -388,19 +392,19 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     raw = _coerce_adapter_root(raw, stage=stage)
     # Single-object Claude Code result envelope (--output-format json) carrying
     # a schema-conforming `structured_output`: prefer it over re-parsing the
-    # `result` text. Guarded on is_error so error envelopes keep flowing into
-    # the AdapterModelError path below.
+    # `result` text. Error envelopes keep flowing into the AdapterModelError
+    # path below, whether the CLI identifies them with is_error or type=error.
     if (
         "findings" not in raw
         and "critiques" not in raw
-        and raw.get("is_error") is not True
+        and not _is_adapter_error_event(raw)
         and isinstance(raw.get("structured_output"), (dict, list))
     ):
         _log_structured_output_usage(stage, used=True)
         return _coerce_adapter_root(raw["structured_output"], stage=stage)
     if (
         raw.get("type") == "result"
-        and raw.get("is_error") is not True
+        and not _is_adapter_error_event(raw)
         and "structured_output" not in raw
     ):
         _log_structured_output_usage(stage, used=False)
@@ -412,10 +416,15 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     ):
         return _load_stream_json(stdout, stage=stage)
 
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and _is_adapter_error_event(raw)
+    ):
+        error_detail = _json_preview(_terminal_error_detail(raw))
+        raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
+
     if "findings" not in raw and isinstance(raw.get("result"), str):
-        if raw.get("is_error") is True:
-            error_detail = _json_preview(_terminal_error_detail(raw))
-            raise AdapterModelError(f"Claude Code returned an error result: {error_detail!r}")
         if raw["result"].strip():
             try:
                 unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))

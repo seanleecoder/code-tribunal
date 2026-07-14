@@ -17,6 +17,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   treats missing optional critique artifacts as a warning before consensus.
 - Platform adapter construction now lives in a dedicated composition root rather
   than the posting and input-bundle CLI modules.
+- The shipped GitHub Actions workflow now enables the merge gate by default.
 
 ### Removed
 
@@ -35,6 +36,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   declarative security controls must also be removed. The shipped
   `ai-review/config/review.yaml` demonstrates the supported `review_config.v1`
   surface; unknown keys are rejected at every active mapping level.
+- GitHub installations that need the previous advisory-only behavior must set
+  `AI_REVIEW_MERGE_GATE_ENABLED=false`. Enforcing the gate in the workflow only
+  blocks merges when its check is also required by the repository's branch
+  protection rules or rulesets.
 
 ## [0.3.1] - 2026-07-13
 

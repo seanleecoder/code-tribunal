@@ -240,6 +240,35 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
             _load_adapter_json(stdout)
 
+    def test_single_object_opencode_error_is_model_error(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "name": "UnknownError",
+                    "data": {
+                        "message": (
+                            '{"code":429,"metadata":'
+                            '{"error_type":"rate_limit_exceeded"}}'
+                        )
+                    },
+                },
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
+            _load_adapter_json(stdout)
+
+    def test_single_object_error_does_not_use_structured_output(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "error",
+                "error": {"message": "provider unavailable"},
+                "structured_output": {"findings": []},
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "provider unavailable"):
+            _load_adapter_json(stdout)
+
     def test_stream_structured_output_preferred_over_result_text(self) -> None:
         # With --json-schema the terminal result event carries the payload in
         # structured_output; it must win over a fenced/noisy result string.
@@ -806,6 +835,37 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
             self.assertEqual(batch["adapter_status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "AdapterModelError")
+            self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
+
+    def test_opencode_single_object_error_status_is_model_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
+            error = json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "data": {
+                            "message": (
+                                '{"code":429,"metadata":'
+                                '{"error_type":"rate_limit_exceeded"}}'
+                            )
+                        }
+                    },
+                }
+            )
+            _write_adapter(
+                paths["adapter_dir"],
+                "opencode",
+                "#!/bin/sh\nprintf '%s\\n' '" + error + "'\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+
             status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterModelError")
