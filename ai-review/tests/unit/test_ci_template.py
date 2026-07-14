@@ -532,10 +532,17 @@ class GitHubActionsTemplateTests(unittest.TestCase):
     def test_github_actions_template_selects_github_runtime(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
+        review = _workflow_job(text, "review")
+        critique = _workflow_job(text, "critique")
 
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
-        self.assertEqual(text.count("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}"), 2)
+        self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
+        self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
+        self.assertIn(
+            "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
+            critique,
+        )
 
     def test_github_actions_template_runs_full_critique_panel(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
