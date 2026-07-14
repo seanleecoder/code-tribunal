@@ -307,6 +307,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
         self.assertIn("--ephemeral", cli_args)
+        self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
         self.assertIn("--ignore-rules", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
@@ -597,6 +598,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         # still runs read-only, but its working root is left empty so there is
         # nothing to explore — parity with claude's tools-off critique.
         self.assertIn("--cd ", cli_args)
+        self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
         self.assertIn("schemas/critique_batch.schema.json", cli_args)
         self.assertEqual(meta["workspace_entries"], set())

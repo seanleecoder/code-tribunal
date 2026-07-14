@@ -212,7 +212,12 @@ class GitHubReviewPlatform:
         return self._normalize_issue_comment(note) if isinstance(note, dict) else {}
 
     def current_user(self) -> dict[str, Any]:
-        user = self._request("GET", "/user")
+        path = (
+            f"/users/{quote(self._bot_login, safe='')}"
+            if self._bot_login
+            else "/user"
+        )
+        user = self._request("GET", path)
         return user if isinstance(user, dict) else {}
 
     def current_user_id(self) -> int | None:

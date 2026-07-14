@@ -55,3 +55,15 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   the `seanleecoder/code-tribunal` repository attestations.
 - The canonical GitHub and GitLab templates were advanced together to these
   immutable images before the repository dogfood run.
+
+### Corrected dogfood bootstrap images
+
+- Source merge commit: `bdd6ba8b3ee61fd761ce1b2bc13b0da0e7a8f0d0`.
+- Publication workflow: GitHub Actions run `29336111836`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:6541373c4059cd04991a903c985c669a7bebfef7d4eb0e42c9a7cbaca9dc6312`.
+- Reviewer image digest:
+  `sha256:033d8c62788f40b49dcbb098cbab6a8fe1f304a6c42af003f246a64200b3111d`.
+- This refresh contains the workflow container-context and GitHub raw-diff
+  fixes discovered by the initial repository dogfood attempts.

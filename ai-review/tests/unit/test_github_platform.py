@@ -25,6 +25,8 @@ class Session:
         self.calls.append((method, url, kwargs))
         if url.endswith("/user"):
             return Response(200, {"id": 42, "login": "bot"})
+        if url.endswith("/users/github-actions%5Bbot%5D"):
+            return Response(200, {"id": 41898282, "login": "github-actions[bot]"})
         if url.endswith("/issues/7/comments"):
             state = encode_state_note(
                 {
@@ -86,6 +88,19 @@ def test_member_access_level_maps_github_write_permissions() -> None:
 
     assert platform.member_access_level("octo/repo", "alice") == 40
     assert platform.member_access_level("octo/repo", 99) is None
+
+
+def test_current_user_uses_configured_bot_login_for_installation_token() -> None:
+    session = Session()
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        bot_login="github-actions[bot]",
+        session=session,
+    )
+
+    assert platform.current_user_id() == 41898282
+    assert session.calls[-1][1].endswith("/users/github-actions%5Bbot%5D")
 
 
 def test_fetch_diff_returns_raw_patch_text() -> None:
