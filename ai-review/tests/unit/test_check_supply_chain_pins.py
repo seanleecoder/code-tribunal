@@ -68,6 +68,48 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
+    def test_detects_mislabeled_action_pin(self) -> None:
+        text = (
+            "steps:\n"
+            "  - uses: actions/checkout@"
+            "df4cb1c069e1874edd31b4311f1884172cec0e10 # v4.3.0\n"
+        )
+
+        self.assertEqual(
+            check_supply_chain_pins._workflow_action_issues(text),
+            [
+                "line 2: actions/checkout@"
+                "df4cb1c069e1874edd31b4311f1884172cec0e10 is v6.0.3, "
+                "but its version label is v4.3.0"
+            ],
+        )
+
+    def test_detects_mutable_third_party_action(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._workflow_action_issues(
+                "steps:\n  - uses: third-party/example@v1\n"
+            ),
+            ["line 2: third-party/example must use a full commit SHA"],
+        )
+
+    def test_allows_local_and_docker_actions(self) -> None:
+        text = (
+            "steps:\n"
+            "  - uses: ./local-action\n"
+            "  - uses: docker://alpine:3.22\n"
+        )
+
+        self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
+
+    def test_accepts_registered_preceding_version_label(self) -> None:
+        text = (
+            "steps:\n"
+            "  # actions/checkout@v6.0.3\n"
+            "  - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10\n"
+        )
+
+        self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
+
     def test_detects_workflow_entry_folded_into_inline_comment(self) -> None:
         text = (
             "steps:\n"

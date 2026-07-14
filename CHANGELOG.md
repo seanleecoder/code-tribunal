@@ -19,6 +19,14 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Removed the unwired issue-tracker helper and its unused state/post-result
   fields.
 
+### Migration
+
+- Custom review configurations must remove the former top-level `jira`,
+  `budget`, `severity_order`, and `categories` keys before upgrading. They were
+  reserved or inert rather than functional controls and are now rejected as
+  unknown keys. The shipped `ai-review/config/review.yaml` demonstrates the
+  supported `review_config.v1` surface.
+
 ## [0.3.1] - 2026-07-13
 
 ### Added
