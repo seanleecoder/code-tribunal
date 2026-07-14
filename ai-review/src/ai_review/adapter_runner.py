@@ -221,6 +221,13 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
     subtype = str(event.get("subtype", "")).strip()
     if subtype:
         return subtype
+    error = event.get("error")
+    if isinstance(error, dict):
+        data = error.get("data")
+        if isinstance(data, dict) and isinstance(data.get("message"), str):
+            return str(data["message"])
+        if isinstance(error.get("message"), str):
+            return str(error["message"])
     try:
         return json.dumps(event, sort_keys=True)
     except (TypeError, ValueError):
@@ -323,9 +330,10 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         if (
             isinstance(event.get("structured_output"), (dict, list))
             and event.get("is_error") is not True
+            and event.get("type") != "error"
         ):
             structured_result = event["structured_output"]
-        if event.get("is_error") is True:
+        if event.get("is_error") is True or event.get("type") == "error":
             # Record the terminal error but keep scanning: the model may have
             # already emitted valid findings in an earlier assistant message and
             # only *then* hit a terminal error (e.g. error_max_turns). We only

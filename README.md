@@ -377,7 +377,7 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | GitHub state-author lookup | Required under GitHub Actions. Set it to the bot account that owns Code Tribunal comments; writes are rejected if GitHub attributes them to a different account. The installed workflow uses `github-actions[bot]` because its installation token cannot call the user-token `/user` endpoint. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
-| `AI_REVIEW_MANUAL` | Review trigger mode | In GitLab, set the CI/CD variable to `"true"` for a non-blocking manual entry job. In GitHub, set the Actions repository variable (not a secret) to `true` to skip automatic PR reviews, then run **AI Review** manually with a PR number. Unset = auto-run. |
+| `AI_REVIEW_MANUAL` | Review trigger mode | In GitLab, set the CI/CD variable to `"true"` for a non-blocking manual entry job. In GitHub, set the Actions repository variable (not a secret) to `true` to skip all jobs in automatic PR runs, then run **AI Review** manually with a PR number. GitHub evaluates workflow triggers before repository variables, so the skipped workflow run still appears in Actions. Unset = auto-run. |
 
 Boolean configuration overrides above must be **exactly `true` or `false`**
 (lowercase, no surrounding whitespace). `AI_REVIEW_MANUAL` is a CI trigger
