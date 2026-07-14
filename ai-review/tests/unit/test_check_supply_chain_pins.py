@@ -68,6 +68,18 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
+    def test_detects_workflow_entry_folded_into_inline_comment(self) -> None:
+        text = (
+            "steps:\n"
+            "  - uses: actions/checkout@" + ("a" * 40) + " # v4.3.0"
+            "  - uses: actions/setup-python@" + ("b" * 40) + " # v5.6.0    with:\n"
+        )
+
+        self.assertEqual(
+            check_supply_chain_pins._workflow_structure_issues(text),
+            ["line 2 contains a YAML key inside an inline comment"],
+        )
+
     def test_allows_repository_only_ci_workflow_to_be_absent_from_runtime_image(self) -> None:
         original = check_supply_chain_pins.CI_WORKFLOW
         with tempfile.TemporaryDirectory() as tmp:

@@ -53,6 +53,23 @@ def _constraint_packages(text: str) -> set[str]:
     return packages
 
 
+def _workflow_structure_issues(text: str) -> list[str]:
+    """Catch YAML entries accidentally folded into an inline comment.
+
+    A YAML parser ignores everything after ``#``. A mechanical pin rewrite can
+    therefore hide a following ``uses``, ``with``, or ``if`` entry without the
+    action-pin regex noticing it.
+    """
+    issues: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if "#" not in line:
+            continue
+        comment = line.split("#", 1)[1]
+        if re.search(r"(?:-\s+uses:|\bwith:|\bif:)", comment):
+            issues.append(f"line {line_number} contains a YAML key inside an inline comment")
+    return issues
+
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -131,6 +148,9 @@ def main() -> int:
                 failures += 1
         shipped_workflows[PUBLISH_WORKFLOW] = workflow
     for path, text in shipped_workflows.items():
+        for issue in _workflow_structure_issues(text):
+            error(f"{path}: {issue}")
+            failures += 1
         for action, ref in re.findall(r"uses:\s*(actions/[^@\s]+)@([^\s#]+)", text):
             if not re.fullmatch(r"[0-9a-f]{40}", ref):
                 display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
