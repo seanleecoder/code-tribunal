@@ -75,6 +75,17 @@ class PlatformRuntimeTests(unittest.TestCase):
                 env={"GITHUB_TOKEN": "x", "GITHUB_ACTIONS": "true"},
             )
 
+    def test_github_actions_dry_run_still_requires_explicit_bot_login(self) -> None:
+        # Dry-run defaults provide placeholder credentials for local tooling;
+        # they must not weaken bot-identity verification inside Actions.
+        with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
+            create_runtime_platform(
+                {"posting": {"mode": "github_reviews"}},
+                access="write",
+                env={"GITHUB_ACTIONS": "true"},
+                allow_dry_run_defaults=True,
+            )
+
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
             create_runtime_platform(

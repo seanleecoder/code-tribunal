@@ -22,8 +22,11 @@
   `bc97745c98309f225ce8b243b428980d131242b5`.
 - Dogfood workflow run:
   [29338230558](https://github.com/seanleecoder/code-tribunal/actions/runs/29338230558).
-- Review outcomes: Claude and Codex succeeded; OpenCode returned a classified
-  `SchemaValidationError`, exercising the intended degraded-panel policy.
+- Review outcomes: Claude and Codex succeeded. OpenCode received an OpenRouter
+  HTTP 429 `rate_limit_exceeded` error embedded in its JSON event stream. The
+  then-current parser classified the no-output stream as `SchemaValidationError`;
+  the follow-up parser fix recognizes OpenCode `type=error` events as model
+  failures. The run still exercised the intended degraded-panel policy.
 - Critique outcomes: Claude, Codex, and OpenCode succeeded, including the
   stage-specific critique status artifact paths.
 - Consensus outcome: `panel_status=degraded`, with Claude and Codex recorded as
@@ -71,6 +74,10 @@ evaluation on the repository that publishes Code Tribunal.
 - Gate outcome: success with `AI_REVIEW_MERGE_GATE_ENABLED=true`, confirming
   the shipped GitHub template evaluates the enforcing path.
 
+This run did not produce `block_merge=true`, so it is not live evidence of a
+rejected GitHub gate job. Negative blocking behavior remains covered by
+`test_post_gate_e2e.py` and `test_gate.py` rather than by this live run.
+
 Final live-posting verdict: accepted for inline review comments and the
 machine-owned state store. A summary/review body is emitted only for findings
 that cannot be anchored inline; that fallback remains covered by automated
@@ -95,3 +102,10 @@ tests rather than this exact-anchored live run.
 
 Exact-runtime verdict: accepted. The repository workflow now pins and has
 dogfooded the immutable images containing the merged GitHub hardening.
+
+The exact-runtime run produced zero findings. Consequently, the hardened
+`_verified_state_write` path and authenticated state persistence were exercised,
+but the same run did not also create an inline review comment. PR #33 proved
+inline posting with the preceding image, while PR #34 proved the hardened state
+write; a single live run combining both remains optional acceptance evidence,
+not an identified runtime defect.

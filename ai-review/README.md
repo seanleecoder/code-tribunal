@@ -210,5 +210,10 @@ require an explicit run instead, create an Actions repository variable named
 then be created with all review jobs skipped. Start a review from **Actions → AI
 Review → Run workflow** and supply the pull request number; the workflow fetches
 that PR's metadata and checks out its head commit before preparing the bundle.
+Repository variables cannot prevent the workflow run itself from being created,
+because GitHub evaluates the top-level `on` trigger first. To suppress those
+skipped runs as well, maintain a repository-specific installation with the
+`pull_request` trigger removed and retain only `workflow_dispatch`; doing so
+intentionally diverges from the canonical auto-capable template.
 Manual dispatch remains unavailable for external-fork PRs because model jobs
 receive `OPENROUTER_API_KEY`.
