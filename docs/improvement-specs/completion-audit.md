@@ -17,7 +17,7 @@ current code, tests, CI, tags, and recorded downstream validation.
 
 ## Verification performed
 
-- `make test`: 323 tests passed after the active-config and action-pin cleanup.
+- `make test`: 324 tests passed after the closed-config and action-pin cleanup.
 - `git tag --sort=version:refname`: `v0.1.0`, `v0.2.0`, `v0.3.0`, and
   `v0.3.1` are present.
 - Source inspection confirms one shared `SEVERITY_RANK`, one unified diff parser,

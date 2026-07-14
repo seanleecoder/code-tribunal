@@ -24,8 +24,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Custom review configurations must remove the former top-level `jira`,
   `budget`, `severity_order`, and `categories` keys before upgrading. They were
   reserved or inert rather than functional controls and are now rejected as
-  unknown keys. The shipped `ai-review/config/review.yaml` demonstrates the
-  supported `review_config.v1` surface.
+  unknown keys. Removed nested placeholders such as reviewer `cli_version`,
+  panel/degradation metadata, posting marker/locking controls, declarative
+  merge-gate settings, state marker versions, per-reviewer limits, and
+  declarative security controls must also be removed. The shipped
+  `ai-review/config/review.yaml` demonstrates the supported `review_config.v1`
+  surface; unknown keys are rejected at every active mapping level.
 
 ## [0.3.1] - 2026-07-13
 
