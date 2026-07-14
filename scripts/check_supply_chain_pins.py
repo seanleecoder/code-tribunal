@@ -58,10 +58,15 @@ def main() -> int:
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
     workflow = _read_optional(PUBLISH_WORKFLOW)
-    shipped_workflows = {
-        path: _read(path)
-        for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW)
-    }
+    # The runtime image copies the reusable review workflow but intentionally
+    # omits repository-only .github workflows. Check every shipped workflow
+    # that exists in the current distribution without making the image test
+    # depend on files that are not part of that distribution.
+    shipped_workflows = {}
+    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+        workflow_text = _read_optional(path)
+        if workflow_text is not None:
+            shipped_workflows[path] = workflow_text
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))

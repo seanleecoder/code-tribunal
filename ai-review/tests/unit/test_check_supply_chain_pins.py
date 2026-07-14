@@ -68,6 +68,15 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
+    def test_allows_repository_only_ci_workflow_to_be_absent_from_runtime_image(self) -> None:
+        original = check_supply_chain_pins.CI_WORKFLOW
+        with tempfile.TemporaryDirectory() as tmp:
+            check_supply_chain_pins.CI_WORKFLOW = Path(tmp) / "missing-ci.yml"
+            try:
+                self.assertEqual(check_supply_chain_pins.main(), 0)
+            finally:
+                check_supply_chain_pins.CI_WORKFLOW = original
+
 
 if __name__ == "__main__":
     unittest.main()
