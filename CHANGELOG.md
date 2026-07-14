@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-14
+
 ### Changed
 
 - The shipped configuration now contains only controls consumed by production
