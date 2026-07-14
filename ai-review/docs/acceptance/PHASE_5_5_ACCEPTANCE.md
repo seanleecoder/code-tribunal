@@ -93,3 +93,7 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   in PR #32. The GitHub and GitLab templates were advanced together so manual
   dispatch does not execute pull-request-controlled Python under write-token
   jobs.
+- Manual dogfood run `29345802433` pulled these digests and completed prepare,
+  a full three-reviewer panel, all three critiques, consensus, two exact-anchor
+  inline posts, authenticated state persistence, and the enforcing gate on
+  PR #33.

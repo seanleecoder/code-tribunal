@@ -45,7 +45,33 @@ posting. The installed GitHub workflow pulled the attested, digest-pinned images
 and completed prepare, review, critique, consensus, state persistence, and gate
 evaluation on the repository that publishes Code Tribunal.
 
-The runs produced zero surfaced findings, so they did not live-validate inline
-review comments or a human-facing summary/review body. Those posting surfaces
-must be exercised by a controlled finding-producing pull request before the
-GitHub integration is described as having full live posting acceptance.
+## Enforcing-gate and inline-posting confirmation
+
+- Hardened pull request:
+  [#33](https://github.com/seanleecoder/code-tribunal/pull/33), head
+  `c60007700ca9ba2239989e2c385322ab26c948b2`.
+- Manual dogfood workflow run:
+  [29345802433](https://github.com/seanleecoder/code-tribunal/actions/runs/29345802433).
+- Image source commit:
+  `e0ad996aafa40ceceb420014ce62a0e7b3105275`, using the attested digests
+  recorded in `PHASE_5_5_ACCEPTANCE.md` under "Manual-dispatch images."
+- Panel outcome: Claude, Codex, and OpenCode reviews succeeded; all three
+  critique legs succeeded; consensus reported `panel_status=full` with no
+  failed reviewers.
+- Posting outcome: two human-facing inline review comments were created at
+  exact diff anchors as
+  [discussion 3580429451](https://github.com/seanleecoder/code-tribunal/pull/33#discussion_r3580429451)
+  and
+  [discussion 3580429525](https://github.com/seanleecoder/code-tribunal/pull/33#discussion_r3580429525).
+  The authenticated `github-actions[bot]` state comment was also created as
+  [issue comment 4971039322](https://github.com/seanleecoder/code-tribunal/pull/33#issuecomment-4971039322).
+- Consensus surfaced the intentional advisory-to-enforcing default change as
+  a non-blocking compatibility warning and the state-write verification as an
+  informational security finding. Neither required acknowledgment.
+- Gate outcome: success with `AI_REVIEW_MERGE_GATE_ENABLED=true`, confirming
+  the shipped GitHub template evaluates the enforcing path.
+
+Final live-posting verdict: accepted for inline review comments and the
+machine-owned state store. A summary/review body is emitted only for findings
+that cannot be anchored inline; that fallback remains covered by automated
+tests rather than this exact-anchored live run.
