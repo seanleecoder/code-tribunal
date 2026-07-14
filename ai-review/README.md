@@ -188,8 +188,9 @@ it mirrors the prepare → review → critique → consensus → post → gate f
 maps the repository's `OPENROUTER_API_KEY` secret only into model-running jobs.
 Automatic runs explicitly check out the submitted pull-request head SHA instead
 of GitHub's synthetic merge commit. This keeps `repo_snapshot` aligned with the
-head SHA and API diff recorded in the input manifest. Manual dispatch validates
-the PR number before constructing its checkout ref.
+head SHA and API diff recorded in the input manifest. Before any checkout,
+manual dispatch validates the PR number, resolves its immutable head SHA through
+the GitHub API, and rejects missing source repositories and external forks.
 The shipped workflow enables merge-gate enforcement. Set
 `AI_REVIEW_MERGE_GATE_ENABLED=false` only for an explicitly advisory rollout.
 GitHub Actions installations must set `AI_REVIEW_GITHUB_BOT_LOGIN` to the

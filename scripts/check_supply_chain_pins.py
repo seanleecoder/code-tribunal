@@ -28,6 +28,7 @@ APPROVED_ACTION_PINS = {
     ("actions/checkout", "08eba0b27e820071cde6df949e0beb9ba4906955"): "v4.3.0",
     ("actions/checkout", "df4cb1c069e1874edd31b4311f1884172cec0e10"): "v6.0.3",
     ("actions/setup-python", "a26af69be951a213d495a4c3e4e4022e16d87065"): "v5.6.0",
+    ("actions/github-script", "60a0d83039c74a4aee543508d2ffcb1c3799cdea"): "v7.0.1",
     ("actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"): "v4.6.2",
     ("actions/download-artifact", "d3f86a106a0bac45b974a628896c90dbdf5c8093"): "v4.3.0",
     ("actions/attest", "a1948c3f048ba23858d222213b7c278aabede763"): "v4",
