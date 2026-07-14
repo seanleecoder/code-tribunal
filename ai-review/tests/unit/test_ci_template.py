@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import re
 import unittest
 from pathlib import Path
@@ -527,6 +528,63 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("python -m ai_review.post", text)
         self.assertIn("python -m ai_review.gate", text)
         self.assertNotIn('echo "Run prepare/reviewer/consensus/post/gate stages here."', text)
+
+    def test_github_actions_template_selects_github_runtime(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        review = _workflow_job(text, "review")
+        critique = _workflow_job(text, "critique")
+
+        self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
+        self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
+        self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
+        self.assertIn(
+            "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
+            critique,
+        )
+
+    def test_github_actions_template_runs_full_critique_panel(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        critique = _workflow_job(text, "critique")
+        consensus = _workflow_job(text, "consensus")
+
+        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("continue-on-error: true", critique)
+        self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
+        self.assertIn("pattern: ai-review-review-*", critique)
+        self.assertIn("pattern: ai-review-critique-*", consensus)
+        self.assertIn("needs: [prepare, review, critique]", consensus)
+        self.assertEqual(
+            text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
+            2,
+        )
+
+    def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        consensus = _workflow_job(template.read_text(encoding="utf-8"), "consensus")
+        download = re.search(
+            r"(?ms)- name: Download critique artifacts\n(.*?)(?=\n      - name:)",
+            consensus,
+        )
+
+        self.assertIsNotNone(download)
+        self.assertIn("continue-on-error: true", download.group(1))
+        self.assertIn("steps.download-critiques.outcome == 'failure'", consensus)
+        self.assertIn("consensus will use reviewer findings only", consensus)
+
+    def test_github_critique_artifact_paths_extract_under_expected_root(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        critique = _workflow_job(template.read_text(encoding="utf-8"), "critique")
+        upload_paths = re.findall(
+            r"(?m)^\s+(out/(?:critiques|pooled_findings|status)/.+)$", critique
+        )
+
+        self.assertEqual(len(upload_paths), 3)
+        self.assertEqual(posixpath.commonpath(upload_paths), "out")
+        extracted_paths = {path.removeprefix("out/").split("/", 1)[0] for path in upload_paths}
+        self.assertEqual(extracted_paths, {"critiques", "pooled_findings", "status"})
 
 
 if __name__ == "__main__":

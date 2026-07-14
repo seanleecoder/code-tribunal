@@ -82,7 +82,7 @@ pipeline.
 - Status reports are saved to `out/status/<reviewer>.json`.
 
 ### 3. `critique` (Blind Cross-Examination - Optional)
-- Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes the grouped `AI critique: [claude|codex|opencode]` jobs. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
+- Active when `critique.enabled: true` (and `critique.rounds: 1`). The GitLab template uses `AI_REVIEW_CRITIQUE_ENABLED` for both job creation and runtime config. The GitHub template always creates the critique matrix so artifact dependencies remain stable; when disabled, each runner emits a skipped artifact without calling a model.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
 - Reviewers evaluate peer findings, producing agreement (`agree`), dispute (`dispute`), noise (`noise`), or duplicate (`duplicate`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
@@ -370,8 +370,10 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_OPENCODE_MODEL` | `reviewers.opencode.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_<REVIEWER>_ENABLED` | `reviewers.<name>.enabled` | Strict `true`/`false`. Disabling below `panel.min_successful_reviewers_for_blocking` fails validation loudly. |
 | `AI_REVIEW_<REVIEWER>_EFFORT` | `reviewers.<name>.effort` | Reasoning/exploration effort, one of `low`/`medium`/`high`/`xhigh`/`max` (anything else fails config validation). Voluntary stopping, not a turn cap. Currently consumed only by the claude adapter (`--effort`). |
-| `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled` **and** critique job creation | The CI template sets this to `"true"` by default and the critique-job rule keys off the exact same variable, so config behavior and CI job-creation stay in lock-step. |
+| `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled`; GitLab critique job creation | The GitLab template gates job creation on this value. The GitHub template always creates the matrix and emits skipped artifacts without model calls when set to `false`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
+| `AI_REVIEW_POSTING_MODE` | `posting.mode` | Select `gitlab_discussions` or `github_reviews`; set consistently in every job. |
+| `AI_REVIEW_STATE_BACKEND` | `state.backend` | Select the matching state backend; GitHub workflows use `github_pr_comment`. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
 | `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |
@@ -379,7 +381,7 @@ under `effective_config` in `inputs/manifest.json` for audit).
 All boolean variables above must be **exactly `true` or `false`** (lowercase, no
 surrounding whitespace) — a byte-for-byte match of GitLab's `== "true"` rule. Any
 other value (`TRUE`, `1`, `yes`, `" true "`, a typo like `flase`) fails the pipeline
-loudly rather than silently no-op'ing or diverging from CI job-creation.
+loudly rather than silently no-op'ing.
 
 Golden consensus snapshots can be refreshed after intentional reducer output
 changes with `make update-golden`; review the resulting fixture diff before merging.

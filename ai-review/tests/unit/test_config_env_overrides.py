@@ -85,6 +85,22 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertFalse(config["critique"]["enabled"])
         self.assertFalse(config["merge_gate"]["enabled"])
 
+    def test_platform_overrides_apply_together(self) -> None:
+        config = _base_config()
+        config["posting"] = {"mode": "gitlab_discussions"}
+        config["state"] = {"backend": "gitlab_mr_state_note"}
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AI_REVIEW_POSTING_MODE": "github_reviews",
+                "AI_REVIEW_STATE_BACKEND": "github_pr_comment",
+            },
+            clear=True,
+        ):
+            apply_env_overrides(config)
+        self.assertEqual(config["posting"]["mode"], "github_reviews")
+        self.assertEqual(config["state"]["backend"], "github_pr_comment")
+
     def test_non_exact_boolean_value_fails_loudly(self) -> None:
         # Exact lowercase true/false only (mirrors GitLab == "true"): "1"/"yes"/typos
         # AND non-canonical casing/whitespace must raise, never silently no-op.
@@ -115,6 +131,25 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+
+    def test_github_platform_env_overrides_load_valid_config(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AI_REVIEW_POSTING_MODE": "github_reviews",
+                "AI_REVIEW_STATE_BACKEND": "github_pr_comment",
+            },
+        ):
+            config = load_config(_REPO_CONFIG)
+        self.assertEqual(config["posting"]["mode"], "github_reviews")
+        self.assertEqual(config["state"]["backend"], "github_pr_comment")
+
+    def test_invalid_platform_env_override_fails_loudly(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_POSTING_MODE": "bitbucket"}),
+            self.assertRaisesRegex(ConfigError, "posting.mode"),
+        ):
+            load_config(_REPO_CONFIG)
 
     def test_repo_config_default_effort_loads(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=False):

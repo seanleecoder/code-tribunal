@@ -81,6 +81,8 @@ to change a model at runtime. Reviewer enablement, critique, and the merge gate 
 likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
 `AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
+On GitHub, disabling critique keeps the matrix jobs present for stable artifact
+dependencies, but the runner writes skipped artifacts without invoking a model.
 
 ### Debugging a slow or stuck reviewer
 
@@ -170,8 +172,10 @@ The shipped configuration contains only controls consumed by production code. Pa
 
 ### GitHub pull request reviews
 
-Set `posting.mode: github_reviews` and `state.backend: github_pr_comment` to post
-AI review findings to GitHub pull requests. The GitHub adapter translates neutral
+Set `AI_REVIEW_POSTING_MODE=github_reviews` and
+`AI_REVIEW_STATE_BACKEND=github_pr_comment` in every workflow job to override the
+image-baked GitLab defaults and post AI review findings to GitHub pull requests.
+The GitHub adapter translates neutral
 anchors to GitHub review-comment fields (`path`, `line`, `side`, and optional
 `start_line` / `start_side`) and stores persisted state in a bot-authored PR
 comment. State comments carry the normal encoded `ai-review-state:v1` payload plus
@@ -180,8 +184,17 @@ token identity. Summary comments share GitHub's PR issue-comment channel but do
 not carry the state marker.
 
 Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions;
-it mirrors the prepare → review → consensus → post → gate flow. Keep write-token
-jobs on `pull_request` for trusted in-repository workflow YAML; do not use unsafe
+it mirrors the prepare → review → critique → consensus → post → gate flow and
+maps the repository's `OPENROUTER_API_KEY` secret only into model-running jobs.
+Individual model jobs are allowed to fail so deterministic consensus can apply
+the degradation policy; consensus itself fails when no reviewer succeeds.
+Missing critique artifacts are advisory and produce a workflow warning rather
+than suppressing consensus over valid reviewer findings.
+Keep write-token jobs on `pull_request` for trusted in-repository workflow YAML;
+do not use unsafe
 `pull_request_target` patterns that execute pull-request code with repository
 secrets. Maintainer slash-command authorization checks GitHub collaborator
 permissions and accepts `write`, `maintain`, or `admin` as command-capable roles.
+Before enabling the workflow, create an Actions repository secret named
+`OPENROUTER_API_KEY`; external-fork pull requests are skipped by design because
+GitHub does not expose that secret to them.

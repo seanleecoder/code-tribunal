@@ -22,6 +22,8 @@ env:
   AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-93bb8a1b859f77d268dcfc314dc613208dc526e2@sha256:ca7a7bb17c1c3744d040fb078df51d36c0405609c2a9e6721379b389e04968fe
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
+  AI_REVIEW_POSTING_MODE: github_reviews
+  AI_REVIEW_STATE_BACKEND: github_pr_comment
   AI_REVIEW_CRITIQUE_ENABLED: "true"
 
 jobs:
@@ -44,6 +46,10 @@ jobs:
 
   review:
     needs: prepare
+    # Individual model failures are data for deterministic consensus. Keep the
+    # fan-out running; consensus fails with panel_status=failed when no reviewer
+    # succeeds, so this does not turn a total panel failure into a green gate.
+    continue-on-error: true
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_REVIEWER_IMAGE }}
     strategy:
@@ -61,8 +67,11 @@ jobs:
           AI_REVIEW_INPUT_DIR: inputs
           AI_REVIEW_OUTPUT_DIR: out
           AI_REVIEW_LOCAL_MOCK: "0"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -71,8 +80,51 @@ jobs:
           name: ai-review-review-${{ matrix.reviewer }}
           path: out/
 
-  consensus:
+  critique:
     needs: [prepare, review]
+    # Critique is optional evidence. A failed critic must not suppress consensus
+    # over otherwise valid reviewer findings.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    container: ${{ env.AI_REVIEW_REVIEWER_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        reviewer: [claude, codex, opencode]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ai-review-review-*
+          path: out
+          merge-multiple: true
+      - name: Run critique
+        env:
+          REVIEWER: ${{ matrix.reviewer }}
+          AI_REVIEW_INPUT_DIR: inputs
+          AI_REVIEW_OUTPUT_DIR: out
+          AI_REVIEW_LOCAL_MOCK: "0"
+          OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+          ANTHROPIC_BASE_URL: https://openrouter.ai/api
+        run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ai-review-critique-${{ matrix.reviewer }}
+          path: |
+            out/critiques/${{ matrix.reviewer }}.json
+            out/pooled_findings/${{ matrix.reviewer }}.json
+            out/status/${{ matrix.reviewer }}.json
+
+  consensus:
+    needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_BASE_IMAGE }}
@@ -86,6 +138,17 @@ jobs:
           pattern: ai-review-review-*
           path: reviewer-artifacts
           merge-multiple: true
+      - name: Download critique artifacts
+        id: download-critiques
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ai-review-critique-*
+          path: reviewer-artifacts
+          merge-multiple: true
+      - name: Report missing critique artifacts
+        if: steps.download-critiques.outcome == 'failure'
+        run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
         run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

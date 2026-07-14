@@ -31,7 +31,7 @@ reasoning and security invariants are not lost.
 | **0** | Quick wins | SPEC-01…05 | Complete; implemented before the Phase 1/2 releases. |
 | **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
-| **3** | Platform + supply chain | SPEC-15…16 | Implemented on `main`; one boundary-interpretation follow-up remains ([completion audit](completion-audit.md)). |
+| **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
 
 ## Downstream validation
 

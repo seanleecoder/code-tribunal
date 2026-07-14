@@ -104,7 +104,10 @@ class InputBundleLimitTests(unittest.TestCase):
                     }
                 },
             ),
-            mock.patch("ai_review.input_bundle.create_gitlab_platform", BrokenUserClient),
+            mock.patch(
+                "ai_review.input_bundle.create_runtime_platform",
+                return_value=BrokenUserClient(),
+            ),
             mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),

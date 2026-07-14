@@ -251,6 +251,8 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
     - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
+    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``
+    - ``AI_REVIEW_STATE_BACKEND`` -> ``state.backend``
     - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` ->
       ``panel.grouping.semantic.enabled``
     - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` ->
@@ -288,6 +290,18 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         merge_gate = config.setdefault("merge_gate", {})
         if isinstance(merge_gate, dict):
             merge_gate["enabled"] = flag
+
+    posting_mode_env = os.environ.get("AI_REVIEW_POSTING_MODE")
+    if posting_mode_env is not None and posting_mode_env.strip():
+        posting = config.setdefault("posting", {})
+        if isinstance(posting, dict):
+            posting["mode"] = posting_mode_env.strip()
+
+    state_backend_env = os.environ.get("AI_REVIEW_STATE_BACKEND")
+    if state_backend_env is not None and state_backend_env.strip():
+        state = config.setdefault("state", {})
+        if isinstance(state, dict):
+            state["backend"] = state_backend_env.strip()
 
     semantic_enabled_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED")
     semantic_threshold_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD")
