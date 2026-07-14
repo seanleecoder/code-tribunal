@@ -544,6 +544,14 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             critique,
         )
 
+    def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertNotIn("container: ${{ env.", text)
+        self.assertEqual(text.count("container: ghcr.io/"), 6)
+        self.assertEqual(text.count("@sha256:"), 8)
+
     def test_github_actions_template_runs_full_critique_panel(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
