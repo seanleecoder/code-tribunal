@@ -28,7 +28,7 @@ current code, tests, CI, tags, and recorded downstream validation.
   pulled the attested digest-pinned images and completed prepare, degraded
   review, all critique legs, consensus, authenticated state posting, and the
   advisory gate. The full acceptance record is in
-  `ai-review/GITHUB_DOGFOOD_ACCEPTANCE.md`.
+  `ai-review/docs/acceptance/GITHUB_DOGFOOD_ACCEPTANCE.md`.
 
 ## Resolved follow-ups
 

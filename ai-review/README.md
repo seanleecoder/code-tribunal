@@ -1,6 +1,6 @@
 # AI Review Subsystem (`ai-review`)
 
-This directory contains the core implementation, configuration schemas, prompt templates, CLI adapters, and acceptance records for **Code Tribunal** (AI Review Subsystem).
+This directory contains the core implementation, configuration schemas, prompt templates, CLI adapters, and documentation for **Code Tribunal** (AI Review Subsystem).
 
 For high-level system architecture, pipeline execution stages, local harness usage, security container isolation model, and the GitLab CI integration guide, see the main repository [README.md](../README.md). Completed requirement status is reconciled in the [improvement-spec audit](../docs/improvement-specs/completion-audit.md).
 
@@ -131,7 +131,7 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 
 ### Bootstrap Refs & GHCR Cutover Sequence
 
-1. **Bootstrap State**: The first public GHCR publish has succeeded and is verified (see [PHASE_5_5_ACCEPTANCE.md](PHASE_5_5_ACCEPTANCE.md)), and [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) has been cut over from the temporary Phase 5.5 private bootstrap refs to the published GHCR `@sha256:` digests.
+1. **Bootstrap State**: The first public GHCR publish has succeeded and is verified (see [PHASE_5_5_ACCEPTANCE.md](docs/acceptance/PHASE_5_5_ACCEPTANCE.md)), and [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) has been cut over from the temporary Phase 5.5 private bootstrap refs to the published GHCR `@sha256:` digests.
 2. **CLI Version Pinning**: Reviewer CLI versions are pinned in `images/package.json` and `images/package-lock.json`, installed with `npm ci`, and checked by `scripts/check_supply_chain_pins.py`. Update CLI versions through a reviewed lockfile change, not repository variables.
 3. **Public Registry Change**: After the workflow runs on `main`, change both GHCR packages to public in package settings, verify anonymous pulls by digest, then bump `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and `AI_REVIEW_TRUSTED_IMAGE_SHA` together from the workflow summary.
 4. **Preflight Audit**: The reviewer image preflight probes `claude --version`, `codex --version`, and `opencode --version`, then validates local mock fan-out and consensus calculation. Do not run MR smoke against images that install CLIs inside the smoke job.
@@ -156,12 +156,12 @@ Each reviewer writes strictly to its own output files (`out/findings/<reviewer>.
 
 The system development and validation is documented across 6 milestone acceptance files:
 
-- [Phase 1 Acceptance Evidence](PHASE_1_ACCEPTANCE.md): Local harness & schema validation.
-- [Phase 2 Acceptance Evidence](PHASE_2_ACCEPTANCE.md): Parallel CLI fan-out via OpenRouter.
-- [Phase 3 Acceptance Evidence](PHASE_3_ACCEPTANCE.md): Deterministic consensus & idempotent GitLab upsert.
-- [Phase 4 Acceptance Evidence](PHASE_4_ACCEPTANCE.md): Anchor drift, state hashing & revision matching.
-- [Phase 5 Acceptance Evidence](PHASE_5_ACCEPTANCE.md): Multi-agent blind cross-examination (critique).
-- [Phase 5.5 Acceptance Evidence](PHASE_5_5_ACCEPTANCE.md): Public GHCR image publishing & preflight verification.
+- [Phase 1 Acceptance Evidence](docs/acceptance/PHASE_1_ACCEPTANCE.md): Local harness & schema validation.
+- [Phase 2 Acceptance Evidence](docs/acceptance/PHASE_2_ACCEPTANCE.md): Parallel CLI fan-out via OpenRouter.
+- [Phase 3 Acceptance Evidence](docs/acceptance/PHASE_3_ACCEPTANCE.md): Deterministic consensus & idempotent GitLab upsert.
+- [Phase 4 Acceptance Evidence](docs/acceptance/PHASE_4_ACCEPTANCE.md): Anchor drift, state hashing & revision matching.
+- [Phase 5 Acceptance Evidence](docs/acceptance/PHASE_5_ACCEPTANCE.md): Multi-agent blind cross-examination (critique).
+- [Phase 5.5 Acceptance Evidence](docs/acceptance/PHASE_5_5_ACCEPTANCE.md): Public GHCR image publishing & preflight verification.
 
 For a concrete, artifact-backed walkthrough of every stage on one real pipeline run, see [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).
 
