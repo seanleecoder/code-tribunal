@@ -97,3 +97,20 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   a full three-reviewer panel, all three critiques, consensus, two exact-anchor
   inline posts, authenticated state persistence, and the enforcing gate on
   PR #33.
+
+### Hardened dogfood images
+
+- Source merge commit: `6e084960750a46faf0235a9641bdba1f97074555`.
+- Publication workflow: GitHub Actions run `29346501692`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701`.
+- Reviewer image digest:
+  `sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a`.
+- These images contain the enforcing GitHub default, state-write identity
+  verification, empty-diff handling, bot-login fail-fast behavior, and image
+  pin consistency checks merged in PR #33.
+- Exact-runtime dogfood run `29347031848` pulled these digests on PR #34. All
+  three reviews and all three critiques succeeded, consensus reported a full
+  panel with zero findings, authenticated state persistence succeeded, and the
+  enforcing gate passed.

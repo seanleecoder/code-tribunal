@@ -75,3 +75,23 @@ Final live-posting verdict: accepted for inline review comments and the
 machine-owned state store. A summary/review body is emitted only for findings
 that cannot be anchored inline; that fallback remains covered by automated
 tests rather than this exact-anchored live run.
+
+## Exact merged-runtime confirmation
+
+- Pin-only pull request:
+  [#34](https://github.com/seanleecoder/code-tribunal/pull/34), validation head
+  `d6a15c0d74ee717545ba5a43afe14ef4f849cdbe`.
+- Dogfood workflow run:
+  [29347031848](https://github.com/seanleecoder/code-tribunal/actions/runs/29347031848).
+- The run used images published and attested from merged PR #33 commit
+  `6e084960750a46faf0235a9641bdba1f97074555`, so the container runtime included
+  the final bot-login, state-write verification, and empty-diff hardening.
+- Claude, Codex, and OpenCode reviews and critiques all succeeded; consensus
+  reported `panel_status=full`, zero failed reviewers, zero findings, and
+  `block_merge=false`.
+- Authenticated state persistence created
+  [issue comment 4971194700](https://github.com/seanleecoder/code-tribunal/pull/34#issuecomment-4971194700)
+  under `github-actions[bot]`, and the enforcing gate passed.
+
+Exact-runtime verdict: accepted. The repository workflow now pins and has
+dogfooded the immutable images containing the merged GitHub hardening.
