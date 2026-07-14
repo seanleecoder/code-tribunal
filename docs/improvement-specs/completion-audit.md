@@ -23,6 +23,12 @@ current code, tests, CI, tags, and recorded downstream validation.
 - Source inspection confirms one shared `SEVERITY_RANK`, one unified diff parser,
   a sub-150-line `post_consensus`, labeled grouping fixtures, platform contract
   tests, and GitHub post→gate integration cases.
+- The repository-level GitHub dogfood run
+  [29338230558](https://github.com/seanleecoder/code-tribunal/actions/runs/29338230558)
+  pulled the attested digest-pinned images and completed prepare, degraded
+  review, all critique legs, consensus, authenticated state posting, and the
+  advisory gate. The full acceptance record is in
+  `ai-review/GITHUB_DOGFOOD_ACCEPTANCE.md`.
 
 ## Resolved follow-ups
 
