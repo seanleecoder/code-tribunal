@@ -12,12 +12,12 @@ current code, tests, CI, tags, and recorded downstream validation.
 | SPEC-07 | Complete | State-note author verification and hostile-note security tests exist for GitLab and GitHub-backed state. |
 | SPEC-08 | Complete with an intentional policy revision | The one-level downgrade cap remains enforced. Advisory escalation is now enabled by default following the recorded v0.3.1 decision; the older “both flags false” acceptance sentence is historical, not the current contract. |
 | SPEC-09…14 | Complete | Reducer import boundaries, golden snapshots, hermetic post→gate tests, strict reducer typing, shared diff parsing/severity constants, labeled grouping corpus, and decomposed posting helpers exist and pass. |
-| SPEC-15 | Functionally complete; boundary wording needs follow-up | GitLab/GitHub adapters, contract tests, and fake-GitHub E2E coverage exist. `post.py` and `input_bundle.py` still select concrete platform factories at their CLI edges, so the literal criterion “reference no GitLab-specific symbol directly” is not fully met even though operational logic uses the protocol. |
+| SPEC-15 | Complete | GitLab/GitHub adapters, contract tests, and fake-GitHub E2E coverage exist. CLI entry points construct adapters through the platform composition root, and an import-boundary regression test prevents direct concrete-factory selection from returning to `post.py` or `input_bundle.py`. |
 | SPEC-16 | Complete | Images, npm/Python inputs, and every shipped GitHub Actions reference are pinned. The drift checker covers the publish workflow, ordinary CI, and reusable GitHub review template, including action version-label agreement. |
 
 ## Verification performed
 
-- `make test`: 324 tests passed after the closed-config and action-pin cleanup.
+- `make test`: 376 tests passed after the GitHub workflow and platform-boundary cleanup.
 - `git tag --sort=version:refname`: `v0.1.0`, `v0.2.0`, `v0.3.0`, and
   `v0.3.1` are present.
 - Source inspection confirms one shared `SEVERITY_RANK`, one unified diff parser,
@@ -29,6 +29,3 @@ current code, tests, CI, tags, and recorded downstream validation.
 1. Execute the SPEC-06 hostile-MR runbook in an operator-controlled GitLab
    scratch deployment and attach pipeline IDs, job IDs, protected-variable
    settings, and artifact/log audit evidence.
-2. Decide whether SPEC-15’s CLI-edge factory selection is an acceptable
-   interpretation of the platform boundary; otherwise move platform selection
-   into a composition root and tighten the acceptance wording/tests.

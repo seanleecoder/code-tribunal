@@ -528,6 +528,27 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("python -m ai_review.gate", text)
         self.assertNotIn('echo "Run prepare/reviewer/consensus/post/gate stages here."', text)
 
+    def test_github_actions_template_selects_github_runtime(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
+        self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        self.assertEqual(text.count("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}"), 2)
+
+    def test_github_actions_template_runs_full_critique_panel(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        critique = _workflow_job(text, "critique")
+        consensus = _workflow_job(text, "consensus")
+
+        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("continue-on-error: true", critique)
+        self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
+        self.assertIn("pattern: ai-review-review-*", critique)
+        self.assertIn("pattern: ai-review-critique-*", consensus)
+        self.assertIn("needs: [prepare, review, critique]", consensus)
+
 
 if __name__ == "__main__":
     unittest.main()

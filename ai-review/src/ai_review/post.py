@@ -23,7 +23,7 @@ from .memory import (
     state_overflow_reason,
 )
 from .platform import ReviewPlatform, ReviewPlatformError
-from .platform.factory import create_github_platform, create_gitlab_platform
+from .platform.runtime import create_runtime_platform
 from .render import (
     compute_body_hash as _compute_body_hash,
 )
@@ -1591,20 +1591,7 @@ def cli(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
     consensus = cast(Consensus, load_json_file(args.consensus))
-    posting = config.get("posting", {}) if isinstance(config, dict) else {}
-    mode = posting.get("mode", "gitlab_discussions")
-    if mode == "github_reviews":
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "dry-run-token"
-        api_url = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
-        client = create_github_platform(api_url, token)
-    else:
-        token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
-        api_url = (
-            os.environ.get("CI_API_V4_URL")
-            or os.environ.get("GITLAB_API_URL")
-            or "https://gitlab.example.com/api/v4"
-        )
-        client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
+    client = create_runtime_platform(config, access="write", allow_missing_token=args.dry_run)
     diff_path = Path(args.inputs) / "mr.diff"
     diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(

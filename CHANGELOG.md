@@ -12,6 +12,11 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   code; inert policy, integration, and metadata placeholders were removed.
 - Improvement specs now distinguish completed work, independently archived
   plans, and evidence-backed follow-up gaps.
+- GitHub Actions now selects the GitHub posting/state backends at runtime, passes
+  provider credentials only to model jobs, and runs the configured critique
+  panel before consensus.
+- Platform adapter construction now lives in a dedicated composition root rather
+  than the posting and input-bundle CLI modules.
 
 ### Removed
 

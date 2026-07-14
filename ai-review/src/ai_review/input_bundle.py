@@ -15,7 +15,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
-from .platform.factory import create_github_platform, create_gitlab_platform
+from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
 
 
@@ -183,12 +183,8 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
     repo = os.environ.get("GITHUB_REPOSITORY")
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    api_url = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
-    if not repo or not token:
-        raise SystemExit(
-            "prepare requires GITHUB_REPOSITORY and GITHUB_TOKEN for github_reviews mode"
-        )
+    if not repo:
+        raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
     config_dict = load_config(config)
     pull_request = _github_event_pull_request()
     pr_number = str(
@@ -197,7 +193,10 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     if not pr_number or not pr_number.isdigit():
         raise SystemExit("prepare requires pull_request.number in the GitHub event payload")
 
-    client = create_github_platform(api_url, token)
+    try:
+        client = create_runtime_platform(config_dict, access="read")
+    except PlatformRuntimeError as exc:
+        raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     version = client.fetch_version(repo, pr_number)
     diff_text = client.fetch_diff(repo, pr_number)
     _enforce_diff_limits(diff_text, config_dict)
@@ -266,20 +265,20 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
-    api_url = os.environ.get("CI_API_V4_URL") or os.environ.get("GITLAB_API_URL")
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
-    token = os.environ.get("GITLAB_READ_TOKEN")
-    if not api_url or not project_id or not mr_iid or not token:
+    if not project_id or not mr_iid:
         raise SystemExit(
-            "prepare requires CI_API_V4_URL, CI_PROJECT_ID, "
-            "CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
+            "prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID"
         )
     config_dict = load_config(config)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
-    client = create_gitlab_platform(api_url, token, token_header="PRIVATE-TOKEN")
+    try:
+        client = create_runtime_platform(config_dict, access="read")
+    except PlatformRuntimeError as exc:
+        raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
     version = client.fetch_version(project_id, mr_iid)
     diff_text = client.fetch_diff(project_id, mr_iid)
     _enforce_diff_limits(diff_text, config_dict)
