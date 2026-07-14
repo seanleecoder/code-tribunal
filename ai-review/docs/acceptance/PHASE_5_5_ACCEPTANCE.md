@@ -110,3 +110,7 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
 - These images contain the enforcing GitHub default, state-write identity
   verification, empty-diff handling, bot-login fail-fast behavior, and image
   pin consistency checks merged in PR #33.
+- Exact-runtime dogfood run `29347031848` pulled these digests on PR #34. All
+  three reviews and all three critiques succeeded, consensus reported a full
+  panel with zero findings, authenticated state persistence succeeded, and the
+  enforcing gate passed.
