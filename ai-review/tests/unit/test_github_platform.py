@@ -4,7 +4,11 @@ import json
 from typing import Any
 
 from ai_review.memory import encode_state_note
-from ai_review.platform.github import STATE_MARKER, GitHubReviewPlatform
+from ai_review.platform.github import (
+    STATE_MARKER,
+    GitHubReviewPlatform,
+    GitHubReviewPlatformError,
+)
 
 
 class Response:
@@ -79,6 +83,28 @@ class DiffSession:
         return response
 
 
+class StateWriteSession:
+    def __init__(self, author_login: str) -> None:
+        self.author_login = author_login
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        if method in {"POST", "PATCH"}:
+            return Response(
+                200,
+                {
+                    "id": 17,
+                    "body": kwargs["json"]["body"],
+                    "user": {"id": 42, "login": self.author_login},
+                },
+            )
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+
+class MissingBotSession:
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        return Response(404, {"message": "Not Found"})
+
+
 def test_state_notes_are_author_verified_and_normalized() -> None:
     session = Session()
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
@@ -122,6 +148,14 @@ def test_fetch_diff_returns_raw_patch_text() -> None:
     assert kwargs["headers"]["Accept"] == "application/vnd.github.v3.diff"
 
 
+def test_fetch_diff_returns_empty_string_for_empty_response() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test", "token", session=DiffSession("")
+    )
+
+    assert platform.fetch_diff("octo/repo", 7) == ""
+
+
 def test_fetch_pull_request_returns_metadata() -> None:
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=Session())
 
@@ -129,3 +163,48 @@ def test_fetch_pull_request_returns_metadata() -> None:
 
     assert pull_request["number"] == 7
     assert pull_request["head"]["ref"] == "feature"
+
+
+def test_state_write_requires_configured_bot_to_be_actual_author() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        bot_login="expected[bot]",
+        session=StateWriteSession("different[bot]"),
+    )
+
+    try:
+        platform.create_state_note("octo/repo", 7, "state")
+    except GitHubReviewPlatformError as exc:
+        assert "expected configured bot login" in str(exc)
+    else:
+        raise AssertionError("state write accepted a mismatched configured bot login")
+
+
+def test_state_write_accepts_configured_bot_author() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        bot_login="expected[bot]",
+        session=StateWriteSession("expected[bot]"),
+    )
+
+    note = platform.update_state_note("octo/repo", 7, 17, "state")
+
+    assert note["author"]["username"] == "expected[bot]"
+
+
+def test_missing_configured_bot_has_explicit_error() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        bot_login="missing[bot]",
+        session=MissingBotSession(),
+    )
+
+    try:
+        platform.current_user_id()
+    except GitHubReviewPlatformError as exc:
+        assert "could not be resolved" in str(exc)
+    else:
+        raise AssertionError("missing configured bot login did not fail")

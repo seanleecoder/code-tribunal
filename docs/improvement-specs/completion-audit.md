@@ -26,8 +26,9 @@ current code, tests, CI, tags, and recorded downstream validation.
 - The repository-level GitHub dogfood run
   [29338230558](https://github.com/seanleecoder/code-tribunal/actions/runs/29338230558)
   pulled the attested digest-pinned images and completed prepare, degraded
-  review, all critique legs, consensus, authenticated state posting, and the
-  advisory gate. The full acceptance record is in
+  review, all critique legs, consensus, authenticated state-store posting, and
+  the advisory gate. Inline and human-facing summary posting were not exercised
+  because the run produced no findings. The scoped acceptance record is in
   `ai-review/docs/acceptance/GITHUB_DOGFOOD_ACCEPTANCE.md`.
 
 ## Resolved follow-ups

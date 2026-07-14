@@ -24,15 +24,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AI_REVIEW_BASE_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
-  AI_REVIEW_REVIEWER_IMAGE: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
   AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_STATE_BACKEND: github_pr_comment
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
   AI_REVIEW_CRITIQUE_ENABLED: "true"
-  AI_REVIEW_MERGE_GATE_ENABLED: "false"
+  AI_REVIEW_MERGE_GATE_ENABLED: "true"
 
 jobs:
   prepare:

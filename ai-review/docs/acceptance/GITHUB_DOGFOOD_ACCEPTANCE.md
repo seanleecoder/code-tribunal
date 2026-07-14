@@ -12,7 +12,8 @@
 - Reviewer image digest:
   `sha256:a6c112245c35e02a6f42001e5bf88578eabfd160a66a4e1e9552cba477e2478d`.
 - Validation target: a same-repository draft pull request exercising prepare,
-  review, critique, consensus, GitHub posting, and the advisory gate.
+  review, critique, consensus, authenticated GitHub state-store posting, and
+  the advisory gate.
 - Merge gate policy: advisory for the controlled run.
 - Image publication and attestation run:
   [29337542439](https://github.com/seanleecoder/code-tribunal/actions/runs/29337542439).
@@ -34,8 +35,17 @@
   [issue comment 4969958823](https://github.com/seanleecoder/code-tribunal/pull/31#issuecomment-4969958823).
 - Gate outcome: success with `AI_REVIEW_MERGE_GATE_ENABLED=false`, confirming
   advisory operation for the controlled run.
+- Final-head confirmation run:
+  [29338660697](https://github.com/seanleecoder/code-tribunal/actions/runs/29338660697).
+  Claude, Codex, and OpenCode reviews all succeeded; all three critiques,
+  consensus, posting, and the advisory gate also succeeded.
 
-Final verdict: accepted. The installed GitHub workflow pulled the attested,
-digest-pinned images and completed prepare, degraded review, critique,
-consensus, authenticated state posting, and advisory gate evaluation on the
-repository that publishes Code Tribunal.
+Final verdict: accepted for workflow execution and authenticated state-store
+posting. The installed GitHub workflow pulled the attested, digest-pinned images
+and completed prepare, review, critique, consensus, state persistence, and gate
+evaluation on the repository that publishes Code Tribunal.
+
+The runs produced zero surfaced findings, so they did not live-validate inline
+review comments or a human-facing summary/review body. Those posting surfaces
+must be exercised by a controlled finding-producing pull request before the
+GitHub integration is described as having full live posting acceptance.

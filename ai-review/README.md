@@ -186,6 +186,12 @@ not carry the state marker.
 Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions;
 it mirrors the prepare → review → critique → consensus → post → gate flow and
 maps the repository's `OPENROUTER_API_KEY` secret only into model-running jobs.
+The shipped workflow enables merge-gate enforcement. Set
+`AI_REVIEW_MERGE_GATE_ENABLED=false` only for an explicitly advisory rollout.
+GitHub Actions installations must set `AI_REVIEW_GITHUB_BOT_LOGIN` to the
+account that actually authors state comments; the template uses
+`github-actions[bot]`, and posting fails if the configured identity does not
+match the write response.
 Individual model jobs are allowed to fail so deterministic consensus can apply
 the degradation policy; consensus itself fails when no reviewer succeeds.
 Missing critique artifacts are advisory and produce a workflow warning rather
