@@ -55,6 +55,15 @@ class Session:
             )
         if url.endswith("/collaborators/alice/permission"):
             return Response(200, {"permission": "write"})
+        if url.endswith("/repos/octo/repo/pulls/7"):
+            return Response(
+                200,
+                {
+                    "number": 7,
+                    "head": {"sha": "1" * 40, "ref": "feature"},
+                    "base": {"sha": "0" * 40, "ref": "main"},
+                },
+            )
         raise AssertionError(f"unexpected request: {method} {url}")
 
 
@@ -111,3 +120,12 @@ def test_fetch_diff_returns_raw_patch_text() -> None:
     assert platform.fetch_diff("octo/repo", 7) == diff
     _, _, kwargs = session.calls[0]
     assert kwargs["headers"]["Accept"] == "application/vnd.github.v3.diff"
+
+
+def test_fetch_pull_request_returns_metadata() -> None:
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=Session())
+
+    pull_request = platform.fetch_pull_request("octo/repo", 7)
+
+    assert pull_request["number"] == 7
+    assert pull_request["head"]["ref"] == "feature"

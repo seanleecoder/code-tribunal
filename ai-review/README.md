@@ -198,3 +198,11 @@ permissions and accepts `write`, `maintain`, or `admin` as command-capable roles
 Before enabling the workflow, create an Actions repository secret named
 `OPENROUTER_API_KEY`; external-fork pull requests are skipped by design because
 GitHub does not expose that secret to them.
+By default, in-repository pull requests start the workflow automatically. To
+require an explicit run instead, create an Actions repository variable named
+`AI_REVIEW_MANUAL` with the exact value `true`. Automatic pull-request runs will
+then be created with all review jobs skipped. Start a review from **Actions → AI
+Review → Run workflow** and supply the pull request number; the workflow fetches
+that PR's metadata and checks out its head commit before preparing the bundle.
+Manual dispatch remains unavailable for external-fork PRs because model jobs
+receive `OPENROUTER_API_KEY`.

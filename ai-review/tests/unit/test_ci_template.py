@@ -535,6 +535,18 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             critique,
         )
 
+    def test_github_actions_supports_manual_pr_dispatch(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        prepare = _workflow_job(text, "prepare")
+
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("pr_number:", text)
+        self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
+        self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
+        self.assertIn("refs/pull/{0}/head", prepare)
+        self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+
     def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")

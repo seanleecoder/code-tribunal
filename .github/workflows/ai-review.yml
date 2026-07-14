@@ -7,6 +7,12 @@ name: AI Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -30,16 +36,24 @@ env:
 
 jobs:
   prepare:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    if: >-
+      ${{
+        (github.event_name == 'pull_request' &&
+          vars.AI_REVIEW_MANUAL != 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository) ||
+        github.event_name == 'workflow_dispatch'
+      }}
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pr_number) || github.event.pull_request.head.sha }}
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}
         run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -104,10 +104,16 @@ class GitHubReviewPlatform:
     def fetch_version(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> PullRequestVersion:
+        pr = self.fetch_pull_request(project_id_or_path, change_id)
+        return PullRequestVersion(base_sha=str(pr["base"]["sha"]), head_sha=str(pr["head"]["sha"]))
+
+    def fetch_pull_request(
+        self, project_id_or_path: str | int, change_id: str | int
+    ) -> dict[str, Any]:
         pr = self._request("GET", f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}")
         if not isinstance(pr, dict):
             raise GitHubReviewPlatformError("pull request response was not an object")
-        return PullRequestVersion(base_sha=str(pr["base"]["sha"]), head_sha=str(pr["head"]["sha"]))
+        return pr
 
     def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
         return str(
