@@ -13,6 +13,7 @@ REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
+INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
 GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
@@ -140,10 +141,18 @@ def main() -> int:
     # that exists in the current distribution without making the image test
     # depend on files that are not part of that distribution.
     shipped_workflows = {}
-    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW, INSTALLED_GITHUB_REVIEW_WORKFLOW):
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text
+    installed_review_workflow = _read_optional(INSTALLED_GITHUB_REVIEW_WORKFLOW)
+    canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
+    if (
+        installed_review_workflow is not None
+        and installed_review_workflow != canonical_review_workflow
+    ):
+        error(".github/workflows/ai-review.yml must match the canonical GitHub template")
+        failures += 1
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))

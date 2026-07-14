@@ -41,3 +41,17 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   `sha256:ca7a7bb17c1c3744d040fb078df51d36c0405609c2a9e6721379b389e04968fe`.
 - Both images were built once, preflighted, published from the saved artifact,
   and attested before the v0.3.1 release pin update.
+
+## Pre-v0.4.0 Image Refresh
+
+- Source merge commit: `dc12f1ab11bd50b8a1c04f5c22319c9d87a00ca8`.
+- Publication workflow: GitHub Actions run `29334595527`; both preflight and
+  publish/attestation jobs passed.
+- Base image digest:
+  `sha256:97e259a48326a9e7554c5c2408ae8231378ce5b1815e77f7a0c223c6030da8ae`.
+- Reviewer image digest:
+  `sha256:b59b5a516b57ec3b62e2f05f92da007108d1aeaf28db325f954fc39277995a9b`.
+- `gh attestation verify` accepted both digest-qualified GHCR subjects against
+  the `seanleecoder/code-tribunal` repository attestations.
+- The canonical GitHub and GitLab templates were advanced together to these
+  immutable images before the repository dogfood run.
