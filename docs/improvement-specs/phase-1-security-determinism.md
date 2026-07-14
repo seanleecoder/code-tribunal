@@ -1,6 +1,7 @@
 # Phase 1 — Security + Determinism (Month 1)
 
-> Status: complete; released as `v0.2.0`. Retained as decision history.
+> Status: implemented and released as `v0.2.0`; SPEC-06 still requires
+> deployment-specific hostile-MR evidence. Retained as decision history.
 
 Closes the structural security gaps the review flagged as the existential risks
 for a *security* tool, plus the one architectural leak that undermines the
@@ -269,7 +270,7 @@ big refactors):
 ### Scope
 - **In:** `input_bundle.py`/`ci/review.gitlab-ci.yml` (fork gate),
   `memory.py:compact_state` (retention), `config.py:validate_config`.
-- **Out:** the broader dead-config cleanup (SPEC-17).
+- **Out:** unrelated configuration-surface cleanup.
 
 ### Implementation
 1. **Fork gate:** in `prepare` (and/or the CI rules), when

@@ -42,7 +42,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
-    def test_detects_stale_gitlab_cli_version_variables(self) -> None:
+    def test_detects_stale_gitlab_cli_package_variables(self) -> None:
         original = check_supply_chain_pins.GITLAB_BUILD_TEMPLATE
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "build-images.gitlab-ci.yml"
@@ -56,6 +56,17 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 self.assertEqual(check_supply_chain_pins.main(), 1)
             finally:
                 check_supply_chain_pins.GITLAB_BUILD_TEMPLATE = original
+
+    def test_detects_mutable_action_in_shipped_review_workflow(self) -> None:
+        original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "review.github-actions.yml"
+            mutated.write_text("steps:\n  - uses: actions/checkout@v4\n", encoding="utf-8")
+            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
+            try:
+                self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
 
 if __name__ == "__main__":

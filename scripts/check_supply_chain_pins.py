@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_DOCKERFILE = ROOT / "ai-review/images/base.Dockerfile"
 REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
+CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
@@ -56,6 +58,10 @@ def main() -> int:
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
     workflow = _read_optional(PUBLISH_WORKFLOW)
+    shipped_workflows = {
+        path: _read(path)
+        for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW)
+    }
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))
@@ -117,6 +123,13 @@ def main() -> int:
                 failures += 1
             if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
                 error(f"{action} full-SHA pin not found")
+                failures += 1
+        shipped_workflows[PUBLISH_WORKFLOW] = workflow
+    for path, text in shipped_workflows.items():
+        for action, ref in re.findall(r"uses:\s*(actions/[^@\s]+)@([^\s#]+)", text):
+            if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+                error(f"{display_path}: {action} must use a full commit SHA")
                 failures += 1
     combined_ci = (workflow or "") + "\n" + gitlab_build
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow

@@ -57,51 +57,16 @@ highest-leverage change in the whole program.
 
 ## SPEC-02 — README accuracy pass
 
-- **Severity:** High (H8) · **Effort:** XS · **ROI rank:** 5
+- **Status:** complete; superseded by the 2026-07-14 active-config cleanup.
 - **Depends on:** none
 
-### Why
-The README markets features the code doesn't deliver. A DD reviewer who opens
-the code loses trust in the whole document; users configure no-ops.
-
-### Scope
-- **In:** `README.md`, `ai-review/README.md`.
-- **Out:** implementing budget/Jira (tracked separately in SPEC-17). This spec
-  only makes the docs true.
-
-### Implementation
-1. **Budget (README ~line 24):** change the headline bullet from a claimed
-   capability to "planned — currently advisory only (`backend: none`)." Confirm
-   against `ai-review/src/ai_review/budget.py` (returns
-   `budget_backend_not_implemented`).
-2. **Jira:** demote from "Key Feature" to "Planned/experimental." Note that
-   `post.py` does not import `jira_client` and `jira_comments_*` are always 0.
-3. **Critique verdicts:** replace `unverifiable` with the real enum values
-   `agree | dispute | noise | duplicate` (source:
-   `ai-review/schemas/critique_batch.schema.json` and `CONSENSUS.md`).
-4. Add an **"Implemented vs Reserved" table** listing config knobs the review
-   flagged as inert (`panel.quorum.mode`, `panel.degraded_behavior.*`,
-   `panel.expected_reviewers`, `severity_policy.majority_noise`,
-   `merge_gate.mechanism/required_project_setting/stale_head_behavior`, most of
-   `security.*`, `budget.*`, `jira.*`, per-reviewer `cli_version`,
-   `limits.max_findings_per_reviewer`, several `posting.*`) with a "reserved"
-   label. This can be superseded by SPEC-17's config cleanup later.
-5. **Security claims:** soften "Egress Control: network calls are restricted"
-   and the ASCII diagram's "Network: openrouter.ai" to state egress is
-   **CLI-policy-dependent, not enforced at the container/runner layer** (until
-   SPEC-06/enforcement lands). Cross-reference H2.
+The original accuracy pass separated implemented controls from future-facing placeholders. The follow-up cleanup removed all inert configuration and associated product claims, so the shipped config and docs now describe implemented behavior only. Paused product ideas live outside the active improvement specs.
 
 ### Acceptance criteria
-- No occurrence of `unverifiable` as a critique verdict in docs.
-- Budget and Jira are described as planned, not delivered.
-- An implemented-vs-reserved table exists and matches the code.
 
-### Tests
-- Optional: extend `tests/unit/test_ci_template.py`-style assertions with a doc
-  lint that greps the README for `unverifiable` and fails if present.
-
-### Risk / rollback
-- None. Docs only.
+- Product documentation contains no reserved-config table or inert config example.
+- Every top-level key in the shipped config is accepted and used by production code.
+- Paused capabilities are absent from runtime schemas and artifacts.
 
 ---
 
@@ -136,7 +101,7 @@ refactor spec.
    the PR on the whole tree. Instead: add `mypy` in a **non-blocking** step
    (`continue-on-error: true`) initially, OR scope strict mypy to the already-
    clean leaf modules (`canonical`, `anchors`, `gate`, `redact`, `trigger`,
-   `budget`) via per-module overrides, and record the gap for SPEC-13 to close.
+   `gate`) via per-module overrides, and record the gap for SPEC-13 to close.
    Make ruff + pytest **blocking** immediately.
 
 ### Acceptance criteria

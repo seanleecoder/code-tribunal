@@ -41,7 +41,6 @@ type AdapterStatus = Literal[
     "schema_error",
     "config_error",
     "internal_error",
-    "budget_skipped",
 ]
 type PostStatus = Literal[
     "success",
@@ -230,7 +229,6 @@ class StateRecord(TypedDict, total=False):
     aliases: StateAliases
     discussion_id: str | None
     root_note_id: int | None
-    jira_comment_id: str | None
     status: StateRecordStatus
     last_seen_sha: str
     first_seen_sha: str
@@ -283,8 +281,6 @@ class PostResult(TypedDict, total=False):
     resolved_discussions: Required[int]
     skipped_unchanged: Required[int]
     stale_unverified: Required[int]
-    jira_comments_created: Required[int]
-    jira_comments_updated: Required[int]
     posted_discussions: Required[list[PostedDiscussion]]
     warnings: Required[list[str]]
     summary_comment: SummaryComment

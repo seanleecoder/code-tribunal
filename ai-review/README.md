@@ -2,16 +2,16 @@
 
 This directory contains the core implementation, configuration schemas, prompt templates, CLI adapters, and acceptance records for **Code Tribunal** (AI Review Subsystem).
 
-For high-level system architecture, pipeline execution stages, local harness usage, security container isolation model, and full GitLab CI integration guide, see the main repository [README.md](../README.md) and formal specification [specs/ai-review-implementation-ready-spec.md](../specs/ai-review-implementation-ready-spec.md).
+For high-level system architecture, pipeline execution stages, local harness usage, security container isolation model, and the GitLab CI integration guide, see the main repository [README.md](../README.md). Completed requirement status is reconciled in the [improvement-spec audit](../docs/improvement-specs/completion-audit.md).
 
 ---
 
 ## Directory Layout
 
-- **[config/review.yaml](config/review.yaml)**: Primary runtime configuration defining panel quorum, reviewer models, limits, posting rules, Jira integration, and security controls.
+- **[config/review.yaml](config/review.yaml)**: Primary runtime configuration defining panel quorum, reviewer models, limits, posting rules, and security controls.
 - **[ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml)**: Production 6-stage GitLab CI pipeline template (`prepare`, `review`, `critique`, `consensus`, `post`, `gate`).
 - **[ci/build-images.gitlab-ci.yml](ci/build-images.gitlab-ci.yml)**: Internal GitLab image building and preflight pipeline.
-- **[src/ai_review/](src/ai_review/)**: Core Python engine package containing 19 modules for input bundle packaging, consensus voting, canonical hashing, line remapping, GitLab discussion posting, state note management, Jira linking, and merge gate evaluation.
+- **[src/ai_review/](src/ai_review/)**: Core Python engine package for input bundle packaging, consensus voting, canonical hashing, line remapping, platform discussion posting, state management, and merge gate evaluation.
 - **[adapters/](adapters/)**: Shell script adapters wrapping CLI reviewer executables (`run_reviewer.sh`, `claude.sh`, `codex.sh`, `opencode.sh`).
 - **[prompts/](prompts/)**: Markdown prompt templates (`review.md`, `critique.md`, `respond.md`).
 - **[rules/](rules/)**: Custom review rules guidelines ([rules/README.md](rules/README.md)).
@@ -136,20 +136,17 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 
 ---
 
-## Concurrency, Failure Isolation & Budget Controls
+## Concurrency and Failure Isolation
 
 ### Parallel Runner Execution
 The three `review_*` jobs run in parallel against the same immutable input bundle and have no `resource_group`, so they are never serialized by GitLab. A GitLab Runner with at least 3 concurrent job slots achieves true parallel execution; with fewer slots, jobs queue safely.
 
 ### Fault Tolerance & Panel Degradation
-Each reviewer writes strictly to its own output files (`out/findings/<reviewer>.json` and `out/status/<reviewer>.json`). A failing reviewer does not fail its CI job (`allow_failure: true`), and `consensus_ai_review` treats every review job as `optional: true`. `panel.min_successful_reviewers_for_blocking` and `panel.degraded_behavior` in [config/review.yaml](config/review.yaml) control how consensus degrades when reviewers fail:
+Each reviewer writes strictly to its own output files (`out/findings/<reviewer>.json` and `out/status/<reviewer>.json`). A failing reviewer does not fail its CI job (`allow_failure: true`), and `consensus_ai_review` treats every review job as `optional: true`. `panel.min_successful_reviewers_for_blocking` controls how consensus degrades when reviewers fail:
 - **3 / 3 Successful**: `full` panel consensus (blocking allowed with 2-of-3 quorum).
 - **2 / 3 Successful**: `degraded` mode (blocking allowed with 2-of-2 consensus).
 - **1 / 3 Successful**: `advisory_only` mode (findings posted as non-blocking summary comments).
 - **0 / 3 Successful**: `failed` infrastructure mode (fails pipeline before posting).
-
-### Budget Backend
-`budget.backend: none` (the default in `config/review.yaml`) is planned/advisory only: `budget.py` returns `budget_backend_not_implemented`, and `budget_skipped` status is only reachable once a production budget backend is configured.
 
 ---
 
@@ -167,9 +164,9 @@ The system development and validation is documented across 6 milestone acceptanc
 For a concrete, artifact-backed walkthrough of every stage on one real pipeline run, see [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).
 
 
-## Implemented vs Reserved Configuration
+## Active Configuration
 
-Budget and Jira settings are currently planned/experimental. `post.py` does not import `jira_client`, Jira comment counters remain `0`, and the default budget backend is `none`. Several policy knobs remain reserved for later cleanup, including alternate quorum/degraded behavior, expected reviewer counts, majority-noise severity policy, merge-gate project-setting automation, most container-level `security.*` controls, per-reviewer `cli_version`, and `limits.max_findings_per_reviewer`.
+The shipped configuration contains only controls consumed by production code. Paused and future-facing controls are omitted rather than represented by inert placeholders.
 
 ### GitHub pull request reviews
 

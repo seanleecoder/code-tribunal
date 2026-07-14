@@ -9,7 +9,7 @@ Please include:
 - A concise description of the issue and impact.
 - Reproduction steps or a minimal proof of concept.
 - Affected version, commit SHA, CI job, and relevant configuration.
-- Whether any tokens, prompts, model output, or GitLab/Jira data were exposed.
+- Whether any tokens, prompts, model output, or GitLab data were exposed.
 
 We aim to acknowledge reports within 3 business days, provide an initial triage update within 7 business days, and keep reporters updated while a fix is prepared.
 
@@ -22,7 +22,7 @@ In scope:
 
 Out of scope:
 
-- Vulnerabilities in third-party hosted LLM providers, GitLab, Jira, or reviewer CLI tools unless this project amplifies them.
+- Vulnerabilities in third-party hosted LLM providers, GitLab, or reviewer CLI tools unless this project amplifies them.
 - Denial-of-service reports that only require excessive traffic against public services.
 - Reports that require access to credentials you do not own.
 

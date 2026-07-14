@@ -13,16 +13,12 @@ TOP_LEVEL_KEYS = {
     "schema_version",
     "reviewers",
     "panel",
-    "severity_order",
-    "categories",
     "severity_policy",
     "critique",
     "posting",
     "merge_gate",
     "state",
-    "jira",
     "limits",
-    "budget",
     "security",
 }
 

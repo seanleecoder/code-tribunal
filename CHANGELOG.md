@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+### Changed
+
+- The shipped configuration now contains only controls consumed by production
+  code; inert policy, integration, and metadata placeholders were removed.
+- Improvement specs now distinguish completed work, independently archived
+  plans, and evidence-backed follow-up gaps.
+
+### Removed
+
+- Removed the no-op spend-control runtime and its associated artifact status.
+- Removed the unwired issue-tracker helper and its unused state/post-result
+  fields.
+
 ## [0.3.1] - 2026-07-13
 
 ### Added
@@ -70,7 +83,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 ### Changed
 
 - AI review `body_hash` includes `RENDER_BODY_VERSION`; posted Markdown is unchanged, but existing bot-authored discussion markers receive a one-time update after upgrade.
-- Documentation distinguishes implemented behavior from reserved configuration.
+- Documentation distinguishes implemented behavior from future product ideas.
 - Claude adapter endpoint handling requires the exact OpenRouter Anthropic base URL.
 - Posted model-authored finding text is redacted before publication.
 

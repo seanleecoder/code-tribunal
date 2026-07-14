@@ -14,8 +14,6 @@
     "resolved_discussions",
     "skipped_unchanged",
     "stale_unverified",
-    "jira_comments_created",
-    "jira_comments_updated",
     "posted_discussions",
     "warnings"
   ],
@@ -39,8 +37,6 @@
     "resolved_discussions": { "type": "integer", "minimum": 0 },
     "skipped_unchanged": { "type": "integer", "minimum": 0 },
     "stale_unverified": { "type": "integer", "minimum": 0 },
-    "jira_comments_created": { "type": "integer", "minimum": 0 },
-    "jira_comments_updated": { "type": "integer", "minimum": 0 },
     "posted_discussions": {
       "type": "array",
       "items": {

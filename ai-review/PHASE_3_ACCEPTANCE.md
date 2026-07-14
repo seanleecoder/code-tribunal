@@ -94,7 +94,7 @@ Gate summary: gate_result.v1 validated; status=failed_blocking_findings;
   the merge gate correctly enforced blocking consensus findings.
 Idempotency summary: pending
 Secret-leak audit: pipeline 179203 traces and artifacts contained no provider
-  API key, GitLab read/write token, Jira token, CLI auth/session file content,
+  API key, GitLab read/write token, CLI auth/session file content,
   or shell history content. Traces included literal command text for
   SSH_PRIVATE_KEY and GitLab coordinator token status snippets, but not secret
   values.
@@ -125,7 +125,7 @@ Secret-leak audit: pipeline 179203 traces and artifacts contained no provider
       only when the rendered body hash changed.
 - [ ] Retried `ai_review_gate` validated using the retried post artifact.
 - [x] Downloaded artifacts and job traces contained no provider keys, GitLab
-      tokens, Jira tokens, CLI auth/session file contents, or shell history
+      tokens, CLI auth/session file contents, or shell history
       contents.
 
 After these checks are confirmed, change the status above to:

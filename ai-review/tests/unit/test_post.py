@@ -562,7 +562,6 @@ class PostTests(unittest.TestCase):
             },
             "discussion_id": discussion_id,
             "root_note_id": 123,
-            "jira_comment_id": None,
             "status": "open",
             "last_seen_sha": "old-head",
             "first_seen_sha": "old-head",

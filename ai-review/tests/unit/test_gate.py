@@ -49,8 +49,6 @@ class GateTests(unittest.TestCase):
             "resolved_discussions": 0,
             "skipped_unchanged": 0,
             "stale_unverified": 0,
-            "jira_comments_created": 0,
-            "jira_comments_updated": 0,
             "posted_discussions": [],
             "warnings": [],
         }

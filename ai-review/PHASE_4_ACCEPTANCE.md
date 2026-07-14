@@ -128,5 +128,5 @@ Drift traces downloaded and scanned for jobs `2527796`, `2527797`, `2527798`, `2
 
 Results:
 
-- No provider keys, usable GitLab tokens, Jira tokens, CLI auth/session files, or shell history files were found in runtime traces or generated AI-review outputs.
+- No provider keys, usable GitLab tokens, CLI auth/session files, or shell history files were found in runtime traces or generated AI-review outputs.
 - Scan matches were limited to source-tree example/test literals inside `inputs/repo_snapshot/ai-review`, not runtime secrets.

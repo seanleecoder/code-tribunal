@@ -118,9 +118,6 @@ def normalize_state_record(
         "root_note_id": record.get("root_note_id")
         if isinstance(record.get("root_note_id"), int)
         else None,
-        "jira_comment_id": (
-            str(record["jira_comment_id"]) if record.get("jira_comment_id") is not None else None
-        ),
         "status": str(record.get("status") or "open"),
         "last_seen_sha": str(record.get("last_seen_sha") or head_sha),
         "first_seen_sha": str(record.get("first_seen_sha") or head_sha),

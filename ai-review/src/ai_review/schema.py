@@ -47,7 +47,6 @@ ADAPTER_STATUSES = {
     "schema_error",
     "config_error",
     "internal_error",
-    "budget_skipped",
 }
 
 

@@ -23,7 +23,7 @@ mypy  # non-blocking whole-package debt signal; remaining known debt is outside 
 - Add or update tests for behavior changes.
 - Keep `ruff` and `pytest` green; the scoped SPEC-13/14 `mypy` command is blocking, and the whole-package `mypy` command remains a visible non-blocking CI signal while remaining package-wide typing debt is closed incrementally.
 - Document new configuration and mark reserved/inert options honestly.
-- Avoid exposing GitLab, Jira, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
+- Avoid exposing GitLab, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
 
 ## Adding a Reviewer Backend
 

@@ -102,6 +102,6 @@ Artifact checks:
 - Status: complete for pipeline `179454` and pipeline `179684`
 - Scope (`179454`): traces and downloaded artifacts for jobs `2528806` through `2528815`.
 - Scope (`179684`): traces and downloaded artifacts for jobs `2529360` through `2529369`.
-- No provider API keys, GitLab read/write tokens, Jira tokens, CLI auth files, CLI session files, or shell history files were found in runtime AI-review traces or generated AI-review outputs for either pipeline.
+- No provider API keys, GitLab read/write tokens, CLI auth files, CLI session files, or shell history files were found in runtime AI-review traces or generated AI-review outputs for either pipeline.
 - Trace matches were limited to GitLab runner coordinator snippets such as `token=glcbt-64`, literal command text such as `echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa`, and Codex session IDs.
 - Value-like matches outside runtime AI-review outputs were limited to committed repo-snapshot files, including Firebase app config keys and redaction-test fixtures.

@@ -37,7 +37,6 @@ _ENV_KEYS = [
     "PATH",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
-    "JIRA_API_TOKEN",
     "CI_JOB_TOKEN",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -232,7 +231,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
-            os.environ["JIRA_API_TOKEN"] = "jira-secret"
             os.environ["CI_JOB_TOKEN"] = "ci-job-secret"
             os.environ["OPENAI_API_KEY"] = "openai-secret"
             os.environ["ANTHROPIC_API_KEY"] = "anthropic-secret"
@@ -624,7 +622,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 for forbidden in (
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",
-                    "JIRA_API_TOKEN",
                     "CI_JOB_TOKEN",
                     "OPENAI_API_KEY",
                     "ANTHROPIC_API_KEY",
