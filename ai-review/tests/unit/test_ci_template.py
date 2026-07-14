@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import re
 import unittest
 from pathlib import Path
@@ -548,6 +549,35 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("pattern: ai-review-review-*", critique)
         self.assertIn("pattern: ai-review-critique-*", consensus)
         self.assertIn("needs: [prepare, review, critique]", consensus)
+        self.assertEqual(
+            text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
+            2,
+        )
+
+    def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        consensus = _workflow_job(template.read_text(encoding="utf-8"), "consensus")
+        download = re.search(
+            r"(?ms)- name: Download critique artifacts\n(.*?)(?=\n      - name:)",
+            consensus,
+        )
+
+        self.assertIsNotNone(download)
+        self.assertIn("continue-on-error: true", download.group(1))
+        self.assertIn("steps.download-critiques.outcome == 'failure'", consensus)
+        self.assertIn("consensus will use reviewer findings only", consensus)
+
+    def test_github_critique_artifact_paths_extract_under_expected_root(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        critique = _workflow_job(template.read_text(encoding="utf-8"), "critique")
+        upload_paths = re.findall(
+            r"(?m)^\s+(out/(?:critiques|pooled_findings|status)/.+)$", critique
+        )
+
+        self.assertEqual(len(upload_paths), 3)
+        self.assertEqual(posixpath.commonpath(upload_paths), "out")
+        extracted_paths = {path.removeprefix("out/").split("/", 1)[0] for path in upload_paths}
+        self.assertEqual(extracted_paths, {"critiques", "pooled_findings", "status"})
 
 
 if __name__ == "__main__":

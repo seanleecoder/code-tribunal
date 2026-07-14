@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -56,15 +57,52 @@ class PlatformRuntimeTests(unittest.TestCase):
                 {"posting": {"mode": "github_reviews"}}, access="read", env={}
             )
 
+    def test_gitlab_requires_api_url_outside_dry_run(self) -> None:
+        with self.assertRaisesRegex(PlatformRuntimeError, "CI_API_V4_URL"):
+            create_runtime_platform(
+                {"posting": {"mode": "gitlab_discussions"}},
+                access="read",
+                env={"GITLAB_READ_TOKEN": "r"},
+            )
+
+    def test_gitlab_dry_run_allows_placeholder_defaults(self) -> None:
+        with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
+            create_runtime_platform(
+                {"posting": {"mode": "gitlab_discussions"}},
+                access="write",
+                env={},
+                allow_dry_run_defaults=True,
+            )
+        factory.assert_called_once_with(
+            "https://gitlab.example.com/api/v4",
+            "dry-run-token",
+            token_header="PRIVATE-TOKEN",
+        )
+
     def test_cli_modules_do_not_select_concrete_factories(self) -> None:
         source_root = Path(__file__).resolve().parents[2] / "src" / "ai_review"
         for module_name in ("post.py", "input_bundle.py"):
             with self.subTest(module=module_name):
                 source = (source_root / module_name).read_text(encoding="utf-8")
-                self.assertNotIn("platform.factory", source)
-                self.assertNotIn("create_gitlab_platform", source)
-                self.assertNotIn("create_github_platform", source)
-                self.assertIn("create_runtime_platform", source)
+                tree = ast.parse(source)
+                imported_modules: set[str] = set()
+                imported_names: set[str] = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        imported_modules.add(node.module or "")
+                        imported_names.update(alias.name for alias in node.names)
+                    elif isinstance(node, ast.Import):
+                        imported_modules.update(alias.name for alias in node.names)
+
+                self.assertFalse(
+                    any(module.endswith("platform.factory") for module in imported_modules)
+                )
+                self.assertTrue(
+                    {"create_gitlab_platform", "create_github_platform"}.isdisjoint(
+                        imported_names
+                    )
+                )
+                self.assertIn("create_runtime_platform", imported_names)
 
 
 if __name__ == "__main__":

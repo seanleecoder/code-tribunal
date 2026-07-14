@@ -21,7 +21,7 @@ def create_runtime_platform(
     *,
     access: PlatformAccess,
     env: Mapping[str, str] | None = None,
-    allow_missing_token: bool = False,
+    allow_dry_run_defaults: bool = False,
 ) -> ReviewPlatform:
     """Construct the configured adapter from trusted runtime environment values."""
     runtime_env = os.environ if env is None else env
@@ -30,7 +30,7 @@ def create_runtime_platform(
 
     if mode == "github_reviews":
         token = runtime_env.get("GITHUB_TOKEN") or runtime_env.get("GH_TOKEN")
-        if not token and not allow_missing_token:
+        if not token and not allow_dry_run_defaults:
             raise PlatformRuntimeError("github_reviews requires GITHUB_TOKEN or GH_TOKEN")
         api_url = runtime_env.get("GITHUB_API_URL") or "https://api.github.com"
         return create_github_platform(api_url, token or "dry-run-token")
@@ -40,15 +40,15 @@ def create_runtime_platform(
 
     token_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
     token = runtime_env.get(token_name)
-    if not token and not allow_missing_token:
+    if not token and not allow_dry_run_defaults:
         raise PlatformRuntimeError(f"gitlab_discussions requires {token_name}")
-    api_url = (
-        runtime_env.get("CI_API_V4_URL")
-        or runtime_env.get("GITLAB_API_URL")
-        or "https://gitlab.example.com/api/v4"
-    )
+    api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
+    if not api_url and not allow_dry_run_defaults:
+        raise PlatformRuntimeError(
+            "gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL"
+        )
     return create_gitlab_platform(
-        api_url,
+        api_url or "https://gitlab.example.com/api/v4",
         token or "dry-run-token",
         token_header="PRIVATE-TOKEN",
     )

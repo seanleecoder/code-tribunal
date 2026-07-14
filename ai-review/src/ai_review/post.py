@@ -1591,7 +1591,7 @@ def cli(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
     consensus = cast(Consensus, load_json_file(args.consensus))
-    client = create_runtime_platform(config, access="write", allow_missing_token=args.dry_run)
+    client = create_runtime_platform(config, access="write", allow_dry_run_defaults=args.dry_run)
     diff_path = Path(args.inputs) / "mr.diff"
     diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(

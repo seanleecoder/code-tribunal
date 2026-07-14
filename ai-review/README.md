@@ -81,6 +81,8 @@ to change a model at runtime. Reviewer enablement, critique, and the merge gate 
 likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
 `AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
+On GitHub, disabling critique keeps the matrix jobs present for stable artifact
+dependencies, but the runner writes skipped artifacts without invoking a model.
 
 ### Debugging a slow or stuck reviewer
 
@@ -184,6 +186,10 @@ not carry the state marker.
 Use `ai-review/ci/review.github-actions.yml` as the starting point for Actions;
 it mirrors the prepare → review → critique → consensus → post → gate flow and
 maps the repository's `OPENROUTER_API_KEY` secret only into model-running jobs.
+Individual model jobs are allowed to fail so deterministic consensus can apply
+the degradation policy; consensus itself fails when no reviewer succeeds.
+Missing critique artifacts are advisory and produce a workflow warning rather
+than suppressing consensus over valid reviewer findings.
 Keep write-token jobs on `pull_request` for trusted in-repository workflow YAML;
 do not use unsafe
 `pull_request_target` patterns that execute pull-request code with repository

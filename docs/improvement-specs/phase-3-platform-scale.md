@@ -1,6 +1,7 @@
 # Phase 3 — Platform + Supply Chain
 
-> Status: implemented on `main`, with follow-up gaps recorded in the
+> Status: complete on `main`; retained as implementation history. The former
+> platform composition-root follow-up is recorded as resolved in the
 > [completion audit](completion-audit.md).
 
 Adds GitHub support and reproducible image inputs. Paused product ideas are not
@@ -10,8 +11,8 @@ part of this phase or the active roadmap.
 
 ## SPEC-15 — `ReviewPlatform` interface + GitHub adapter
 
-**Implementation status:** functionally complete on `main`; the literal
-platform-boundary wording has one follow-up in the completion audit.
+**Implementation status:** complete on `main`; CLI adapter selection now lives
+in the platform composition root and is protected by an import-boundary test.
 
 - **Severity:** Medium (M3) · **Effort:** L · **ROI rank:** 15
 - **Depends on:** SPEC-13, SPEC-14 (need typed shapes + a clean `post` seam)

@@ -17,12 +17,18 @@ current code, tests, CI, tags, and recorded downstream validation.
 
 ## Verification performed
 
-- `make test`: 376 tests passed after the GitHub workflow and platform-boundary cleanup.
+- `make test`: 380 tests passed after the GitHub workflow and platform-boundary cleanup.
 - `git tag --sort=version:refname`: `v0.1.0`, `v0.2.0`, `v0.3.0`, and
   `v0.3.1` are present.
 - Source inspection confirms one shared `SEVERITY_RANK`, one unified diff parser,
   a sub-150-line `post_consensus`, labeled grouping fixtures, platform contract
   tests, and GitHub post→gate integration cases.
+
+## Resolved follow-ups
+
+- SPEC-15's CLI-edge factory-selection question was resolved by moving concrete
+  adapter construction into `platform/runtime.py` and enforcing that boundary
+  with AST-based import tests.
 
 ## Missing work that cannot be closed by repository-only changes
 
