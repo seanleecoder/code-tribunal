@@ -168,14 +168,41 @@ def _load_platform_state(
         return default_state
 
 
-def _github_event_pull_request() -> dict[str, Any]:
+def _github_event_pull_request() -> dict[str, Any] | None:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path:
-        raise SystemExit("prepare requires GITHUB_EVENT_PATH for github_reviews mode")
+        return None
     event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     pull_request = event.get("pull_request")
-    if not isinstance(pull_request, dict):
-        raise SystemExit("prepare requires a pull_request GitHub event payload")
+    return pull_request if isinstance(pull_request, dict) else None
+
+
+def _resolve_github_pull_request(client: Any, repo: str) -> dict[str, Any]:
+    pull_request = _github_event_pull_request()
+    if pull_request is None:
+        pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
+        if not pr_number.isdigit():
+            raise SystemExit(
+                "prepare requires a pull_request GitHub event payload or a numeric "
+                "AI_REVIEW_GITHUB_PR_NUMBER"
+            )
+        fetch_pull_request = getattr(client, "fetch_pull_request", None)
+        if not callable(fetch_pull_request):
+            raise SystemExit("configured GitHub platform cannot fetch pull request metadata")
+        pull_request = fetch_pull_request(repo, pr_number)
+        if not isinstance(pull_request, dict):
+            raise SystemExit("GitHub pull request response was not an object")
+
+    raw_head = pull_request.get("head")
+    head = raw_head if isinstance(raw_head, dict) else {}
+    raw_head_repo = head.get("repo")
+    head_repo = raw_head_repo if isinstance(raw_head_repo, dict) else {}
+    source_repo = str(head_repo.get("full_name") or "")
+    if source_repo != repo:
+        raise SystemExit(
+            "prepare refused to run: external fork PR secret-bearing path is disabled "
+            f"(source_repository={source_repo or 'unknown'}, repository={repo})"
+        )
     return pull_request
 
 
@@ -186,17 +213,14 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
     config_dict = load_config(config)
-    pull_request = _github_event_pull_request()
-    pr_number = str(
-        pull_request.get("number") or os.environ.get("GITHUB_REF_NAME", "").split("/")[0]
-    )
-    if not pr_number or not pr_number.isdigit():
-        raise SystemExit("prepare requires pull_request.number in the GitHub event payload")
-
     try:
         client = create_runtime_platform(config_dict, access="read")
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
+    pull_request = _resolve_github_pull_request(client, repo)
+    pr_number = str(pull_request.get("number") or "")
+    if not pr_number.isdigit():
+        raise SystemExit("prepare requires pull_request.number in GitHub pull request metadata")
     version = client.fetch_version(repo, pr_number)
     diff_text = client.fetch_diff(repo, pr_number)
     _enforce_diff_limits(diff_text, config_dict)

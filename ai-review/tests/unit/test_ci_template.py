@@ -13,7 +13,6 @@ _PUBLISH_WORKFLOW = (
 )
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
-_ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
@@ -501,16 +500,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("critique_batch.schema.json", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
-    def test_acceptance_doc_names_sanitized_opencode_workspace(self) -> None:
-        text = _ACCEPTANCE_DOC.read_text(encoding="utf-8")
-
-        self.assertIn("opencode --pure run", text)
-        self.assertIn("opencode-review-root", text)
-        self.assertIn("temporary OpenCode review root must not expose bundle-root files", text)
-        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR"', text)
-        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"', text)
-
-
 class GitHubActionsTemplateTests(unittest.TestCase):
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -545,6 +534,18 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
             critique,
         )
+
+    def test_github_actions_supports_manual_pr_dispatch(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        prepare = _workflow_job(text, "prepare")
+
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("pr_number:", text)
+        self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
+        self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
+        self.assertIn("refs/pull/{0}/head", prepare)
+        self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
 
     def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

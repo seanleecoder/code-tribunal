@@ -6,7 +6,7 @@ This is a concrete, artifact-backed walkthrough of one real GitLab CI pipeline r
 - **MR**: `!3144`, "Revert \"remove fake bad code\"", source branch `ai-review-smoke-throw-away`
 - **Head SHA**: `53f832b0c2ccb201ba2f529247060f1a14c49517`
 - **Run ID**: `gl-179684-2529360`
-- **Trusted config at run time**: `critique.enabled=true`, `critique.rounds=1`, `allow_advisory_escalation=true`, `allow_severity_downgrade=true` (the permanently-enabled critique config; see [PHASE_5_ACCEPTANCE.md](PHASE_5_ACCEPTANCE.md))
+- **Trusted config at run time**: `critique.enabled=true`, `critique.rounds=1`, `allow_advisory_escalation=true`, `allow_severity_downgrade=true` (the permanently-enabled critique config; see [PHASE_5_ACCEPTANCE.md](docs/acceptance/PHASE_5_ACCEPTANCE.md))
 
 ## The probe file
 

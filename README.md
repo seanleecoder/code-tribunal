@@ -306,7 +306,7 @@ To integrate Code Tribunal into downstream projects:
    a GitLab pipeline execution policy.
 
 2. **Image Variables & Cutover State**:
-   `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
+   `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
    ```yaml
    variables:
      AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-b79f29f69d053f87f1a205a82cefe0f3e1b93bef@sha256:d2a3fc87ac97aa9278a66669670e06d59b6bb5ae9db695836873b5f42892c7b0"
@@ -377,12 +377,12 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | GitHub state-author lookup | Set to the bot account that owns Code Tribunal comments. The installed Actions workflow uses `github-actions[bot]` because its installation token cannot call the user-token `/user` endpoint. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
-| `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |
+| `AI_REVIEW_MANUAL` | Review trigger mode | In GitLab, set the CI/CD variable to `"true"` for a non-blocking manual entry job. In GitHub, set the Actions repository variable (not a secret) to `true` to skip automatic PR reviews, then run **AI Review** manually with a PR number. Unset = auto-run. |
 
-All boolean variables above must be **exactly `true` or `false`** (lowercase, no
-surrounding whitespace) — a byte-for-byte match of GitLab's `== "true"` rule. Any
-other value (`TRUE`, `1`, `yes`, `" true "`, a typo like `flase`) fails the pipeline
-loudly rather than silently no-op'ing.
+Boolean configuration overrides above must be **exactly `true` or `false`**
+(lowercase, no surrounding whitespace). `AI_REVIEW_MANUAL` is a CI trigger
+control rather than a configuration override: only the exact value `true`
+selects manual mode; any other value leaves automatic review enabled.
 
 Golden consensus snapshots can be refreshed after intentional reducer output
 changes with `make update-golden`; review the resulting fixture diff before merging.
@@ -427,12 +427,12 @@ The system was implemented and validated across 6 milestone phases:
 
 | Phase | Milestone | Scope & Acceptance Evidence | Status |
 |---|---|---|---|
-| **Phase 1** | Local Harness & Schema Validation | Local harness setup, schema validation, Claude Code CLI smoke test ([ai-review/PHASE_1_ACCEPTANCE.md](ai-review/PHASE_1_ACCEPTANCE.md)). | Accepted |
-| **Phase 2** | CLI Reviewers via OpenRouter | Parallel fan-out (`claude`, `codex`, `opencode`) via OpenRouter ([ai-review/PHASE_2_ACCEPTANCE.md](ai-review/PHASE_2_ACCEPTANCE.md)). | Accepted |
-| **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/PHASE_3_ACCEPTANCE.md](ai-review/PHASE_3_ACCEPTANCE.md)). | Accepted |
-| **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/PHASE_4_ACCEPTANCE.md](ai-review/PHASE_4_ACCEPTANCE.md)). | Accepted |
-| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/PHASE_5_ACCEPTANCE.md](ai-review/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
-| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, anonymous pull-by-digest, and the GitLab CI cutover to the published digests are all verified. | Accepted |
+| **Phase 1** | Local Harness & Schema Validation | Local harness setup, schema validation, Claude Code CLI smoke test ([ai-review/docs/acceptance/PHASE_1_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_1_ACCEPTANCE.md)). | Accepted |
+| **Phase 2** | CLI Reviewers via OpenRouter | Parallel fan-out (`claude`, `codex`, `opencode`) via OpenRouter ([ai-review/docs/acceptance/PHASE_2_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_2_ACCEPTANCE.md)). | Accepted |
+| **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/docs/acceptance/PHASE_3_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_3_ACCEPTANCE.md)). | Accepted |
+| **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/docs/acceptance/PHASE_4_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_4_ACCEPTANCE.md)). | Accepted |
+| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/docs/acceptance/PHASE_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
+| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, anonymous pull-by-digest, and the GitLab CI cutover to the published digests are all verified. | Accepted |
 
 ---
 
@@ -457,12 +457,7 @@ code-tribunal/
 │   └── archived-improvement-plans/           # Paused and superseded plans
 └── ai-review/
     ├── README.md                              # Subsystem sitemap & operational guide
-    ├── PHASE_1_ACCEPTANCE.md                  # Phase 1 acceptance record
-    ├── PHASE_2_ACCEPTANCE.md                  # Phase 2 acceptance record
-    ├── PHASE_3_ACCEPTANCE.md                  # Phase 3 acceptance record
-    ├── PHASE_4_ACCEPTANCE.md                  # Phase 4 acceptance record
-    ├── PHASE_5_ACCEPTANCE.md                  # Phase 5 acceptance record
-    ├── PHASE_5_5_ACCEPTANCE.md                # Phase 5.5 acceptance record
+    ├── docs/acceptance/                       # Acceptance evidence records
     ├── EXAMPLE_PIPELINE_WALKTHROUGH.md        # Worked example: one real pipeline run, stage by stage
     ├── adapters/                              # Shell wrappers for model CLI tools
     │   ├── run_reviewer.sh                    # Reviewer execution dispatcher & env isolation

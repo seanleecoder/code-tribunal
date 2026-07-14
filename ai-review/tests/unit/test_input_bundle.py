@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from ai_review.input_bundle import (
     BundleError,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
+    _resolve_github_pull_request,
     prepare_gitlab_bundle,
 )
 
@@ -115,6 +117,68 @@ class InputBundleLimitTests(unittest.TestCase):
             self.assertRaisesRegex(BundleError, "current_user"),
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
+
+
+class GitHubPullRequestResolutionTests(unittest.TestCase):
+    @staticmethod
+    def _pull_request(*, number: int = 7, source_repo: str = "octo/repo") -> dict[str, object]:
+        return {
+            "number": number,
+            "head": {
+                "ref": "feature",
+                "sha": "1" * 40,
+                "repo": {"full_name": source_repo},
+            },
+            "base": {"ref": "main", "sha": "0" * 40},
+        }
+
+    def test_resolves_pull_request_event_without_api_metadata_fetch(self) -> None:
+        client = mock.Mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            event_path = Path(tmpdir) / "event.json"
+            expected = self._pull_request()
+            event_path.write_text(json.dumps({"pull_request": expected}), encoding="utf-8")
+            with mock.patch.dict(
+                "os.environ", {"GITHUB_EVENT_PATH": str(event_path)}, clear=True
+            ):
+                actual = _resolve_github_pull_request(client, "octo/repo")
+
+        self.assertEqual(actual, expected)
+        client.fetch_pull_request.assert_not_called()
+
+    def test_manual_dispatch_fetches_requested_pull_request(self) -> None:
+        client = mock.Mock()
+        expected = self._pull_request(number=32)
+        client.fetch_pull_request.return_value = expected
+        with mock.patch.dict(
+            "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True
+        ):
+            actual = _resolve_github_pull_request(client, "octo/repo")
+
+        self.assertEqual(actual, expected)
+        client.fetch_pull_request.assert_called_once_with("octo/repo", "32")
+
+    def test_manual_dispatch_requires_numeric_pull_request(self) -> None:
+        with (
+            mock.patch.dict(
+                "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "not-a-number"}, clear=True
+            ),
+            self.assertRaisesRegex(SystemExit, "numeric AI_REVIEW_GITHUB_PR_NUMBER"),
+        ):
+            _resolve_github_pull_request(mock.Mock(), "octo/repo")
+
+    def test_external_fork_pull_request_is_rejected(self) -> None:
+        client = mock.Mock()
+        client.fetch_pull_request.return_value = self._pull_request(
+            number=32, source_repo="someone/fork"
+        )
+        with (
+            mock.patch.dict(
+                "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True
+            ),
+            self.assertRaisesRegex(SystemExit, "external fork PR secret-bearing path"),
+        ):
+            _resolve_github_pull_request(client, "octo/repo")
 
 
 if __name__ == "__main__":
