@@ -56,6 +56,18 @@ class Session:
         raise AssertionError(f"unexpected request: {method} {url}")
 
 
+class DiffSession:
+    def __init__(self, diff: str) -> None:
+        self.diff = diff
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        self.calls.append((method, url, kwargs))
+        response = Response(200, None)
+        response.text = self.diff
+        return response
+
+
 def test_state_notes_are_author_verified_and_normalized() -> None:
     session = Session()
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
@@ -74,3 +86,13 @@ def test_member_access_level_maps_github_write_permissions() -> None:
 
     assert platform.member_access_level("octo/repo", "alice") == 40
     assert platform.member_access_level("octo/repo", 99) is None
+
+
+def test_fetch_diff_returns_raw_patch_text() -> None:
+    diff = "diff --git a/a.py b/a.py\n+print('ok')\n"
+    session = DiffSession(diff)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    assert platform.fetch_diff("octo/repo", 7) == diff
+    _, _, kwargs = session.calls[0]
+    assert kwargs["headers"]["Accept"] == "application/vnd.github.v3.diff"
