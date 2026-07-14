@@ -20,7 +20,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number }}
+  group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: false
 
 env:
@@ -44,10 +44,51 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
     steps:
+      - name: Resolve pull request
+        id: pull-request
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            let pullRequest = context.payload.pull_request;
+            if (context.eventName === "workflow_dispatch") {
+              const requestedNumber = process.env.PR_NUMBER || "";
+              if (!/^[1-9][0-9]{0,9}$/.test(requestedNumber)) {
+                core.setFailed("pr_number must be a positive integer of at most 10 digits");
+                return;
+              }
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(requestedNumber),
+              });
+              pullRequest = response.data;
+            }
+            if (!pullRequest) {
+              core.setFailed("pull request metadata was unavailable");
+              return;
+            }
+            const sourceRepository = pullRequest.head?.repo?.full_name;
+            if (sourceRepository !== repository) {
+              core.setFailed(
+                `external fork PR checkout is disabled (source=${sourceRepository || "unknown"}, repository=${repository})`,
+              );
+              return;
+            }
+            const headSha = pullRequest.head?.sha || "";
+            if (!/^[0-9a-f]{40,64}$/.test(headSha)) {
+              core.setFailed("pull request head SHA was missing or invalid");
+              return;
+            }
+            core.setOutput("ref", headSha);
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pr_number) || github.event.pull_request.head.sha }}
+          persist-credentials: false
+          ref: ${{ steps.pull-request.outputs.ref }}
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

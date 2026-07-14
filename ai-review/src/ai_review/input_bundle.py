@@ -15,6 +15,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
+from .platform.github import PullRequestVersion
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
 
@@ -198,12 +199,27 @@ def _resolve_github_pull_request(client: Any, repo: str) -> dict[str, Any]:
     raw_head_repo = head.get("repo")
     head_repo = raw_head_repo if isinstance(raw_head_repo, dict) else {}
     source_repo = str(head_repo.get("full_name") or "")
+    # The shipped GitHub workflow always carries review credentials, so its
+    # external-fork path is deliberately fail-closed. The configurable
+    # security.allow_external_fork_secrets exception is limited to GitLab.
     if source_repo != repo:
         raise SystemExit(
             "prepare refused to run: external fork PR secret-bearing path is disabled "
             f"(source_repository={source_repo or 'unknown'}, repository={repo})"
         )
     return pull_request
+
+
+def _github_pull_request_version(pull_request: dict[str, Any]) -> PullRequestVersion:
+    raw_base = pull_request.get("base")
+    raw_head = pull_request.get("head")
+    base = raw_base if isinstance(raw_base, dict) else {}
+    head = raw_head if isinstance(raw_head, dict) else {}
+    base_sha = str(base.get("sha") or "")
+    head_sha = str(head.get("sha") or "")
+    if not base_sha or not head_sha:
+        raise SystemExit("prepare requires base.sha and head.sha in GitHub pull request metadata")
+    return PullRequestVersion(base_sha=base_sha, head_sha=head_sha)
 
 
 def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
@@ -221,7 +237,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     pr_number = str(pull_request.get("number") or "")
     if not pr_number.isdigit():
         raise SystemExit("prepare requires pull_request.number in GitHub pull request metadata")
-    version = client.fetch_version(repo, pr_number)
+    version = _github_pull_request_version(pull_request)
     diff_text = client.fetch_diff(repo, pr_number)
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")

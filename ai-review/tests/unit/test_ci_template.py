@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import posixpath
 import re
+import shutil
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -76,6 +80,22 @@ def _workflow_job(text: str, job_name: str) -> str:
     if match is None:
         raise AssertionError(f"Workflow job not found: {job_name}")
     return match.group(0)
+
+
+def _workflow_named_step_script(job: str, step_name: str) -> str:
+    step = re.search(
+        rf"(?ms)^      - name: {re.escape(step_name)}\n.*?(?=^      - |\Z)",
+        job,
+    )
+    if step is None:
+        raise AssertionError(f"Workflow step not found: {step_name}")
+    script = re.search(
+        r"(?ms)^          script: \|\n(?P<script>(?:^            [^\n]*\n?)+)",
+        step.group(0),
+    )
+    if script is None:
+        raise AssertionError(f"Workflow step script not found: {step_name}")
+    return textwrap.dedent(script.group("script"))
 
 
 class GitLabCiTemplateTests(unittest.TestCase):
@@ -546,8 +566,169 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("pr_number:", text)
         self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
         self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
-        self.assertIn("refs/pull/{0}/head", prepare)
+        self.assertIn("PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+        self.assertIn("await github.rest.pulls.get", prepare)
+        self.assertIn("ref: ${{ steps.pull-request.outputs.ref }}", prepare)
+        self.assertNotIn("refs/pull/", prepare)
         self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+
+    def test_github_actions_groups_manual_and_automatic_runs_by_pr(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}",
+            text,
+        )
+
+    def test_github_resolver_rejects_untrusted_heads_before_checkout(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        prepare = _workflow_job(template.read_text(encoding="utf-8"), "prepare")
+        script = _workflow_named_step_script(prepare, "Resolve pull request")
+        resolver_position = prepare.index("- name: Resolve pull request")
+        checkout_position = prepare.index("- uses: actions/checkout@")
+
+        self.assertLess(resolver_position, checkout_position)
+        self.assertIn('context.eventName === "workflow_dispatch"', script)
+        self.assertIn('/^[1-9][0-9]{0,9}$/.test(requestedNumber)', script)
+        self.assertIn("await github.rest.pulls.get", script)
+        self.assertIn("let pullRequest = context.payload.pull_request", script)
+        self.assertIn("pullRequest.head?.repo?.full_name", script)
+        self.assertIn("sourceRepository !== repository", script)
+        self.assertIn("pullRequest.head?.sha", script)
+        self.assertIn('core.setOutput("ref", headSha)', script)
+        self.assertNotIn("${{ inputs.pr_number }}", script)
+        self.assertIn(
+            "uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea",
+            prepare,
+        )
+        self.assertIn("persist-credentials: false", prepare)
+
+    def test_github_resolver_executes_trust_and_input_boundaries(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable in this Python-only test environment")
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        prepare = _workflow_job(template.read_text(encoding="utf-8"), "prepare")
+        script = _workflow_named_step_script(prepare, "Resolve pull request")
+        harness = Path(__file__).resolve().parents[1] / "support" / "github_script_harness.js"
+        repository = "octo/repo"
+        head_sha = "a" * 40
+        same_repository_pr = {
+            "number": 32,
+            "head": {"sha": head_sha, "repo": {"full_name": repository}},
+        }
+        scenarios = [
+            {
+                "name": "manual-same-repository",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": same_repository_pr,
+            },
+            {
+                "name": "automatic-same-repository",
+                "eventName": "pull_request",
+                "eventPullRequest": same_repository_pr,
+            },
+            {
+                "name": "manual-maximum-length-number",
+                "eventName": "workflow_dispatch",
+                "prNumber": "9999999999",
+                "apiPullRequest": same_repository_pr,
+            },
+            {
+                "name": "manual-external-fork",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {
+                    "number": 32,
+                    "head": {"sha": head_sha, "repo": {"full_name": "someone/fork"}},
+                },
+            },
+            {
+                "name": "manual-missing-head-repository",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {"number": 32, "head": {"sha": head_sha, "repo": None}},
+            },
+            {
+                "name": "manual-invalid-head-sha",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {
+                    "number": 32,
+                    "head": {"sha": "not-a-sha", "repo": {"full_name": repository}},
+                },
+            },
+            {
+                "name": "automatic-missing-pull-request",
+                "eventName": "pull_request",
+            },
+        ]
+        invalid_numbers = ("", "0", "-1", "32/head", "1" * 11)
+        scenarios.extend(
+            {
+                "name": f"manual-invalid-number-{index}",
+                "eventName": "workflow_dispatch",
+                "prNumber": value,
+                "apiPullRequest": same_repository_pr,
+            }
+            for index, value in enumerate(invalid_numbers)
+        )
+        completed = subprocess.run(
+            [node, str(harness)],
+            input=json.dumps({"script": script, "scenarios": scenarios}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        results = {item["name"]: item for item in json.loads(completed.stdout)}
+        manual = results["manual-same-repository"]
+        self.assertEqual(manual["failures"], [])
+        self.assertEqual(manual["outputs"], {"ref": head_sha})
+        self.assertEqual(
+            manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}]
+        )
+        self.assertIsNone(manual["thrown"])
+
+        automatic = results["automatic-same-repository"]
+        self.assertEqual(automatic["failures"], [])
+        self.assertEqual(automatic["outputs"], {"ref": head_sha})
+        self.assertEqual(automatic["apiCalls"], [])
+        self.assertIsNone(automatic["thrown"])
+
+        maximum = results["manual-maximum-length-number"]
+        self.assertEqual(maximum["failures"], [])
+        self.assertEqual(maximum["outputs"], {"ref": head_sha})
+        self.assertEqual(maximum["apiCalls"][0]["pull_number"], 9_999_999_999)
+        self.assertIsNone(maximum["thrown"])
+
+        for name in ("manual-external-fork", "manual-missing-head-repository"):
+            with self.subTest(name=name):
+                self.assertIn("external fork PR checkout is disabled", results[name]["failures"][0])
+                self.assertEqual(results[name]["outputs"], {})
+                self.assertIsNone(results[name]["thrown"])
+
+        invalid_sha = results["manual-invalid-head-sha"]
+        self.assertIn("head SHA was missing or invalid", invalid_sha["failures"][0])
+        self.assertEqual(invalid_sha["outputs"], {})
+        self.assertIsNone(invalid_sha["thrown"])
+
+        missing_pr = results["automatic-missing-pull-request"]
+        self.assertIn("pull request metadata was unavailable", missing_pr["failures"][0])
+        self.assertEqual(missing_pr["outputs"], {})
+        self.assertEqual(missing_pr["apiCalls"], [])
+        self.assertIsNone(missing_pr["thrown"])
+
+        for index, _value in enumerate(invalid_numbers):
+            name = f"manual-invalid-number-{index}"
+            with self.subTest(name=name):
+                self.assertIn("positive integer of at most 10 digits", results[name]["failures"][0])
+                self.assertEqual(results[name]["outputs"], {})
+                self.assertEqual(results[name]["apiCalls"], [])
+                self.assertIsNone(results[name]["thrown"])
 
     def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
