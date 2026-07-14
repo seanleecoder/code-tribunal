@@ -66,6 +66,7 @@ class GitHubReviewPlatform:
         return headers
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        raw_text = bool(kwargs.pop("raw_text", False))
         headers = self._headers(kwargs.pop("headers", None))
         response = self.session.request(method, self._url(path), headers=headers, **kwargs)
         if response.status_code >= 400:
@@ -74,6 +75,8 @@ class GitHubReviewPlatform:
             )
         if response.status_code == 204 or not getattr(response, "text", ""):
             return None
+        if raw_text:
+            return response.text
         return response.json()
 
     def _get_all_pages(self, path: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -112,6 +115,7 @@ class GitHubReviewPlatform:
                 "GET",
                 f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}",
                 headers={"Accept": "application/vnd.github.v3.diff"},
+                raw_text=True,
             )
         )
 

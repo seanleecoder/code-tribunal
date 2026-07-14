@@ -17,7 +17,7 @@ current code, tests, CI, tags, and recorded downstream validation.
 
 ## Verification performed
 
-- `make test`: 381 tests passed after the GitHub workflow and platform-boundary cleanup.
+- `make test`: 382 tests passed after the GitHub workflow and platform-boundary cleanup.
 - `git tag --sort=version:refname`: `v0.1.0`, `v0.2.0`, `v0.3.0`, and
   `v0.3.1` are present.
 - Source inspection confirms one shared `SEVERITY_RANK`, one unified diff parser,
