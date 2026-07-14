@@ -11,7 +11,9 @@ from ai_review.input_bundle import (
     BundleError,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
+    _github_pull_request_version,
     _resolve_github_pull_request,
+    prepare_github_bundle,
     prepare_gitlab_bundle,
 )
 
@@ -157,6 +159,55 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
         client.fetch_pull_request.assert_called_once_with("octo/repo", "32")
+
+    def test_version_is_built_from_resolved_pull_request_metadata(self) -> None:
+        version = _github_pull_request_version(self._pull_request())
+
+        self.assertEqual(version.base_sha, "0" * 40)
+        self.assertEqual(version.head_sha, "1" * 40)
+
+    def test_version_requires_both_endpoint_shas(self) -> None:
+        pull_request = self._pull_request()
+        pull_request["head"] = {"repo": {"full_name": "octo/repo"}}
+
+        with self.assertRaisesRegex(SystemExit, "base.sha and head.sha"):
+            _github_pull_request_version(pull_request)
+
+    def test_manual_prepare_fetches_pull_request_metadata_once(self) -> None:
+        client = mock.Mock()
+        client.fetch_pull_request.return_value = self._pull_request(number=32)
+        client.fetch_diff.return_value = "diff --git a/f.py b/f.py\n"
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "GITHUB_REPOSITORY": "octo/repo",
+                    "AI_REVIEW_GITHUB_PR_NUMBER": "32",
+                    "GITHUB_RUN_ID": "100",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                },
+                clear=True,
+            ),
+            mock.patch("ai_review.input_bundle.load_config", return_value={}),
+            mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+            mock.patch(
+                "ai_review.input_bundle._load_platform_state",
+                side_effect=lambda _client, _config, state, **_kwargs: state,
+            ),
+            mock.patch("ai_review.input_bundle.shutil.copy2"),
+            mock.patch("ai_review.input_bundle.shutil.copytree"),
+            mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
+            mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
+        ):
+            out = Path(tmpdir) / "inputs"
+            prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+
+        client.fetch_pull_request.assert_called_once_with("octo/repo", "32")
+        client.fetch_version.assert_not_called()
+        self.assertEqual(manifest["base_sha"], "0" * 40)
+        self.assertEqual(manifest["head_sha"], "1" * 40)
 
     def test_manual_dispatch_requires_numeric_pull_request(self) -> None:
         with (

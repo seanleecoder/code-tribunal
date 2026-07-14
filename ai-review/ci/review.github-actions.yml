@@ -20,7 +20,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number }}
+  group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: false
 
 env:
@@ -44,10 +44,29 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
     steps:
+      - name: Resolve checkout ref
+        id: checkout-ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            case "$PR_NUMBER" in
+              ''|*[!0-9]*)
+                echo "::error::pr_number must contain digits only"
+                exit 1
+                ;;
+            esac
+            checkout_ref="refs/pull/$PR_NUMBER/head"
+          else
+            checkout_ref="$PR_HEAD_SHA"
+          fi
+          printf 'ref=%s\n' "$checkout_ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pr_number) || github.event.pull_request.head.sha }}
+          ref: ${{ steps.checkout-ref.outputs.ref }}
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

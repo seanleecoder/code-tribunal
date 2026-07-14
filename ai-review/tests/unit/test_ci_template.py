@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 import posixpath
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -76,6 +80,17 @@ def _workflow_job(text: str, job_name: str) -> str:
     if match is None:
         raise AssertionError(f"Workflow job not found: {job_name}")
     return match.group(0)
+
+
+def _workflow_named_step_script(job: str, step_name: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(step_name)}\n.*?^        run: \|\n"
+        r"(?P<script>(?:^          [^\n]*\n?)+?)(?=^      - |\Z)",
+        job,
+    )
+    if match is None:
+        raise AssertionError(f"Workflow step script not found: {step_name}")
+    return textwrap.dedent(match.group("script"))
 
 
 class GitLabCiTemplateTests(unittest.TestCase):
@@ -546,8 +561,80 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("pr_number:", text)
         self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
         self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
-        self.assertIn("refs/pull/{0}/head", prepare)
+        self.assertIn("checkout_ref=\"refs/pull/$PR_NUMBER/head\"", prepare)
+        self.assertIn("ref: ${{ steps.checkout-ref.outputs.ref }}", prepare)
+        self.assertNotIn("format('refs/pull/", prepare)
         self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+
+    def test_github_actions_groups_manual_and_automatic_runs_by_pr(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}",
+            text,
+        )
+
+    def test_github_checkout_ref_resolver_validates_before_checkout(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        prepare = _workflow_job(template.read_text(encoding="utf-8"), "prepare")
+        script = _workflow_named_step_script(prepare, "Resolve checkout ref")
+        resolver_position = prepare.index("- name: Resolve checkout ref")
+        checkout_position = prepare.index("- uses: actions/checkout@")
+
+        self.assertLess(resolver_position, checkout_position)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "output"
+            manual = subprocess.run(
+                ["sh", "-eu", "-c", script],
+                env={
+                    **os.environ,
+                    "EVENT_NAME": "workflow_dispatch",
+                    "PR_NUMBER": "32",
+                    "PR_HEAD_SHA": "",
+                    "GITHUB_OUTPUT": str(output),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(manual.returncode, 0, manual.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), "ref=refs/pull/32/head\n")
+
+            output.unlink()
+            automatic = subprocess.run(
+                ["sh", "-eu", "-c", script],
+                env={
+                    **os.environ,
+                    "EVENT_NAME": "pull_request",
+                    "PR_NUMBER": "",
+                    "PR_HEAD_SHA": "a" * 40,
+                    "GITHUB_OUTPUT": str(output),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(automatic.returncode, 0, automatic.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), f"ref={'a' * 40}\n")
+
+            output.unlink()
+            invalid = subprocess.run(
+                ["sh", "-eu", "-c", script],
+                env={
+                    **os.environ,
+                    "EVENT_NAME": "workflow_dispatch",
+                    "PR_NUMBER": "32/head",
+                    "PR_HEAD_SHA": "",
+                    "GITHUB_OUTPUT": str(output),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("pr_number must contain digits only", invalid.stdout)
+            self.assertFalse(output.exists())
 
     def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
