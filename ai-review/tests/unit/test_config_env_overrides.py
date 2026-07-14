@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 from ai_review.config import ConfigError, apply_env_overrides, load_config, validate_config
@@ -125,6 +126,41 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
         self.assertTrue(config["critique"]["allow_advisory_escalation"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
+
+    def test_stale_nested_config_keys_fail_loudly(self) -> None:
+        config_text = _REPO_CONFIG.read_text(encoding="utf-8")
+        stale_keys = (
+            ("  claude:\n", "    cli_version: pinned-by-image\n", "reviewers.claude"),
+            ("panel:\n", "  expected_reviewers: 3\n", "panel"),
+            ("  quorum:\n", "    mode: absolute\n", "panel.quorum"),
+            (
+                "  single_reviewer_blocker:\n",
+                "    human_ack_recommended: true\n",
+                "severity_policy.single_reviewer_blocker",
+            ),
+            ("posting:\n", "  marker_version: ai-review:v1\n", "posting"),
+            ("posting:\n", "  update_existing_threads: true\n", "posting"),
+            (
+                "posting:\n",
+                "  post_lock_resource_group: ai-review-mr-lock\n",
+                "posting",
+            ),
+            ("merge_gate:\n", "  mechanism: ci_job_failure\n", "merge_gate"),
+            ("state:\n", "  marker_version: ai-review-state:v1\n", "state"),
+            ("limits:\n", "  max_findings_per_reviewer: 50\n", "limits"),
+            ("security:\n", "  redact_logs: true\n", "security"),
+        )
+        with TemporaryDirectory() as tmp:
+            for anchor, stale_line, error_path in stale_keys:
+                with self.subTest(stale_line=stale_line.strip()):
+                    mutated = config_text.replace(anchor, anchor + stale_line, 1)
+                    config_path = Path(tmp) / "review.yaml"
+                    config_path.write_text(mutated, encoding="utf-8")
+                    with (
+                        mock.patch.dict("os.environ", {}, clear=True),
+                        self.assertRaisesRegex(ConfigError, error_path.replace(".", r"\.")),
+                    ):
+                        load_config(config_path)
 
     def test_missing_advisory_escalation_uses_enabled_default(self) -> None:
         config = load_config(_REPO_CONFIG)

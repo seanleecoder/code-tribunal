@@ -95,7 +95,7 @@ Reviewer jobs that carry provider secrets must not trust MR-controlled adapter
 code, reviewer config, or wrapper edits. Those inputs should come from the
 trusted review image/repository; the in-repo endpoint/model validation and
 allowlisted environment are defense in depth. Codex and OpenCode jobs must
-scrub GitLab/Jira tokens, unrelated provider keys, shell history variables, and
+scrub GitLab tokens, unrelated provider keys, shell history variables, and
 persisted CLI auth/session paths from reviewer subprocesses by default.
 
 ## OpenCode Rollout Ordering (Trusted Image Pin)
@@ -145,7 +145,7 @@ as a blocking reviewer before the pin bump has landed.
 - [ ] Three invalid/failed reviewers produce `panel_status=failed` and a
       nonzero `consensus_ai_review` before `post_ai_review`.
 - [x] Downloaded artifacts and GitLab job logs contain no provider key,
-      GitLab token, Jira token, CLI auth file, CLI session file, or CLI history
+      GitLab token, CLI auth file, CLI session file, or CLI history
       file content.
 
 Accepted evidence:
@@ -187,7 +187,7 @@ failed.
 ```
 
 Job trace audit for pipeline `179203` found no provider API key, GitLab
-read/write token, Jira token, CLI auth/session file content, or shell history
+read/write token, CLI auth/session file content, or shell history
 content. GitLab runner traces included literal command text such as
 `echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa` and coordinator `token=glcbt-64`
 status snippets, but not secret values. The Codex trace echoed the untrusted
@@ -223,7 +223,7 @@ Locally verified on that path:
 - `codex.sh` / `gemini.sh` mock fallback (`AI_REVIEW_LOCAL_MOCK=1`, no key)
   produced schema-valid `success` batches.
 - `adapter_runner` status coverage included `model_error`, `schema_error`,
-  `timeout`, `budget_skipped`, and `skipped`.
+  `timeout`, and `skipped`.
 - Consensus panel degradation was covered locally against `config/review.yaml`.
 
 Private GitLab smoke target:
@@ -272,10 +272,6 @@ were intentionally skipped by owner request for the superseded path.
   process-scoped injection. At minimum, do not run repository-controlled code,
   dependency hooks, or build scripts in the same job environment that exposes
   provider API keys.
-- `budget.backend: none` (current default) makes the pre-model budget check a
-  no-op; `budget_skipped` only becomes reachable in production once a real
-  budget backend is implemented in `budget.py`.
-
 ## Source Notes
 
 - Codex non-interactive mode:

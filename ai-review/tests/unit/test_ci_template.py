@@ -16,9 +16,6 @@ _ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
-_IMPLEMENTATION_SPEC = (
-    Path(__file__).resolve().parents[3] / "specs" / "ai-review-implementation-ready-spec.md"
-)
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -426,18 +423,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn('"AI review: [opencode]"', text)
         self.assertIn('"AI critique: [opencode]"', text)
         self.assertIn("opencode --version", text)
-
-    def test_implementation_spec_links_to_ci_source_without_copying_it(self) -> None:
-        if not _IMPLEMENTATION_SPEC.exists():
-            self.skipTest("repository-level specification is not copied into runtime images")
-        text = _IMPLEMENTATION_SPEC.read_text(encoding="utf-8")
-        section = text.split("## 20. CI templates", 1)[1].split("## 21.", 1)[0]
-
-        self.assertIn("ai-review/ci/review.gitlab-ci.yml", section)
-        self.assertIn("ai-review/ci/review-child.gitlab-ci.yml", section)
-        self.assertNotIn("prepare_ai_review:", section)
-        self.assertNotIn(".review_template:", section)
-        self.assertNotIn("AI_REVIEW_BASE_IMAGE:", section)
 
     def test_secret_bearing_jobs_use_trusted_image_code_and_config(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")

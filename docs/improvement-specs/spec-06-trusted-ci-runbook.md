@@ -87,7 +87,6 @@ In the consumer project, configure these as Masked and Protected variables:
 - `OPENROUTER_API_KEY`
 - `GITLAB_READ_TOKEN`
 - `GITLAB_WRITE_TOKEN`
-- `JIRA_API_TOKEN` when Jira integration is enabled
 
 Protected variables must not be available to unprotected external fork branches.
 That property is the security boundary this runbook validates.

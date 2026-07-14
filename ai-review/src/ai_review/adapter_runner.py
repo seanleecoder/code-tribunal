@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import budget
 from .canonical import json_loads_no_duplicates
 from .config import ConfigError, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -40,7 +39,7 @@ _ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 # jobs stay `allow_failure: true`, so a non-zero exit surfaces as a visible
 # "warning" without hard-blocking the pipeline — the panel degradation policy
 # (min_successful_reviewers_for_blocking) still governs merge gating. Intentional
-# non-run outcomes (success, skipped, budget_skipped) keep exit code 0.
+# Non-run outcomes (success and skipped) keep exit code 0.
 _EXIT_ERROR = 1
 
 _ADAPTER_RUNTIME_ENV = {
@@ -85,18 +84,6 @@ def _manifest_run_id(input_dir: Path) -> str:
         if isinstance(manifest, dict) and manifest.get("run_id"):
             return str(manifest["run_id"])
     return "unknown-run"
-
-
-def _manifest_project_and_mr(input_dir: Path) -> tuple[str, str]:
-    manifest_path = input_dir / "manifest.json"
-    if manifest_path.exists():
-        manifest = load_json_file(manifest_path)
-        if isinstance(manifest, dict):
-            return (
-                str(manifest.get("project_id", "unknown-project")),
-                str(manifest.get("merge_request_iid", "unknown-mr")),
-            )
-    return "unknown-project", "unknown-mr"
 
 
 def _output_file(stage: str, reviewer: str) -> Path:
@@ -696,33 +683,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 error_message=validation_error,
             )
             return _EXIT_ERROR
-
-        budget_backend = str(config.get("budget", {}).get("backend", "none"))
-        project_id, mr_iid = _manifest_project_and_mr(input_dir)
-        decision = budget.acquire(project_id, mr_iid, reviewer, 0.0, backend=budget_backend)
-        if not decision.allowed:
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
-                "budget_skipped",
-                run_id,
-                model,
-                started_at,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "budget_skipped",
-                started_at,
-                started_monotonic,
-                output_file,
-                error_class="BudgetDenied",
-                error_message=decision.reason,
-            )
-            return 0
 
         adapter_path = resolve_adapter_path(config_path, str(reviewer_config["adapter"]))
         prompt_tmp: Path | None = None

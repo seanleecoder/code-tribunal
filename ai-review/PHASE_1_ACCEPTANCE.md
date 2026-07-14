@@ -94,7 +94,7 @@ on 2026-07-01:
 - `gate_result.json` had `status=passed`, `reason=no_blocking_consensus`, and
   `block_merge=false`.
 - A generated-artifact scan excluding `inputs/repo_snapshot/` found no
-  provider, GitLab, or Jira secret value patterns across 13 generated files.
+  provider, GitLab across 13 generated files.
   A broader scan of the repo snapshot found only existing static source-tree
   matches: a redaction-test fixture and Firebase Google API keys.
 - `PYTHONPATH=src python3 -m unittest discover -s tests` passed in the
@@ -125,7 +125,7 @@ accepted:
   conservative policy, broad list/dict validation and narrow missing-key
   handling can remain separate threads.
 - [ ] A manual or web pipeline worked with injected `AI_FLOW_INPUT`.
-- [ ] No provider key, GitLab token, or Jira token appeared in job logs or
+- [ ] No provider key, GitLab token, or appeared in job logs or
   persisted artifacts. Generated artifacts were scanned clean on 2026-07-01;
   GitLab job logs still need a final human security pass.
 
@@ -144,5 +144,5 @@ Start Phase 2 after Phase 1 acceptance is confirmed:
 - Verify reviewer enable/disable is config-only.
 - Verify one killed reviewer yields a degraded but valid consensus artifact.
 - Verify zero successful reviewers fails before posting.
-- Verify success, schema error, model error, budget skip, and wrapper timeout
+- Verify success, schema error, model error, wrapper timeout
   all emit valid findings/status artifacts.

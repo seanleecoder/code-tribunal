@@ -11,12 +11,26 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_DOCKERFILE = ROOT / "ai-review/images/base.Dockerfile"
 REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
+CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "python-gitlab", "requests"}
+
+# Version labels are documentation, but incorrect labels conceal dependency
+# upgrades. Keep this registry offline and reviewable so CI can verify every
+# action pin that the repository currently ships without consulting GitHub.
+APPROVED_ACTION_PINS = {
+    ("actions/checkout", "08eba0b27e820071cde6df949e0beb9ba4906955"): "v4.3.0",
+    ("actions/checkout", "df4cb1c069e1874edd31b4311f1884172cec0e10"): "v6.0.3",
+    ("actions/setup-python", "a26af69be951a213d495a4c3e4e4022e16d87065"): "v5.6.0",
+    ("actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"): "v4.6.2",
+    ("actions/download-artifact", "d3f86a106a0bac45b974a628896c90dbdf5c8093"): "v4.3.0",
+    ("actions/attest", "a1948c3f048ba23858d222213b7c278aabede763"): "v4",
+}
 
 
 def error(message: str) -> None:
@@ -51,11 +65,85 @@ def _constraint_packages(text: str) -> set[str]:
     return packages
 
 
+def _workflow_structure_issues(text: str) -> list[str]:
+    """Catch YAML entries accidentally folded into an inline comment.
+
+    A YAML parser ignores everything after ``#``. A mechanical pin rewrite can
+    therefore hide a following ``uses``, ``with``, or ``if`` entry without the
+    action-pin regex noticing it.
+    """
+    issues: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if "#" not in line:
+            continue
+        comment = line.split("#", 1)[1]
+        if re.search(r"(?:-\s+uses:|\bwith:|\bif:)", comment):
+            issues.append(f"line {line_number} contains a YAML key inside an inline comment")
+    return issues
+
+
+def _workflow_action_issues(text: str) -> list[str]:
+    """Validate external action SHAs and any adjacent version labels."""
+    issues: list[str] = []
+    lines = text.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        yaml = line.split("#", 1)[0]
+        match = re.search(r"\buses:\s*([^\s#]+)", yaml)
+        if match is None:
+            continue
+        reference = match.group(1)
+        if reference.startswith(("./", "../", "docker://")):
+            continue
+        if "@" not in reference:
+            issues.append(f"line {line_number}: external action {reference!r} has no ref")
+            continue
+        action, ref = reference.rsplit("@", 1)
+        if not re.fullmatch(r"[^/\s]+/[^@\s]+", action):
+            continue
+        if not re.fullmatch(r"[0-9a-f]{40}", ref):
+            issues.append(f"line {line_number}: {action} must use a full commit SHA")
+            continue
+
+        version_label = None
+        inline_label = re.search(r"#\s*(v[^\s]+)\s*$", line)
+        if inline_label is not None:
+            version_label = inline_label.group(1)
+        elif line_number > 1:
+            preceding_label = re.fullmatch(
+                rf"\s*#\s*{re.escape(action)}@(v[^\s]+)\s*", lines[line_number - 2]
+            )
+            if preceding_label is not None:
+                version_label = preceding_label.group(1)
+
+        expected_label = APPROVED_ACTION_PINS.get((action, ref))
+        if expected_label is not None and version_label != expected_label:
+            shown_label = version_label or "<missing>"
+            issues.append(
+                f"line {line_number}: {action}@{ref} is {expected_label}, "
+                f"but its version label is {shown_label}"
+            )
+        elif version_label is not None and expected_label is None:
+            issues.append(
+                f"line {line_number}: {action}@{ref} has unregistered version label "
+                f"{version_label}"
+            )
+    return issues
+
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
     workflow = _read_optional(PUBLISH_WORKFLOW)
+    # The runtime image copies the reusable review workflow but intentionally
+    # omits repository-only .github workflows. Check every shipped workflow
+    # that exists in the current distribution without making the image test
+    # depend on files that are not part of that distribution.
+    shipped_workflows = {}
+    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+        workflow_text = _read_optional(path)
+        if workflow_text is not None:
+            shipped_workflows[path] = workflow_text
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     package = json.loads(_read(PACKAGE_JSON))
@@ -118,6 +206,15 @@ def main() -> int:
             if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
                 error(f"{action} full-SHA pin not found")
                 failures += 1
+        shipped_workflows[PUBLISH_WORKFLOW] = workflow
+    for path, text in shipped_workflows.items():
+        display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+        for issue in _workflow_structure_issues(text):
+            error(f"{display_path}: {issue}")
+            failures += 1
+        for issue in _workflow_action_issues(text):
+            error(f"{display_path}: {issue}")
+            failures += 1
     combined_ci = (workflow or "") + "\n" + gitlab_build
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)

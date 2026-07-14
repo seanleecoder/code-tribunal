@@ -17,7 +17,6 @@ from ai_review.adapter_runner import (
     _load_adapter_json,
     run_adapter,
 )
-from ai_review.budget import BudgetDecision
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -27,30 +26,15 @@ from ai_review.schema import (
 
 _CONFIG_TAIL = [
     "panel:",
-    "  expected_reviewers: 1",
     "  min_successful_reviewers_for_blocking: 1",
     "  min_successful_reviewers_for_resolution: 1",
     "  quorum:",
-    "    mode: absolute",
     "    votes_required: 1",
-    "severity_order:",
-    "  - info",
-    "  - minor",
-    "  - major",
-    "  - blocker",
-    "categories:",
-    "  - correctness",
     "severity_policy:",
     "  single_reviewer_blocker:",
     "    categories: [correctness]",
-    "    post: true",
-    "    block_merge: false",
-    "    human_ack_recommended: true",
     "  quorum_blocker:",
-    "    post: true",
     "    block_merge: true",
-    "  majority_noise:",
-    "    decision: drop",
     "critique:",
     "  enabled: false",
     "  rounds: 0",
@@ -62,19 +46,12 @@ _CONFIG_TAIL = [
     "  mode: gitlab_discussions",
     "merge_gate:",
     "  enabled: true",
-    "  mechanism: ci_job_failure",
-    "  required_project_setting: pipelines_must_succeed",
-    "  stale_head_behavior: pass_noop",
     "state:",
     "  backend: gitlab_mr_state_note",
-    "jira:",
-    "  enabled: false",
     "limits:",
     "  max_prompt_bytes: 500000",
-    "budget:",
-    "  backend: none",
     "security:",
-    "  redact_logs: true",
+    "  allow_external_fork_secrets: false",
 ]
 
 
@@ -908,29 +885,6 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             debug = paths["output_dir"] / "status" / "chatty-timeout-debug.txt"
             self.assertTrue(debug.exists())
             self.assertIn("progress-marker", debug.read_text(encoding="utf-8"))
-
-    def test_status_budget_skipped_short_circuits_before_adapter_runs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "budgeted")
-            sentinel = paths["output_dir"] / "adapter_ran.txt"
-            _write_adapter(
-                paths["adapter_dir"],
-                "budgeted",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-            )
-            self._set_env(paths, config_path)
-
-            with mock.patch("ai_review.adapter_runner.budget.acquire") as acquire:
-                acquire.return_value = BudgetDecision(False, "per_mr_budget_exhausted")
-                self.assertEqual(run_adapter("budgeted", "review"), 0)
-
-            batch = load_json_file(paths["output_dir"] / "findings" / "budgeted.json")
-            self.assertEqual(batch["adapter_status"], "budget_skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "budgeted.json")
-            self.assertEqual(status["status"], "budget_skipped")
-            self.assertEqual(status["error_message_redacted"], "per_mr_budget_exhausted")
-            self.assertFalse(sentinel.exists())
 
     def test_status_skipped_is_config_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

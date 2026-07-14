@@ -5,7 +5,7 @@
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
-**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), planned Jira issue linking, and automated merge gating.
+**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), and automated merge gating.
 
 It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs optional blind cross-examination, posts idempotent inline GitLab discussions, maintains state across MR revisions, and enforces CI/CD merge gating.
 
@@ -19,15 +19,13 @@ It orchestrates a panel of independent LLM reviewer models via provider CLIs (**
 - **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with CLI-policy-dependent provider access (runner/container egress enforcement is planned), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
 - **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs without creating duplicate threads across commits.
 - **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`), mapping historical issues across code revisions using line remapping (`anchors.py`).
-- **Jira Integration (planned/experimental)**: Jira issue discovery and ADF formatting helpers exist, but MR posting currently does not call `jira_client`; Jira comment counts remain `0`.
 - **Automated Merge Gating**: Integrates natively with GitLab CI/CD `pipelines_must_succeed` setting, automatically failing the pipeline when unresolved blocking findings exist.
-- **Budget & Limit Controls (planned)**: Configuration is present, but `budget.backend: none` is currently advisory/no-op and returns `budget_backend_not_implemented` until a production backend is added.
 
 ---
 
 ## High-Level System Architecture
 
-Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab/Jira credential access.
+Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab credential access.
 
 ```mermaid
 flowchart TD
@@ -110,7 +108,6 @@ pipeline.
   - Skips unchanged existing discussions (`skipped_unchanged`).
   - Updates discussion text if body content changed.
 - Posts or updates a summary comment for multiline/fallback findings.
-- Jira remains planned/experimental: `jira_client.py` contains discovery/ADF helpers, but `post.py` does not import it and reports `jira_comments_created`/`jira_comments_updated` as `0`.
 - Writes an updated hidden state note (`ai-review-state:v1`) containing base64url-encoded state payload with SHA-256 integrity checksum.
 - Outputs `out/post/post_result.json` matching [ai-review/schemas/post_result.schema.json](ai-review/schemas/post_result.schema.json).
 
@@ -123,207 +120,9 @@ pipeline.
 
 ---
 
-## Implemented vs Reserved Configuration
+## Active configuration surface
 
-| Area / knob | Status | Notes |
-|---|---|---|
-| `panel.quorum.mode` | Reserved | Consensus currently uses the implemented vote/degradation logic rather than alternate quorum modes. |
-| `panel.degraded_behavior.*` | Reserved | Documented for future policy work; only current implemented degradation paths are reflected in artifacts. |
-| `panel.expected_reviewers` | Reserved | Informational today; successful reviewer counts come from produced artifacts. |
-| `severity_policy.majority_noise` | Reserved | Critique verdicts are recorded, but this policy knob does not yet drive merge decisions. |
-| `merge_gate.mechanism`, `required_project_setting`, `stale_head_behavior` | Reserved | Gate artifacts are produced for CI; project-setting automation is not implemented. |
-| Most `security.*` fields | Reserved | Endpoint validation and environment allowlisting exist; container-level egress/token controls are not fully enforced yet. |
-| `budget.*` | Planned | `backend: none` is advisory/no-op and reports `budget_backend_not_implemented`. |
-| `jira.*` | Planned/experimental | Jira helpers exist, but posting does not create or update Jira comments. |
-| Per-reviewer `cli_version` | Reserved | CLI versions are documented/pinned by images rather than enforced from this knob. |
-| `limits.max_findings_per_reviewer` | Reserved | Schema/config placeholder; reviewer output is validated downstream. |
-| Several `posting.*` knobs | Reserved | Core GitLab posting, state, summary, and stale-head behavior exist; some advanced policy toggles are placeholders. |
-
-## Complete Configuration Reference (`config/review.yaml`)
-
-System behavior is configured in [ai-review/config/review.yaml](ai-review/config/review.yaml). The full, un-trimmed specification is shown below:
-
-```yaml
-schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
-
-# Configured LLM reviewer backends
-reviewers:
-  claude:
-    enabled: true
-    adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
-    model: claude-haiku-4.5 # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_turns: 4 # Max multi-turn agentic turns permitted
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-  codex:
-    enabled: true
-    adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
-    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-  opencode:
-    enabled: true
-    adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
-    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-
-# Panel voting and consensus aggregation rules
-panel:
-  expected_reviewers: 3 # Number of configured reviewers expected to execute
-  min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
-  min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
-  quorum:
-    mode: absolute # Voting calculation scheme (unused / reserved in schema)
-    votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
-  # Declarative degradation policy schema (unused / reserved in code; runtime logic uses min_successful_reviewers_for_blocking)
-  degraded_behavior:
-    successful_reviewers_0: fail_pipeline_infra
-    successful_reviewers_1: advisory_only
-    successful_reviewers_2: blocking_allowed_with_2_of_2
-    successful_reviewers_3: blocking_allowed_with_2_of_3
-
-# Priority order of finding severities (lowest to highest)
-severity_order:
-  - info
-  - minor
-  - major
-  - blocker
-
-# Allowed classification domains for review findings
-categories:
-  - security
-  - correctness
-  - performance
-  - maintainability
-  - style
-  - test
-  - other
-
-# Severity rules governing MR merge blocking and consensus requirements
-severity_policy:
-  single_reviewer_blocker:
-    categories: [security, correctness] # Finding categories eligible for single-reviewer blocker reporting
-    post: true
-    block_merge: false # Require consensus quorum to block merge; single-reviewer blockers act as advisory flags
-    human_ack_recommended: true # Flag finding for human reviewer acknowledgment
-  quorum_blocker:
-    post: true
-    block_merge: true # Block MR merge when consensus quorum agrees on a blocker finding
-  # Reserved schema section for majority noise handling (unused / reserved in schema)
-  majority_noise:
-    decision: drop
-
-# Optional multi-agent cross-examination phase (critique)
-critique:
-  enabled: true
-  rounds: 1 # Current critique round count
-  max_rounds: 1 # Max critique iteration rounds allowed
-  blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
-  can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
-  allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
-
-# Placement and formatting rules for MR inline comments & summaries
-posting:
-  mode: gitlab_discussions # Integration backend target for discussions
-  v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
-  inline_multiline: true # Support multiline diff range comments
-  fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
-  marker_version: ai-review:v1 # Bot comment header tag to track existing threads across runs
-  update_existing_threads: true # Update existing bot comments on re-run instead of creating duplicates
-  fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
-  stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
-  post_lock_resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}" # GitLab lock group pattern to prevent concurrent posting race conditions
-
-# Merge gating integration rules
-merge_gate:
-  enabled: true
-  mechanism: ci_job_failure # Enforce merge block by failing the CI pipeline job (declarative spec)
-  required_project_setting: pipelines_must_succeed # Prerequisite GitLab project merge request setting (declarative spec)
-  stale_head_behavior: pass_noop # Reserved schema field (unused / reserved in schema)
-
-# Persistent state management across pipeline runs
-state:
-  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR)
-  marker_version: ai-review-state:v1 # State note payload version identifier
-  recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
-  checksum_required: true # Require SHA256 integrity check on state note content
-  retention:
-    keep_open: true # Preserve state records for open findings
-    keep_wontfix: true # Preserve state records marked as won't fix
-    keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
-    keep_superseded_runs: 2 # Retention depth for superseded run records
-    max_records: 200 # Max state entry count
-    max_state_bytes: 50000 # Max byte size for state payload note
-    overflow_behavior: fail_closed # Fail pipeline if state payload exceeds size/record limits
-
-# Optional Jira integration specification (unused / reserved for future Jira integration)
-jira:
-  enabled: false
-  deployment: cloud # Jira deployment model ('cloud' or 'server')
-  issue_key_patterns:
-    - "[A-Z][A-Z0-9]+-[0-9]+" # Regex pattern to detect Jira issue keys in branch names or PR metadata
-  auth:
-    cloud:
-      email_variable: JIRA_EMAIL # Environment variable for Jira service account email
-      api_token_variable: JIRA_API_TOKEN # Environment variable for Jira API token
-      base_url_variable: JIRA_BASE_URL # Environment variable for Jira base URL
-  comments:
-    enabled: true
-    idempotent_marker: ai-review-jira:v1 # Header tag for Jira comments to prevent duplicate posting
-  transitions:
-    enabled: false
-    on_first_post: null # Jira status name for initial finding post transition
-    on_blocker: null # Jira status name for blocker finding transition
-    dry_run: true # Log transitions without executing live Jira API updates
-
-# Safety limits for diff size, findings, and prompts
-limits:
-  max_diff_bytes: 250000 # Max git diff payload size in bytes accepted for review
-  max_files: 200 # Max number of changed files analyzed per review run
-  max_findings_per_reviewer: 50 # Hard limit on findings per reviewer
-  max_posted_surface_findings: 25 # Limit on inline posted comments to prevent MR thread spam
-  max_fyi_findings: 50 # Cap on non-blocking findings in MR summary comment
-  max_prompt_bytes: 500000 # Max prompt payload size in bytes sent to model APIs
-
-# Cost ceiling and concurrency controls
-budget:
-  per_job_usd_max: 2.00 # Max API spend limit per single CI job (declarative spec)
-  per_mr_usd_max: 12.00 # Max cumulative spend limit per Merge Request (declarative spec)
-  per_project_daily_usd_max: 100.00 # Daily project-wide spend ceiling (declarative spec)
-  max_concurrent_mrs: 4 # Concurrency limit on active MR reviews (declarative spec)
-  max_concurrent_model_jobs: 12 # Concurrency limit on parallel LLM calls (declarative spec)
-  backend: none # Spend tracking backend ('none' disables budget check in adapter runner)
-  on_budget_exceeded: advisory_skip # Reserved schema field for budget overrun behavior (unused / reserved in schema)
-
-# Security and sandbox configuration (declarative container/pipeline security specification)
-security:
-  reviewers_can_run_shell: false # Restrict reviewers from executing shell commands
-  reviewers_can_modify_files: false # Restrict reviewers from editing repository files
-  reviewers_have_gitlab_token: false # Restrict exposing GitLab API tokens to reviewer processes
-  reviewers_have_jira_token: false # Restrict exposing Jira tokens to reviewer processes
-  network_egress: provider_api_only # Reserved schema field for container network egress boundary (unused / reserved in schema)
-  allow_external_fork_secrets: false # Block secret environment variables on external fork pipelines
-  redact_logs: true # Redact sensitive keys and tokens from CI execution logs
-```
-
-### Panel Degradation Matrix
-
-| Successful Reviewers | Operational Mode | Quorum Required | Blocking Allowed? | System Action |
-|---|---|---|---|---|
-| **3 / 3** | Full Panel | 2 of 3 votes | Yes | Full consensus evaluation; blocking allowed with 2-of-3 quorum. |
-| **2 / 3** | Degraded Mode | 2 of 2 votes | Yes | Requires unanimous agreement of surviving reviewers. |
-| **1 / 3** | Advisory Mode | N/A | No | Findings posted as non-blocking summary/FYI comments. |
-| **0 / 3** | Infra Failure | N/A | Yes (Fails Pipeline) | Infrastructure error; pipeline fails closed before posting. |
-
----
+The shipped [runtime configuration](ai-review/config/review.yaml) contains only controls consumed by production code. Future or paused controls are intentionally absent rather than exposed as reserved placeholders.
 
 ## Security Model & Container Isolation
 
@@ -345,7 +144,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
 ```
 
 - **Trusted Root (`/opt/ai-review`)**: Reviewer CLIs and Python runtime execute code strictly from `/opt/ai-review` inside pre-built Docker images, isolated from MR-controlled code.
-- **Credential Separation**: Reviewer containers receive only `OPENROUTER_API_KEY` (or `ANTHROPIC_BASE_URL` mapping) and have **no access** to `GITLAB_TOKEN`, `JIRA_API_TOKEN`, or local host permissions.
+- **Credential Separation**: Reviewer containers receive only `OPENROUTER_API_KEY` (or `ANTHROPIC_BASE_URL` mapping) and have **no access** to GitLab write tokens or local host permissions.
 - **CLI Hardening**:
   - **Claude Code**: Invoked via `claude.sh` with stream output parsing and disabled legacy model remap.
   - **Codex CLI**: Executed via `codex.sh` with `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`.
@@ -529,9 +328,6 @@ To integrate Code Tribunal into downstream projects:
 | `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
 | `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes | Yes |
 | `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes | Yes |
-| `JIRA_EMAIL` | Jira Cloud user email (if Jira integration enabled). | No | Optional | Optional |
-| `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Yes if enabled | Optional |
-| `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional | Optional |
 
 Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
 
@@ -592,7 +388,7 @@ changes with `make update-golden`; review the resulting fixture diff before merg
 > - These variables are read at runtime, but the *code that reads them* ships inside
 >   the container image. A given image build must already contain this logic; after
 >   that, changing the values above needs no further rebuild. Deeper policy
->   (`panel.quorum`, `severity_policy`, budgets) intentionally stays in the
+>   (`panel.quorum`, `severity_policy`) intentionally stays in the
 >   version-pinned `review.yaml` — override the whole file via `AI_REVIEW_CONFIG` if
 >   you need to change it.
 > - Set these as **project-level** CI/CD variables so every job in the pipeline sees
@@ -653,8 +449,9 @@ code-tribunal/
 ├── .github/
 │   └── workflows/
 │       └── publish-ai-review-images.yml       # GHCR image build, preflight, & attestation workflow
-├── specs/
-│   └── ai-review-implementation-ready-spec.md # Technical specification & build requirements
+├── docs/
+│   ├── improvement-specs/                    # Completed specs and reconciliation audit
+│   └── archived-improvement-plans/           # Paused and superseded plans
 └── ai-review/
     ├── README.md                              # Subsystem sitemap & operational guide
     ├── PHASE_1_ACCEPTANCE.md                  # Phase 1 acceptance record
@@ -673,7 +470,7 @@ code-tribunal/
     │   ├── review.gitlab-ci.yml               # Production 6-stage review pipeline template
     │   └── build-images.gitlab-ci.yml         # Internal container image build pipeline
     ├── config/
-    │   └── review.yaml                        # Core system configuration (panel, quorum, limits, jira)
+    │   └── review.yaml                        # Core system configuration (panel, quorum, limits)
     ├── images/                                # Dockerfiles for base & reviewer images
     │   ├── base.Dockerfile
     │   └── reviewer.Dockerfile
@@ -698,14 +495,12 @@ code-tribunal/
             ├── __init__.py
             ├── adapter_runner.py              # Runner subprocess dispatch, timeout & log redaction
             ├── anchors.py                     # Diff line parsing & fuzzy anchor drift remapping
-            ├── budget.py                      # Budget checking interface (default no-op)
             ├── canonical.py                   # Canonical JSON formatting & SHA-256 context hashing
             ├── config.py                      # Config loader (review_config.v1) & default merger
             ├── consensus.py                   # Deduplication, quorum voting, panel degradation logic
             ├── gate.py                        # CI merge gate evaluator
             ├── gitlab_client.py               # GitLab API client (discussions, notes, DiffNotes)
             ├── input_bundle.py                # Diff extraction & input bundle packager
-            ├── jira_client.py                 # Jira issue key discovery & ADF summary formatting
             ├── memory.py                      # Historical state matching & record reconciliation
             ├── mock_reviewer.py               # Deterministic mock reviewer for offline testing
             ├── openrouter_reviewer.py         # OpenRouter direct Chat Completions client
@@ -716,4 +511,4 @@ code-tribunal/
             └── trigger.py                     # Pipeline trigger evaluator helper
 ```
 
-For complete technical specifications and implementation details, refer to the [Full Specification Document](specs/ai-review-implementation-ready-spec.md).
+For completed requirements and implementation gaps, see the [improvement-spec completion audit](docs/improvement-specs/completion-audit.md).

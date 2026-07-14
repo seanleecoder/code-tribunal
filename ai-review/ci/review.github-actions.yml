@@ -30,14 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_BASE_IMAGE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           fetch-depth: 0
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ai-review-inputs
           path: inputs/
@@ -51,7 +51,7 @@ jobs:
       matrix:
         reviewer: [claude, codex, opencode]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-inputs
           path: inputs
@@ -65,7 +65,7 @@ jobs:
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ai-review-review-${{ matrix.reviewer }}
@@ -77,18 +77,18 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_BASE_IMAGE }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ai-review-review-*
           path: reviewer-artifacts
           merge-multiple: true
       - name: Build consensus
         run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ai-review-consensus
           path: out/consensus/
@@ -98,11 +98,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_BASE_IMAGE }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-consensus
           path: out/consensus
@@ -110,7 +110,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ai-review-post
@@ -121,11 +121,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ env.AI_REVIEW_BASE_IMAGE }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-consensus
           path: out/consensus
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ai-review-post
           path: out/post

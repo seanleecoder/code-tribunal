@@ -1,8 +1,9 @@
 # Code Tribunal — Improvement Specs and Status
 
 These documents began as agent-ready work units derived from the Staff+ and
-security review. Phases 0–2 are implemented and retained as decision history;
-Phase 3 remains the active roadmap for unfinished platform/scale work.
+security review. Phases 0–3 are retained as implementation and decision history.
+There is no active follow-on roadmap in this directory; paused ideas are stored
+under [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
 
 Each spec follows the same template so an agent can execute it without extra
 context:
@@ -28,9 +29,9 @@ reasoning and security invariants are not lost.
 | Phase | Theme | Specs | Status |
 |---|---|---|---|
 | **0** | Quick wins | SPEC-01…05 | Complete; implemented before the Phase 1/2 releases. |
-| **1** | Security + determinism | SPEC-06…10 | Complete; released as `v0.2.0`. |
+| **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
-| **3** | Platform + scale | SPEC-15…18 | In progress: SPEC-15 and SPEC-16 are on `main`; SPEC-17 and SPEC-18 remain planned ([active plan](phase-3-implementation-plan.md)). |
+| **3** | Platform + supply chain | SPEC-15…16 | Implemented on `main`; one boundary-interpretation follow-up remains ([completion audit](completion-audit.md)). |
 
 ## Downstream validation
 
@@ -61,8 +62,9 @@ SPEC-07 (state auth) ── independent
 SPEC-06 (CI trust) ── independent (docs + reference pipeline)
 ```
 
-The graph is retained as implementation history. New work should follow the
-remaining Phase 3 dependencies rather than replaying completed phases.
+The graph is retained as implementation history. See the
+[completion audit](completion-audit.md) before treating a phase-level status as
+proof that every acceptance criterion is closed.
 
 ## Historical reassessment — PR #3 (`mr-review-performance`)
 
@@ -76,7 +78,7 @@ change any Critical/High finding**. Two consequences for these specs:
   new `--bare` guard). Both must be fixed.
 - The `effort` field is a **good template to copy**: closed-set value,
   `validate_config` check, `effective_config_summary` surfacing, and unit tests.
-  Reuse that pattern for any new config in these specs.
+  Reuse that pattern only when a new control is implemented end to end.
 
 ## Source of truth
 

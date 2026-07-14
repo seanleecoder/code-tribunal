@@ -13,16 +13,12 @@ TOP_LEVEL_KEYS = {
     "schema_version",
     "reviewers",
     "panel",
-    "severity_order",
-    "categories",
     "severity_policy",
     "critique",
     "posting",
     "merge_gate",
     "state",
-    "jira",
     "limits",
-    "budget",
     "security",
 }
 
@@ -34,11 +30,75 @@ REVIEWER_REQUIRED_KEYS = {
     "max_findings",
     "credential_variable",
 }
+REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "max_turns"}
+PANEL_KEYS = {
+    "min_successful_reviewers_for_blocking",
+    "min_successful_reviewers_for_resolution",
+    "quorum",
+    "grouping",
+}
+PANEL_QUORUM_KEYS = {"votes_required"}
+PANEL_GROUPING_KEYS = {"semantic"}
+PANEL_SEMANTIC_KEYS = {"enabled", "threshold"}
+SEVERITY_POLICY_KEYS = {"single_reviewer_blocker", "quorum_blocker"}
+SINGLE_REVIEWER_BLOCKER_KEYS = {"categories"}
+QUORUM_BLOCKER_KEYS = {"block_merge"}
+CRITIQUE_KEYS = {
+    "enabled",
+    "rounds",
+    "max_rounds",
+    "blind_reviewer_identity",
+    "can_add_quorum_votes",
+    "allow_advisory_escalation",
+    "allow_severity_downgrade",
+}
+POSTING_KEYS = {
+    "mode",
+    "v1_inline_sides",
+    "inline_multiline",
+    "fallback_to_summary_comment",
+    "fyi_mode",
+    "stale_head_guard",
+}
+MERGE_GATE_KEYS = {"enabled"}
+STATE_KEYS = {
+    "backend",
+    "recover_from_discussion_markers",
+    "checksum_required",
+    "retention",
+    # Used by state-load error handling for compatibility with older custom
+    # configs; retention.overflow_behavior governs state-write overflow.
+    "overflow_behavior",
+}
+STATE_RETENTION_KEYS = {
+    "keep_open",
+    "keep_wontfix",
+    "keep_resolved_runs",
+    "keep_superseded_runs",
+    "keep_stale_runs",
+    "max_records",
+    "max_state_bytes",
+    "overflow_behavior",
+}
+LIMIT_KEYS = {
+    "max_diff_bytes",
+    "max_files",
+    "max_posted_surface_findings",
+    "max_fyi_findings",
+    "max_prompt_bytes",
+}
+SECURITY_KEYS = {"allow_external_fork_secrets"}
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
 # levels; a closed set also means the value that reaches shell argv can never
 # carry quoting/injection payloads.
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
+
+def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) -> None:
+    unknown = set(mapping) - allowed
+    if unknown:
+        raise ConfigError(f"unknown config keys at {path}: {sorted(unknown)}")
 
 
 def _strip_comment(line: str) -> str:
@@ -302,9 +362,13 @@ def _validate_severity_policy(config: dict[str, Any]) -> None:
     policy = config.get("severity_policy")
     if not isinstance(policy, dict):
         raise ConfigError("severity_policy must be a mapping")
+    _reject_unknown_keys(policy, SEVERITY_POLICY_KEYS, "severity_policy")
     single = policy.get("single_reviewer_blocker")
     if not isinstance(single, dict):
         raise ConfigError("severity_policy.single_reviewer_blocker must be a mapping")
+    _reject_unknown_keys(
+        single, SINGLE_REVIEWER_BLOCKER_KEYS, "severity_policy.single_reviewer_blocker"
+    )
     categories = single.get("categories")
     if not isinstance(categories, list) or not all(isinstance(item, str) for item in categories):
         raise ConfigError(
@@ -313,6 +377,7 @@ def _validate_severity_policy(config: dict[str, Any]) -> None:
     quorum = policy.get("quorum_blocker")
     if not isinstance(quorum, dict):
         raise ConfigError("severity_policy.quorum_blocker must be a mapping")
+    _reject_unknown_keys(quorum, QUORUM_BLOCKER_KEYS, "severity_policy.quorum_blocker")
     if not isinstance(quorum.get("block_merge"), bool):
         raise ConfigError("severity_policy.quorum_blocker.block_merge must be a boolean")
 
@@ -332,12 +397,18 @@ def _validate_posting(config: dict[str, Any]) -> None:
     posting = config.setdefault("posting", {})
     if not isinstance(posting, dict):
         raise ConfigError("posting must be a mapping")
+    _reject_unknown_keys(posting, POSTING_KEYS, "posting")
     mode = posting.setdefault("mode", "gitlab_discussions")
     if mode not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
     state = config.setdefault("state", {})
     if not isinstance(state, dict):
         raise ConfigError("state must be a mapping")
+    _reject_unknown_keys(state, STATE_KEYS, "state")
+    retention = state.get("retention", {})
+    if not isinstance(retention, dict):
+        raise ConfigError("state.retention must be a mapping")
+    _reject_unknown_keys(retention, STATE_RETENTION_KEYS, "state.retention")
     backend = state.setdefault(
         "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
     )
@@ -362,6 +433,7 @@ def validate_config(config: dict[str, Any]) -> None:
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
             raise ConfigError(f"reviewer {name} must be a mapping")
+        _reject_unknown_keys(reviewer, REVIEWER_ALLOWED_KEYS, f"reviewers.{name}")
         missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
@@ -371,6 +443,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"reviewer {name} effort must be one of {sorted(EFFORT_LEVELS)}, got {effort!r}"
             )
     critique = config.setdefault("critique", {})
+    if not isinstance(critique, dict):
+        raise ConfigError("critique must be a mapping")
+    _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
     critique.setdefault("enabled", False)
     critique.setdefault("rounds", 0)
     critique.setdefault("max_rounds", 1)
@@ -383,17 +458,27 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("critique.rounds must be 0 or 1 for v1")
     if critique.get("can_add_quorum_votes") is not False:
         raise ConfigError("critique.can_add_quorum_votes must be false in v1")
+    merge_gate = config.setdefault("merge_gate", {})
+    if not isinstance(merge_gate, dict):
+        raise ConfigError("merge_gate must be a mapping")
+    _reject_unknown_keys(merge_gate, MERGE_GATE_KEYS, "merge_gate")
     enabled_count = len(enabled_reviewers(config))
     if enabled_count < 1:
         raise ConfigError("at least one reviewer must be enabled")
     panel = config.get("panel", {})
+    if not isinstance(panel, dict):
+        raise ConfigError("panel must be a mapping")
+    _reject_unknown_keys(panel, PANEL_KEYS, "panel")
     min_successful = panel.get("min_successful_reviewers_for_blocking")
     if not isinstance(min_successful, int) or not (1 <= min_successful <= enabled_count):
         raise ConfigError(
             "panel.min_successful_reviewers_for_blocking must be between 1 and enabled reviewers"
         )
     quorum = panel.get("quorum", {})
-    votes_required = quorum.get("votes_required") if isinstance(quorum, dict) else None
+    if not isinstance(quorum, dict):
+        raise ConfigError("panel.quorum must be a mapping")
+    _reject_unknown_keys(quorum, PANEL_QUORUM_KEYS, "panel.quorum")
+    votes_required = quorum.get("votes_required")
     if enabled_count > 1 and (not isinstance(votes_required, int) or votes_required < 2):
         raise ConfigError("panel.quorum.votes_required must be at least 2 with multiple reviewers")
     grouping = panel.get("grouping", {})
@@ -402,9 +487,11 @@ def validate_config(config: dict[str, Any]) -> None:
         panel["grouping"] = grouping
     if not isinstance(grouping, dict):
         raise ConfigError("panel.grouping must be a mapping")
+    _reject_unknown_keys(grouping, PANEL_GROUPING_KEYS, "panel.grouping")
     semantic = grouping.setdefault("semantic", {})
     if not isinstance(semantic, dict):
         raise ConfigError("panel.grouping.semantic must be a mapping")
+    _reject_unknown_keys(semantic, PANEL_SEMANTIC_KEYS, "panel.grouping.semantic")
     semantic.setdefault("enabled", False)
     semantic.setdefault("threshold", 0.5)
     if not isinstance(semantic.get("enabled"), bool):
@@ -412,6 +499,14 @@ def validate_config(config: dict[str, Any]) -> None:
     threshold = semantic.get("threshold")
     if not isinstance(threshold, int | float) or not (0.0 <= float(threshold) <= 1.0):
         raise ConfigError("panel.grouping.semantic.threshold must be between 0.0 and 1.0")
+    limits = config.get("limits", {})
+    if not isinstance(limits, dict):
+        raise ConfigError("limits must be a mapping")
+    _reject_unknown_keys(limits, LIMIT_KEYS, "limits")
+    security = config.get("security", {})
+    if not isinstance(security, dict):
+        raise ConfigError("security must be a mapping")
+    _reject_unknown_keys(security, SECURITY_KEYS, "security")
 
 
 def resolve_adapter_path(config_path: str | Path, adapter: str) -> Path:
