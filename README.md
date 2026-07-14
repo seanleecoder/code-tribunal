@@ -1,11 +1,11 @@
 # Code Tribunal (`ai-review`)
 
-[![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
+[![CI](https://github.com/seanleecoder/code-tribunal/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) [![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
 [![Python Version](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](pyproject.toml)
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
-**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), optional Jira issue linking, and automated merge gating.
+**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), and automated merge gating.
 
 It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs optional blind cross-examination, posts idempotent inline GitLab discussions, maintains state across MR revisions, and enforces CI/CD merge gating.
 
@@ -14,30 +14,28 @@ It orchestrates a panel of independent LLM reviewer models via provider CLIs (**
 ## Key Features
 
 - **Multi-Agent Consensus Panel**: Combines independent model reviewers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, and **Google Gemini 3.1 Flash Lite**) to eliminate single-model hallucination and bias.
-- **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), rebuttals (`disagree`), duplicate markers (`duplicate`), or unverifiable flags (`unverifiable`) before final consensus.
+- **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), disputes (`dispute`), noise classifications (`noise`), or duplicate markers (`duplicate`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
-- **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with restricted network egress (provider API endpoints only), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
+- **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with CLI-policy-dependent provider access (runner/container egress enforcement is planned), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
 - **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs without creating duplicate threads across commits.
 - **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`), mapping historical issues across code revisions using line remapping (`anchors.py`).
-- **Jira Integration**: Discovers Jira issue keys via regex patterns (`issue_key_patterns`), formats ADF (Atlassian Document Format) summaries, and supports idempotent Jira commenting (`ai-review-jira:v1`).
 - **Automated Merge Gating**: Integrates natively with GitLab CI/CD `pipelines_must_succeed` setting, automatically failing the pipeline when unresolved blocking findings exist.
-- **Budget & Limit Controls**: Configurable per-job, per-MR, and per-project daily USD budget caps with automatic fallback to advisory mode.
 
 ---
 
 ## High-Level System Architecture
 
-Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, restricted egress, and no credential access.
+Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab credential access.
 
 ```mermaid
 flowchart TD
-    MR[GitLab Merge Request Event] --> Prepare[Stage 1: prepare\nBuild Immutable Input Bundle]
-    Prepare -->|input_bundle/| Reviewers[Stage 2: review\nParallel Reviewer Fan-Out]
+    MR[GitLab Merge Request Event] --> Prepare[ai_review DAG: prepare\nBuild Immutable Input Bundle]
+    Prepare -->|input_bundle/| Reviewers[ai_review DAG: review\nParallel Reviewer Fan-Out]
 
     subgraph Panel ["Reviewer Panel (Isolated Containers)"]
-        Claude[review_claude\nClaude Haiku 4.5\nclaude-code CLI]
-        Codex[review_codex\nGPT-5.4-mini\ncodex exec CLI]
-        OpenCode[review_opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
+        Claude[AI review: claude\nClaude Haiku 4.5\nclaude-code CLI]
+        Codex[AI review: codex\nGPT-5.4-mini\ncodex exec CLI]
+        OpenCode[AI review: opencode\nGemini 3.1 Flash Lite\nopencode run CLI]
     end
 
     Reviewers --> Claude
@@ -49,20 +47,23 @@ flowchart TD
     OpenCode -->|out/findings/opencode.json| Critique
 
     subgraph CritiqueStage ["Critique Phase (Optional Phase 5)"]
-        Critique[Stage 3: critique\nBlind Cross-Examination]
+        Critique[ai_review DAG: critique\nBlind Cross-Examination]
     end
 
-    Critique -->|pooled_findings & critiques| Consensus[Stage 4: consensus\nCanonical Hashing & Quorum Voting]
-    Consensus -->|Canonical Hashing & Deduplication| Post[Stage 5: post\nGitLab Discussions & State Note]
-    Post -->|Discussion Threads & State Note| Gate[Stage 6: gate\nCI Pipeline Gate Evaluation]
+    Critique -->|pooled_findings & critiques| Consensus[ai_review DAG: consensus\nCanonical Hashing & Quorum Voting]
+    Consensus -->|Canonical Hashing & Deduplication| Post[ai_review DAG: post\nGitLab Discussions & State Note]
+    Post -->|Discussion Threads & State Note| Gate[ai_review DAG: gate\nCI Pipeline Gate Evaluation]
     Gate -->|CI Job Pass / Fail| Verdict{Merge Gate Decision}
 ```
 
 ---
 
-## 6-Stage CI Pipeline Execution Lifecycle
+## Single-Stage CI DAG Execution Lifecycle
 
-The pipeline executes sequentially across 6 distinct stages defined in [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
+The pipeline uses one `ai_review` stage with six logical phases ordered by
+`needs`. This keeps consumer pipelines compact without sacrificing artifact or
+failure dependencies. The same DAG can run directly or in a mirrored child
+pipeline.
 
 ### 1. `prepare` (Input Bundle Packaging)
 - Executed by `python -m ai_review.input_bundle prepare`.
@@ -73,18 +74,17 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
   - `manifest.json`: Commit SHAs, project/MR IDs, target branch metadata.
   - `state_aliases.json`: Historical issue context hashes and discussion IDs.
   - `config.review.yaml`: Active runtime configuration.
-- Outputs `out/status/prepare.json`.
 
 ### 2. `review` (Parallel Reviewer Fan-Out)
-- Executes `review_claude`, `review_codex`, and `review_opencode` in parallel (`allow_failure: true`).
+- Executes `AI review: [claude]`, `AI review: [codex]`, and `AI review: [opencode]` in parallel (`allow_failure: true`). The bracket suffixes preserve reviewer identity while allowing GitLab's regular pipeline graph to collapse the jobs into one group.
 - Each reviewer job runs inside `$AI_REVIEW_REVIEWER_IMAGE` executing wrapper scripts ([ai-review/adapters/run_reviewer.sh](ai-review/adapters/run_reviewer.sh)).
 - Output findings are strictly validated against [ai-review/schemas/finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json).
 - Status reports are saved to `out/status/<reviewer>.json`.
 
 ### 3. `critique` (Blind Cross-Examination - Optional)
-- Active when `critique.enabled: true` (and `critique.rounds: 1`). Executes `critique_claude`, `critique_codex`, and `critique_opencode`. Both the CI job-creation rule and the config value are driven by the single `AI_REVIEW_CRITIQUE_ENABLED` variable (see [Runtime Environment Overrides](#runtime-environment-overrides)), so the two layers cannot drift apart.
+- Active when `critique.enabled: true` (and `critique.rounds: 1`). The GitLab template uses `AI_REVIEW_CRITIQUE_ENABLED` for both job creation and runtime config. The GitHub template always creates the critique matrix so artifact dependencies remain stable; when disabled, each runner emits a skipped artifact without calling a model.
 - Pools findings from all successful reviewers into anonymized batches (`reviewer_A`, `reviewer_B`) stripped of reviewer identities.
-- Reviewers evaluate peer findings, producing agreement (`agree`), rebuttal (`disagree`), duplicate (`duplicate`), or unverifiable (`unverifiable`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
+- Reviewers evaluate peer findings, producing agreement (`agree`), dispute (`dispute`), noise (`noise`), or duplicate (`duplicate`) verdicts against [ai-review/schemas/critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json).
 
 ### 4. `consensus` (Deduplication & Quorum Voting)
 - Executed by `python -m ai_review.consensus`.
@@ -108,7 +108,6 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
   - Skips unchanged existing discussions (`skipped_unchanged`).
   - Updates discussion text if body content changed.
 - Posts or updates a summary comment for multiline/fallback findings.
-- If Jira is enabled, discovers Jira issue keys (`jira_client.py`) and posts idempotent Jira comments.
 - Writes an updated hidden state note (`ai-review-state:v1`) containing base64url-encoded state payload with SHA-256 integrity checksum.
 - Outputs `out/post/post_result.json` matching [ai-review/schemas/post_result.schema.json](ai-review/schemas/post_result.schema.json).
 
@@ -121,191 +120,9 @@ The pipeline executes sequentially across 6 distinct stages defined in [ai-revie
 
 ---
 
-## Complete Configuration Reference (`config/review.yaml`)
+## Active configuration surface
 
-System behavior is configured in [ai-review/config/review.yaml](ai-review/config/review.yaml). The full, un-trimmed specification is shown below:
-
-```yaml
-schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
-
-# Configured LLM reviewer backends
-reviewers:
-  claude:
-    enabled: true
-    adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
-    model: claude-haiku-4.5 # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_turns: 4 # Max multi-turn agentic turns permitted
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-  codex:
-    enabled: true
-    adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
-    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-  opencode:
-    enabled: true
-    adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
-    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter
-    timeout_seconds: 900 # Execution timeout per reviewer job
-    max_findings: 50 # Cap on raw findings emitted before consensus filtering
-    credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
-    cli_version: "pinned-by-image" # CLI binary versioning strategy ('pinned-by-image' uses pre-installed container version)
-
-# Panel voting and consensus aggregation rules
-panel:
-  expected_reviewers: 3 # Number of configured reviewers expected to execute
-  min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
-  min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
-  quorum:
-    mode: absolute # Voting calculation scheme (unused / reserved in schema)
-    votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
-  # Declarative degradation policy schema (unused / reserved in code; runtime logic uses min_successful_reviewers_for_blocking)
-  degraded_behavior:
-    successful_reviewers_0: fail_pipeline_infra
-    successful_reviewers_1: advisory_only
-    successful_reviewers_2: blocking_allowed_with_2_of_2
-    successful_reviewers_3: blocking_allowed_with_2_of_3
-
-# Priority order of finding severities (lowest to highest)
-severity_order:
-  - info
-  - minor
-  - major
-  - blocker
-
-# Allowed classification domains for review findings
-categories:
-  - security
-  - correctness
-  - performance
-  - maintainability
-  - style
-  - test
-  - other
-
-# Severity rules governing MR merge blocking and consensus requirements
-severity_policy:
-  single_reviewer_blocker:
-    categories: [security, correctness] # Finding categories eligible for single-reviewer blocker reporting
-    post: true
-    block_merge: false # Require consensus quorum to block merge; single-reviewer blockers act as advisory flags
-    human_ack_recommended: true # Flag finding for human reviewer acknowledgment
-  quorum_blocker:
-    post: true
-    block_merge: true # Block MR merge when consensus quorum agrees on a blocker finding
-  # Reserved schema section for majority noise handling (unused / reserved in schema)
-  majority_noise:
-    decision: drop
-
-# Optional multi-agent cross-examination phase (critique)
-critique:
-  enabled: true
-  rounds: 1 # Current critique round count
-  max_rounds: 1 # Max critique iteration rounds allowed
-  blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
-  can_add_quorum_votes: false # Must be false in v1 schema
-  allow_advisory_escalation: true # Permit critique phase to escalate advisory findings to blocking status
-  allow_severity_downgrade: true # Permit reviewers to lower finding severity during critique upon agreement
-
-# Placement and formatting rules for MR inline comments & summaries
-posting:
-  mode: gitlab_discussions # Integration backend target for discussions
-  v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
-  inline_multiline: true # Support multiline diff range comments
-  fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
-  marker_version: ai-review:v1 # Bot comment header tag to track existing threads across runs
-  update_existing_threads: true # Update existing bot comments on re-run instead of creating duplicates
-  fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
-  stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
-  post_lock_resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}" # GitLab lock group pattern to prevent concurrent posting race conditions
-
-# Merge gating integration rules
-merge_gate:
-  enabled: true
-  mechanism: ci_job_failure # Enforce merge block by failing the CI pipeline job (declarative spec)
-  required_project_setting: pipelines_must_succeed # Prerequisite GitLab project merge request setting (declarative spec)
-  stale_head_behavior: pass_noop # Reserved schema field (unused / reserved in schema)
-
-# Persistent state management across pipeline runs
-state:
-  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR)
-  marker_version: ai-review-state:v1 # State note payload version identifier
-  recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
-  checksum_required: true # Require SHA256 integrity check on state note content
-  retention:
-    keep_open: true # Preserve state records for open findings
-    keep_wontfix: true # Preserve state records marked as won't fix
-    keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
-    keep_superseded_runs: 2 # Retention depth for superseded run records
-    max_records: 200 # Max state entry count
-    max_state_bytes: 50000 # Max byte size for state payload note
-    overflow_behavior: fail_closed # Fail pipeline if state payload exceeds size/record limits
-
-# Optional Jira integration specification (unused / reserved for future Jira integration)
-jira:
-  enabled: false
-  deployment: cloud # Jira deployment model ('cloud' or 'server')
-  issue_key_patterns:
-    - "[A-Z][A-Z0-9]+-[0-9]+" # Regex pattern to detect Jira issue keys in branch names or PR metadata
-  auth:
-    cloud:
-      email_variable: JIRA_EMAIL # Environment variable for Jira service account email
-      api_token_variable: JIRA_API_TOKEN # Environment variable for Jira API token
-      base_url_variable: JIRA_BASE_URL # Environment variable for Jira base URL
-  comments:
-    enabled: true
-    idempotent_marker: ai-review-jira:v1 # Header tag for Jira comments to prevent duplicate posting
-  transitions:
-    enabled: false
-    on_first_post: null # Jira status name for initial finding post transition
-    on_blocker: null # Jira status name for blocker finding transition
-    dry_run: true # Log transitions without executing live Jira API updates
-
-# Safety limits for diff size, findings, and prompts
-limits:
-  max_diff_bytes: 250000 # Max git diff payload size in bytes accepted for review
-  max_files: 200 # Max number of changed files analyzed per review run
-  max_findings_per_reviewer: 50 # Hard limit on findings per reviewer
-  max_posted_surface_findings: 25 # Limit on inline posted comments to prevent MR thread spam
-  max_fyi_findings: 50 # Cap on non-blocking findings in MR summary comment
-  max_prompt_bytes: 500000 # Max prompt payload size in bytes sent to model APIs
-
-# Cost ceiling and concurrency controls
-budget:
-  per_job_usd_max: 2.00 # Max API spend limit per single CI job (declarative spec)
-  per_mr_usd_max: 12.00 # Max cumulative spend limit per Merge Request (declarative spec)
-  per_project_daily_usd_max: 100.00 # Daily project-wide spend ceiling (declarative spec)
-  max_concurrent_mrs: 4 # Concurrency limit on active MR reviews (declarative spec)
-  max_concurrent_model_jobs: 12 # Concurrency limit on parallel LLM calls (declarative spec)
-  backend: none # Spend tracking backend ('none' disables budget check in adapter runner)
-  on_budget_exceeded: advisory_skip # Reserved schema field for budget overrun behavior (unused / reserved in schema)
-
-# Security and sandbox configuration (declarative container/pipeline security specification)
-security:
-  reviewers_can_run_shell: false # Restrict reviewers from executing shell commands
-  reviewers_can_modify_files: false # Restrict reviewers from editing repository files
-  reviewers_have_gitlab_token: false # Restrict exposing GitLab API tokens to reviewer processes
-  reviewers_have_jira_token: false # Restrict exposing Jira tokens to reviewer processes
-  network_egress: provider_api_only # Reserved schema field for container network egress boundary (unused / reserved in schema)
-  allow_external_fork_secrets: false # Block secret environment variables on external fork pipelines
-  redact_logs: true # Redact sensitive keys and tokens from CI execution logs
-```
-
-### Panel Degradation Matrix
-
-| Successful Reviewers | Operational Mode | Quorum Required | Blocking Allowed? | System Action |
-|---|---|---|---|---|
-| **3 / 3** | Full Panel | 2 of 3 votes | Yes | Full consensus evaluation; blocking allowed with 2-of-3 quorum. |
-| **2 / 3** | Degraded Mode | 2 of 2 votes | Yes | Requires unanimous agreement of surviving reviewers. |
-| **1 / 3** | Advisory Mode | N/A | No | Findings posted as non-blocking summary/FYI comments. |
-| **0 / 3** | Infra Failure | N/A | Yes (Fails Pipeline) | Infrastructure error; pipeline fails closed before posting. |
-
----
+The shipped [runtime configuration](ai-review/config/review.yaml) contains only controls consumed by production code. Future or paused controls are intentionally absent rather than exposed as reserved placeholders.
 
 ## Security Model & Container Isolation
 
@@ -320,19 +137,19 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
 |  |                                     |   |                                   |  |
 |  | - Access to GITLAB_WRITE_TOKEN      |   | - Isolated Read-Only /opt/ai-review|  |
 |  | - Full git access                   |   | - ONLY OPENROUTER_API_KEY exposed |  |
-|  | - Posts Discussions & State Notes   |   | - Network: https://openrouter.ai  |  |
+|  | - Posts Discussions & State Notes   |   | - Provider access: CLI-policy dependent |  |
 |  +-------------------------------------+   | - Shell & File Edits DENIED       |  |
 |                                            +-----------------------------------+  |
 +-----------------------------------------------------------------------------------+
 ```
 
 - **Trusted Root (`/opt/ai-review`)**: Reviewer CLIs and Python runtime execute code strictly from `/opt/ai-review` inside pre-built Docker images, isolated from MR-controlled code.
-- **Credential Separation**: Reviewer containers receive only `OPENROUTER_API_KEY` (or `ANTHROPIC_BASE_URL` mapping) and have **no access** to `GITLAB_TOKEN`, `JIRA_API_TOKEN`, or local host permissions.
+- **Credential Separation**: Reviewer containers receive only `OPENROUTER_API_KEY` (or `ANTHROPIC_BASE_URL` mapping) and have **no access** to GitLab write tokens or local host permissions.
 - **CLI Hardening**:
   - **Claude Code**: Invoked via `claude.sh` with stream output parsing and disabled legacy model remap.
   - **Codex CLI**: Executed via `codex.sh` with `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`.
   - **OpenCode CLI**: Invoked via `opencode.sh` with `opencode --pure run --agent ai-reviewer --format json` in an isolated directory with `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, and `OPENCODE_DISABLE_LSP_DOWNLOAD=1`.
-- **Egress Control**: Network calls are restricted to OpenRouter API endpoints (`https://openrouter.ai/api/v1`).
+- **Egress Control**: Provider endpoint pinning is enforced in adapter validation, but runner/container network egress is CLI-policy-dependent and not yet enforced at the container layer (tracked by H2/SPEC-06).
 - **Immutable Container Images**: Pre-built base and reviewer container images are preflighted and signed/attested via GitHub Actions.
 
 ---
@@ -345,7 +162,7 @@ All inter-stage data exchanges are governed by 9 JSON Schemas located in [ai-rev
 |---|---|---|
 | [finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json) | `finding_batch.v1` | Reviewer finding output (category, severity, line numbers, anchor code, title, body, confidence, suggested_fix). |
 | [raw_finding_batch.schema.json](ai-review/schemas/raw_finding_batch.schema.json) | N/A | Intermediate schema used for CLI structured output validation (e.g. Codex CLI `--output-schema`). |
-| [critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json) | `critique_batch.v1` | Peer cross-examination verdicts (`agree`, `disagree`, `duplicate`, `unverifiable`). |
+| [critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json) | `critique_batch.v1` | Peer cross-examination verdicts (`agree`, `dispute`, `noise`, `duplicate`). |
 | [consensus.schema.json](ai-review/schemas/consensus.schema.json) | `consensus.v1` | Deduplicated findings, vote tallies, surfaced/FYI classification, and `block_merge` decision. |
 | [state.schema.json](ai-review/schemas/state.schema.json) | `state.v1` | Hidden state payload tracking active/resolved/wontfix/superseded issues across MR commits. |
 | [state_aliases.schema.json](ai-review/schemas/state_aliases.schema.json) | `state_aliases.v1` | State alias records passed to `prepare` for historical issue matching across commits. |
@@ -406,28 +223,95 @@ make validate-local
 
 To integrate Code Tribunal into downstream projects:
 
-1. **Declare Stages & Include CI Template**: Add the AI review stages to your root `.gitlab-ci.yml` `stages:` list and include [ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml):
+> **Unreleased compatibility note:** the grouped job names replace
+> `review_<reviewer>` and `critique_<reviewer>`. Consumers with custom `needs`,
+> overrides, dashboards, or scripts that reference those identifiers must move
+> to `AI review: [reviewer]` and `AI critique: [reviewer]` before adopting this
+> template revision.
+
+| Previous job | Grouped job |
+|---|---|
+| `review_claude` | `AI review: [claude]` |
+| `review_codex` | `AI review: [codex]` |
+| `review_opencode` | `AI review: [opencode]` |
+| `critique_claude` | `AI critique: [claude]` |
+| `critique_codex` | `AI critique: [codex]` |
+| `critique_opencode` | `AI critique: [opencode]` |
+
+1. **Choose direct or child-pipeline integration from a trusted template project.**
+
+   Direct mode adds one stage to the consumer pipeline:
+
    ```yaml
    stages:
-     - prepare
-     - review
-     - critique
-     - consensus
-     - post
-     - gate
-     # ... your existing pipeline stages (e.g. build, test, deploy)
+     # ... existing stages
+     - ai_review
+     # ... later stages such as deploy
 
    include:
-     - local: 'ai-review/ci/review.gitlab-ci.yml'
+     - project: 'org/code-tribunal-ci'
+       ref: '<40-character-template-commit-sha>'
+       file: '/ai-review/ci/review.gitlab-ci.yml'
    ```
 
+   Child-pipeline mode keeps the parent graph to one mirrored bridge job. The
+   bridge starts immediately, while later stages still wait for the child gate:
+
+   ```yaml
+   stages:
+     # ... existing stages
+     - ai_review
+     # ... later stages such as deploy
+
+   ai_review:
+     stage: ai_review
+     needs: []
+     inherit:
+       variables: false
+     rules:
+       - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+       - if: '$CI_PIPELINE_SOURCE == "web"'
+       - if: '$CI_PIPELINE_SOURCE == "api"'
+     trigger:
+       include:
+         - project: 'org/code-tribunal-ci'
+           ref: '<40-character-template-commit-sha>'
+           file: '/ai-review/ci/review-child.gitlab-ci.yml'
+         - project: 'org/code-tribunal-ci'
+           ref: '<same-40-character-template-commit-sha>'
+           file: '/ai-review/ci/review.gitlab-ci.yml'
+       strategy: mirror
+       forward:
+         yaml_variables: false
+         pipeline_variables: false
+   ```
+
+   **Child mode must use exactly those two project includes.** Do not add string,
+   local, remote, component, template, duplicate, or third project entries to
+   `trigger:include`. Host the templates in a separate protected project,
+   require CODEOWNERS approval, and pin both files to the same reviewed full
+   commit SHA.
+
+   The bridge must not define `variables`, and both forwarding flags must remain
+   explicitly disabled. Forwarded values become high-precedence downstream
+   pipeline variables and could otherwise replace trusted image, configuration,
+   endpoint, or mock-mode settings. Root variables for unrelated parent jobs are
+   safe only because `inherit:variables: false` and the two forwarding guards
+   isolate them from the child.
+
+   Direct mode shares the parent pipeline's configuration namespace. Other
+   top-level or transitive includes can redefine jobs after a local audit, so
+   use child mode for the strongest isolation. If direct mode is required,
+   protect the root CI configuration and every included source with approval or
+   a GitLab pipeline execution policy.
+
 2. **Image Variables & Cutover State**:
-   `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
+   `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
    ```yaml
    variables:
-     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:00caceacc7e86c59007cf4fd1b6dfd81bfe615122a6667e874c23b90ac8bde66"
-     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:8006f10aab52783697c474a4a5c51e0253b16fa1dd432f98b09dbb2100318fd5"
-     AI_REVIEW_TRUSTED_IMAGE_SHA: "f7f149089b85516c004e31255e6e57ac461ffed7"
+     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701"
+     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a"
+     AI_REVIEW_TRUSTED_IMAGE_SHA: "6e084960750a46faf0235a9641bdba1f97074555"
    ```
    **GHCR Cutover Procedure**: When [.github/workflows/publish-ai-review-images.yml](.github/workflows/publish-ai-review-images.yml) runs on `main` and publishes a newer commit, update these 3 variables together in `ai-review/ci/review.gitlab-ci.yml` to use the new immutable GHCR `@sha256:` digest refs provided in the workflow summary:
    ```yaml
@@ -439,14 +323,31 @@ To integrate Code Tribunal into downstream projects:
 
 3. **Configure GitLab CI/CD Variables** (Settings -> CI/CD -> Variables):
 
-| Variable | Description | Masked | Required |
-|---|---|---|---|
-| `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes |
-| `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes |
-| `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes |
-| `JIRA_EMAIL` | Jira Cloud user email (if Jira integration enabled). | No | Optional |
-| `JIRA_API_TOKEN` | Jira API Token (if Jira integration enabled). | Yes | Optional |
-| `JIRA_BASE_URL` | Jira instance URL e.g. `https://yourdomain.atlassian.net`. | No | Optional |
+| Variable | Description | Masked | Protected | Required |
+|---|---|---|---|---|
+| `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
+| `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes | Yes |
+| `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes | Yes |
+
+Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
+
+```bash
+PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+  path/to/.gitlab-ci.yml \
+  --mode child \
+  --template-project org/code-tribunal-ci \
+  --template-sha <40-character-template-commit-sha>
+```
+
+Use `--mode direct` for direct integration. Supply the expected project and SHA
+from protected deployment configuration, not from merge-request-controlled CI
+variables. The auditor validates the local composition; it does not inspect the
+expanded contents of unrelated or transitive includes.
+
+
+### Upgrade note: render body hash v1
+
+This release folds `RENDER_BODY_VERSION` into AI review discussion `body_hash` values. The posted Markdown body is intentionally unchanged, but existing `ai-review:v1` markers from older builds will not match the new hash input. Operators should expect a one-time update of existing bot-authored AI review threads on the next run after upgrading.
 
 4. **Required GitLab Project Settings**:
    - Enable **Pipelines must succeed** (Settings -> General -> Merge requests).
@@ -468,26 +369,40 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_CODEX_MODEL` | `reviewers.codex.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_OPENCODE_MODEL` | `reviewers.opencode.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_<REVIEWER>_ENABLED` | `reviewers.<name>.enabled` | Strict `true`/`false`. Disabling below `panel.min_successful_reviewers_for_blocking` fails validation loudly. |
-| `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled` **and** critique job creation | The CI template sets this to `"true"` by default and the critique-job rule keys off the exact same variable, so config behavior and CI job-creation stay in lock-step. |
+| `AI_REVIEW_<REVIEWER>_EFFORT` | `reviewers.<name>.effort` | Reasoning/exploration effort, one of `low`/`medium`/`high`/`xhigh`/`max` (anything else fails config validation). Voluntary stopping, not a turn cap. Currently consumed only by the claude adapter (`--effort`). |
+| `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled`; GitLab critique job creation | The GitLab template gates job creation on this value. The GitHub template always creates the matrix and emits skipped artifacts without model calls when set to `false`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `merge_gate.enabled` | Run in advisory (non-blocking) mode without a rebuild. |
-| `AI_REVIEW_MANUAL` | Trigger mode for `prepare_ai_review` | `"true"` = non-blocking manual trigger on MRs; unset = auto-run. |
+| `AI_REVIEW_POSTING_MODE` | `posting.mode` | Select `gitlab_discussions` or `github_reviews`; set consistently in every job. |
+| `AI_REVIEW_STATE_BACKEND` | `state.backend` | Select the matching state backend; GitHub workflows use `github_pr_comment`. |
+| `AI_REVIEW_GITHUB_BOT_LOGIN` | GitHub state-author lookup | Required under GitHub Actions. Set it to the bot account that owns Code Tribunal comments; writes are rejected if GitHub attributes them to a different account. The installed workflow uses `github-actions[bot]` because its installation token cannot call the user-token `/user` endpoint. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `panel.grouping.semantic.enabled` | Strict `true`/`false`. Enables deterministic title/body similarity grouping; keep disabled until calibrated on the labeled corpus. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `panel.grouping.semantic.threshold` | Floating-point Jaccard threshold from `0.0` to `1.0`; validated at config load. |
+| `AI_REVIEW_MANUAL` | Review trigger mode | In GitLab, set the CI/CD variable to `"true"` for a non-blocking manual entry job. In GitHub, set the Actions repository variable (not a secret) to `true` to skip all jobs in automatic PR runs, then run **AI Review** manually with a PR number. GitHub evaluates workflow triggers before repository variables, so the skipped workflow run still appears in Actions. Unset = auto-run. |
 
-All boolean variables above must be **exactly `true` or `false`** (lowercase, no
-surrounding whitespace) — a byte-for-byte match of GitLab's `== "true"` rule. Any
-other value (`TRUE`, `1`, `yes`, `" true "`, a typo like `flase`) fails the pipeline
-loudly rather than silently no-op'ing or diverging from CI job-creation.
+Boolean configuration overrides above must be **exactly `true` or `false`**
+(lowercase, no surrounding whitespace). `AI_REVIEW_MANUAL` is a CI trigger
+control rather than a configuration override: only the exact value `true`
+selects manual mode; any other value leaves automatic review enabled.
+
+Golden consensus snapshots can be refreshed after intentional reducer output
+changes with `make update-golden`; review the resulting fixture diff before merging.
 
 > **Notes:**
 > - These variables are read at runtime, but the *code that reads them* ships inside
 >   the container image. A given image build must already contain this logic; after
 >   that, changing the values above needs no further rebuild. Deeper policy
->   (`panel.quorum`, `severity_policy`, budgets) intentionally stays in the
+>   (`panel.quorum`, `severity_policy`) intentionally stays in the
 >   version-pinned `review.yaml` — override the whole file via `AI_REVIEW_CONFIG` if
 >   you need to change it.
 > - Set these as **project-level** CI/CD variables so every job in the pipeline sees
 >   the same value. The prepare stage records the effective config into
 >   `inputs/manifest.json`, and the consensus stage re-derives it and **warns** if its
 >   own view disagrees — a signal that a variable was scoped to only some jobs.
+> - Child mode deliberately does not accept YAML, manual, scheduled, API, or
+>   trigger pipeline variables from its parent. Configure approved runtime
+>   options as protected project/group variables in GitLab settings. Introduce
+>   typed child-pipeline inputs for any future per-run option; do not re-enable
+>   general forwarding.
 
 ---
 
@@ -512,12 +427,12 @@ The system was implemented and validated across 6 milestone phases:
 
 | Phase | Milestone | Scope & Acceptance Evidence | Status |
 |---|---|---|---|
-| **Phase 1** | Local Harness & Schema Validation | Local harness setup, schema validation, Claude Code CLI smoke test ([ai-review/PHASE_1_ACCEPTANCE.md](ai-review/PHASE_1_ACCEPTANCE.md)). | Accepted |
-| **Phase 2** | CLI Reviewers via OpenRouter | Parallel fan-out (`claude`, `codex`, `opencode`) via OpenRouter ([ai-review/PHASE_2_ACCEPTANCE.md](ai-review/PHASE_2_ACCEPTANCE.md)). | Accepted |
-| **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/PHASE_3_ACCEPTANCE.md](ai-review/PHASE_3_ACCEPTANCE.md)). | Accepted |
-| **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/PHASE_4_ACCEPTANCE.md](ai-review/PHASE_4_ACCEPTANCE.md)). | Accepted |
-| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/PHASE_5_ACCEPTANCE.md](ai-review/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
-| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/PHASE_5_5_ACCEPTANCE.md](ai-review/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, anonymous pull-by-digest, and the GitLab CI cutover to the published digests are all verified. | Accepted |
+| **Phase 1** | Local Harness & Schema Validation | Local harness setup, schema validation, Claude Code CLI smoke test ([ai-review/docs/acceptance/PHASE_1_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_1_ACCEPTANCE.md)). | Accepted |
+| **Phase 2** | CLI Reviewers via OpenRouter | Parallel fan-out (`claude`, `codex`, `opencode`) via OpenRouter ([ai-review/docs/acceptance/PHASE_2_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_2_ACCEPTANCE.md)). | Accepted |
+| **Phase 3** | Consensus & GitLab State Upsert | Quorum engine, idempotent MR discussion upsert, and merge gating ([ai-review/docs/acceptance/PHASE_3_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_3_ACCEPTANCE.md)). | Accepted |
+| **Phase 4** | Anchor Drift & Revision Matching | State notes (`ai-review-state:v1`), canonical hashing, and line remapping ([ai-review/docs/acceptance/PHASE_4_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_4_ACCEPTANCE.md)). | Accepted |
+| **Phase 5** | Blind Cross-Examination (Critique) | Anonymized peer critique phase, pool generation, and verdict aggregation ([ai-review/docs/acceptance/PHASE_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_ACCEPTANCE.md)). Critique now ships permanently enabled in the trusted config; see the worked example below. | Accepted |
+| **Phase 5.5** | Public GHCR Container Publishing | Multi-stage image build, preflight verification, and GHCR publishing ([ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md)). Public publish, attestation, anonymous pull-by-digest, and the GitLab CI cutover to the published digests are all verified. | Accepted |
 
 ---
 
@@ -537,16 +452,12 @@ code-tribunal/
 ├── .github/
 │   └── workflows/
 │       └── publish-ai-review-images.yml       # GHCR image build, preflight, & attestation workflow
-├── specs/
-│   └── ai-review-implementation-ready-spec.md # Technical specification & build requirements
+├── docs/
+│   ├── improvement-specs/                    # Completed specs and reconciliation audit
+│   └── archived-improvement-plans/           # Paused and superseded plans
 └── ai-review/
     ├── README.md                              # Subsystem sitemap & operational guide
-    ├── PHASE_1_ACCEPTANCE.md                  # Phase 1 acceptance record
-    ├── PHASE_2_ACCEPTANCE.md                  # Phase 2 acceptance record
-    ├── PHASE_3_ACCEPTANCE.md                  # Phase 3 acceptance record
-    ├── PHASE_4_ACCEPTANCE.md                  # Phase 4 acceptance record
-    ├── PHASE_5_ACCEPTANCE.md                  # Phase 5 acceptance record
-    ├── PHASE_5_5_ACCEPTANCE.md                # Phase 5.5 acceptance record
+    ├── docs/acceptance/                       # Acceptance evidence records
     ├── EXAMPLE_PIPELINE_WALKTHROUGH.md        # Worked example: one real pipeline run, stage by stage
     ├── adapters/                              # Shell wrappers for model CLI tools
     │   ├── run_reviewer.sh                    # Reviewer execution dispatcher & env isolation
@@ -557,7 +468,7 @@ code-tribunal/
     │   ├── review.gitlab-ci.yml               # Production 6-stage review pipeline template
     │   └── build-images.gitlab-ci.yml         # Internal container image build pipeline
     ├── config/
-    │   └── review.yaml                        # Core system configuration (panel, quorum, limits, jira)
+    │   └── review.yaml                        # Core system configuration (panel, quorum, limits)
     ├── images/                                # Dockerfiles for base & reviewer images
     │   ├── base.Dockerfile
     │   └── reviewer.Dockerfile
@@ -582,14 +493,12 @@ code-tribunal/
             ├── __init__.py
             ├── adapter_runner.py              # Runner subprocess dispatch, timeout & log redaction
             ├── anchors.py                     # Diff line parsing & fuzzy anchor drift remapping
-            ├── budget.py                      # Budget checking interface (default no-op)
             ├── canonical.py                   # Canonical JSON formatting & SHA-256 context hashing
             ├── config.py                      # Config loader (review_config.v1) & default merger
             ├── consensus.py                   # Deduplication, quorum voting, panel degradation logic
             ├── gate.py                        # CI merge gate evaluator
             ├── gitlab_client.py               # GitLab API client (discussions, notes, DiffNotes)
             ├── input_bundle.py                # Diff extraction & input bundle packager
-            ├── jira_client.py                 # Jira issue key discovery & ADF summary formatting
             ├── memory.py                      # Historical state matching & record reconciliation
             ├── mock_reviewer.py               # Deterministic mock reviewer for offline testing
             ├── openrouter_reviewer.py         # OpenRouter direct Chat Completions client
@@ -600,4 +509,4 @@ code-tribunal/
             └── trigger.py                     # Pipeline trigger evaluator helper
 ```
 
-For complete technical specifications and implementation details, refer to the [Full Specification Document](specs/ai-review-implementation-ready-spec.md).
+For completed requirements and implementation gaps, see the [improvement-spec completion audit](docs/improvement-specs/completion-audit.md).

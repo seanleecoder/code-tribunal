@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -9,8 +11,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.adapter_runner import _EXIT_ERROR, _load_adapter_json, run_adapter
-from ai_review.budget import BudgetDecision
+from ai_review.adapter_runner import (
+    _EXIT_ERROR,
+    _cli_reviewer_validation_error,
+    _load_adapter_json,
+    run_adapter,
+)
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -20,30 +26,15 @@ from ai_review.schema import (
 
 _CONFIG_TAIL = [
     "panel:",
-    "  expected_reviewers: 1",
     "  min_successful_reviewers_for_blocking: 1",
     "  min_successful_reviewers_for_resolution: 1",
     "  quorum:",
-    "    mode: absolute",
     "    votes_required: 1",
-    "severity_order:",
-    "  - info",
-    "  - minor",
-    "  - major",
-    "  - blocker",
-    "categories:",
-    "  - correctness",
     "severity_policy:",
     "  single_reviewer_blocker:",
     "    categories: [correctness]",
-    "    post: true",
-    "    block_merge: false",
-    "    human_ack_recommended: true",
     "  quorum_blocker:",
-    "    post: true",
     "    block_merge: true",
-    "  majority_noise:",
-    "    decision: drop",
     "critique:",
     "  enabled: false",
     "  rounds: 0",
@@ -55,20 +46,34 @@ _CONFIG_TAIL = [
     "  mode: gitlab_discussions",
     "merge_gate:",
     "  enabled: true",
-    "  mechanism: ci_job_failure",
-    "  required_project_setting: pipelines_must_succeed",
-    "  stale_head_behavior: pass_noop",
     "state:",
     "  backend: gitlab_mr_state_note",
-    "jira:",
-    "  enabled: false",
     "limits:",
     "  max_prompt_bytes: 500000",
-    "budget:",
-    "  backend: none",
     "security:",
-    "  redact_logs: true",
+    "  allow_external_fork_secrets: false",
 ]
+
+
+class AdapterEndpointValidationTests(unittest.TestCase):
+    def test_claude_rejects_hostile_anthropic_openrouter_lookalike(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False
+        ):
+            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+
+        self.assertIsNotNone(error)
+        self.assertIn(
+            "ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api", error
+        )
+
+    def test_claude_accepts_canonical_anthropic_openrouter_base(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False
+        ):
+            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+
+        self.assertIsNone(error)
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):
@@ -94,7 +99,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "type": "result",
                 "subtype": "success",
                 "is_error": False,
-                "result": "```json\n{\"findings\":[]}\n```",
+                "result": '```json\n{"findings":[]}\n```',
             }
         )
         loaded = _load_adapter_json(stdout)
@@ -112,9 +117,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "is_error": False,
                 "result": (
                     "```json\n"
-                    "[{\"target_source_finding_id\":\"" + "1" * 64 + "\", "
-                    "\"critic\":\"claude\",\"verdict\":\"agree\","
-                    "\"adjusted_severity\":null,\"rationale\":\"valid\"}]\n"
+                    '[{"target_source_finding_id":"' + "1" * 64 + '", '
+                    '"critic":"claude","verdict":"agree",'
+                    '"adjusted_severity":null,"rationale":"valid"}]\n'
                     "```"
                 ),
             }
@@ -133,9 +138,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
     def test_loads_critique_array_before_unrelated_trailing_bracket(self) -> None:
         stdout = (
-            "[{\"target_source_finding_id\":\"" + "3" * 64 + "\", "
-            "\"critic\":\"claude\",\"verdict\":\"agree\","
-            "\"adjusted_severity\":null,\"rationale\":\"valid\"}]"
+            '[{"target_source_finding_id":"' + "3" * 64 + '", '
+            '"critic":"claude","verdict":"agree",'
+            '"adjusted_severity":null,"rationale":"valid"}]'
             "\ntrailing note ]"
         )
         loaded = _load_adapter_json(stdout, stage="critique")
@@ -150,9 +155,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                     {
                         "type": "text",
                         "text": (
-                            "[{\"target_source_finding_id\":\"" + "2" * 64 + "\", "
-                            "\"critic\":\"opencode\",\"verdict\":\"noise\","
-                            "\"adjusted_severity\":null,\"rationale\":\"too vague\"}]"
+                            '[{"target_source_finding_id":"' + "2" * 64 + '", '
+                            '"critic":"opencode","verdict":"noise",'
+                            '"adjusted_severity":null,"rationale":"too vague"}]'
                         ),
                     }
                 ),
@@ -212,6 +217,201 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterModelError, "error_max_turns"):
             _load_adapter_json(stdout)
 
+    def test_opencode_error_event_without_output_is_model_error(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "s"}),
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "name": "UnknownError",
+                            "data": {
+                                "message": (
+                                    '{"code":429,"metadata":'
+                                    '{"error_type":"rate_limit_exceeded"}}'
+                                )
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
+            _load_adapter_json(stdout)
+
+    def test_single_object_opencode_error_is_model_error(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "name": "UnknownError",
+                    "data": {
+                        "message": (
+                            '{"code":429,"metadata":'
+                            '{"error_type":"rate_limit_exceeded"}}'
+                        )
+                    },
+                },
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
+            _load_adapter_json(stdout)
+
+    def test_single_object_error_does_not_use_structured_output(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "error",
+                "error": {"message": "provider unavailable"},
+                "structured_output": {"findings": []},
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "provider unavailable"):
+            _load_adapter_json(stdout)
+
+    def test_stream_structured_output_preferred_over_result_text(self) -> None:
+        # With --json-schema the terminal result event carries the payload in
+        # structured_output; it must win over a fenced/noisy result string.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "not json at all"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "result": "```json\nnot even parseable\n```",
+                        "structured_output": {"findings": []},
+                    }
+                ),
+            ]
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        # Steering activity is stated in the job log so it is never silent.
+        self.assertIn("used structured_output", stderr.getvalue())
+
+    def test_stream_structured_output_critique_list_root(self) -> None:
+        critique = {
+            "target_source_finding_id": "4" * 64,
+            "critic": "claude",
+            "verdict": "agree",
+            "adjusted_severity": None,
+            "rationale": "valid",
+        }
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "result": "",
+                        "structured_output": [critique],
+                    }
+                ),
+            ]
+        )
+        loaded = _load_adapter_json(stdout, stage="critique")
+        self.assertEqual(loaded, {"critiques": [critique]})
+
+    def test_stream_structured_output_absent_falls_back_to_result_text(self) -> None:
+        # --json-schema is best-effort: structured_output is sometimes omitted,
+        # so the existing result-text path must keep working — and the job log
+        # must say steering was inactive (never silently).
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "result": '{"findings":[]}',
+                    }
+                ),
+            ]
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        self.assertIn("no structured_output", stderr.getvalue())
+
+    def test_opencode_stream_logs_no_structured_output_message(self) -> None:
+        # opencode streams have no terminal result event; the steering log
+        # would be noise there and must not appear either way.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "s"}),
+                json.dumps({"type": "text", "text": '{"findings":[]}'}),
+            ]
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            loaded = _load_adapter_json(stdout)
+        self.assertEqual(loaded, {"findings": []})
+        self.assertNotIn("structured_output", stderr.getvalue())
+
+    def test_stream_structured_output_on_error_event_is_ignored(self) -> None:
+        # A terminal error's structured_output must not be trusted; with no other
+        # usable content the run is a model error, same as before.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init"}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": "",
+                        "structured_output": {"findings": []},
+                    }
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(AdapterModelError, "error_during_execution"):
+            _load_adapter_json(stdout)
+
+    def test_single_envelope_structured_output_unwrapped(self) -> None:
+        # --output-format json shape (single result object): prefer
+        # structured_output over re-parsing the result string.
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "prose that is not JSON",
+                "structured_output": {"findings": []},
+            }
+        )
+        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
+
+    def test_single_envelope_error_ignores_structured_output(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "result": "boom",
+                "structured_output": {"findings": []},
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "error result"):
+            _load_adapter_json(stdout)
+
     def test_loads_stream_json_assistant_content(self) -> None:
         stdout = "\n".join(
             [
@@ -225,7 +425,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                         },
                     }
                 ),
-                json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": ""}),
+                json.dumps(
+                    {"type": "result", "subtype": "success", "is_error": False, "result": ""}
+                ),
             ]
         )
         loaded = _load_adapter_json(stdout)
@@ -259,9 +461,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
 
 class MaxTurnsEnvTests(unittest.TestCase):
-    def _run_turns_adapter(
-        self, *, config_max_turns: int | None, env_max_turns: str | None
-    ) -> str:
+    def _run_turns_adapter(self, *, config_max_turns: int | None, env_max_turns: str | None) -> str:
         # Drive a synthetic reviewer whose adapter echoes the AI_REVIEW_MAX_TURNS
         # it actually received, so the test observes what the runner exports.
         with tempfile.TemporaryDirectory() as tmp:
@@ -304,8 +504,9 @@ class MaxTurnsEnvTests(unittest.TestCase):
             )
             adapter = adapter_dir / "turns.sh"
             adapter.write_text(
-                '#!/bin/sh\n'
-                'printf "%s" "${AI_REVIEW_MAX_TURNS:-<unset>}" > "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
+                "#!/bin/sh\n"
+                'printf "%s" "${AI_REVIEW_MAX_TURNS:-<unset>}" '
+                '> "$AI_REVIEW_OUTPUT_DIR/max_turns_seen.txt"\n'
                 "printf '{\"findings\":[]}'\n",
                 encoding="utf-8",
             )
@@ -324,7 +525,12 @@ class MaxTurnsEnvTests(unittest.TestCase):
             config_path = config_dir / "review.yaml"
             config_path.write_text(
                 "\n".join(
-                    ["schema_version: review_config.v1", "reviewers:", *reviewer_lines, *_CONFIG_TAIL]
+                    [
+                        "schema_version: review_config.v1",
+                        "reviewers:",
+                        *reviewer_lines,
+                        *_CONFIG_TAIL,
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -357,22 +563,16 @@ class MaxTurnsEnvTests(unittest.TestCase):
     def test_reviewer_max_turns_is_exported_to_adapter(self) -> None:
         # Bug #13: the runner must export AI_REVIEW_MAX_TURNS from the reviewer config so
         # the adapter honours it instead of falling back to the literal default.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=7, env_max_turns=None), "7"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=7, env_max_turns=None), "7")
 
     def test_env_max_turns_passes_through_without_config(self) -> None:
         # No config max_turns (the claude default): an operator-set env override
         # must survive the sanitized adapter env and reach the adapter.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=None, env_max_turns="9"), "9"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=None, env_max_turns="9"), "9")
 
     def test_env_max_turns_wins_over_config(self) -> None:
         # When both are set, the runtime env override takes precedence over config.
-        self.assertEqual(
-            self._run_turns_adapter(config_max_turns=7, env_max_turns="9"), "9"
-        )
+        self.assertEqual(self._run_turns_adapter(config_max_turns=7, env_max_turns="9"), "9")
 
     def test_no_max_turns_leaves_env_unset(self) -> None:
         # Neither configured nor overridden: the adapter sees no cap at all
@@ -380,6 +580,120 @@ class MaxTurnsEnvTests(unittest.TestCase):
         self.assertEqual(
             self._run_turns_adapter(config_max_turns=None, env_max_turns=None), "<unset>"
         )
+
+
+class EffortEnvTests(unittest.TestCase):
+    def _run_effort_adapter(self, *, config_effort: str | None, env_effort: str | None) -> str:
+        # Synthetic reviewer whose adapter echoes AI_REVIEW_EFFORT, so the test
+        # observes exactly what the runner exports (config value, with the
+        # AI_REVIEW_<REVIEWER>_EFFORT override folded in at config load).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "ai-review"
+            config_dir = project / "config"
+            adapter_dir = project / "adapters"
+            prompt_dir = project / "prompts"
+            rules_dir = project / "rules"
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            for path in [config_dir, adapter_dir, prompt_dir, rules_dir, input_dir]:
+                path.mkdir(parents=True, exist_ok=True)
+            (prompt_dir / "review.md").write_text("Return JSON only.", encoding="utf-8")
+            (rules_dir / "README.md").write_text("rules", encoding="utf-8")
+            (input_dir / "mr.diff").write_text("", encoding="utf-8")
+            write_canonical_json(
+                input_dir / "manifest.json",
+                {
+                    "schema_version": "input_manifest.v1",
+                    "run_id": "local-test",
+                    "project_id": "local",
+                    "project_path": "local/project",
+                    "merge_request_iid": "1",
+                    "source_branch": "s",
+                    "target_branch": "t",
+                    "base_sha": "0" * 40,
+                    "start_sha": "0" * 40,
+                    "head_sha": "1" * 40,
+                    "diff_sha256": "0" * 64,
+                    "repo_snapshot_sha256": "0" * 64,
+                    "config_sha256": "0" * 64,
+                    "rules_sha256": "0" * 64,
+                    "created_at": "2026-06-29T00:00:00Z",
+                },
+            )
+            write_canonical_json(
+                input_dir / "prior_decisions.json",
+                {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
+            )
+            adapter = adapter_dir / "effort.sh"
+            adapter.write_text(
+                "#!/bin/sh\n"
+                'printf "%s" "${AI_REVIEW_EFFORT:-<unset>}" '
+                '> "$AI_REVIEW_OUTPUT_DIR/effort_seen.txt"\n'
+                "printf '{\"findings\":[]}'\n",
+                encoding="utf-8",
+            )
+            adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
+            reviewer_lines = [
+                "  effortrev:",
+                "    enabled: true",
+                "    adapter: adapters/effort.sh",
+                "    model: effort-model",
+                "    timeout_seconds: 30",
+                "    max_findings: 50",
+                "    credential_variable: EFFORT_KEY",
+            ]
+            if config_effort is not None:
+                reviewer_lines.insert(5, f"    effort: {config_effort}")
+            config_path = config_dir / "review.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "schema_version: review_config.v1",
+                        "reviewers:",
+                        *reviewer_lines,
+                        *_CONFIG_TAIL,
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            previous = {
+                "AI_REVIEW_INPUT_DIR": os.environ.get("AI_REVIEW_INPUT_DIR"),
+                "AI_REVIEW_OUTPUT_DIR": os.environ.get("AI_REVIEW_OUTPUT_DIR"),
+                "AI_REVIEW_CONFIG": os.environ.get("AI_REVIEW_CONFIG"),
+                "AI_REVIEW_EFFORTREV_EFFORT": os.environ.get("AI_REVIEW_EFFORTREV_EFFORT"),
+            }
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(config_path)
+            if env_effort is None:
+                os.environ.pop("AI_REVIEW_EFFORTREV_EFFORT", None)
+            else:
+                os.environ["AI_REVIEW_EFFORTREV_EFFORT"] = env_effort
+            try:
+                self.assertEqual(run_adapter("effortrev", "review"), 0)
+                seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
+                batch = load_json_file(output_dir / "findings" / "effortrev.json")
+                self.assertEqual(batch["adapter_status"], "success")
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            return seen
+
+    def test_config_effort_is_exported_to_adapter(self) -> None:
+        self.assertEqual(self._run_effort_adapter(config_effort="high", env_effort=None), "high")
+
+    def test_env_effort_override_wins_over_config(self) -> None:
+        # The AI_REVIEW_<REVIEWER>_EFFORT override is folded in at config load,
+        # so the adapter must see the override, not the yaml default.
+        self.assertEqual(self._run_effort_adapter(config_effort="medium", env_effort="low"), "low")
+
+    def test_no_effort_leaves_env_unset(self) -> None:
+        # Neither configured nor overridden: claude.sh then omits --effort.
+        self.assertEqual(self._run_effort_adapter(config_effort=None, env_effort=None), "<unset>")
 
 
 def _scaffold_project(root: Path) -> dict[str, Path]:
@@ -488,6 +802,75 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
 
+    def test_opencode_stream_error_status_is_model_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
+            stream = "\n".join(
+                [
+                    json.dumps({"type": "step_start", "sessionID": "s"}),
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "error": {
+                                "data": {
+                                    "message": (
+                                        '{"code":429,"metadata":'
+                                        '{"error_type":"rate_limit_exceeded"}}'
+                                    )
+                                }
+                            },
+                        }
+                    ),
+                ]
+            )
+            _write_adapter(
+                paths["adapter_dir"],
+                "opencode",
+                "#!/bin/sh\ncat <<'EOF'\n" + stream + "\nEOF\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
+            self.assertEqual(batch["adapter_status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "AdapterModelError")
+            self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
+
+    def test_opencode_single_object_error_status_is_model_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
+            error = json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "data": {
+                            "message": (
+                                '{"code":429,"metadata":'
+                                '{"error_type":"rate_limit_exceeded"}}'
+                            )
+                        }
+                    },
+                }
+            )
+            _write_adapter(
+                paths["adapter_dir"],
+                "opencode",
+                "#!/bin/sh\nprintf '%s\\n' '" + error + "'\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+
+            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "AdapterModelError")
+            self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
+
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
@@ -501,9 +884,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(batch["adapter_status"], "schema_error")
             status = load_json_file(paths["output_dir"] / "status" / "garbled.json")
             self.assertEqual(status["status"], "schema_error")
-            self.assertTrue(
-                (paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists()
-            )
+            self.assertTrue((paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists())
 
     def test_review_drops_malformed_finding_without_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -553,7 +934,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "mixed.json")
             self.assertEqual(batch["adapter_status"], "success")
-            self.assertEqual([finding["title"] for finding in batch["findings"]], ["Validate before indexing"])
+            self.assertEqual(
+                [finding["title"] for finding in batch["findings"]], ["Validate before indexing"]
+            )
             status = load_json_file(paths["output_dir"] / "status" / "mixed.json")
             self.assertEqual(status["status"], "success")
             self.assertFalse((paths["output_dir"] / "status" / "mixed-parse-debug.txt").exists())
@@ -565,7 +948,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(
                 paths["adapter_dir"],
                 "slow",
-                '#!/bin/sh\nsleep 5\nprintf \'{"findings":[]}\'\n',
+                "#!/bin/sh\nsleep 5\nprintf '{\"findings\":[]}'\n",
             )
             self._set_env(paths, config_path)
 
@@ -623,29 +1006,6 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             debug = paths["output_dir"] / "status" / "chatty-timeout-debug.txt"
             self.assertTrue(debug.exists())
             self.assertIn("progress-marker", debug.read_text(encoding="utf-8"))
-
-    def test_status_budget_skipped_short_circuits_before_adapter_runs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "budgeted")
-            sentinel = paths["output_dir"] / "adapter_ran.txt"
-            _write_adapter(
-                paths["adapter_dir"],
-                "budgeted",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-            )
-            self._set_env(paths, config_path)
-
-            with mock.patch("ai_review.adapter_runner.budget.acquire") as acquire:
-                acquire.return_value = BudgetDecision(False, "per_mr_budget_exhausted")
-                self.assertEqual(run_adapter("budgeted", "review"), 0)
-
-            batch = load_json_file(paths["output_dir"] / "findings" / "budgeted.json")
-            self.assertEqual(batch["adapter_status"], "budget_skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "budgeted.json")
-            self.assertEqual(status["status"], "budget_skipped")
-            self.assertEqual(status["error_message_redacted"], "per_mr_budget_exhausted")
-            self.assertFalse(sentinel.exists())
 
     def test_status_skipped_is_config_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

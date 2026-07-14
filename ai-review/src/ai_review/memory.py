@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
+from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
+STATE_MATCHING_STRATEGY = (
+    "Persisted state matching is intentionally limited to deterministic issue IDs, "
+    "source finding aliases, context/title fingerprints, anchors, and symbols. "
+    "Consensus-only semantic text similarity is not a state recovery fallback."
+)
 
-MATCH_PRECEDENCE = (
+MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "exact_issue_id",
     "source_finding_id",
     "context_hash",
@@ -33,10 +40,10 @@ STATE_NOTE_LEGACY_RE = re.compile(
 
 @dataclass(frozen=True)
 class StateMatchResult:
-    status: str
-    record: dict[str, Any] | None
-    records: list[dict[str, Any]]
-    precedence: str | None
+    status: StateMatchStatus
+    record: StateRecord | None
+    records: list[StateRecord]
+    precedence: MatchPrecedence | None
 
 
 def compute_state_hash(state: dict[str, Any]) -> str:
@@ -84,8 +91,10 @@ def normalize_state_record(
     manifest: dict[str, Any] | None = None,
     pipeline_id: str = "",
 ) -> dict[str, Any]:
-    anchor = record.get("anchor") if isinstance(record.get("anchor"), dict) else {}
-    aliases = record.get("aliases") if isinstance(record.get("aliases"), dict) else {}
+    raw_anchor = record.get("anchor")
+    anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
+    raw_aliases = record.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     title_fp = title_fingerprint(str(record.get("title", ""))) if record.get("title") else None
     normalized_aliases = {
         "candidate_issue_signatures": sorted(_as_set(aliases.get("candidate_issue_signatures"))),
@@ -106,10 +115,9 @@ def normalize_state_record(
         "discussion_id": (
             str(record["discussion_id"]) if record.get("discussion_id") is not None else None
         ),
-        "root_note_id": record.get("root_note_id") if isinstance(record.get("root_note_id"), int) else None,
-        "jira_comment_id": (
-            str(record["jira_comment_id"]) if record.get("jira_comment_id") is not None else None
-        ),
+        "root_note_id": record.get("root_note_id")
+        if isinstance(record.get("root_note_id"), int)
+        else None,
         "status": str(record.get("status") or "open"),
         "last_seen_sha": str(record.get("last_seen_sha") or head_sha),
         "first_seen_sha": str(record.get("first_seen_sha") or head_sha),
@@ -222,31 +230,55 @@ def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -
     if isinstance(note.get("id"), int):
         state = dict(state)
         state["state_note_id"] = note["id"]
-        state = attach_state_hash({key: value for key, value in state.items() if key != "state_hash"})
+        state = attach_state_hash(
+            {key: value for key, value in state.items() if key != "state_hash"}
+        )
     return state
 
 
-def state_note_candidates(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        note
-        for note in notes
-        if isinstance(note, dict)
-        and isinstance(note.get("body"), str)
-        and (
-            STATE_NOTE_SPEC_RE.search(note["body"]) is not None
-            or STATE_NOTE_LEGACY_RE.search(note["body"]) is not None
-        )
-    ]
+def _note_author_id(note: dict[str, Any]) -> int | None:
+    author = note.get("author")
+    if not isinstance(author, dict):
+        return None
+    author_id = author.get("id")
+    return author_id if isinstance(author_id, int) else None
+
+
+def state_note_candidates(
+    notes: list[dict[str, Any]],
+    *,
+    expected_author_id: int | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    candidates: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for note in notes:
+        if not (
+            isinstance(note, dict)
+            and isinstance(note.get("body"), str)
+            and (
+                STATE_NOTE_SPEC_RE.search(note["body"]) is not None
+                or STATE_NOTE_LEGACY_RE.search(note["body"]) is not None
+            )
+        ):
+            continue
+        if expected_author_id is not None and _note_author_id(note) != expected_author_id:
+            warnings.append(
+                f"ignored state note {note.get('id')} from non-bot author {_note_author_id(note)}"
+            )
+            continue
+        candidates.append(note)
+    return candidates, warnings
 
 
 def newest_valid_state_from_notes(
     notes: list[dict[str, Any]],
     *,
     checksum_required: bool = True,
+    expected_author_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    warnings: list[str] = []
+    candidates, warnings = state_note_candidates(notes, expected_author_id=expected_author_id)
     valid: list[tuple[str, int, dict[str, Any]]] = []
-    for note in state_note_candidates(notes):
+    for note in candidates:
         try:
             state = decode_state_note(note, checksum_required=checksum_required)
         except ValueError as exc:
@@ -288,20 +320,28 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
     retention = retention or {}
     keep_resolved_runs = int(retention.get("keep_resolved_runs", 5))
     keep_superseded_runs = int(retention.get("keep_superseded_runs", 2))
+    keep_stale_runs = int(retention.get("keep_stale_runs", 2))
     records = []
     resolved = []
     superseded = []
+    stale = []
     for record in state.get("records", []):
         status = record.get("status")
         if status == "superseded":
             superseded.append(record)
         elif status == "resolved":
             resolved.append(record)
-        elif status == "wontfix" and retention.get("keep_wontfix", True):
+        elif status in {"stale", "stale_unverified"}:
+            stale.append(record)
+        elif status == "wontfix":
+            if not retention.get("keep_wontfix", True):
+                continue
             records.append(record)
-        elif status == "open" and retention.get("keep_open", True):
+        elif status == "open":
+            if not retention.get("keep_open", True):
+                continue
             records.append(record)
-        elif status not in {"open", "resolved", "wontfix", "superseded"}:
+        else:
             records.append(record)
 
     def keep_latest(items: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
@@ -314,10 +354,15 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
         )[:count]
 
     compacted = dict(state)
-    compacted["records"] = records + keep_latest(resolved, keep_resolved_runs) + keep_latest(
-        superseded, keep_superseded_runs
+    compacted["records"] = (
+        records
+        + keep_latest(resolved, keep_resolved_runs)
+        + keep_latest(superseded, keep_superseded_runs)
+        + keep_latest(stale, keep_stale_runs)
     )
-    return attach_state_hash({key: value for key, value in compacted.items() if key != "state_hash"})
+    return attach_state_hash(
+        {key: value for key, value in compacted.items() if key != "state_hash"}
+    )
 
 
 def state_overflow_reason(
@@ -328,7 +373,9 @@ def state_overflow_reason(
 ) -> str | None:
     record_count = len(state.get("records", []))
     if record_count > max_records:
-        return f"state has {record_count} records, exceeds state.retention.max_records ({max_records})"
+        return (
+            f"state has {record_count} records, exceeds state.retention.max_records ({max_records})"
+        )
     encoded_bytes = len(encode_state_note(state).encode("utf-8"))
     if encoded_bytes > max_state_bytes:
         return (
@@ -367,7 +414,7 @@ def _retention_sort_key(item: dict[str, Any]) -> tuple[str, int, int, str, str, 
     )
 
 
-def _group_match_keys(group: dict[str, Any]) -> dict[str, Any]:
+def _group_match_keys(group: Mapping[str, Any]) -> dict[str, Any]:
     match_keys = group.get("match_keys")
     if isinstance(match_keys, dict):
         return match_keys
@@ -385,18 +432,18 @@ def _group_match_keys(group: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_category(record: dict[str, Any]) -> str:
+def _record_category(record: Mapping[str, Any]) -> str:
     category = record.get("category")
     return str(category) if category is not None else ""
 
 
-def _group_category(group: dict[str, Any]) -> str:
+def _group_category(group: Mapping[str, Any]) -> str:
     match_keys = _group_match_keys(group)
     category = match_keys.get("category", group.get("category"))
     return str(category) if category is not None else ""
 
 
-def _record_path_keys(record: dict[str, Any]) -> set[str]:
+def _record_path_keys(record: Mapping[str, Any]) -> set[str]:
     values: set[str] = set()
     anchor = record.get("anchor")
     if isinstance(anchor, dict):
@@ -410,14 +457,14 @@ def _record_path_keys(record: dict[str, Any]) -> set[str]:
     return {value for value in values if value}
 
 
-def _record_aliases(record: dict[str, Any], key: str) -> set[str]:
+def _record_aliases(record: Mapping[str, Any], key: str) -> set[str]:
     aliases = record.get("aliases")
     if not isinstance(aliases, dict):
         return set()
     return _as_set(aliases.get(key))
 
 
-def _group_values(group: dict[str, Any], key: str) -> set[str]:
+def _group_values(group: Mapping[str, Any], key: str) -> set[str]:
     match_keys = _group_match_keys(group)
     return _as_set(match_keys.get(key))
 
@@ -442,7 +489,7 @@ def _anchor_key(anchor: Any) -> AnchorMatchKey | None:
     )
 
 
-def _group_anchor_keys(group: dict[str, Any]) -> set[AnchorMatchKey]:
+def _group_anchor_keys(group: Mapping[str, Any]) -> set[AnchorMatchKey]:
     anchors = group.get("all_anchors")
     if not isinstance(anchors, list):
         anchors = [group.get("representative_anchor")]
@@ -450,11 +497,11 @@ def _group_anchor_keys(group: dict[str, Any]) -> set[AnchorMatchKey]:
     return {key for key in keys if key is not None}
 
 
-def _same_category(record: dict[str, Any], group: dict[str, Any]) -> bool:
+def _same_category(record: Mapping[str, Any], group: Mapping[str, Any]) -> bool:
     return bool(_record_category(record)) and _record_category(record) == _group_category(group)
 
 
-def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedence: str) -> bool:
+def _matches_precedence(record: StateRecord, group: FindingGroup, precedence: str) -> bool:
     if precedence == "exact_issue_id":
         issue_id = group.get("issue_id")
         return isinstance(issue_id, str) and issue_id == record.get("issue_id")
@@ -468,8 +515,7 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
             _same_category(record, group)
             and bool(_group_values(group, "path_keys") & _record_path_keys(record))
             and bool(
-                _group_values(group, "context_hashes")
-                & _record_aliases(record, "context_hashes")
+                _group_values(group, "context_hashes") & _record_aliases(record, "context_hashes")
             )
         )
 
@@ -498,15 +544,21 @@ def _matches_precedence(record: dict[str, Any], group: dict[str, Any], precedenc
     raise ValueError(f"unknown state match precedence: {precedence}")
 
 
-def find_matching_record(group: dict[str, Any], state: dict[str, Any] | None) -> StateMatchResult:
+def find_matching_record(group: FindingGroup, state: State | None) -> StateMatchResult:
+    """Match a consensus group to persisted state using the documented deterministic strategy."""
     records = [
         record
         for record in (state or {}).get("records", [])
-        if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
+        if isinstance(record, dict)
+        and isinstance(record.get("issue_id"), str)
         and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:
-        matches = [record for record in records if _matches_precedence(record, group, precedence)]
+        matches = [
+            record
+            for record in records
+            if _matches_precedence(record, group, precedence)
+        ]
         if len(matches) == 1:
             return StateMatchResult(
                 status="matched",

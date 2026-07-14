@@ -7,48 +7,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import HUNK_RE, strip_diff_prefix
+from .anchors import parse_unified_diff
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
-    old_path = ""
-    new_path = ""
-    old_line: int | None = None
-    new_line: int | None = None
-    hunk_header = ""
-
-    for raw_line in diff_text.splitlines():
-        if raw_line.startswith("--- "):
-            old_path = strip_diff_prefix(raw_line[4:].strip())
-            continue
-        if raw_line.startswith("+++ "):
-            new_path = strip_diff_prefix(raw_line[4:].strip())
-            continue
-        hunk_match = HUNK_RE.match(raw_line)
-        if hunk_match:
-            old_line = int(hunk_match.group("old"))
-            new_line = int(hunk_match.group("new"))
-            hunk_header = raw_line
-            continue
-        if old_line is None or new_line is None:
-            continue
-        prefix = raw_line[:1]
-        text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
-        if prefix == "+":
-            current_new = new_line
-            new_line += 1
-            if "records[0]" in text or "data[0]" in text:
+    for diff_file in parse_unified_diff(diff_text):
+        for line in diff_file.lines:
+            if line.kind != "added":
+                continue
+            if "records[0]" in line.text or "data[0]" in line.text:
                 return {
-                    "old_path": old_path,
-                    "new_path": new_path,
-                    "new_line": current_new,
-                    "hunk_header": hunk_header,
+                    "old_path": diff_file.old_path or "",
+                    "new_path": diff_file.new_path or "",
+                    "new_line": line.new_line,
+                    "hunk_header": line.hunk_header,
                 }
-        elif prefix == "-":
-            old_line += 1
-        else:
-            old_line += 1
-            new_line += 1
     return None
 
 
@@ -80,7 +53,10 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
                 "severity": "major",
                 "category": "correctness",
                 "title": "Validate the empty response before indexing",
-                "body": "The added code indexes the first record before checking whether the collection is empty.",
+                "body": (
+                    "The added code indexes the first record before checking whether "
+                    "the collection is empty."
+                ),
                 "evidence": [
                     "records[0] is accessed before the existing empty-records guard can run."
                 ],

@@ -27,7 +27,9 @@ def redact_text(text: str) -> str:
     redacted = text
     for pattern in SECRET_PATTERNS:
         if pattern.groups >= 3:
-            redacted = pattern.sub(lambda match: match.group(1) + match.group(2) + "[REDACTED]", redacted)
+            redacted = pattern.sub(
+                lambda match: match.group(1) + match.group(2) + "[REDACTED]", redacted
+            )
         else:
             redacted = pattern.sub("[REDACTED]", redacted)
     return redacted

@@ -27,8 +27,7 @@
         "model_error",
         "schema_error",
         "config_error",
-        "internal_error",
-        "budget_skipped"
+        "internal_error"
       ]
     },
     "started_at": { "type": "string", "minLength": 1 },

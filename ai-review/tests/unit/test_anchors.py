@@ -3,7 +3,14 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from ai_review.anchors import context_hash_from_unified_diff, remap_anchor
+from ai_review.anchors import (
+    DiffLine,
+    _line_belongs_to_side,
+    _target_matches,
+    context_hash_from_unified_diff,
+    parse_unified_diff,
+    remap_anchor,
+)
 
 
 def _diff(line: str, *, new_line: int = 2, old_line: int = 1, path: str = "src/foo.py") -> str:
@@ -18,7 +25,9 @@ def _diff(line: str, *, new_line: int = 2, old_line: int = 1, path: str = "src/f
     )
 
 
-def _anchor(side: str, *, old_line: int | None, new_line: int | None, path: str = "src/foo.py") -> dict[str, Any]:
+def _anchor(
+    side: str, *, old_line: int | None, new_line: int | None, path: str = "src/foo.py"
+) -> dict[str, Any]:
     return {
         "old_path": path,
         "new_path": path,
@@ -32,6 +41,82 @@ def _anchor(side: str, *, old_line: int | None, new_line: int | None, path: str 
 
 
 class AnchorRemapTests(unittest.TestCase):
+    def test_parse_unified_diff_covers_headers_hunks_and_line_kinds(self) -> None:
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,2 +1,3 @@",
+                " keep",
+                "-old",
+                "+new",
+                "+extra",
+                "\\ No newline at end of file",
+                "diff --git a/src/empty.py b/src/empty.py",
+                "--- a/src/empty.py",
+                "+++ b/src/empty.py",
+                "@@ -0,0 +1,0 @@",
+            ]
+        )
+
+        files = list(parse_unified_diff(diff_text))
+
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0].old_path, "src/foo.py")
+        self.assertEqual(files[0].new_path, "src/foo.py")
+        self.assertEqual(
+            [(line.old_line, line.new_line, line.text, line.kind) for line in files[0].lines],
+            [
+                (1, 1, "keep", "context"),
+                (2, None, "old", "removed"),
+                (None, 2, "new", "added"),
+                (None, 3, "extra", "added"),
+            ],
+        )
+        self.assertTrue(all(line.hunk_header == "@@ -1,2 +1,3 @@" for line in files[0].lines))
+        self.assertEqual(files[1].old_path, "src/empty.py")
+        self.assertEqual(files[1].new_path, "src/empty.py")
+        self.assertEqual(files[1].lines, ())
+
+    def test_diff_line_side_helpers_use_explicit_kind(self) -> None:
+        added = DiffLine(
+            old_line=None,
+            new_line=7,
+            text="new",
+            hunk_header="@@ -1,0 +7,1 @@",
+            kind="added",
+        )
+        removed = DiffLine(
+            old_line=3,
+            new_line=None,
+            text="old",
+            hunk_header="@@ -3,1 +1,0 @@",
+            kind="removed",
+        )
+        context = DiffLine(
+            old_line=4,
+            new_line=8,
+            text="same",
+            hunk_header="@@ -4,1 +8,1 @@",
+            kind="context",
+        )
+
+        self.assertTrue(_line_belongs_to_side("new", added))
+        self.assertFalse(_line_belongs_to_side("old", added))
+        self.assertTrue(_target_matches("new", {"new_line": 7}, added))
+        self.assertFalse(_target_matches("unchanged", {"old_line": None, "new_line": 7}, added))
+
+        self.assertTrue(_line_belongs_to_side("old", removed))
+        self.assertFalse(_line_belongs_to_side("new", removed))
+        self.assertTrue(_target_matches("old", {"old_line": 3}, removed))
+        self.assertFalse(_target_matches("unchanged", {"old_line": 3, "new_line": None}, removed))
+
+        self.assertTrue(_line_belongs_to_side("new", context))
+        self.assertTrue(_line_belongs_to_side("old", context))
+        self.assertTrue(_line_belongs_to_side("unchanged", context))
+        self.assertTrue(_target_matches("unchanged", {"old_line": 4, "new_line": 8}, context))
+
     def test_remap_anchor_exact(self) -> None:
         diff_text = _diff("+target", new_line=2)
         anchor = _anchor("new", old_line=None, new_line=2)
@@ -55,9 +140,11 @@ class AnchorRemapTests(unittest.TestCase):
         self.assertEqual(missing["status"], "missing")
         self.assertIsNone(missing["anchor"])
 
-        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
-            f"+tail-{index}" for index in range(6)
-        ]
+        block = (
+            [f"+ctx-{index}" for index in range(6)]
+            + ["+target"]
+            + [f"+tail-{index}" for index in range(6)]
+        )
         original_block_diff = "\n".join(
             [
                 "diff --git a/src/foo.py b/src/foo.py",

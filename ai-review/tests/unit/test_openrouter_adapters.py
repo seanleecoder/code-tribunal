@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import stat
+import subprocess
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -36,7 +37,6 @@ _ENV_KEYS = [
     "PATH",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
-    "JIRA_API_TOKEN",
     "CI_JOB_TOKEN",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -71,7 +71,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
         (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
         (repo_snapshot / ".opencode").mkdir()
-        (repo_snapshot / ".opencode" / "plugin.js").write_text("module.exports = {}\n", encoding="utf-8")
+        (repo_snapshot / ".opencode" / "plugin.js").write_text(
+            "module.exports = {}\n", encoding="utf-8"
+        )
         (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
         (repo_snapshot / ".codex").mkdir()
         (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
@@ -148,17 +150,17 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         if name == "claude":
             cli.write_text(
                 "#!/bin/sh\n"
-                "args=\"$*\"\n"
-                "mkdir -p \"$AI_REVIEW_OUTPUT_DIR\"\n"
-                "printf '%s\\n' \"$0 $args\" > \"$AI_REVIEW_OUTPUT_DIR/claude.args\"\n"
-                "printf '%s\\n' \"$@\" > \"$AI_REVIEW_OUTPUT_DIR/claude.argv\"\n"
-                "env | sort > \"$AI_REVIEW_OUTPUT_DIR/claude.env\"\n"
-                "pwd > \"$AI_REVIEW_OUTPUT_DIR/claude.pwd\"\n"
-                "find . -mindepth 1 > \"$AI_REVIEW_OUTPUT_DIR/claude.tree\"\n"
-                "cat > \"$AI_REVIEW_OUTPUT_DIR/claude.stdin\"\n"
+                'args="$*"\n'
+                'mkdir -p "$AI_REVIEW_OUTPUT_DIR"\n'
+                'printf \'%s\\n\' "$0 $args" > "$AI_REVIEW_OUTPUT_DIR/claude.args"\n'
+                'printf \'%s\\n\' "$@" > "$AI_REVIEW_OUTPUT_DIR/claude.argv"\n'
+                'env | sort > "$AI_REVIEW_OUTPUT_DIR/claude.env"\n'
+                'pwd > "$AI_REVIEW_OUTPUT_DIR/claude.pwd"\n'
+                'find . -mindepth 1 > "$AI_REVIEW_OUTPUT_DIR/claude.tree"\n'
+                'cat > "$AI_REVIEW_OUTPUT_DIR/claude.stdin"\n'
                 # Emit stage-appropriate output so critique runs exercise the
                 # critique parse/finalize path, not a finding-shaped fallback.
-                "if [ \"$AI_REVIEW_STAGE\" = critique ]; then\n"
+                'if [ "$AI_REVIEW_STAGE" = critique ]; then\n'
                 "  printf '{\"critiques\":[]}'\n"
                 "else\n"
                 "  printf '{\"findings\":[]}'\n"
@@ -169,29 +171,29 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             return
         cli.write_text(
             "#!/bin/sh\n"
-            "args=\"$*\"\n"
+            'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
-            "if [ \"$AI_REVIEW_STAGE\" = critique ]; then payload='{\"critiques\":[]}'; fi\n"
-            "trace_dir=\"${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}\"\n"
-            "if [ -n \"$trace_dir\" ]; then\n"
-            "  mkdir -p \"$trace_dir\"\n"
-            "  printf '%s\\n' \"$0 $args\" > \"$trace_dir/cli.args\"\n"
-            "  env | sort > \"$trace_dir/cli.env\"\n"
-            "  printf '%s\\n' \"$OPENROUTER_API_KEY\" > \"$trace_dir/cli.key\"\n"
+            'if [ "$AI_REVIEW_STAGE" = critique ]; then payload=\'{"critiques":[]}\'; fi\n'
+            'trace_dir="${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}"\n'
+            'if [ -n "$trace_dir" ]; then\n'
+            '  mkdir -p "$trace_dir"\n'
+            '  printf \'%s\\n\' "$0 $args" > "$trace_dir/cli.args"\n'
+            '  env | sort > "$trace_dir/cli.env"\n'
+            '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
             "fi\n"
             "out=''\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
+            'while [ "$#" -gt 0 ]; do\n'
             "  if [ \"$1\" = '-o' ]; then\n"
             "    shift\n"
-            "    out=\"$1\"\n"
+            '    out="$1"\n'
             "  fi\n"
             "  shift || true\n"
             "done\n"
-            "if [ -n \"$out\" ]; then\n"
-            "  printf '%s\\n' \"$0 $args\" > \"$out.args\"\n"
-            "  env | sort > \"$out.env\"\n"
-            "  printf '%s\\n' \"$OPENROUTER_API_KEY\" > \"$out.key\"\n"
-            "  printf '%s' \"$payload\" > \"$out\"\n"
+            'if [ -n "$out" ]; then\n'
+            '  printf \'%s\\n\' "$0 $args" > "$out.args"\n'
+            '  env | sort > "$out.env"\n'
+            '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$out.key"\n'
+            '  printf \'%s\' "$payload" > "$out"\n'
             "else\n"
             "  printf '%s' \"$payload\"\n"
             "fi\n",
@@ -204,7 +206,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         reviewer: str,
         cli_name: str,
         extra_env: dict[str, str] | None = None,
-        prepare_snapshot: "Callable[[Path], None] | None" = None,
+        prepare_snapshot: Callable[[Path], None] | None = None,
         stage: str = "review",
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -229,7 +231,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
-            os.environ["JIRA_API_TOKEN"] = "jira-secret"
             os.environ["CI_JOB_TOKEN"] = "ci-job-secret"
             os.environ["OPENAI_API_KEY"] = "openai-secret"
             os.environ["ANTHROPIC_API_KEY"] = "anthropic-secret"
@@ -255,8 +256,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     cli_env_path = Path(f"{trace_prefix}.env")
                     cli_key_path = Path(f"{trace_prefix}.key")
                 else:
-                    trace_dir = output_dir / ".tmp" / (
-                        "opencode-config-dir" if cli_name == "opencode" else "codex-home"
+                    trace_dir = (
+                        output_dir
+                        / ".tmp"
+                        / ("opencode-config-dir" if cli_name == "opencode" else "codex-home")
                     )
                     cli_args_path = trace_dir / "cli.args"
                     cli_env_path = trace_dir / "cli.env"
@@ -304,12 +307,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
         self.assertIn("--ephemeral", cli_args)
+        self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
         self.assertIn("--ignore-rules", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
         self.assertNotIn("--ask-for-approval", cli_args)
-        self.assertIn("model_provider=\"openrouter\"", cli_args)
-        self.assertIn("model_providers.openrouter.name=\"OpenRouter\"", cli_args)
+        self.assertIn('model_provider="openrouter"', cli_args)
+        self.assertIn('model_providers.openrouter.name="OpenRouter"', cli_args)
         self.assertIn("schemas/raw_finding_batch.schema.json", cli_args)
         self.assertIn("--output-schema ", cli_args)
         self.assertNotIn("schemas/finding_batch.schema.json", cli_args)
@@ -377,7 +381,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 cwd = (output_dir / "claude.pwd").read_text(encoding="utf-8").strip()
                 tree = {
                     line[2:]
-                    for line in (output_dir / "claude.tree").read_text(encoding="utf-8").splitlines()
+                    for line in (output_dir / "claude.tree")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
                     if line.startswith("./")
                 }
                 repo_snapshot_dir = str(input_dir / "repo_snapshot")
@@ -395,6 +401,20 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn("--tools Read,Grep,Glob", cli_args)
         self.assertNotIn("bundle prompt", cli_args)
         self.assertIn("bundle prompt", stdin)
+        # Structured-output steering: the review schema text is passed inline
+        # (mirroring codex --output-schema), not the post-consensus batch schema.
+        self.assertIn("--json-schema", cli_args)
+        self.assertIn('"$id": "raw_finding_batch.schema.json"', cli_args)
+        self.assertNotIn("critique_batch.schema.json", cli_args)
+        # The $schema draft declaration must be stripped — the CLI rejects
+        # schemas declaring the 2020-12 draft at argument validation.
+        self.assertNotIn('"$schema"', cli_args)
+        # Effort comes from the repo config default (reviewers.claude.effort).
+        self.assertIn("--effort medium", cli_args)
+        # This test runs the OpenRouter route (ANTHROPIC_BASE_URL above), where
+        # --bare would break ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
+        self.assertNotIn("--bare", cli_args)
+        self.assertIn("--safe-mode", cli_args)
         # claude explores a clean copy of the pinned MR snapshot rooted at its
         # working directory (like codex --cd / opencode --dir), not the ambient
         # CI checkout nor the input/snapshot dirs directly.
@@ -412,6 +432,42 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("symdir/AGENTS.md", tree)
         # Only the agent-config symlinks are removed; their target is untouched.
         self.assertIn("steer.txt", tree)
+
+    def test_claude_direct_anthropic_route_adds_bare(self) -> None:
+        # Without an OpenRouter ANTHROPIC_BASE_URL, auth is plain
+        # ANTHROPIC_API_KEY, so --bare (which restricts auth to exactly that)
+        # is safe and skips startup auto-discovery on top of --safe-mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "claude")
+            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
+            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
+            os.environ.pop("ANTHROPIC_BASE_URL", None)
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            try:
+                self.assertEqual(run_adapter("claude", "review"), 0)
+                batch = load_json_file(output_dir / "findings" / "claude.json")
+                argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("--bare", argv)
+        self.assertIn("--safe-mode", argv)
 
     def test_claude_critique_runs_without_repo_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -461,6 +517,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertNotIn("Read,Grep,Glob", argv)
         self.assertNotRegex(cwd, r"/out/\.tmp/claude-review-root\.\d+$")
         self.assertEqual(review_roots, [])
+        # critique steers toward the critique schema, not the review one.
+        self.assertIn("--json-schema", argv)
+        argv_text = "\n".join(argv)
+        self.assertIn('"$id": "critique_batch.schema.json"', argv_text)
+        self.assertNotIn("raw_finding_batch.schema.json", argv_text)
+        # $schema draft declaration stripped (CLI rejects the 2020-12 draft).
+        self.assertNotIn('"$schema"', argv_text)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli(
@@ -535,6 +598,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         # still runs read-only, but its working root is left empty so there is
         # nothing to explore — parity with claude's tools-off critique.
         self.assertIn("--cd ", cli_args)
+        self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
         self.assertIn("schemas/critique_batch.schema.json", cli_args)
         self.assertEqual(meta["workspace_entries"], set())
@@ -560,7 +624,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 for forbidden in (
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",
-                    "JIRA_API_TOKEN",
                     "CI_JOB_TOKEN",
                     "OPENAI_API_KEY",
                     "ANTHROPIC_API_KEY",
@@ -600,7 +663,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
+            if reviewer == "claude":
+                os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            if reviewer == "opencode":
+                os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = base_url
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
@@ -612,7 +678,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 # This helper only drives the invalid-config (model_error) path,
                 # so the adapter now exits non-zero.
                 self.assertEqual(run_adapter(reviewer, "review"), _EXIT_ERROR)
-                self.assertFalse((output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists())
+                self.assertFalse(
+                    (output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists()
+                )
                 return load_json_file(output_dir / "findings" / f"{reviewer}.json")
             finally:
                 for key, value in previous.items():
@@ -628,6 +696,56 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         )
 
         self.assertEqual(batch["adapter_status"], "model_error")
+
+    def test_invalid_anthropic_base_url_is_model_error_without_cli_invocation(self) -> None:
+        batch = self._run_invalid_cli_config(
+            "claude",
+            extra_env={"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"},
+        )
+
+        self.assertEqual(batch["adapter_status"], "model_error")
+
+    def test_claude_shell_does_not_map_token_for_hostile_base_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            prompt = root / "prompt.md"
+            bin_dir.mkdir()
+            output_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "claude")
+            prompt.write_text("prompt", encoding="utf-8")
+
+            env = {
+                **os.environ,
+                "AI_REVIEW_INPUT_DIR": str(input_dir),
+                "AI_REVIEW_OUTPUT_DIR": str(output_dir),
+                "AI_REVIEW_LOCAL_MOCK": "0",
+                "AI_REVIEW_REQUIRE_REAL_CLAUDE": "1",
+                "AI_REVIEW_REVIEWER": "claude",
+                "AI_REVIEW_STAGE": "review",
+                "AI_REVIEW_MODEL": "anthropic/claude-haiku-4.5",
+                "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api",
+                "ANTHROPIC_API_KEY": "anthropic-native-secret",
+                "OPENROUTER_API_KEY": "sk-or-v1-test",
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            }
+
+            completed = subprocess.run(
+                [str(Path(__file__).resolve().parents[2] / "adapters" / "claude.sh")],
+                check=True,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(completed.stdout, '{"findings":[]}')
+            cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
+            self.assertIn("ANTHROPIC_API_KEY=anthropic-native-secret", cli_env)
 
     def test_codex_model_override_reaches_cli(self) -> None:
         batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(

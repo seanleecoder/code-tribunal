@@ -1,4 +1,5 @@
 stages:
+  - image_validate
   - image_build
   - image_preflight
   - image_smoke
@@ -6,11 +7,15 @@ stages:
 variables:
   # Private GitLab registry tag slug. Public GHCR tags use semantic "1.0-<sha>".
   AI_REVIEW_IMAGE_VERSION: "1_0"
-  AI_REVIEW_CLAUDE_NPM_PACKAGE: "@anthropic-ai/claude-code"
-  AI_REVIEW_CODEX_NPM_PACKAGE: "@openai/codex"
-  AI_REVIEW_OPENCODE_NPM_PACKAGE: "opencode-ai"
   AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
   AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
+
+validate_ai_review_supply_chain_pins:
+  extends: .ai_review_protected_image_rules
+  stage: image_validate
+  image: python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
+  script:
+    - python scripts/check_supply_chain_pins.py
 
 .ai_review_protected_image_rules:
   rules:
@@ -46,21 +51,12 @@ build_ai_review_reviewer_image:
   needs:
     - job: build_ai_review_base_image
   script:
-    - test -n "$AI_REVIEW_CLAUDE_VERSION"
-    - test -n "$AI_REVIEW_CODEX_VERSION"
-    - test -n "$AI_REVIEW_OPENCODE_VERSION"
     - |
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/reviewer.Dockerfile" \
         --destination "$AI_REVIEW_REVIEWER_IMAGE" \
         --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_IMAGE" \
-        --build-arg "CLAUDE_VERSION=$AI_REVIEW_CLAUDE_VERSION" \
-        --build-arg "CODEX_VERSION=$AI_REVIEW_CODEX_VERSION" \
-        --build-arg "OPENCODE_VERSION=$AI_REVIEW_OPENCODE_VERSION" \
-        --build-arg "CLAUDE_NPM_PACKAGE=$AI_REVIEW_CLAUDE_NPM_PACKAGE" \
-        --build-arg "CODEX_NPM_PACKAGE=$AI_REVIEW_CODEX_NPM_PACKAGE" \
-        --build-arg "OPENCODE_NPM_PACKAGE=$AI_REVIEW_OPENCODE_NPM_PACKAGE" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
 

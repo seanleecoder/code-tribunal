@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 from .canonical import sha256_hex
 from .config import effective_config_summary, load_config
-from .gitlab_client import GitLabClient
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
     prior_decisions_from_state,
     state_aliases_from_state,
 )
+from .platform.github import PullRequestVersion
+from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
 
 
@@ -21,7 +24,7 @@ class BundleError(RuntimeError):
     pass
 
 
-def _enforce_diff_limits(diff_text: str, config: dict) -> None:
+def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
     """Reject oversized diffs before they are sent to reviewer models.
 
     Mirrors the ``max_prompt_bytes`` guard in prompt_render: a diff that exceeds
@@ -60,7 +63,9 @@ def _directory_sha256(path: Path) -> str:
     return sha256_hex(b"".join(digest_parts))
 
 
-def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path, out: str | Path) -> Path:
+def prepare_local_bundle(
+    config: str | Path, diff: str | Path, repo: str | Path, out: str | Path
+) -> Path:
     config_path = Path(config)
     diff_path = Path(diff)
     repo_path = Path(repo)
@@ -87,7 +92,9 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
         "open": [],
     }
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions)
-    write_canonical_json(out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []})
+    write_canonical_json(
+        out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []}
+    )
 
     diff_sha = _file_sha256(diff_path)
     manifest = {
@@ -112,21 +119,208 @@ def prepare_local_bundle(config: str | Path, diff: str | Path, repo: str | Path,
     return out_path
 
 
+def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
+    source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
+    project_id = os.environ.get("CI_PROJECT_ID")
+    if not source_project_id or not project_id or source_project_id == project_id:
+        return None
+    security = config.get("security", {}) if isinstance(config, dict) else {}
+    if bool(security.get("allow_external_fork_secrets", False)):
+        return None
+    return (
+        "external fork MR secret-bearing prepare path is disabled because "
+        "security.allow_external_fork_secrets is false "
+        f"(source_project_id={source_project_id}, project_id={project_id})"
+    )
+
+
+def _load_platform_state(
+    client: Any,
+    config: dict[str, Any],
+    default_state: dict[str, Any],
+    *,
+    project_id: str,
+    change_id: str,
+    backend_name: str,
+) -> dict[str, Any]:
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    if state_config.get("backend") not in {"gitlab_mr_state_note", "github_pr_comment"}:
+        return default_state
+    try:
+        bot_author_id = client.current_user_id()
+        if bot_author_id is None:
+            raise BundleError(
+                f"state backend requires {backend_name} current_user lookup "
+                "to verify state-note author"
+            )
+        notes = client.list_state_notes(project_id, change_id)
+        loaded, warnings = newest_valid_state_from_notes(
+            notes,
+            checksum_required=bool(state_config.get("checksum_required", True)),
+            expected_author_id=bot_author_id,
+        )
+        for warning in warnings:
+            print(f"ai-review prepare: {warning}")
+        return loaded if loaded is not None else default_state
+    except Exception as exc:
+        if state_config.get("overflow_behavior") == "fail_closed":
+            raise
+        print(f"ai-review prepare: state load failed: {exc}")
+        return default_state
+
+
+def _github_event_pull_request() -> dict[str, Any] | None:
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        return None
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    pull_request = event.get("pull_request")
+    return pull_request if isinstance(pull_request, dict) else None
+
+
+def _resolve_github_pull_request(client: Any, repo: str) -> dict[str, Any]:
+    pull_request = _github_event_pull_request()
+    if pull_request is None:
+        pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
+        if not pr_number.isdigit():
+            raise SystemExit(
+                "prepare requires a pull_request GitHub event payload or a numeric "
+                "AI_REVIEW_GITHUB_PR_NUMBER"
+            )
+        fetch_pull_request = getattr(client, "fetch_pull_request", None)
+        if not callable(fetch_pull_request):
+            raise SystemExit("configured GitHub platform cannot fetch pull request metadata")
+        pull_request = fetch_pull_request(repo, pr_number)
+        if not isinstance(pull_request, dict):
+            raise SystemExit("GitHub pull request response was not an object")
+
+    raw_head = pull_request.get("head")
+    head = raw_head if isinstance(raw_head, dict) else {}
+    raw_head_repo = head.get("repo")
+    head_repo = raw_head_repo if isinstance(raw_head_repo, dict) else {}
+    source_repo = str(head_repo.get("full_name") or "")
+    # The shipped GitHub workflow always carries review credentials, so its
+    # external-fork path is deliberately fail-closed. The configurable
+    # security.allow_external_fork_secrets exception is limited to GitLab.
+    if source_repo != repo:
+        raise SystemExit(
+            "prepare refused to run: external fork PR secret-bearing path is disabled "
+            f"(source_repository={source_repo or 'unknown'}, repository={repo})"
+        )
+    return pull_request
+
+
+def _github_pull_request_version(pull_request: dict[str, Any]) -> PullRequestVersion:
+    raw_base = pull_request.get("base")
+    raw_head = pull_request.get("head")
+    base = raw_base if isinstance(raw_base, dict) else {}
+    head = raw_head if isinstance(raw_head, dict) else {}
+    base_sha = str(base.get("sha") or "")
+    head_sha = str(head.get("sha") or "")
+    if not base_sha or not head_sha:
+        raise SystemExit("prepare requires base.sha and head.sha in GitHub pull request metadata")
+    return PullRequestVersion(base_sha=base_sha, head_sha=head_sha)
+
+
+def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
+    out_path = Path(out)
+    out_path.mkdir(parents=True, exist_ok=True)
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
+    config_dict = load_config(config)
+    try:
+        client = create_runtime_platform(config_dict, access="read")
+    except PlatformRuntimeError as exc:
+        raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
+    pull_request = _resolve_github_pull_request(client, repo)
+    pr_number = str(pull_request.get("number") or "")
+    if not pr_number.isdigit():
+        raise SystemExit("prepare requires pull_request.number in GitHub pull request metadata")
+    version = _github_pull_request_version(pull_request)
+    diff_text = client.fetch_diff(repo, pr_number)
+    _enforce_diff_limits(diff_text, config_dict)
+    (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
+
+    config_path = Path(config)
+    shutil.copy2(config_path, out_path / "config.review.yaml")
+    source_rules = config_path.parent.parent / "rules"
+    source_prompts = config_path.parent.parent / "prompts"
+    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
+    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
+
+    snapshot_dir = out_path / "repo_snapshot"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    ignore_names = {".git", ".ai-review-local", out_path.name}
+
+    def ignore(_directory: str, names: list[str]) -> set[str]:
+        return set(names) & ignore_names
+
+    shutil.copytree(Path.cwd(), snapshot_dir, dirs_exist_ok=True, ignore=ignore)
+    diff_sha = sha256_hex(diff_text)
+    raw_head = pull_request.get("head")
+    head = raw_head if isinstance(raw_head, dict) else {}
+    raw_base = pull_request.get("base")
+    base = raw_base if isinstance(raw_base, dict) else {}
+    manifest = {
+        "schema_version": "input_manifest.v1",
+        "run_id": (
+            f"gh-{os.environ.get('GITHUB_RUN_ID', '0')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '0')}"
+        ),
+        "project_id": repo,
+        "project_path": repo,
+        "merge_request_iid": pr_number,
+        "source_branch": str(head.get("ref") or ""),
+        "target_branch": str(base.get("ref") or ""),
+        "base_sha": version.base_sha,
+        "start_sha": version.base_sha,
+        "head_sha": version.head_sha,
+        "diff_sha256": diff_sha,
+        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
+        "config_sha256": _file_sha256(config_path),
+        "rules_sha256": _directory_sha256(source_rules),
+        "effective_config": effective_config_summary(config_dict),
+        "created_at": now_iso(),
+    }
+    state = empty_state(
+        project_id=repo,
+        merge_request_iid=pr_number,
+        head_sha=version.head_sha,
+        pipeline_id=os.environ.get("GITHUB_RUN_ID", ""),
+    )
+    state = _load_platform_state(
+        client,
+        config_dict,
+        state,
+        project_id=repo,
+        change_id=pr_number,
+        backend_name="GitHub",
+    )
+    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
+    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
+    write_canonical_json(out_path / "manifest.json", manifest)
+    return out_path
+
+
 def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
     out_path.mkdir(parents=True, exist_ok=True)
-    api_url = os.environ.get("CI_API_V4_URL") or os.environ.get("GITLAB_API_URL")
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
-    token = os.environ.get("GITLAB_READ_TOKEN")
-    if not api_url or not project_id or not mr_iid or not token:
+    if not project_id or not mr_iid:
         raise SystemExit(
-            "prepare requires CI_API_V4_URL, CI_PROJECT_ID, CI_MERGE_REQUEST_IID, and GITLAB_READ_TOKEN"
+            "prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID"
         )
     config_dict = load_config(config)
-    client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
-    version = client.fetch_latest_mr_version(project_id, mr_iid)
-    diff_text = client.fetch_mr_diff(project_id, mr_iid)
+    fork_block_reason = _external_fork_secrets_blocked(config_dict)
+    if fork_block_reason is not None:
+        raise SystemExit(f"prepare refused to run: {fork_block_reason}")
+    try:
+        client = create_runtime_platform(config_dict, access="read")
+    except PlatformRuntimeError as exc:
+        raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
+    version = client.fetch_version(project_id, mr_iid)
+    diff_text = client.fetch_diff(project_id, mr_iid)
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
@@ -170,22 +364,14 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         head_sha=version.head_sha,
         pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
     )
-    state_config = config_dict.get("state", {}) if isinstance(config_dict, dict) else {}
-    if state_config.get("backend") == "gitlab_mr_state_note":
-        try:
-            notes = client.list_mr_notes(project_id, mr_iid)
-            loaded, warnings = newest_valid_state_from_notes(
-                notes,
-                checksum_required=bool(state_config.get("checksum_required", True)),
-            )
-            if loaded is not None:
-                state = loaded
-            for warning in warnings:
-                print(f"ai-review prepare: {warning}")
-        except Exception as exc:
-            if state_config.get("overflow_behavior") == "fail_closed":
-                raise
-            print(f"ai-review prepare: state load failed: {exc}")
+    state = _load_platform_state(
+        client,
+        config_dict,
+        state,
+        project_id=str(project_id),
+        change_id=str(mr_iid),
+        backend_name="GitLab",
+    )
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
     write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
     write_canonical_json(out_path / "manifest.json", manifest)
@@ -210,7 +396,12 @@ def cli(argv: list[str] | None = None) -> int:
         prepare_local_bundle(args.config, args.diff, args.repo, args.out)
         return 0
     if args.command == "prepare":
-        prepare_gitlab_bundle(args.config, args.out)
+        config_dict = load_config(args.config)
+        posting = config_dict.get("posting", {}) if isinstance(config_dict, dict) else {}
+        if posting.get("mode") == "github_reviews":
+            prepare_github_bundle(args.config, args.out)
+        else:
+            prepare_gitlab_bundle(args.config, args.out)
         return 0
     raise AssertionError(args.command)
 

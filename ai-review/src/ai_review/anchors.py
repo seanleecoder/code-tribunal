@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Literal
 
 from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-HUNK_RE = re.compile(r"@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? \+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@")
+HUNK_RE = re.compile(
+    r"@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? \+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@"
+)
+
+
+DiffLineKind = Literal["context", "added", "removed"]
 
 
 @dataclass(frozen=True)
@@ -17,6 +23,14 @@ class DiffLine:
     new_line: int | None
     text: str
     hunk_header: str
+    kind: DiffLineKind
+
+
+@dataclass(frozen=True)
+class DiffFile:
+    old_path: str | None
+    new_path: str | None
+    lines: tuple[DiffLine, ...]
 
 
 def strip_diff_prefix(path: str) -> str:
@@ -108,7 +122,9 @@ def normalize_symbol(symbol: Any) -> str | None:
     return normalized or None
 
 
-def candidate_issue_signature(anchor: dict[str, Any], category: str, title_fp: str) -> dict[str, Any]:
+def candidate_issue_signature(
+    anchor: dict[str, Any], category: str, title_fp: str
+) -> dict[str, Any]:
     return {
         "path_key": anchor_path_key(anchor),
         "category": category,
@@ -137,75 +153,48 @@ def _parse_diff_paths(line: str) -> tuple[str, str] | None:
     return None
 
 
-def _path_matches(anchor: dict[str, Any], old_path: str | None, new_path: str | None) -> bool:
-    anchor_old = normalize_path(anchor.get("old_path", "missing"))
-    anchor_new = normalize_path(anchor.get("new_path", "missing"))
-    return (old_path is not None and normalize_path(old_path) == anchor_old) or (
-        new_path is not None and normalize_path(new_path) == anchor_new
-    )
+def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
+    """Yield files and numbered content lines from a unified Git diff.
 
+    The parser intentionally keeps only the data anchor/remap callers need:
+    old/new file paths, hunk headers, old/new line numbers, and line text with
+    diff prefixes removed. File metadata, binary patch sections, and no-newline
+    markers are ignored.
+    """
 
-def _target_matches(side: str, target_start: dict[str, Any], line: DiffLine) -> bool:
-    if side == "new":
-        return line.new_line == target_start.get("new_line")
-    if side == "old":
-        return line.old_line == target_start.get("old_line")
-    return (
-        line.old_line == target_start.get("old_line")
-        and line.new_line == target_start.get("new_line")
-    )
-
-
-def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
-    if side == "new":
-        return line.new_line is not None
-    if side == "old":
-        return line.old_line is not None
-    return line.old_line is not None and line.new_line is not None
-
-
-def context_hash_from_unified_diff(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> str:
-    side = str(anchor["side"])
     old_path: str | None = None
     new_path: str | None = None
     old_line: int | None = None
     new_line: int | None = None
     hunk_header = ""
-    lines_for_file: list[DiffLine] = []
+    lines: list[DiffLine] = []
+    saw_file = False
 
-    def try_match(lines: list[DiffLine]) -> str | None:
-        if not _path_matches(anchor, old_path, new_path):
+    def emit_current() -> DiffFile | None:
+        if not saw_file:
             return None
-        side_lines = [line for line in lines if _line_belongs_to_side(side, line)]
-        target_indexes = [
-            index
-            for index, line in enumerate(side_lines)
-            if _target_matches(side, anchor["start"], line)
-        ]
-        if not target_indexes:
-            return None
-        target_index = target_indexes[0]
-        start = max(target_index - window, 0)
-        end = min(target_index + window, len(side_lines) - 1)
-        return compute_context_hash(anchor_path_key(anchor), side, [line.text for line in side_lines[start : end + 1]])
+        return DiffFile(old_path=old_path, new_path=new_path, lines=tuple(lines))
 
     for raw_line in diff_text.splitlines():
         parsed_paths = _parse_diff_paths(raw_line)
         if parsed_paths:
-            match = try_match(lines_for_file)
-            if match:
-                return match
+            current = emit_current()
+            if current is not None:
+                yield current
             old_path, new_path = parsed_paths
             old_line = None
             new_line = None
             hunk_header = ""
-            lines_for_file = []
+            lines = []
+            saw_file = True
             continue
         if raw_line.startswith("--- "):
             old_path = strip_diff_prefix(raw_line[4:].strip())
+            saw_file = True
             continue
         if raw_line.startswith("+++ "):
             new_path = strip_diff_prefix(raw_line[4:].strip())
+            saw_file = True
             continue
         hunk_match = HUNK_RE.match(raw_line)
         if hunk_match:
@@ -220,19 +209,94 @@ def context_hash_from_unified_diff(diff_text: str, anchor: dict[str, Any], *, wi
         prefix = raw_line[:1]
         text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
         if prefix == "+":
-            lines_for_file.append(DiffLine(None, new_line, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=None,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="added",
+                )
+            )
             new_line += 1
         elif prefix == "-":
-            lines_for_file.append(DiffLine(old_line, None, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=None,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="removed",
+                )
+            )
             old_line += 1
         else:
-            lines_for_file.append(DiffLine(old_line, new_line, text, hunk_header))
+            lines.append(
+                DiffLine(
+                    old_line=old_line,
+                    new_line=new_line,
+                    text=text,
+                    hunk_header=hunk_header,
+                    kind="context",
+                )
+            )
             old_line += 1
             new_line += 1
 
-    match = try_match(lines_for_file)
-    if match:
-        return match
+    current = emit_current()
+    if current is not None:
+        yield current
+
+
+def _path_matches(anchor: dict[str, Any], old_path: str | None, new_path: str | None) -> bool:
+    anchor_old = normalize_path(anchor.get("old_path", "missing"))
+    anchor_new = normalize_path(anchor.get("new_path", "missing"))
+    return (old_path is not None and normalize_path(old_path) == anchor_old) or (
+        new_path is not None and normalize_path(new_path) == anchor_new
+    )
+
+
+def _target_matches(side: str, target_start: dict[str, Any], line: DiffLine) -> bool:
+    if side == "new":
+        return line.kind in {"added", "context"} and line.new_line == target_start.get("new_line")
+    if side == "old":
+        return line.kind in {"removed", "context"} and line.old_line == target_start.get("old_line")
+    return (
+        line.kind == "context"
+        and line.old_line == target_start.get("old_line")
+        and line.new_line == target_start.get("new_line")
+    )
+
+
+def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
+    if side == "new":
+        return line.kind in {"added", "context"}
+    if side == "old":
+        return line.kind in {"removed", "context"}
+    return line.kind == "context"
+
+
+def context_hash_from_unified_diff(
+    diff_text: str, anchor: dict[str, Any], *, window: int = 6
+) -> str:
+    side = str(anchor["side"])
+    for diff_file in parse_unified_diff(diff_text):
+        if not _path_matches(anchor, diff_file.old_path, diff_file.new_path):
+            continue
+        side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
+        target_indexes = [
+            index
+            for index, line in enumerate(side_lines)
+            if _target_matches(side, anchor["start"], line)
+        ]
+        if not target_indexes:
+            continue
+        target_index = target_indexes[0]
+        start = max(target_index - window, 0)
+        end = min(target_index + window, len(side_lines) - 1)
+        return compute_context_hash(
+            anchor_path_key(anchor), side, [line.text for line in side_lines[start : end + 1]]
+        )
     raise ValueError("anchor does not map to the unified diff")
 
 
@@ -248,17 +312,10 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
 
     side = str(anchor.get("side"))
     matches: list[dict[str, Any]] = []
-    old_path: str | None = None
-    new_path: str | None = None
-    old_line: int | None = None
-    new_line: int | None = None
-    hunk_header = ""
-    lines_for_file: list[DiffLine] = []
-
-    def scan_file() -> None:
-        if not old_path or not new_path:
-            return
-        side_lines = [line for line in lines_for_file if _line_belongs_to_side(side, line)]
+    for diff_file in parse_unified_diff(diff_text):
+        if not diff_file.old_path or not diff_file.new_path:
+            continue
+        side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
         for index, line in enumerate(side_lines):
             start = max(index - window, 0)
             end = min(index + window, len(side_lines) - 1)
@@ -268,8 +325,8 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
             if compute_context_hash(anchor_path_key(anchor), side, line_texts) != expected_hash:
                 continue
             remapped = dict(anchor)
-            remapped["old_path"] = old_path
-            remapped["new_path"] = new_path
+            remapped["old_path"] = diff_file.old_path
+            remapped["new_path"] = diff_file.new_path
             remapped["hunk_header"] = line.hunk_header
             remapped["start"] = {
                 "old_line": line.old_line,
@@ -279,46 +336,6 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
             remapped["end"] = dict(remapped["start"])
             remapped["context_hash"] = expected_hash
             matches.append(add_line_codes(remapped))
-
-    for raw_line in diff_text.splitlines():
-        parsed_paths = _parse_diff_paths(raw_line)
-        if parsed_paths:
-            scan_file()
-            old_path, new_path = parsed_paths
-            old_line = None
-            new_line = None
-            hunk_header = ""
-            lines_for_file = []
-            continue
-        if raw_line.startswith("--- "):
-            old_path = strip_diff_prefix(raw_line[4:].strip())
-            continue
-        if raw_line.startswith("+++ "):
-            new_path = strip_diff_prefix(raw_line[4:].strip())
-            continue
-        hunk_match = HUNK_RE.match(raw_line)
-        if hunk_match:
-            old_line = int(hunk_match.group("old"))
-            new_line = int(hunk_match.group("new"))
-            hunk_header = raw_line
-            continue
-        if old_line is None or new_line is None or not hunk_header:
-            continue
-        if raw_line.startswith("\\"):
-            continue
-        prefix = raw_line[:1]
-        text = raw_line[1:] if prefix in {" ", "+", "-"} else raw_line
-        if prefix == "+":
-            lines_for_file.append(DiffLine(None, new_line, text, hunk_header))
-            new_line += 1
-        elif prefix == "-":
-            lines_for_file.append(DiffLine(old_line, None, text, hunk_header))
-            old_line += 1
-        else:
-            lines_for_file.append(DiffLine(old_line, new_line, text, hunk_header))
-            old_line += 1
-            new_line += 1
-    scan_file()
     unique = {
         (
             match.get("old_path"),

@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -10,12 +10,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
+COPY ai-review/images/python-constraints.txt /opt/ai-review/images/python-constraints.txt
+
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
-      "jsonschema>=4.22" \
-      "PyYAML>=6.0" \
-      "python-gitlab>=4.7" \
-      "requests>=2.32"
+      --constraint /opt/ai-review/images/python-constraints.txt \
+      jsonschema PyYAML python-gitlab requests
 
 COPY ai-review/adapters /opt/ai-review/adapters
 COPY ai-review/ci /opt/ai-review/ci
@@ -26,7 +26,7 @@ COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src /opt/ai-review/src
 COPY ai-review/tests /opt/ai-review/tests
-COPY ai-review/PHASE_2_ACCEPTANCE.md /opt/ai-review/PHASE_2_ACCEPTANCE.md
+COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY ai-review/README.md /opt/ai-review/README.md
 
 RUN chmod +x /opt/ai-review/adapters/*.sh \

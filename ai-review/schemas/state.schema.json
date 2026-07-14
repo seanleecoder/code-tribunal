@@ -33,7 +33,6 @@
           "aliases",
           "discussion_id",
           "root_note_id",
-          "jira_comment_id",
           "status",
           "last_seen_sha",
           "first_seen_sha",
@@ -96,7 +95,6 @@
           },
           "discussion_id": { "type": ["string", "null"] },
           "root_note_id": { "type": ["integer", "null"], "minimum": 1 },
-          "jira_comment_id": { "type": ["string", "null"] },
           "status": {
             "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified", "superseded"]
           },

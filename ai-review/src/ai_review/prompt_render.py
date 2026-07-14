@@ -24,6 +24,22 @@ def _read_rules(rules_dir: Path) -> str:
     return "\n\n".join(chunks)
 
 
+def _diff_stats_text(diff_text: str) -> str:
+    # Approximate size summary so reviewers can calibrate exploration depth
+    # (referenced by prompts/review.md). Calibration hint, not ground truth: a
+    # deleted line whose own content begins with "--" is skipped by the `---`
+    # exclusion.
+    files = insertions = deletions = 0
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            files += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            insertions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return f"files_changed: {files}\ninsertions: {insertions}\ndeletions: {deletions}"
+
+
 def render_review_prompt(input_dir: str | Path, config_path: str | Path, reviewer: str) -> str:
     input_dir = Path(input_dir)
     config = load_config(config_path)
@@ -58,6 +74,9 @@ def render_review_prompt(input_dir: str | Path, config_path: str | Path, reviewe
             "<RULES>",
             rules,
             "</RULES>",
+            "<DIFF_STATS>",
+            _diff_stats_text(diff_text),
+            "</DIFF_STATS>",
             "<MR_DIFF_UNTRUSTED_DATA>",
             diff_text,
             "</MR_DIFF_UNTRUSTED_DATA>",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -12,9 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import budget
-from .config import ConfigError, load_config, resolve_adapter_path
 from .canonical import json_loads_no_duplicates
+from .config import ConfigError, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
@@ -32,13 +32,14 @@ from .schema import (
 )
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 # Process exit code written for terminal error statuses (model_error,
 # schema_error, timeout, config_error, internal_error). The CI reviewer/critique
 # jobs stay `allow_failure: true`, so a non-zero exit surfaces as a visible
 # "warning" without hard-blocking the pipeline — the panel degradation policy
 # (min_successful_reviewers_for_blocking) still governs merge gating. Intentional
-# non-run outcomes (success, skipped, budget_skipped) keep exit code 0.
+# Non-run outcomes (success and skipped) keep exit code 0.
 _EXIT_ERROR = 1
 
 _ADAPTER_RUNTIME_ENV = {
@@ -83,18 +84,6 @@ def _manifest_run_id(input_dir: Path) -> str:
         if isinstance(manifest, dict) and manifest.get("run_id"):
             return str(manifest["run_id"])
     return "unknown-run"
-
-
-def _manifest_project_and_mr(input_dir: Path) -> tuple[str, str]:
-    manifest_path = input_dir / "manifest.json"
-    if manifest_path.exists():
-        manifest = load_json_file(manifest_path)
-        if isinstance(manifest, dict):
-            return (
-                str(manifest.get("project_id", "unknown-project")),
-                str(manifest.get("merge_request_iid", "unknown-mr")),
-            )
-    return "unknown-project", "unknown-mr"
 
 
 def _output_file(stage: str, reviewer: str) -> Path:
@@ -232,10 +221,22 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
     subtype = str(event.get("subtype", "")).strip()
     if subtype:
         return subtype
+    error = event.get("error")
+    if isinstance(error, dict):
+        data = error.get("data")
+        if isinstance(data, dict) and isinstance(data.get("message"), str):
+            return str(data["message"])
+        if isinstance(error.get("message"), str):
+            return str(error["message"])
     try:
         return json.dumps(event, sort_keys=True)
     except (TypeError, ValueError):
         return str(event)
+
+
+def _is_adapter_error_event(event: dict[str, Any]) -> bool:
+    """Recognize terminal error envelopes emitted by supported reviewer CLIs."""
+    return event.get("is_error") is True or event.get("type") == "error"
 
 
 def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
@@ -244,9 +245,15 @@ def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any
     if isinstance(raw, list):
         if stage == "critique":
             return {"critiques": raw}
-        if stage is None and all(isinstance(item, dict) for item in raw):
-            if not raw or any("target_source_finding_id" in item or "verdict" in item for item in raw):
-                return {"critiques": raw}
+        if (
+            stage is None
+            and all(isinstance(item, dict) for item in raw)
+            and (
+                not raw
+                or any("target_source_finding_id" in item or "verdict" in item for item in raw)
+            )
+        ):
+            return {"critiques": raw}
     raise SchemaValidationError("adapter output root must be an object")
 
 
@@ -269,11 +276,28 @@ def _extract_text_parts(content: Any) -> list[str]:
     return parts
 
 
+def _log_structured_output_usage(stage: str | None, *, used: bool) -> None:
+    # Schema steering (--json-schema) is best-effort: whether the CLI actually
+    # emitted structured_output is invisible in the findings themselves, so
+    # state it in the job log — otherwise inactive steering would be silent.
+    stage_label = stage or "review"
+    if used:
+        message = f"ai-review: {stage_label} adapter used structured_output\n"
+    else:
+        message = (
+            f"ai-review: {stage_label} adapter result event carried no "
+            "structured_output; parsing result text\n"
+        )
+    sys.stderr.write(redact_text(message))
+
+
 def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     assistant_parts = []
     result_text = ""
     event_types = []
     stream_error: str | None = None
+    structured_result: dict[str, Any] | list[Any] | None = None
+    saw_result_event = False
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -281,26 +305,39 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         try:
             event = json_loads_no_duplicates(stripped)
         except Exception as exc:
+            preview = _json_preview(stripped)
             raise SchemaValidationError(
-                f"adapter stream contained non-JSON line: {exc}; preview={_json_preview(stripped)!r}"
+                f"adapter stream contained non-JSON line: {exc}; preview={preview!r}"
             ) from exc
         if not isinstance(event, dict):
             continue
         event_types.append(str(event.get("type", "unknown")))
+        if event.get("type") == "result":
+            saw_result_event = True
         if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
-        if str(event.get("type", "")).startswith("message") and isinstance(
-            event.get("message"), dict
+        if (
+            str(event.get("type", "")).startswith("message")
+            and isinstance(event.get("message"), dict)
+            and event["message"].get("role") == "assistant"
         ):
-            if event["message"].get("role") == "assistant":
-                assistant_parts.extend(_extract_text_parts(event["message"]))
+            assistant_parts.extend(_extract_text_parts(event["message"]))
         if str(event.get("type", "")).startswith("message") and isinstance(event.get("part"), dict):
             assistant_parts.extend(_extract_text_parts(event["part"]))
         if event.get("type") == "text":
             assistant_parts.extend(_extract_text_parts(event))
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
-        if event.get("is_error") is True:
+        # With --json-schema, the terminal result event carries the
+        # schema-conforming payload in `structured_output`. Best-effort: the
+        # field is sometimes absent even with the flag set, so every text-based
+        # fallback below must stay.
+        if (
+            isinstance(event.get("structured_output"), (dict, list))
+            and not _is_adapter_error_event(event)
+        ):
+            structured_result = event["structured_output"]
+        if _is_adapter_error_event(event):
             # Record the terminal error but keep scanning: the model may have
             # already emitted valid findings in an earlier assistant message and
             # only *then* hit a terminal error (e.g. error_max_turns). We only
@@ -310,12 +347,21 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             # not collapse to an uninformative ''.
             stream_error = _json_preview(_terminal_error_detail(event))
 
-    text = result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
+    if structured_result is not None:
+        _log_structured_output_usage(stage, used=True)
+        return _coerce_adapter_root(structured_result, stage=stage)
+    if saw_result_event and stream_error is None:
+        # Claude-style stream (terminal result event) without the steering
+        # payload; opencode-style streams have no result event and log nothing.
+        _log_structured_output_usage(stage, used=False)
+
+    text = (
+        result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
+    )
     if not text:
         if stream_error is not None:
-            raise AdapterModelError(
-                f"adapter run ended in a model error before emitting reviewer output: {stream_error!r}"
-            )
+            message = "adapter run ended in a model error before emitting reviewer output"
+            raise AdapterModelError(f"{message}: {stream_error!r}")
         raise SchemaValidationError(
             "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
@@ -327,8 +373,9 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             raise AdapterModelError(
                 f"adapter run ended in a model error: {stream_error!r}"
             ) from exc
+        preview = _json_preview(text)
         raise SchemaValidationError(
-            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
+            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={preview!r}"
         ) from exc
     return _coerce_adapter_root(raw, stage=stage)
 
@@ -343,6 +390,24 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
             f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
     raw = _coerce_adapter_root(raw, stage=stage)
+    # Single-object Claude Code result envelope (--output-format json) carrying
+    # a schema-conforming `structured_output`: prefer it over re-parsing the
+    # `result` text. Error envelopes keep flowing into the AdapterModelError
+    # path below, whether the CLI identifies them with is_error or type=error.
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and not _is_adapter_error_event(raw)
+        and isinstance(raw.get("structured_output"), (dict, list))
+    ):
+        _log_structured_output_usage(stage, used=True)
+        return _coerce_adapter_root(raw["structured_output"], stage=stage)
+    if (
+        raw.get("type") == "result"
+        and not _is_adapter_error_event(raw)
+        and "structured_output" not in raw
+    ):
+        _log_structured_output_usage(stage, used=False)
     if (
         "\n" in stdout.strip()
         and "findings" not in raw
@@ -351,11 +416,15 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     ):
         return _load_stream_json(stdout, stage=stage)
 
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and _is_adapter_error_event(raw)
+    ):
+        error_detail = _json_preview(_terminal_error_detail(raw))
+        raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
+
     if "findings" not in raw and isinstance(raw.get("result"), str):
-        if raw.get("is_error") is True:
-            raise AdapterModelError(
-                f"Claude Code returned an error result: {_json_preview(_terminal_error_detail(raw))!r}"
-            )
         if raw["result"].strip():
             try:
                 unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))
@@ -401,11 +470,7 @@ def _build_adapter_env(
     reviewer_config: dict[str, Any],
     prompt_tmp: Path | None,
 ) -> dict[str, str]:
-    env = {
-        key: value
-        for key in _ADAPTER_RUNTIME_ENV
-        if (value := os.environ.get(key)) is not None
-    }
+    env = {key: value for key in _ADAPTER_RUNTIME_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
             key: value
@@ -414,11 +479,7 @@ def _build_adapter_env(
         }
     )
     env.update(
-        {
-            key: value
-            for key in _PROVIDER_ENDPOINT_ENV
-            if (value := os.environ.get(key)) is not None
-        }
+        {key: value for key in _PROVIDER_ENDPOINT_ENV if (value := os.environ.get(key)) is not None}
     )
 
     credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
@@ -426,9 +487,10 @@ def _build_adapter_env(
         env[credential_variable] = credential
 
     anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    if "openrouter.ai" in anthropic_base_url and (
-        openrouter_key := os.environ.get("OPENROUTER_API_KEY")
-    ) is not None:
+    if (
+        anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
+        and (openrouter_key := os.environ.get("OPENROUTER_API_KEY")) is not None
+    ):
         env["OPENROUTER_API_KEY"] = openrouter_key
 
     env["AI_REVIEW_REVIEWER"] = reviewer
@@ -436,11 +498,19 @@ def _build_adapter_env(
     env["AI_REVIEW_MODEL"] = model
     env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
     env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
-    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10))
+    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(
+        max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10)
+    )
     # An outer AI_REVIEW_MAX_TURNS (allowlisted above) takes precedence; config
     # only supplies the value when the operator did not set the env override.
     if reviewer_config.get("max_turns") is not None and "AI_REVIEW_MAX_TURNS" not in env:
         env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
+    # Reasoning-effort hint for CLIs that support it (claude's --effort).
+    # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
+    # runtime override is already folded in at config load, and the value is
+    # validated against a closed set in validate_config.
+    if reviewer_config.get("effort"):
+        env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
     return env
@@ -463,12 +533,19 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     if not _MODEL_ID_RE.match(model or ""):
         return f"model id has unsupported characters: {model!r}"
     # The OpenRouter endpoint remains a hard exfiltration boundary for the CLI
-    # reviewers and must stay the canonical host.
-    if reviewer not in {"codex", "opencode"}:
+    # reviewers and must stay the canonical host. Claude uses Anthropic's
+    # endpoint env var and OpenRouter's Anthropic-compatible /api base; validate
+    # it before spawning the shell adapter so substring-lookalike hosts never see
+    # the shared OpenRouter token.
+    if reviewer == "claude":
+        base_url = os.environ.get("ANTHROPIC_BASE_URL")
+        if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
+            return f"ANTHROPIC_BASE_URL must be unset or exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
         return None
-    base_url = os.environ.get("OPENROUTER_BASE_URL")
-    if base_url is not None and base_url != _OPENROUTER_BASE_URL:
-        return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
+    if reviewer in {"codex", "opencode"}:
+        base_url = os.environ.get("OPENROUTER_BASE_URL")
+        if base_url is not None and base_url != _OPENROUTER_BASE_URL:
+            return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
     return None
 
 
@@ -481,7 +558,7 @@ class _AdapterResult:
         self.stderr = stderr
 
 
-def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     # Kill the adapter shell and every descendant it spawned (the reviewer CLI,
     # its subprocesses) by signalling the whole process group, then reap the
     # shell. Guarded against the race where the process already exited.
@@ -490,14 +567,10 @@ def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
     except (ProcessLookupError, OSError):
         proc.kill()
         return
-    try:
+    with contextlib.suppress(ProcessLookupError, OSError):
         os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 def _run_adapter_process(
@@ -584,17 +657,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
             raise ConfigError(f"unknown reviewer: {reviewer}")
         model = str(reviewer_config.get("model", "unknown-model"))
         if reviewer_config.get("enabled") is not True:
-            _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
-            _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            _write_empty(
+                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+            )
+            _write_status(
+                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+            )
             return 0
 
         critique_config = config.get("critique", {})
         if stage == "critique" and (
-            critique_config.get("enabled") is not True
-            or int(critique_config.get("rounds", 0)) == 0
+            critique_config.get("enabled") is not True or int(critique_config.get("rounds", 0)) == 0
         ):
-            _write_empty(output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at)
-            _write_status(output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file)
+            _write_empty(
+                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+            )
+            _write_status(
+                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+            )
             return 0
 
         if (validation_error := _cli_reviewer_validation_error(reviewer, model)) is not None:
@@ -620,33 +700,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 error_message=validation_error,
             )
             return _EXIT_ERROR
-
-        budget_backend = str(config.get("budget", {}).get("backend", "none"))
-        project_id, mr_iid = _manifest_project_and_mr(input_dir)
-        decision = budget.acquire(project_id, mr_iid, reviewer, 0.0, backend=budget_backend)
-        if not decision.allowed:
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
-                "budget_skipped",
-                run_id,
-                model,
-                started_at,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "budget_skipped",
-                started_at,
-                started_monotonic,
-                output_file,
-                error_class="BudgetDenied",
-                error_message=decision.reason,
-            )
-            return 0
 
         adapter_path = resolve_adapter_path(config_path, str(reviewer_config["adapter"]))
         prompt_tmp: Path | None = None
@@ -685,9 +738,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         # Opt-in live mirroring of the adapter's output to the job log; off by
         # default to avoid large stream-json/--verbose dumps and log truncation.
         mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
-        result = _run_adapter_process(
-            adapter_path, env, timeout_seconds, mirror_logs=mirror_logs
-        )
+        result = _run_adapter_process(adapter_path, env, timeout_seconds, mirror_logs=mirror_logs)
         # When not mirroring live, still surface the adapter's stderr after it
         # exits (adapters like codex narrate progress there) — matching the
         # pre-streaming behavior. When mirroring, it was already echoed live.
@@ -771,7 +822,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
             return _EXIT_ERROR
 
         write_canonical_json(output_dir / output_file, finalized)
-        _write_status(output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file)
+        _write_status(
+            output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file
+        )
         return 0
     except subprocess.TimeoutExpired as exc:
         model = "unknown-model"

@@ -1,12 +1,13 @@
-# Consuming repos must declare these stages in their root .gitlab-ci.yml:
-# prepare, review, critique, consensus, post, gate
+# Canonical Code Tribunal DAG. It can be included directly or combined with
+# review-child.gitlab-ci.yml in a protected child trigger. `needs` preserves
+# order.
 
 variables:
   # Public GHCR images, cut over from the Phase 5.5 private bootstrap refs.
   # Replace all three values together when bumping to a newer published commit.
-  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:00caceacc7e86c59007cf4fd1b6dfd81bfe615122a6667e874c23b90ac8bde66"
-  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f7f149089b85516c004e31255e6e57ac461ffed7@sha256:8006f10aab52783697c474a4a5c51e0253b16fa1dd432f98b09dbb2100318fd5"
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "f7f149089b85516c004e31255e6e57ac461ffed7"
+  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701"
+  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a"
+  AI_REVIEW_TRUSTED_IMAGE_SHA: "6e084960750a46faf0235a9641bdba1f97074555"
   AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
@@ -18,12 +19,14 @@ variables:
 
 .ai_review_rules:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
 prepare_ai_review:
-  stage: prepare
+  stage: ai_review
+  needs: []
   # Entry job for the whole flow: every other job `needs` it, so gating the
   # trigger here gates the entire review. Defaults to auto-run on MRs; set the
   # project/pipeline variable AI_REVIEW_MANUAL="true" to require a human to
@@ -31,6 +34,10 @@ prepare_ai_review:
   # gate still runs once triggered). Use allow_failure: false instead if the
   # review must be mandatory-but-manual (every MR blocked awaiting a click).
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID && $AI_REVIEW_MANUAL == "true"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $AI_REVIEW_MANUAL == "true"'
       when: manual
       allow_failure: true
@@ -46,10 +53,9 @@ prepare_ai_review:
     expire_in: 7 days
     paths:
       - inputs/
-      - out/status/prepare.json
 
 .review_template:
-  stage: review
+  stage: ai_review
   extends: .ai_review_rules
   # Secret-bearing reviewer jobs must run adapter code and reviewer config from
   # the trusted review image/repository, not from MR-controlled code. Runtime
@@ -75,26 +81,26 @@ prepare_ai_review:
       - out/findings/
       - out/status/
 
-review_claude:
+"AI review: [claude]":
   extends: .review_template
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
     ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
-review_codex:
+"AI review: [codex]":
   extends: .review_template
   variables:
     REVIEWER: codex
 
-review_opencode:
+"AI review: [opencode]":
   extends: .review_template
   variables:
     REVIEWER: opencode
     AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
 .critique_template:
-  stage: critique
+  stage: ai_review
   image: "$AI_REVIEW_REVIEWER_IMAGE"
   interruptible: true
   allow_failure: true
@@ -116,19 +122,20 @@ review_opencode:
   rules:
     - if: '$AI_REVIEW_CRITIQUE_ENABLED != "true"'
       when: never
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - if: '$CI_PIPELINE_SOURCE == "api"'
   needs:
     - job: prepare_ai_review
       artifacts: true
-    - job: review_claude
+    - job: "AI review: [claude]"
       artifacts: true
       optional: true
-    - job: review_codex
+    - job: "AI review: [codex]"
       artifacts: true
       optional: true
-    - job: review_opencode
+    - job: "AI review: [opencode]"
       artifacts: true
       optional: true
   script:
@@ -141,48 +148,48 @@ review_opencode:
       - out/pooled_findings/
       - out/status/
 
-critique_claude:
+"AI critique: [claude]":
   extends: .critique_template
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
     ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
-critique_codex:
+"AI critique: [codex]":
   extends: .critique_template
   variables:
     REVIEWER: codex
 
-critique_opencode:
+"AI critique: [opencode]":
   extends: .critique_template
   variables:
     REVIEWER: opencode
     AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
 consensus_ai_review:
-  stage: consensus
+  stage: ai_review
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
   needs:
     - job: prepare_ai_review
       artifacts: true
-    - job: review_claude
+    - job: "AI review: [claude]"
       artifacts: true
       optional: true
-    - job: review_codex
+    - job: "AI review: [codex]"
       artifacts: true
       optional: true
-    - job: review_opencode
+    - job: "AI review: [opencode]"
       artifacts: true
       optional: true
-    - job: critique_claude
+    - job: "AI critique: [claude]"
       artifacts: true
       optional: true
-    - job: critique_codex
+    - job: "AI critique: [codex]"
       artifacts: true
       optional: true
-    - job: critique_opencode
+    - job: "AI critique: [opencode]"
       artifacts: true
       optional: true
   script:
@@ -192,10 +199,9 @@ consensus_ai_review:
     expire_in: 30 days
     paths:
       - out/consensus/
-      - out/status/consensus.json
 
 post_ai_review:
-  stage: post
+  stage: ai_review
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
@@ -212,10 +218,9 @@ post_ai_review:
     expire_in: 30 days
     paths:
       - out/post/
-      - out/status/post.json
 
 ai_review_gate:
-  stage: gate
+  stage: ai_review
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
@@ -231,4 +236,3 @@ ai_review_gate:
     expire_in: 30 days
     paths:
       - out/gate/
-      - out/status/gate.json

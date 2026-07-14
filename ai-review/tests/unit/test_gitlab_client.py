@@ -4,6 +4,7 @@ import unittest
 from typing import Any
 
 from ai_review.gitlab_client import (
+    GitLabApiError,
     GitLabClient,
     MergeRequestVersion,
     build_position,
@@ -85,7 +86,9 @@ class GitLabClientTests(unittest.TestCase):
         self.assertEqual(unchanged["new_line"], 12)
 
     def test_build_position_multiline_adds_line_range(self) -> None:
-        position = build_position(self._anchor("new"), MergeRequestVersion("b", "s", "h"), multiline=True)
+        position = build_position(
+            self._anchor("new"), MergeRequestVersion("b", "s", "h"), multiline=True
+        )
         self.assertEqual(position["line_range"]["start"]["line_code"], "line-start")
         self.assertEqual(position["line_range"]["end"]["line_code"], "line-end")
 
@@ -128,9 +131,7 @@ class GitLabClientTests(unittest.TestCase):
         class PagedSession:
             def __init__(self) -> None:
                 self.pages: dict[int, FakeResponse] = {
-                    1: FakeResponse(
-                        [{"id": "d1"}, {"id": "d2"}], headers={"X-Next-Page": "2"}
-                    ),
+                    1: FakeResponse([{"id": "d1"}, {"id": "d2"}], headers={"X-Next-Page": "2"}),
                     2: FakeResponse([{"id": "summary-note"}], headers={"X-Next-Page": ""}),
                 }
                 self.requested_pages: list[int] = []
@@ -173,8 +174,8 @@ class GitLabClientTests(unittest.TestCase):
                 self.count += 1
                 return FakeResponse([{"id": self.count}], headers={"X-Next-Page": "999"})
 
-        import io
         import contextlib
+        import io
 
         session = RunawaySession()
         client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
@@ -184,6 +185,32 @@ class GitLabClientTests(unittest.TestCase):
         self.assertEqual(session.count, 100)
         self.assertEqual(len(items), 100)
         self.assertIn("pagination cap reached", stderr.getvalue())
+
+    def test_object_methods_reject_non_object_responses(self) -> None:
+        # Mutating endpoints are consumed as objects by the posting pipeline; a
+        # GitLab or mock response with another shape should fail at the I/O boundary.
+        class ListResponseSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                return FakeResponse([])
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=ListResponseSession()
+        )
+        with self.assertRaisesRegex(GitLabApiError, "response was not an object"):
+            client.create_mr_note("group/project", 1, "body")
+
+    def test_paginated_methods_reject_non_object_items(self) -> None:
+        # Pagination returns lists, but each discussion/note entry must be an object
+        # before downstream state/indexing code sees it.
+        class ScalarItemSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                return FakeResponse(["not-an-object"], headers={"X-Next-Page": ""})
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=ScalarItemSession()
+        )
+        with self.assertRaisesRegex(GitLabApiError, "returned a non-object item"):
+            client.list_mr_discussions("group/project", 1)
 
     def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
         # Bug #8: a 204/empty /changes response makes _request return None; fetch_mr_diff

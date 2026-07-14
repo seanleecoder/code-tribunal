@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from datetime import UTC, datetime
@@ -19,6 +18,7 @@ from .anchors import (
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
+from .constants import SEVERITY_RANK
 from .redact import redact_text
 
 
@@ -47,10 +47,8 @@ ADAPTER_STATUSES = {
     "schema_error",
     "config_error",
     "internal_error",
-    "budget_skipped",
 }
 
-_SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
 
 
 def schema_dir() -> Path:
@@ -82,7 +80,7 @@ def load_schema(schema_name: str) -> dict[str, Any]:
 def validate_instance(instance: Any, schema_name: str) -> None:
     schema = load_schema(schema_name)
     try:
-        import jsonschema  # type: ignore[import-not-found]
+        import jsonschema  # type: ignore[import-untyped]
     except ModuleNotFoundError:
         _validate_subset(instance, schema, schema, "$")
         return
@@ -122,7 +120,9 @@ def _type_matches(instance: Any, expected: str) -> bool:
     raise SchemaValidationError(f"unsupported schema type: {expected}")
 
 
-def _validate_subset(instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str) -> None:
+def _validate_subset(
+    instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str
+) -> None:
     if "$ref" in schema:
         _validate_subset(instance, _resolve_ref(schema, root), root, path)
         return
@@ -317,7 +317,7 @@ def _confidence_rank(finding: Any) -> float:
 def _severity_rank(finding: Any) -> int:
     if not isinstance(finding, dict):
         return -1
-    return _SEVERITY_RANK.get(str(finding.get("severity")), -1)
+    return SEVERITY_RANK.get(str(finding.get("severity")), -1)
 
 
 def _rank_findings_for_cap(
@@ -390,7 +390,7 @@ def finalize_finding_batch(
     diff_text = _load_diff(input_dir)
     raw_findings = batch.get("findings", [])
     ranked_findings = _rank_findings_for_cap(raw_findings, max_findings)
-    findings = []
+    findings: list[dict[str, Any]] = []
     finding_keys = {
         "anchor",
         "severity",
@@ -403,11 +403,7 @@ def finalize_finding_batch(
     }
     dropped = 0
     for index, finding in ranked_findings:
-        if (
-            max_findings is not None
-            and max_findings >= 0
-            and len(findings) >= max_findings
-        ):
+        if max_findings is not None and max_findings >= 0 and len(findings) >= max_findings:
             break
         try:
             normalized = {key: finding[key] for key in finding_keys if key in finding}
@@ -456,9 +452,7 @@ def finalize_finding_batch(
             # A single finding with an unresolvable/malformed anchor must not discard the
             # whole batch — drop just that finding and keep the valid ones.
             dropped += 1
-            sys.stderr.write(
-                redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n")
-            )
+            sys.stderr.write(redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n"))
             continue
         findings.append(normalized)
     if dropped:

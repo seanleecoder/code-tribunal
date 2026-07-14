@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from dataclasses import dataclass
-from urllib.parse import quote
 from typing import Any
+from urllib.parse import quote
 
 from .anchors import gitlab_line_code
 
@@ -81,6 +82,18 @@ def root_note_id_from_discussion(response: dict[str, Any]) -> int:
     return note_id
 
 
+def current_user_id(client: Any) -> int | None:
+    current_user_fn = getattr(client, "current_user", None)
+    if not callable(current_user_fn):
+        return None
+    try:
+        current_user = current_user_fn()
+    except Exception:
+        return None
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    return user_id if isinstance(user_id, int) else None
+
+
 class GitLabClient:
     def __init__(
         self,
@@ -94,9 +107,7 @@ class GitLabClient:
         self.token = token
         self.token_header = token_header
         if session is None:
-            import requests  # type: ignore[import-not-found]
-
-            session = requests.Session()
+            session = importlib.import_module("requests").Session()
         self.session = session
 
     def _project(self, project_id_or_path: str | int) -> str:
@@ -124,6 +135,12 @@ class GitLabClient:
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         return self._parse(self._send(method, path, **kwargs))
 
+    def _request_object(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        parsed = self._request(method, path, **kwargs)
+        if not isinstance(parsed, dict):
+            raise GitLabApiError(f"GitLab API {method} {path} response was not an object")
+        return dict(parsed)
+
     @staticmethod
     def _next_page(response: Any) -> int | None:
         """Return GitLab's next page from the X-Next-Page header, or None if absent.
@@ -141,10 +158,10 @@ class GitLabClient:
         text = str(raw).strip()
         return int(text) if text.isdigit() else 0
 
-    def _get_all_pages(self, path: str, **kwargs: Any) -> list[Any]:
+    def _get_all_pages(self, path: str, **kwargs: Any) -> list[dict[str, Any]]:
         params = dict(kwargs.pop("params", {}))
         per_page = int(params.pop("per_page", 100))
-        items: list[Any] = []
+        items: list[dict[str, Any]] = []
         page = 1
         # Bounded loop guards against a server that ignores paging and always returns
         # a full page; 100 pages * per_page covers any realistic MR. The for/else warns
@@ -158,7 +175,10 @@ class GitLabClient:
                 break
             if not isinstance(batch, list):
                 raise GitLabApiError(f"GitLab paginated GET {path} returned a non-list page")
-            items.extend(batch)
+            for item in batch:
+                if not isinstance(item, dict):
+                    raise GitLabApiError(f"GitLab paginated GET {path} returned a non-object item")
+                items.append(dict(item))
             next_page = self._next_page(response)
             if next_page is not None:
                 if next_page == 0:
@@ -232,7 +252,7 @@ class GitLabClient:
         body: str,
         position: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "POST",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/discussions",
             json={"body": body, "position": position},
@@ -255,7 +275,7 @@ class GitLabClient:
         note_id: int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}"
             f"/discussions/{discussion_id}/notes/{note_id}",
@@ -269,7 +289,7 @@ class GitLabClient:
         discussion_id: str,
         resolved: bool = True,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}"
             f"/discussions/{discussion_id}",
@@ -291,7 +311,7 @@ class GitLabClient:
         merge_request_iid: str | int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "POST",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes",
             json={"body": body},
@@ -304,7 +324,7 @@ class GitLabClient:
         note_id: int,
         body: str,
     ) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "PUT",
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/notes/{note_id}",
             json={"body": body},

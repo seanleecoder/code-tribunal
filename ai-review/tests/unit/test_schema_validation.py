@@ -98,8 +98,9 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertIsNone(finalized["critiques"][0]["duplicate_of_source_finding_id"])
         validate_instance(finalized, "critique_batch.schema.json")
 
-
-    def test_finalize_critique_batch_preserves_non_success_status_and_discards_critiques(self) -> None:
+    def test_finalize_critique_batch_preserves_non_success_status_and_discards_critiques(
+        self,
+    ) -> None:
         finalized = finalize_critique_batch(
             {
                 "adapter_status": "model_error",
@@ -156,11 +157,15 @@ class SchemaValidationTests(unittest.TestCase):
 
         required = schema["properties"]["critiques"]["items"]["required"]
 
-        self.assertEqual(schema["properties"]["schema_version"], {"type": "string", "const": "critique_batch.v1"})
+        self.assertEqual(
+            schema["properties"]["schema_version"], {"type": "string", "const": "critique_batch.v1"}
+        )
         self.assertEqual(schema["properties"]["adapter_status"]["type"], "string")
         self.assertEqual(critique_props["verdict"]["type"], "string")
         self.assertIn("duplicate_of_source_finding_id", required)
-        self.assertEqual(critique_props["duplicate_of_source_finding_id"]["type"], ["string", "null"])
+        self.assertEqual(
+            critique_props["duplicate_of_source_finding_id"]["type"], ["string", "null"]
+        )
 
     def test_malformed_adapter_output_becomes_schema_error_empty_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -218,30 +223,15 @@ class SchemaValidationTests(unittest.TestCase):
                         "    max_findings: 50",
                         "    credential_variable: BAD_KEY",
                         "panel:",
-                        "  expected_reviewers: 1",
                         "  min_successful_reviewers_for_blocking: 1",
                         "  min_successful_reviewers_for_resolution: 1",
                         "  quorum:",
-                        "    mode: absolute",
                         "    votes_required: 1",
-                        "severity_order:",
-                        "  - info",
-                        "  - minor",
-                        "  - major",
-                        "  - blocker",
-                        "categories:",
-                        "  - correctness",
                         "severity_policy:",
                         "  single_reviewer_blocker:",
                         "    categories: [correctness]",
-                        "    post: true",
-                        "    block_merge: false",
-                        "    human_ack_recommended: true",
                         "  quorum_blocker:",
-                        "    post: true",
                         "    block_merge: true",
-                        "  majority_noise:",
-                        "    decision: drop",
                         "critique:",
                         "  enabled: false",
                         "  rounds: 0",
@@ -253,19 +243,12 @@ class SchemaValidationTests(unittest.TestCase):
                         "  mode: gitlab_discussions",
                         "merge_gate:",
                         "  enabled: true",
-                        "  mechanism: ci_job_failure",
-                        "  required_project_setting: pipelines_must_succeed",
-                        "  stale_head_behavior: pass_noop",
                         "state:",
                         "  backend: gitlab_mr_state_note",
-                        "jira:",
-                        "  enabled: false",
                         "limits:",
                         "  max_prompt_bytes: 500000",
-                        "budget:",
-                        "  backend: none",
                         "security:",
-                        "  redact_logs: true",
+                        "  allow_external_fork_secrets: false",
                     ]
                 ),
                 encoding="utf-8",

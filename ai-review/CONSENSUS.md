@@ -65,7 +65,9 @@ Four design choices:
   `sha256_hex(canonical_json(...))`.
 - **Exhaustive sorting** before any hash or emit.
 - **Connected-components clustering (union-find), not order-dependent greedy
-  grouping** — so the grouping result is independent of reviewer/input order.
+  grouping** — so initial candidate grouping is independent of reviewer/input
+  order. Components are then split by a deterministic all-members check so
+  transitive chains cannot fabricate quorum between dissimilar endpoints.
 - **No timestamps inside decision objects.**
 
 Same inputs → identical `consensus.json`, every time.
@@ -81,11 +83,19 @@ Same inputs → identical `consensus.json`, every time.
 2. **Deduplication via union-find.** `same_issue(a, b)` is a symmetric predicate:
    same `source_finding_id` / validated critique duplicate-link; OR same
    path + category + side + `context_hash`; OR same path + category with overlapping
-   line ranges and a matching title/evidence fingerprint or symbol. `group_findings`
-   runs union-find over all pairs, then post-splits each component by
-   (category, path) to prevent accidental cross-category merges. Because it is
-   connected components rather than sequential merging, the result does not depend on
-   input order.
+   line ranges and a matching title/evidence fingerprint or symbol. When
+   `panel.grouping.semantic.enabled` is true, the final same-path/category/range
+   branch may also match on deterministic Jaccard similarity over normalized
+   `title + body` words and 3-word shingles at
+   `panel.grouping.semantic.threshold`. `group_findings` runs union-find over all
+   pairs, then post-splits each component by (category, path) and by an all-members
+   same-issue check. This preserves deterministic connected-components discovery
+   while preventing an A-B/B-C chain from merging A and C when the endpoints are
+   dissimilar.
+
+   Any future embedding-based similarity must be computed before the reducer and
+   passed in as ordinary input data. `consensus.py` must remain free of network or
+   model calls so the same inputs still produce byte-identical output.
 
 3. **Voting & severity.** `vote_count` = number of **distinct reviewers** in a group
    (one vote per reviewer). `final_severity` = the **max** severity in the group.
@@ -104,15 +114,22 @@ Same inputs → identical `consensus.json`, every time.
    enabled — see below). Only `success`-status critique batches count, and a critic
    **cannot critique its own finding**. Majority non-author `noise` verdicts drop a
    group; a `duplicate` verdict only merges findings when a *third-party* critic's
-   link is validated; severity downgrade and advisory escalation are both opt-in and
-   the downgrade is capped at **one level**.
+   link is validated. Severity downgrade is opt-in; advisory escalation is
+   enabled by default and only promotes peer-supported `fyi` findings to the
+   non-blocking `surface` decision.
+   All disputes against a group are capped at **one total severity level** of
+   downgrade, regardless of how many critics dispute it, and critique adjustment
+   may never downgrade a `blocker` into a non-blocking severity.
 
-   The load-bearing invariant: **critiques can never push `vote_count` across
-   quorum.** `agree` is confidence metadata only — never a vote. (Locked in by
+   The load-bearing invariants: **critiques can never push `vote_count` across
+   quorum or move a blocker finding across the blocker/non-blocker boundary.**
+   `agree` is confidence metadata only — never a vote. (Locked in by
    `test_agree_support_does_not_increase_vote_count`.)
 
 6. **Finalization.** Every array is sorted, ids are canonical hashes, and the run's
-   `summary.block_merge = any(group.block_merge)`. The `gate` stage
+   `summary.block_merge = any(group.block_merge)`. The summary also reports
+   `panel_convergence`, the fraction of surfaced groups whose `vote_count >= 2`;
+   FYI and dropped groups do not contribute to the denominator. The `gate` stage
    ([`gate.py`](src/ai_review/gate.py)) then reads `summary.block_merge` to pass or
    fail the CI job.
 
@@ -140,9 +157,39 @@ so `review.yaml`'s value simply acts as the default when the variable is unset.)
 ## 5. Tests that pin this behavior
 
 Under [`tests/unit/`](tests/unit/): `test_voting.py` (panel status + decision
-policy), `test_grouping.py` (union-find), `test_phase5_consensus.py` (critique
-merges, majority-noise drop, `agree` doesn't add a vote, opt-in escalation/downgrade,
+policy), `test_grouping.py` (union-find, semantic grouping, transitive splitting,
+and the labeled grouping corpus), `test_phase5_consensus.py` (critique merges,
+majority-noise drop, `agree` doesn't add a vote, opt-in escalation/downgrade,
 `rounds: 0` ignores critiques), `test_consensus_state_matching.py` (cross-run
-matching + deterministic tie-breaking), and `test_consensus_cli.py` (failed panel
-still writes an artifact and exits `3`; critic identity is bound from the filename
-even if the payload lies).
+matching + deterministic tie-breaking + semantic grouping in full consensus output),
+and `test_consensus_cli.py` (failed panel still writes an artifact and exits `3`;
+critic identity is bound from the filename even if the payload lies).
+
+Under [`tests/contract/`](tests/contract/), `test_golden_consensus.py` compares
+semantic-on and default semantic-off consensus artifacts against checked-in
+canonical JSON snapshots. The default snapshot is especially important because the
+transitive-chain split runs even when semantic grouping is disabled. Intentional
+changes to grouping output should run `make update-golden`, include the changed
+files in the same PR, and explain the semantic change.
+
+Under [`tests/integration/`](tests/integration/), `test_post_gate_e2e.py` drives
+the SPEC-12 fake-GitLab post→gate harness through blocking, FYI-only, and
+idempotent re-run scenarios. The reusable in-memory client lives in
+[`tests/support/fake_gitlab.py`](tests/support/fake_gitlab.py) so SPEC-14 and
+SPEC-15 refactors can assert posting and gate behavior without contacting a real
+GitLab instance.
+
+
+## GitHub Review Harness
+
+GitHub reviews use the same deterministic consensus artifacts as GitLab. Set
+`posting.mode: github_reviews` and `state.backend: github_pr_comment` before
+running `python -m ai_review.input_bundle prepare` in a GitHub Actions
+`pull_request` workflow. The prepare stage reads `GITHUB_EVENT_PATH`,
+`GITHUB_REPOSITORY`, and `GITHUB_TOKEN`, writes the same `manifest.json`,
+`prior_decisions.json`, and `state_aliases.json` bundle files, and then the
+reviewer, consensus, post, and gate stages consume those artifacts exactly like
+the GitLab harness. Persisted state is stored in a bot-authored PR issue comment
+with both the encoded `ai-review-state:v1` payload and a GitHub backend marker;
+summary comments share the PR issue-comment channel but intentionally do not use
+the state marker.

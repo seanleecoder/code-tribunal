@@ -1,32 +1,76 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast, overload
 
 from .anchors import remap_anchor, title_fingerprint
-from .canonical import canonical_json, sha256_hex
+from .canonical import sha256_hex
 from .config import load_config
-from .gitlab_client import (
-    GitLabApiError,
-    GitLabClient,
-    build_position,
-    root_note_id_from_discussion,
-)
-from .memory import find_matching_record
+from .constants import SEVERITY_RANK
 from .memory import (
     compact_state,
     empty_state,
     encode_state_note,
+    find_matching_record,
     newest_valid_state_from_notes,
     normalize_state,
     normalize_state_record,
     state_overflow_reason,
 )
+from .platform import ReviewPlatform, ReviewPlatformError
+from .platform.runtime import create_runtime_platform
+from .render import (
+    compute_body_hash as _compute_body_hash,
+)
+from .render import (
+    render_body as _render_body,
+)
+from .render import (
+    sanitize_model_text,
+)
+from .render import (
+    source_hash as _source_hash,
+)
+from .render import (
+    validate_suggestion as _validate_suggestion,
+)
 from .schema import load_json_file, now_iso, write_canonical_json
+from .types import (
+    Anchor,
+    Consensus,
+    FindingGroup,
+    PostResult,
+    State,
+    StateRecord,
+    StateRecordStatus,
+    SummaryComment,
+)
+
+
+def validate_suggestion(suggestion: str | None) -> bool:
+    return _validate_suggestion(suggestion)
+
+
+def source_hash(source_finding_ids: list[str]) -> str:
+    return _source_hash(source_finding_ids)
+
+
+def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
+    return _compute_body_hash(group, body_without_marker)
+
+
+def render_body(
+    group: FindingGroup,
+    successful_reviewer_count: int,
+    run_id: str,
+) -> tuple[str, str]:
+    return _render_body(group, successful_reviewer_count, run_id)
+
 
 MARKER_RE = re.compile(
     r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
@@ -39,55 +83,27 @@ SUMMARY_MARKER_RE = re.compile(
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
-TEXT_TOKEN_RE = re.compile(r"[a-z0-9]+")
-SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
-FAILURE_KEYWORDS = {
-    "attributeerror",
-    "csrf",
-    "empty",
-    "indexerror",
-    "injection",
-    "keyerror",
-    "missing",
-    "none",
-    "null",
-    "permission",
-    "timeout",
-    "typeerror",
-    "valueerror",
-    "xss",
-}
-STOPWORDS = {
-    "about",
-    "after",
-    "also",
-    "and",
-    "are",
-    "because",
-    "been",
-    "before",
-    "being",
-    "but",
-    "can",
-    "could",
-    "from",
-    "has",
-    "have",
-    "into",
-    "may",
-    "not",
-    "only",
-    "that",
-    "the",
-    "then",
-    "this",
-    "when",
-    "where",
-    "will",
-    "with",
-    "would",
-    "your",
-}
+
+
+@dataclass
+class PlanOutcome:
+    warnings: list[str]
+    stale_unverified: int = 0
+    overflow: str | None = None
+
+
+@dataclass
+class StatePlan:
+    persisted_state: State
+    base_records: list[StateRecord]
+    planned_records: list[StateRecord]
+    planned_by_issue: dict[str, StateRecord]
+    planned_matches: dict[str, StateRecord]
+    ambiguous_issue_ids: set[str]
+    pipeline_id: str
+    planned_state: State
+    retention: dict[str, Any]
+    outcome: PlanOutcome
 
 
 @dataclass(frozen=True)
@@ -100,103 +116,7 @@ class ExistingReviewDiscussion:
     title: str
     summary: str
     resolved: bool
-
-
-def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
-    sanitized = text.replace("<!--", "< !--").replace("-->", "-- >")
-    sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n").strip()
-    return sanitized[:max_length]
-
-
-def validate_suggestion(suggestion: str | None) -> bool:
-    if suggestion is None:
-        return True
-    if "<!--" in suggestion or "-->" in suggestion:
-        return False
-    return suggestion.count("```") % 2 == 0
-
-
-def source_hash(source_finding_ids: list[str]) -> str:
-    return sha256_hex(canonical_json(sorted(source_finding_ids)))
-
-
-def compute_body_hash(group: dict[str, Any], body_without_marker: str) -> str:
-    critique_summary = group.get(
-        "critique_summary",
-        {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
-    )
-    return sha256_hex(
-        canonical_json(
-            {
-                "issue_id": group["issue_id"],
-                "decision": group["decision"],
-                "final_severity": group["final_severity"],
-                "block_merge": group["block_merge"],
-                "human_ack_recommended": group.get("human_ack_recommended", False),
-                "title": group["title"],
-                "body_without_marker": body_without_marker,
-                "sorted_source_finding_ids": sorted(group.get("source_finding_ids", [])),
-                "sorted_critique_summary": {
-                    key: critique_summary.get(key, 0)
-                    for key in sorted(["agree", "dispute", "noise", "duplicate"])
-                },
-            }
-        )
-    )
-
-
-def render_body(
-    group: dict[str, Any],
-    successful_reviewer_count: int,
-    run_id: str,
-) -> tuple[str, str]:
-    reviewers = sorted(group.get("contributing_reviewers", []))
-    title = sanitize_model_text(str(group["title"]), max_length=240)
-    summary = sanitize_model_text(str(group.get("body", "")), max_length=1200)
-    evidence_lines = []
-    evidence_by_reviewer = group.get("evidence_by_reviewer", {})
-    if isinstance(evidence_by_reviewer, dict):
-        for reviewer in reviewers:
-            evidence = sanitize_model_text(
-                str(evidence_by_reviewer.get(reviewer, summary)),
-                max_length=300,
-            )
-            evidence_lines.append(f"- {reviewer}: {evidence}")
-    if not evidence_lines:
-        evidence_lines.append(f"- {', '.join(reviewers) or 'reviewer'}: {summary}")
-
-    suggestion = group.get("suggestion")
-    suggestion_block = ""
-    if isinstance(suggestion, str) and validate_suggestion(suggestion):
-        suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion, max_length=1200)
-
-    body_without_marker = "\n".join(
-        [
-            f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
-            "",
-            title,
-            "",
-            summary,
-            "",
-            "Evidence:",
-            *evidence_lines,
-            "",
-            "Consensus:",
-            f"- Reviewers: {', '.join(reviewers)}",
-            f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-            f"- Critique support: {group.get('critique_support_count', 0)}",
-            f"- Decision: {group['decision']}",
-            f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-            "- Human acknowledgment: "
-            + ("recommended" if group.get("human_ack_recommended") else "not required"),
-        ]
-    ) + suggestion_block
-    body_hash = compute_body_hash(group, body_without_marker)
-    marker = (
-        f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
-        f"body_hash={body_hash} source={source_hash(group.get('source_finding_ids', []))} -->"
-    )
-    return body_without_marker + "\n\n" + marker, body_hash
+    author_id: int | None
 
 
 def parse_marker(body: str) -> dict[str, str] | None:
@@ -269,6 +189,12 @@ def index_ai_review_discussions(
                 title=rendered.get("title", ""),
                 summary=rendered.get("summary", ""),
                 resolved=bool(discussion.get("resolved") or root.get("resolved")),
+                author_id=(
+                    root.get("author", {}).get("id")
+                    if isinstance(root.get("author"), dict)
+                    and isinstance(root.get("author", {}).get("id"), int)
+                    else None
+                ),
             )
         )
     return indexed
@@ -291,29 +217,30 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
 
 def _state_enabled(config: dict[str, Any]) -> bool:
     state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return state_config.get("backend") == "gitlab_mr_state_note"
+    return state_config.get("backend") in {"gitlab_mr_state_note", "github_pr_comment"}
 
 
-def _list_mr_notes_if_supported(
-    client: GitLabClient,
+def _list_state_notes(
+    client: ReviewPlatform,
     project_id: str,
-    mr_iid: str,
+    change_id: str,
 ) -> list[dict[str, Any]]:
-    list_notes = getattr(client, "list_mr_notes", None)
-    if callable(list_notes):
-        return list_notes(project_id, mr_iid)
-    return []
+    notes = client.list_state_notes(project_id, change_id)
+    return notes if isinstance(notes, list) else []
 
 
 def load_persisted_state(
-    client: GitLabClient,
+    client: ReviewPlatform,
     config: dict[str, Any],
     manifest: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, list[str]]:
     if not _state_enabled(config):
         return None, []
     state_config = config.get("state", {})
-    notes = _list_mr_notes_if_supported(
+    bot_author_id = client.current_user_id()
+    if bot_author_id is None:
+        raise RuntimeError("state backend requires current_user lookup to verify state-note author")
+    notes = _list_state_notes(
         client,
         manifest["project_id"],
         manifest["merge_request_iid"],
@@ -321,6 +248,7 @@ def load_persisted_state(
     state, warnings = newest_valid_state_from_notes(
         notes,
         checksum_required=bool(state_config.get("checksum_required", True)),
+        expected_author_id=bot_author_id,
     )
     if state is None:
         return None, warnings
@@ -335,7 +263,7 @@ def load_persisted_state(
 
 
 def write_persisted_state(
-    client: GitLabClient,
+    client: ReviewPlatform,
     config: dict[str, Any],
     manifest: dict[str, Any],
     state: dict[str, Any],
@@ -348,18 +276,18 @@ def write_persisted_state(
     body = encode_state_note(state_without_hash)
     note_id = state.get("state_note_id")
     if isinstance(note_id, int):
-        return client.update_mr_note(
+        return client.update_state_note(
             manifest["project_id"],
             manifest["merge_request_iid"],
             note_id,
             body,
         )
-    created = client.create_mr_note(manifest["project_id"], manifest["merge_request_iid"], body)
+    created = client.create_state_note(manifest["project_id"], manifest["merge_request_iid"], body)
     created_id = created.get("id") if isinstance(created, dict) else None
     if isinstance(created_id, int):
         state_with_id = dict(state_without_hash, state_note_id=created_id)
         body_with_id = encode_state_note(state_with_id)
-        return client.update_mr_note(
+        return client.update_state_note(
             manifest["project_id"],
             manifest["merge_request_iid"],
             created_id,
@@ -368,7 +296,7 @@ def write_persisted_state(
     return created if isinstance(created, dict) else None
 
 
-def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
+def _candidate_signature_hashes(group: Mapping[str, Any]) -> list[str]:
     values = group.get("candidate_issue_signature_hashes")
     if not isinstance(values, list):
         values = group.get("_candidate_issue_signature_hashes", [])
@@ -376,7 +304,7 @@ def _candidate_signature_hashes(group: dict[str, Any]) -> list[str]:
 
 
 def _record_for_group(
-    group: dict[str, Any],
+    group: Mapping[str, Any],
     *,
     manifest: dict[str, Any],
     pipeline_id: str,
@@ -388,11 +316,14 @@ def _record_for_group(
     remap_status: str = "exact",
 ) -> dict[str, Any]:
     previous = existing or {}
-    match_keys = group.get("match_keys") if isinstance(group.get("match_keys"), dict) else {}
-    aliases = previous.get("aliases") if isinstance(previous.get("aliases"), dict) else {}
+    raw_match_keys = group.get("match_keys")
+    match_keys = raw_match_keys if isinstance(raw_match_keys, dict) else {}
+    raw_aliases = previous.get("aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     merged_aliases = {
         "candidate_issue_signatures": sorted(
-            set(aliases.get("candidate_issue_signatures", [])) | set(_candidate_signature_hashes(group))
+            set(aliases.get("candidate_issue_signatures", []))
+            | set(_candidate_signature_hashes(group))
         ),
         "source_finding_ids": sorted(
             set(aliases.get("source_finding_ids", [])) | set(group.get("source_finding_ids", []))
@@ -401,7 +332,8 @@ def _record_for_group(
             set(aliases.get("context_hashes", [])) | set(match_keys.get("context_hashes", []))
         ),
         "title_fingerprints": sorted(
-            set(aliases.get("title_fingerprints", [])) | set(match_keys.get("title_fingerprints", []))
+            set(aliases.get("title_fingerprints", []))
+            | set(match_keys.get("title_fingerprints", []))
         ),
         "symbols": sorted(set(aliases.get("symbols", [])) | set(match_keys.get("symbols", []))),
     }
@@ -440,30 +372,33 @@ def _record_for_group(
     )
 
 
-def _has_resolution_quorum(config: dict[str, Any], consensus: dict[str, Any]) -> bool:
+def _has_resolution_quorum(config: dict[str, Any], consensus: Consensus) -> bool:
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     required = int(panel.get("min_successful_reviewers_for_resolution", 2))
     return len(consensus.get("successful_reviewers", [])) >= required
 
 
-def _author_access_level(client: GitLabClient, project_id: str, author: dict[str, Any]) -> int | None:
+def _author_access_level(
+    client: ReviewPlatform, project_id: str, author: dict[str, Any]
+) -> int | None:
     access_level = author.get("access_level")
     if isinstance(access_level, int):
         return access_level
-    user_id = author.get("id")
-    if user_id is None:
-        return None
-    member_access = getattr(client, "project_member_access_level", None)
-    if not callable(member_access):
-        return None
-    try:
-        return member_access(project_id, user_id)
-    except Exception:
-        return None
+    candidate_ids = [author.get("id"), author.get("username"), author.get("login")]
+    for user_id in candidate_ids:
+        if user_id is None:
+            continue
+        try:
+            access_level = client.member_access_level(project_id, user_id)
+        except Exception:
+            continue
+        if isinstance(access_level, int):
+            return access_level
+    return None
 
 
 def collect_human_commands(
-    client: GitLabClient,
+    client: ReviewPlatform,
     project_id: str,
     discussions: list[dict[str, Any]],
 ) -> dict[str, str]:
@@ -485,7 +420,8 @@ def collect_human_commands(
             command_matches = COMMAND_RE.findall(note["body"])
             if not command_matches:
                 continue
-            author = note.get("author") if isinstance(note.get("author"), dict) else {}
+            raw_author = note.get("author")
+            author = raw_author if isinstance(raw_author, dict) else {}
             access_level = _author_access_level(client, project_id, author)
             if access_level is None or access_level < 30:
                 continue
@@ -520,7 +456,8 @@ def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
     line_range = position.get("line_range")
     if isinstance(line_range, dict) and isinstance(line_range.get("start"), dict):
         start = _line_from_position(line_range["start"])
-        end = _line_from_position(line_range.get("end", line_range["start"]))
+        raw_end = line_range.get("end", line_range["start"])
+        end = _line_from_position(raw_end if isinstance(raw_end, dict) else line_range["start"])
     else:
         start = _line_from_position(position)
         end = dict(start)
@@ -541,11 +478,14 @@ def state_from_existing_discussions(
     *,
     exclude_discussion_ids: set[Any] | None = None,
     current_head_sha: str | None = None,
+    expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
         if discussion.resolved or discussion.discussion_id in excluded:
+            continue
+        if expected_author_id is not None and discussion.author_id != expected_author_id:
             continue
         if discussion.discussion_id is None or discussion.root_note_id is None:
             continue
@@ -579,42 +519,29 @@ def state_from_existing_discussions(
     return {"state_schema_version": 1, "records": records}
 
 
-def normalize_issue_text(text: str) -> str:
-    return " ".join(TEXT_TOKEN_RE.findall(text.lower()))
+def recover_state_from_discussions(
+    client: ReviewPlatform,
+    manifest: dict[str, Any],
+    existing_discussions: list[ExistingReviewDiscussion],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Recover state from trusted AI-review discussion markers.
 
-
-def content_tokens(normalized: str) -> set[str]:
-    return {token for token in normalized.split() if len(token) >= 3 and token not in STOPWORDS}
-
-
-def failure_keywords(normalized: str) -> set[str]:
-    return {token for token in normalized.split() if token in FAILURE_KEYWORDS}
-
-
-def same_issue_text(existing: ExistingReviewDiscussion, group: dict[str, Any]) -> bool:
-    existing_title = normalize_issue_text(existing.title)
-    group_title = normalize_issue_text(str(group.get("title", "")))
-    if existing_title and existing_title == group_title:
-        return True
-
-    existing_summary = normalize_issue_text(existing.summary)
-    group_summary = normalize_issue_text(str(group.get("body", "")))
-    if existing_summary and existing_summary == group_summary:
-        return True
-
-    existing_tokens = content_tokens(" ".join([existing_title, existing_summary]))
-    group_tokens = content_tokens(" ".join([group_title, group_summary]))
-    if not existing_tokens or not group_tokens:
-        return False
-    shared = existing_tokens & group_tokens
-    union = existing_tokens | group_tokens
-    if len(shared) < 6:
-        return False
-    if failure_keywords(" ".join([existing_title, existing_summary])) != failure_keywords(
-        " ".join([group_title, group_summary])
-    ):
-        return False
-    return len(shared) / len(union) >= 0.82
+    This is the only discussion-marker recovery seam: markers are accepted only
+    from the authenticated bot user and are converted into the same deterministic
+    alias/fingerprint state shape consumed by find_matching_record.
+    """
+    bot_author_id = None if dry_run else client.current_user_id()
+    if not dry_run and bot_author_id is None:
+        raise RuntimeError(
+            "discussion-marker recovery requires GitLab current_user lookup to verify author"
+        )
+    return state_from_existing_discussions(
+        existing_discussions,
+        current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
+    )
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -629,92 +556,10 @@ def position_side(position: dict[str, Any]) -> str | None:
     return None
 
 
-def line_range_key(
-    position: dict[str, Any],
-) -> tuple[tuple[Any, Any, Any], tuple[Any, Any, Any]] | None:
-    line_range = position.get("line_range")
-    if not isinstance(line_range, dict):
-        return None
-    start = line_range.get("start")
-    end = line_range.get("end")
-    if not isinstance(start, dict) or not isinstance(end, dict):
-        return None
-    return (
-        (start.get("type"), start.get("old_line"), start.get("new_line")),
-        (end.get("type"), end.get("old_line"), end.get("new_line")),
-    )
-
-
-def same_inline_anchor(existing: dict[str, Any], target: dict[str, Any]) -> bool:
-    if existing.get("head_sha") != target.get("head_sha"):
-        return False
-    side = position_side(target)
-    if side is None or position_side(existing) != side:
-        return False
-
-    if side == "new":
-        if existing.get("new_path") != target.get("new_path"):
-            return False
-        if existing.get("new_line") != target.get("new_line"):
-            return False
-    elif side == "old":
-        if existing.get("old_path") != target.get("old_path"):
-            return False
-        if existing.get("old_line") != target.get("old_line"):
-            return False
-    else:
-        if (
-            existing.get("old_path") != target.get("old_path")
-            or existing.get("new_path") != target.get("new_path")
-        ):
-            return False
-        if (
-            existing.get("old_line") != target.get("old_line")
-            or existing.get("new_line") != target.get("new_line")
-        ):
-            return False
-
-    existing_has_range = isinstance(existing.get("line_range"), dict)
-    target_has_range = isinstance(target.get("line_range"), dict)
-    if existing_has_range != target_has_range:
-        return False
-    if not target_has_range:
-        return True
-
-    existing_range = line_range_key(existing)
-    target_range = line_range_key(target)
-    return existing_range is not None and existing_range == target_range
-
-
-def find_same_issue_fallback(
-    existing_discussions: list[ExistingReviewDiscussion],
-    group: dict[str, Any],
-    position: dict[str, Any],
-    used_discussion_ids: set[Any] | None = None,
-) -> ExistingReviewDiscussion | None:
-    used = used_discussion_ids or set()
-    candidates: list[ExistingReviewDiscussion] = []
-    category = str(group.get("category", "")).strip().lower()
-    for discussion in existing_discussions:
-        if discussion.resolved or discussion.position is None:
-            continue
-        if discussion.discussion_id in used:
-            continue
-        if str(discussion.category or "").strip().lower() != category:
-            continue
-        if not same_inline_anchor(discussion.position, position):
-            continue
-        if not same_issue_text(discussion, group):
-            continue
-        candidates.append(discussion)
-    if len(candidates) != 1:
-        return None
-    return candidates[0]
-
-
 def _anchor_location(anchor: dict[str, Any]) -> str:
     path = anchor.get("new_path") or anchor.get("old_path") or "(unknown)"
-    start = anchor.get("start") if isinstance(anchor.get("start"), dict) else {}
+    raw_start = anchor.get("start")
+    start = raw_start if isinstance(raw_start, dict) else {}
     line = start.get("new_line") or start.get("old_line")
     return f"{path}:{line}" if isinstance(line, int) else path
 
@@ -726,7 +571,7 @@ def _one_line(text: str, *, max_length: int) -> str:
     return collapsed
 
 
-def _summary_line(group: dict[str, Any]) -> str:
+def _summary_line(group: Mapping[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
     location = _anchor_location(anchor)
     severity = str(group.get("final_severity") or "").upper()
@@ -741,7 +586,15 @@ def _summary_line(group: dict[str, Any]) -> str:
     return header
 
 
-def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+@overload
+def _sort_groups(groups: list[FindingGroup]) -> list[FindingGroup]: ...
+
+
+@overload
+def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+
+def _sort_groups(groups: list[Any]) -> list[Any]:
     return sorted(
         groups,
         key=lambda group: (
@@ -753,8 +606,8 @@ def _sort_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def render_summary_body(
     run_id: str,
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
 ) -> tuple[str, str]:
     lines = ["**AI review summary**", ""]
@@ -801,17 +654,17 @@ def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | No
 
 def _note_id_from_response(response: Any) -> int | None:
     if isinstance(response, dict) and isinstance(response.get("id"), int):
-        return response["id"]
+        return int(response["id"])
     return None
 
 
 def upsert_summary_comment(
-    client: GitLabClient,
+    client: ReviewPlatform,
     manifest: dict[str, Any],
     run_id: str,
     raw_discussions: list[dict[str, Any]],
-    fallback_groups: list[dict[str, Any]],
-    fyi_groups: list[dict[str, Any]],
+    fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
     dry_run: bool = False,
@@ -830,7 +683,7 @@ def upsert_summary_comment(
         return summary
     existing = find_summary_note(raw_discussions)
     if existing is None:
-        response = client.create_mr_note(
+        response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
         )
         summary["action"] = "created"
@@ -841,24 +694,108 @@ def upsert_summary_comment(
     if existing_hash == body_hash:
         summary["action"] = "unchanged"
         return summary
-    client.update_mr_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
+    client.update_state_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
     summary["action"] = "updated"
     return summary
 
 
+def _initial_post_result(
+    *,
+    consensus: Consensus,
+    manifest: dict[str, Any],
+    current_head_sha: str,
+) -> PostResult:
+    return {
+        "schema_version": "post_result.v1",
+        "run_id": consensus["run_id"],
+        "status": "success",
+        "head_sha": manifest["head_sha"],
+        "current_head_sha": current_head_sha,
+        "created_discussions": 0,
+        "updated_discussions": 0,
+        "resolved_discussions": 0,
+        "skipped_unchanged": 0,
+        "stale_unverified": 0,
+        "posted_discussions": [],
+        "warnings": [],
+        "summary_comment": {
+            "action": "none",
+            "note_id": None,
+            "surface_findings": 0,
+            "fyi_findings": 0,
+        },
+    }
+
+
+@dataclass(frozen=True)
+class PostGroupClassification:
+    inline_candidates: list[FindingGroup]
+    summary_fallback_groups: list[FindingGroup]
+    fyi_groups: list[FindingGroup]
+    warnings: list[str]
+
+
+def _classify_post_groups(
+    groups: list[FindingGroup],
+    *,
+    inline_sides: set[str],
+    inline_multiline: bool,
+    max_surface: int,
+) -> PostGroupClassification:
+    inline_candidates: list[FindingGroup] = []
+    summary_fallback_groups: list[FindingGroup] = []
+    fyi_groups: list[FindingGroup] = []
+    warnings: list[str] = []
+    for group in groups:
+        decision = group.get("decision")
+        if decision == "fyi":
+            fyi_groups.append(group)
+            continue
+        if decision != "surface":
+            continue
+        anchor = group["representative_anchor"]
+        if anchor.get("side") not in inline_sides:
+            warnings.append(f"summary fallback required for unsupported side: {anchor.get('side')}")
+            summary_fallback_groups.append(group)
+            continue
+        if anchor.get("start") != anchor.get("end") and not inline_multiline:
+            warnings.append("summary fallback required for multiline anchor")
+            summary_fallback_groups.append(group)
+            continue
+        inline_candidates.append(group)
+
+    inline_candidates = _sort_groups(inline_candidates)
+    if len(inline_candidates) > max_surface:
+        overflow = inline_candidates[max_surface:]
+        inline_candidates = inline_candidates[:max_surface]
+        for group in overflow:
+            warnings.append(
+                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
+            )
+            summary_fallback_groups.append(group)
+    return PostGroupClassification(
+        inline_candidates=inline_candidates,
+        summary_fallback_groups=summary_fallback_groups,
+        fyi_groups=fyi_groups,
+        warnings=warnings,
+    )
+
+
 def _load_current_diff_text(
-    client: GitLabClient,
+    client: ReviewPlatform,
     manifest: dict[str, Any],
     diff_text: str | None,
+    warnings: list[str],
 ) -> str | None:
     if diff_text is not None:
         return diff_text
-    fetch_mr_diff = getattr(client, "fetch_mr_diff", None)
-    if not callable(fetch_mr_diff):
-        return None
     try:
-        return fetch_mr_diff(manifest["project_id"], manifest["merge_request_iid"])
-    except Exception:
+        fetched = client.fetch_diff(manifest["project_id"], manifest["merge_request_iid"])
+        return fetched if isinstance(fetched, str) else None
+    except Exception as exc:
+        warnings.append(
+            f"diff_fetch_failed: inline remap skipped, anchors may be stale ({type(exc).__name__})"
+        )
         return None
 
 
@@ -870,138 +807,146 @@ def _can_remap_anchor(anchor: Any) -> bool:
     )
 
 
-def post_consensus(
-    client: GitLabClient,
+def _desired_discussion_resolved(
+    record: StateRecord,
+    prior_status: dict[str, StateRecordStatus | None],
+) -> bool | None:
+    if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
+        record["issue_id"]
+    ) != record.get("status"):
+        return True
+    if (
+        record.get("human_disposition") == "reopen"
+        and prior_status.get(record["issue_id"]) != "open"
+    ):
+        return False
+    return None
+
+
+def _plan_stale_records(
+    *,
+    base_records: list[StateRecord],
+    planned_records: list[StateRecord],
+    planned_issue_ids: set[str],
+    protected_issue_ids: set[str],
+    human_commands: dict[str, str],
+    resolution_quorum: bool,
+    manifest: dict[str, Any],
+    pipeline_id: str,
+    outcome: PlanOutcome,
+) -> None:
+    for record in base_records:
+        issue_id = record["issue_id"]
+        if issue_id in planned_issue_ids:
+            continue
+        updated = dict(record)
+        if issue_id in protected_issue_ids:
+            if updated.get("status") == "open":
+                updated["status"] = "stale"
+                updated["remap_status"] = "ambiguous"
+        else:
+            command = human_commands.get(issue_id)
+            if command == "reopen":
+                updated["status"] = "open"
+                updated["human_disposition"] = "reopen"
+            elif command == "wontfix":
+                updated["status"] = "wontfix"
+                updated["human_disposition"] = "wontfix"
+            elif command == "resolve":
+                updated["status"] = "resolved"
+                updated["human_disposition"] = "resolve"
+            elif record.get("status") == "open":
+                updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
+                if not resolution_quorum:
+                    outcome.stale_unverified += 1
+        planned_records.append(
+            cast(
+                StateRecord,
+                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+            )
+        )
+        planned_issue_ids.add(issue_id)
+
+
+def _planned_by_issue(
+    planned_records: list[StateRecord],
+    planned_matches: dict[str, StateRecord],
+) -> dict[str, StateRecord]:
+    planned_by_issue = {record["issue_id"]: record for record in planned_records}
+    for group_issue_id, existing in planned_matches.items():
+        existing_issue_id = existing.get("issue_id")
+        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
+            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    return planned_by_issue
+
+
+def _state_retention(config: dict[str, Any]) -> dict[str, Any]:
+    state_config = config.get("state", {}) if isinstance(config, dict) else {}
+    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
+    return retention if isinstance(retention, dict) else {}
+
+
+def _planned_state_payload(
+    persisted_state: State,
+    *,
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    pipeline_id: str,
+    planned_records: list[StateRecord],
+) -> dict[str, Any]:
+    return {
+        **persisted_state,
+        "last_head_sha": manifest["head_sha"],
+        "written_by_pipeline_id": pipeline_id,
+        "updated_at": now_iso(),
+        "records": planned_records,
+        "run_history": (
+            persisted_state.get("run_history", [])
+            if isinstance(persisted_state.get("run_history"), list)
+            else []
+        )
+        + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
+    }
+
+
+def _process_state_for_persistence(
+    state: dict[str, Any],
+    *,
+    manifest: dict[str, Any],
+    pipeline_id: str,
+    retention: dict[str, Any],
+) -> tuple[State, str | None]:
+    processed_state = normalize_state(state, manifest=manifest, pipeline_id=pipeline_id)
+    processed_state = compact_state(processed_state, retention)
+    overflow = state_overflow_reason(
+        processed_state,
+        max_records=int(retention.get("max_records", 200)),
+        max_state_bytes=int(retention.get("max_state_bytes", 50000)),
+    )
+    return cast(State, processed_state), overflow
+
+
+def plan_state(
     config: dict[str, Any],
     manifest: dict[str, Any],
-    consensus: dict[str, Any],
-    *,
-    dry_run: bool = False,
-    diff_text: str | None = None,
-) -> dict[str, Any]:
-    current_head_sha = client.fetch_current_mr_head_sha(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    result = {
-        "schema_version": "post_result.v1",
-        "run_id": consensus["run_id"],
-        "status": "success",
-        "head_sha": manifest["head_sha"],
-        "current_head_sha": current_head_sha,
-        "created_discussions": 0,
-        "updated_discussions": 0,
-        "resolved_discussions": 0,
-        "skipped_unchanged": 0,
-        "stale_unverified": 0,
-        "jira_comments_created": 0,
-        "jira_comments_updated": 0,
-        "posted_discussions": [],
-        "warnings": [],
-        "summary_comment": {
-            "action": "none",
-            "note_id": None,
-            "surface_findings": 0,
-            "fyi_findings": 0,
-        },
-    }
-    posting = config.get("posting", {})
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
-        result["status"] = "stale_head"
-        return result
-
-    version = client.fetch_latest_mr_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text)
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
-    max_fyi = int(limits.get("max_fyi_findings", 50))
-
-    raw_discussions = (
-        []
-        if dry_run
-        else client.list_mr_discussions(manifest["project_id"], manifest["merge_request_iid"])
-    )
-    existing_discussions = index_ai_review_discussions(raw_discussions)
-    state_warnings: list[str] = []
-    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
-    state_warnings.extend(load_warnings)
-    recovered_state = state_from_existing_discussions(
-        existing_discussions,
-        current_head_sha=manifest["head_sha"],
-    )
-    if persisted_state is None:
-        state_config = config.get("state", {}) if isinstance(config, dict) else {}
-        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
-            persisted_state = normalize_state(
-                recovered_state,
-                manifest=manifest,
-                pipeline_id=_pipeline_id(manifest),
-            )
-    if persisted_state is None:
-        persisted_state = empty_state(
-            project_id=manifest["project_id"],
-            merge_request_iid=manifest["merge_request_iid"],
-            head_sha=manifest["head_sha"],
-            pipeline_id=_pipeline_id(manifest),
-        )
-    result["warnings"].extend(state_warnings)
-    human_commands = collect_human_commands(
-        client,
-        manifest["project_id"],
-        raw_discussions,
-    )
-
-    # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline), and FYI findings.
-    inline_candidates: list[dict[str, Any]] = []
-    summary_fallback_groups: list[dict[str, Any]] = []
-    fyi_groups: list[dict[str, Any]] = []
-    for group in consensus.get("groups", []):
-        decision = group.get("decision")
-        if decision == "fyi":
-            fyi_groups.append(group)
-            continue
-        if decision != "surface":
-            continue
-        anchor = group["representative_anchor"]
-        if anchor.get("side") not in inline_sides:
-            result["warnings"].append(
-                f"summary fallback required for unsupported side: {anchor.get('side')}"
-            )
-            summary_fallback_groups.append(group)
-            continue
-        if anchor.get("start") != anchor.get("end") and not inline_multiline:
-            result["warnings"].append("summary fallback required for multiline anchor")
-            summary_fallback_groups.append(group)
-            continue
-        inline_candidates.append(group)
-
-    # Enforce the inline surface cap; highest-severity findings keep the inline slots and
-    # any overflow is redirected to the summary comment rather than dropped.
-    inline_candidates = _sort_groups(inline_candidates)
-    if len(inline_candidates) > max_surface:
-        overflow = inline_candidates[max_surface:]
-        inline_candidates = inline_candidates[:max_surface]
-        for group in overflow:
-            result["warnings"].append(
-                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
-            )
-            summary_fallback_groups.append(group)
-
+    consensus: Consensus,
+    persisted_state: State,
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
+    human_commands: dict[str, str],
+) -> StatePlan:
+    outcome = PlanOutcome(warnings=[])
     pipeline_id = _pipeline_id(manifest)
     base_records = [
         record
         for record in persisted_state.get("records", [])
         if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
     ]
-    planned_matches: dict[str, dict[str, Any]] = {}
+    planned_matches: dict[str, StateRecord] = {}
     ambiguous_issue_ids: set[str] = set()
     protected_issue_ids: set[str] = set()
-    planned_records: list[dict[str, Any]] = []
+    planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
     all_current_groups = [
@@ -1010,6 +955,7 @@ def post_consensus(
         if isinstance(group.get("issue_id"), str)
     ]
     for group in all_current_groups:
+        issue_id = cast(str, group["issue_id"])
         state_for_match = {
             "records": [
                 record
@@ -1017,17 +963,17 @@ def post_consensus(
                 if record.get("discussion_id") not in planning_used_discussion_ids
             ]
         }
-        state_match = find_matching_record(group, state_for_match)
+        state_match = find_matching_record(group, cast(State, state_for_match))
         if state_match.status == "ambiguous":
-            ambiguous_issue_ids.add(group["issue_id"])
+            ambiguous_issue_ids.add(issue_id)
             candidate_ids = [
                 record["issue_id"]
                 for record in state_match.records
                 if isinstance(record.get("issue_id"), str)
             ]
             protected_issue_ids.update(candidate_ids)
-            result["warnings"].append(
-                f"ambiguous existing record match for {group['issue_id']}; "
+            outcome.warnings.append(
+                f"ambiguous existing record match for {issue_id}; "
                 f"protected {len(candidate_ids)} candidate record(s)"
             )
             for candidate in state_match.records:
@@ -1038,20 +984,25 @@ def post_consensus(
                 updated["status"] = "stale"
                 updated["remap_status"] = "ambiguous"
                 planned_records.append(
-                    normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
+                    cast(
+                        StateRecord,
+                        normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
+                    )
                 )
                 planned_issue_ids.add(candidate_id)
             continue
-        previous = state_match.record if state_match.status == "matched" else None
+        previous = (
+            cast(StateRecord, state_match.record) if state_match.status == "matched" else None
+        )
         if previous is not None:
-            planned_matches[group["issue_id"]] = previous
+            planned_matches[issue_id] = previous
             if isinstance(previous.get("issue_id"), str):
                 protected_issue_ids.add(previous["issue_id"])
             if previous.get("discussion_id") is not None:
                 planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
         human_disposition = previous.get("human_disposition") if previous else None
-        command = human_commands.get(group["issue_id"])
+        command = human_commands.get(issue_id)
         if command is None and previous is not None:
             command = human_commands.get(str(previous.get("issue_id") or ""))
         if command == "wontfix":
@@ -1067,94 +1018,198 @@ def post_consensus(
             status = "wontfix"
             human_disposition = previous.get("human_disposition") or "wontfix"
         planned_records.append(
-            _record_for_group(
-                group,
-                manifest=manifest,
-                pipeline_id=pipeline_id,
-                existing=previous,
-                status=status,
-                human_disposition=human_disposition,
+            cast(
+                StateRecord,
+                _record_for_group(
+                    group,
+                    manifest=manifest,
+                    pipeline_id=pipeline_id,
+                    existing=cast(dict[str, Any] | None, previous),
+                    status=status,
+                    human_disposition=human_disposition,
+                ),
             )
         )
-        planned_issue_ids.add(group["issue_id"])
+        planned_issue_ids.add(issue_id)
         if previous is not None and isinstance(previous.get("issue_id"), str):
             planned_issue_ids.add(previous["issue_id"])
 
-    resolution_quorum = _has_resolution_quorum(config, consensus)
-    for record in base_records:
-        issue_id = record["issue_id"]
-        if issue_id in planned_issue_ids:
-            continue
-        if issue_id in protected_issue_ids:
-            updated = dict(record)
-            if updated.get("status") == "open":
-                updated["status"] = "stale"
-                updated["remap_status"] = (
-                    "ambiguous" if issue_id in protected_issue_ids else updated.get("remap_status")
-                )
-            planned_records.append(
-                normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
-            )
-            planned_issue_ids.add(issue_id)
-            continue
-        command = human_commands.get(issue_id)
-        updated = dict(record)
-        if command == "reopen":
-            updated["status"] = "open"
-            updated["human_disposition"] = "reopen"
-        elif command == "wontfix":
-            updated["status"] = "wontfix"
-            updated["human_disposition"] = "wontfix"
-        elif command == "resolve":
-            updated["status"] = "resolved"
-            updated["human_disposition"] = "resolve"
-        elif record.get("status") == "open":
-            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
-            if not resolution_quorum:
-                result["stale_unverified"] += 1
-        planned_records.append(
-            normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id)
-        )
-    planned_state = normalize_state(
-        {
-            **persisted_state,
-            "last_head_sha": manifest["head_sha"],
-            "written_by_pipeline_id": pipeline_id,
-            "updated_at": now_iso(),
-            "records": planned_records,
-            "run_history": (persisted_state.get("run_history", []) if isinstance(persisted_state.get("run_history"), list) else [])
-            + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
-        },
+    _plan_stale_records(
+        base_records=base_records,
+        planned_records=planned_records,
+        planned_issue_ids=planned_issue_ids,
+        protected_issue_ids=protected_issue_ids,
+        human_commands=human_commands,
+        resolution_quorum=_has_resolution_quorum(config, consensus),
         manifest=manifest,
         pipeline_id=pipeline_id,
+        outcome=outcome,
     )
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
-    planned_state = compact_state(planned_state, retention if isinstance(retention, dict) else {})
-    if _state_enabled(config):
-        overflow = state_overflow_reason(
-            planned_state,
-            max_records=int(retention.get("max_records", 200)) if isinstance(retention, dict) else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
-        )
-        if overflow is not None:
-            result["status"] = "state_overflow"
-            result["warnings"].append(overflow)
-            return result
+    planned_state = _planned_state_payload(
+        persisted_state,
+        manifest=manifest,
+        consensus=consensus,
+        pipeline_id=pipeline_id,
+        planned_records=planned_records,
+    )
+    retention = _state_retention(config)
+    processed_state, overflow = _process_state_for_persistence(
+        planned_state,
+        manifest=manifest,
+        pipeline_id=pipeline_id,
+        retention=retention,
+    )
+    if _state_enabled(config) and overflow is not None:
+        outcome.overflow = overflow
 
-    planned_by_issue = {record["issue_id"]: record for record in planned_records}
-    for group_issue_id, existing in planned_matches.items():
-        existing_issue_id = existing.get("issue_id")
-        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
-            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
+    return StatePlan(
+        persisted_state=persisted_state,
+        base_records=base_records,
+        planned_records=planned_records,
+        planned_by_issue={}
+        if outcome.overflow is not None
+        else _planned_by_issue(planned_records, planned_matches),
+        planned_matches=planned_matches,
+        ambiguous_issue_ids=ambiguous_issue_ids,
+        pipeline_id=pipeline_id,
+        planned_state=processed_state,
+        retention=retention,
+        outcome=outcome,
+    )
+
+
+@dataclass(frozen=True)
+class InlinePostOutcome:
+    result: PostResult
+    state_plan: StatePlan
+    summary_fallback_groups: list[FindingGroup]
+
+
+def _create_inline_discussion(
+    client: ReviewPlatform,
+    manifest: dict[str, Any],
+    result: PostResult,
+    group: FindingGroup,
+    post_group: Mapping[str, Any],
+    body: str,
+    position: dict[str, Any],
+    summary_fallback_groups: list[FindingGroup],
+) -> tuple[dict[str, Any], int] | None:
+    try:
+        discussion = client.create_inline_comment(
+            manifest["project_id"],
+            manifest["merge_request_iid"],
+            body,
+            position,
+        )
+    except ReviewPlatformError as exc:
+        if not client.can_retry_as_single_line(position):
+            result["warnings"].append(
+                f"create_discussion for {post_group['issue_id']} failed: {exc}"
+            )
+            summary_fallback_groups.append(group)
+            return None
+        issue_id = post_group["issue_id"]
+        result["warnings"].append(
+            f"multiline create failed for {issue_id}; retrying single-line: {exc}"
+        )
+        single_line_position = client.single_line_position(position)
+        try:
+            discussion = client.create_inline_comment(
+                manifest["project_id"],
+                manifest["merge_request_iid"],
+                body,
+                single_line_position,
+            )
+        except ReviewPlatformError as retry_exc:
+            result["warnings"].append(
+                f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
+            )
+            summary_fallback_groups.append(group)
+            return None
+    if not isinstance(discussion, dict) or discussion.get("id") is None:
+        result["warnings"].append(
+            f"create_discussion for {group['issue_id']} returned no response body; skipped"
+        )
+        return None
+    try:
+        return discussion, client.root_note_id_from_thread(discussion)
+    except ReviewPlatformError as exc:
+        result["warnings"].append(
+            f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
+        )
+        return None
+
+
+def _update_existing_inline_discussion(
+    client: ReviewPlatform,
+    manifest: dict[str, Any],
+    result: PostResult,
+    existing: StateRecord,
+    planned_record: StateRecord | None,
+    post_group: Mapping[str, Any],
+    body: str,
+    body_hash: str,
+    used_discussion_ids: set[Any],
+) -> None:
+    existing_discussion_id = str(existing["discussion_id"])
+    existing_root_note_id = cast(int, existing["root_note_id"])
+    if existing.get("last_posted_body_hash") == body_hash:
+        result["skipped_unchanged"] += 1
+        return
+    client.update_comment(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+        existing_discussion_id,
+        existing_root_note_id,
+        body,
+    )
+    used_discussion_ids.add(existing["discussion_id"])
+    if planned_record is not None:
+        planned_record["discussion_id"] = existing_discussion_id
+        planned_record["root_note_id"] = existing_root_note_id
+        planned_record["last_posted_body_hash"] = body_hash
+    result["updated_discussions"] += 1
+    result["posted_discussions"].append(
+        {
+            "issue_id": str(post_group["issue_id"]),
+            "action": "updated",
+            "discussion_id": existing_discussion_id,
+            "root_note_id": existing_root_note_id,
+        }
+    )
+
+
+def post_inline(
+    client: ReviewPlatform,
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    result: PostResult,
+    state_plan: StatePlan,
+    inline_candidates: list[FindingGroup],
+    summary_fallback_groups: list[FindingGroup],
+    version: Any,
+    *,
+    inline_multiline: bool,
+    current_diff_text: str | None,
+    dry_run: bool,
+) -> InlinePostOutcome:
+    """Post inline discussions and return the mutated posting/state phase outputs.
+
+    The monolithic posting path historically updated the result counters,
+    planned state records, and summary fallback list in one pass. Returning the
+    mutated objects makes that seam explicit for callers and direct tests while
+    preserving the in-place behavior expected by the finalization phase.
+    """
     used_discussion_ids: set[Any] = set()
     for group in inline_candidates:
+        issue_id = group["issue_id"]
+        if not isinstance(issue_id, str):
+            continue
         anchor = group["representative_anchor"]
-        position = build_position(anchor, version, multiline=inline_multiline)
-        planned_record = planned_by_issue.get(group["issue_id"])
-        if group["issue_id"] in ambiguous_issue_ids:
+        position = client.build_position(cast(Anchor, anchor), version, multiline=inline_multiline)
+        planned_record = state_plan.planned_by_issue.get(issue_id)
+        if issue_id in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
                 "skipped inline creation"
@@ -1164,7 +1219,7 @@ def post_consensus(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = planned_matches.get(group["issue_id"])
+        existing = state_plan.planned_matches.get(issue_id)
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -1173,14 +1228,14 @@ def post_consensus(
             summary_fallback_groups.append(group)
             continue
 
-        post_group = group
+        post_group: dict[str, Any] = dict(group)
         force_create_at_remapped_anchor = False
         if existing is not None:
             if existing["issue_id"] != group.get("issue_id"):
                 post_group = dict(group, issue_id=existing["issue_id"])
             existing_anchor = existing.get("anchor")
             if current_diff_text is not None and _can_remap_anchor(existing_anchor):
-                remap = remap_anchor(current_diff_text, existing_anchor)
+                remap = remap_anchor(current_diff_text, cast(dict[str, Any], existing_anchor))
                 remap_status = str(remap.get("status"))
                 if remap_status == "exact":
                     if planned_record is not None:
@@ -1191,7 +1246,9 @@ def post_consensus(
                         planned_record["anchor"] = remapped_anchor
                         planned_record["remap_status"] = "remapped"
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
-                    position = build_position(remapped_anchor, version, multiline=inline_multiline)
+                    position = client.build_position(
+                        cast(Anchor, remapped_anchor), version, multiline=inline_multiline
+                    )
                     force_create_at_remapped_anchor = True
                 elif remap_status == "missing":
                     if planned_record is not None:
@@ -1214,7 +1271,7 @@ def post_consensus(
                     continue
 
         body, body_hash = render_body(
-            post_group,
+            cast(FindingGroup, post_group),
             len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
         )
@@ -1224,79 +1281,34 @@ def post_consensus(
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
-            if existing.get("last_posted_body_hash") == body_hash:
-                result["skipped_unchanged"] += 1
-                continue
-            client.update_discussion_note(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                str(existing["discussion_id"]),
-                int(existing["root_note_id"]),
+            _update_existing_inline_discussion(
+                client,
+                manifest,
+                result,
+                existing,
+                planned_record,
+                post_group,
                 body,
-            )
-            used_discussion_ids.add(existing["discussion_id"])
-            if planned_record is not None:
-                planned_record["discussion_id"] = str(existing["discussion_id"])
-                planned_record["root_note_id"] = int(existing["root_note_id"])
-                planned_record["last_posted_body_hash"] = body_hash
-            result["updated_discussions"] += 1
-            result["posted_discussions"].append(
-                {
-                    "issue_id": post_group["issue_id"],
-                    "action": "updated",
-                    "discussion_id": str(existing["discussion_id"]),
-                    "root_note_id": int(existing["root_note_id"]),
-                }
+                body_hash,
+                used_discussion_ids,
             )
             continue
         if dry_run:
             result["created_discussions"] += 1
             continue
-        try:
-            discussion = client.create_discussion(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                body,
-                position,
-            )
-        except GitLabApiError as exc:
-            if isinstance(position.get("line_range"), dict):
-                result["warnings"].append(
-                    f"multiline create failed for {post_group['issue_id']}; retrying single-line: {exc}"
-                )
-                single_line_position = dict(position)
-                single_line_position.pop("line_range", None)
-                try:
-                    discussion = client.create_discussion(
-                        manifest["project_id"],
-                        manifest["merge_request_iid"],
-                        body,
-                        single_line_position,
-                    )
-                except GitLabApiError as retry_exc:
-                    result["warnings"].append(
-                        f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
-                    )
-                    summary_fallback_groups.append(group)
-                    continue
-            else:
-                result["warnings"].append(
-                    f"create_discussion for {post_group['issue_id']} failed: {exc}"
-                )
-                summary_fallback_groups.append(group)
-                continue
-        if not isinstance(discussion, dict) or discussion.get("id") is None:
-            result["warnings"].append(
-                f"create_discussion for {group['issue_id']} returned no response body; skipped"
-            )
+        created = _create_inline_discussion(
+            client,
+            manifest,
+            result,
+            group,
+            post_group,
+            body,
+            position,
+            summary_fallback_groups,
+        )
+        if created is None:
             continue
-        try:
-            root_note_id = root_note_id_from_discussion(discussion)
-        except GitLabApiError as exc:
-            result["warnings"].append(
-                f"create_discussion for {post_group['issue_id']} returned no root note: {exc}"
-            )
-            continue
+        discussion, root_note_id = created
         result["created_discussions"] += 1
         used_discussion_ids.add(discussion["id"])
         if planned_record is not None:
@@ -1305,64 +1317,78 @@ def post_consensus(
             planned_record["last_posted_body_hash"] = body_hash
         result["posted_discussions"].append(
             {
-                "issue_id": post_group["issue_id"],
+                "issue_id": str(post_group["issue_id"]),
                 "action": "created",
                 "discussion_id": str(discussion["id"]),
                 "root_note_id": root_note_id,
             }
         )
+    return InlinePostOutcome(
+        result=result,
+        state_plan=state_plan,
+        summary_fallback_groups=summary_fallback_groups,
+    )
 
+
+def finalize_state(
+    client: ReviewPlatform,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    result: PostResult,
+    state_plan: StatePlan,
+    raw_discussions: list[dict[str, Any]],
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
+    *,
+    fallback_to_summary: bool,
+    fyi_mode: str,
+    max_fyi: int,
+    dry_run: bool,
+) -> PostResult:
     fallback_to_post = summary_fallback_groups if fallback_to_summary else []
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
-    result["summary_comment"] = upsert_summary_comment(
-        client,
-        manifest,
-        consensus["run_id"],
-        raw_discussions,
-        fallback_to_post,
-        fyi_to_post,
-        max_fyi,
-        dry_run=dry_run,
+    result["summary_comment"] = cast(
+        SummaryComment,
+        upsert_summary_comment(
+            client,
+            manifest,
+            consensus["run_id"],
+            raw_discussions,
+            fallback_to_post,
+            fyi_to_post,
+            max_fyi,
+            dry_run=dry_run,
+        ),
     )
     if _state_enabled(config):
-        resolve_discussion = getattr(client, "resolve_discussion", None)
-        if callable(resolve_discussion):
-            prior_status = {record["issue_id"]: record.get("status") for record in base_records}
-            for record in planned_records:
-                discussion_id = record.get("discussion_id")
-                if discussion_id is None:
-                    continue
-                desired: bool | None = None
-                if record.get("status") in {"resolved", "wontfix"} and prior_status.get(record["issue_id"]) != record.get("status"):
-                    desired = True
-                elif record.get("human_disposition") == "reopen" and prior_status.get(record["issue_id"]) != "open":
-                    desired = False
-                if desired is None or dry_run:
-                    continue
-                resolve_discussion(
-                    manifest["project_id"],
-                    manifest["merge_request_iid"],
-                    str(discussion_id),
-                    desired,
-                )
-                if desired:
-                    result["resolved_discussions"] += 1
-        final_state = normalize_state(
+        prior_status = {
+            record["issue_id"]: record.get("status") for record in state_plan.base_records
+        }
+        for record in state_plan.planned_records:
+            discussion_id = record.get("discussion_id")
+            if discussion_id is None:
+                continue
+            desired = _desired_discussion_resolved(record, prior_status)
+            if desired is None or dry_run:
+                continue
+            client.resolve_thread(
+                manifest["project_id"],
+                manifest["merge_request_iid"],
+                str(discussion_id),
+                desired,
+            )
+            if desired:
+                result["resolved_discussions"] += 1
+        final_state, overflow = _process_state_for_persistence(
             {
-                **planned_state,
-                "records": planned_records,
+                **state_plan.planned_state,
+                "records": state_plan.planned_records,
                 "updated_at": now_iso(),
             },
             manifest=manifest,
-            pipeline_id=pipeline_id,
-        )
-        final_state = compact_state(final_state, retention if isinstance(retention, dict) else {})
-        overflow = state_overflow_reason(
-            final_state,
-            max_records=int(retention.get("max_records", 200)) if isinstance(retention, dict) else 200,
-            max_state_bytes=int(retention.get("max_state_bytes", 50000))
-            if isinstance(retention, dict)
-            else 50000,
+            pipeline_id=state_plan.pipeline_id,
+            retention=state_plan.retention,
         )
         if overflow is not None:
             result["status"] = "partial_failed"
@@ -1373,7 +1399,7 @@ def post_consensus(
                 client,
                 config,
                 manifest,
-                final_state,
+                cast(dict[str, Any], final_state),
                 dry_run=dry_run,
             )
         except Exception as exc:
@@ -1389,6 +1415,170 @@ def post_consensus(
     return result
 
 
+@dataclass(frozen=True)
+class PostContext:
+    version: Any
+    current_diff_text: str | None
+    raw_discussions: list[dict[str, Any]]
+    persisted_state: State
+    human_commands: dict[str, str]
+
+
+def prepare_post_context(
+    client: ReviewPlatform,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    result: PostResult,
+    *,
+    dry_run: bool,
+    diff_text: str | None,
+) -> PostContext:
+    version = client.fetch_version(manifest["project_id"], manifest["merge_request_iid"])
+    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
+    raw_discussions = (
+        []
+        if dry_run
+        else client.list_threads(manifest["project_id"], manifest["merge_request_iid"])
+    )
+    existing_discussions = index_ai_review_discussions(raw_discussions)
+    state_warnings: list[str] = []
+    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
+    state_warnings.extend(load_warnings)
+    recovered_state = recover_state_from_discussions(
+        client,
+        manifest,
+        existing_discussions,
+        dry_run=dry_run,
+    )
+    if persisted_state is None:
+        state_config = config.get("state", {}) if isinstance(config, dict) else {}
+        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
+            persisted_state = normalize_state(
+                recovered_state,
+                manifest=manifest,
+                pipeline_id=_pipeline_id(manifest),
+            )
+    if persisted_state is None:
+        persisted_state = empty_state(
+            project_id=manifest["project_id"],
+            merge_request_iid=manifest["merge_request_iid"],
+            head_sha=manifest["head_sha"],
+            pipeline_id=_pipeline_id(manifest),
+        )
+    result["warnings"].extend(state_warnings)
+    human_commands = collect_human_commands(
+        client,
+        manifest["project_id"],
+        raw_discussions,
+    )
+    return PostContext(
+        version=version,
+        current_diff_text=current_diff_text,
+        raw_discussions=raw_discussions,
+        persisted_state=cast(State, persisted_state),
+        human_commands=human_commands,
+    )
+
+
+def post_consensus(
+    client: ReviewPlatform,
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    *,
+    dry_run: bool = False,
+    diff_text: str | None = None,
+) -> PostResult:
+    current_head_sha = client.fetch_current_head_sha(
+        manifest["project_id"],
+        manifest["merge_request_iid"],
+    )
+    result = _initial_post_result(
+        consensus=consensus,
+        manifest=manifest,
+        current_head_sha=current_head_sha,
+    )
+    posting = config.get("posting", {})
+    limits = config.get("limits", {})
+    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+        result["status"] = "stale_head"
+        return result
+
+    inline_multiline = bool(posting.get("inline_multiline", False))
+    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
+    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
+    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    max_surface = int(limits.get("max_posted_surface_findings", 25))
+    max_fyi = int(limits.get("max_fyi_findings", 50))
+    context = prepare_post_context(
+        client,
+        config,
+        manifest,
+        result,
+        dry_run=dry_run,
+        diff_text=diff_text,
+    )
+
+    # Classify groups: inline-postable surface findings, surface findings that must fall
+    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    classification = _classify_post_groups(
+        consensus.get("groups", []),
+        inline_sides=inline_sides,
+        inline_multiline=inline_multiline,
+        max_surface=max_surface,
+    )
+    inline_candidates = classification.inline_candidates
+    summary_fallback_groups = classification.summary_fallback_groups
+    fyi_groups = classification.fyi_groups
+    result["warnings"].extend(classification.warnings)
+
+    state_plan = plan_state(
+        config,
+        manifest,
+        consensus,
+        context.persisted_state,
+        inline_candidates,
+        summary_fallback_groups,
+        fyi_groups,
+        context.human_commands,
+    )
+    result["warnings"].extend(state_plan.outcome.warnings)
+    result["stale_unverified"] += state_plan.outcome.stale_unverified
+    if state_plan.outcome.overflow is not None:
+        result["status"] = "state_overflow"
+        result["warnings"].append(state_plan.outcome.overflow)
+        return result
+    inline_outcome = post_inline(
+        client,
+        manifest,
+        consensus,
+        result,
+        state_plan,
+        inline_candidates,
+        summary_fallback_groups,
+        context.version,
+        inline_multiline=inline_multiline,
+        current_diff_text=context.current_diff_text,
+        dry_run=dry_run,
+    )
+
+    return finalize_state(
+        client,
+        config,
+        manifest,
+        consensus,
+        inline_outcome.result,
+        inline_outcome.state_plan,
+        context.raw_discussions,
+        inline_outcome.summary_fallback_groups,
+        fyi_groups,
+        fallback_to_summary=fallback_to_summary,
+        fyi_mode=fyi_mode,
+        max_fyi=max_fyi,
+        dry_run=dry_run,
+    )
+
+
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -1400,14 +1590,8 @@ def cli(argv: list[str] | None = None) -> int:
 
     config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
-    consensus = load_json_file(args.consensus)
-    token = os.environ.get("GITLAB_WRITE_TOKEN") or "dry-run-token"
-    api_url = (
-        os.environ.get("CI_API_V4_URL")
-        or os.environ.get("GITLAB_API_URL")
-        or "https://gitlab.example.com/api/v4"
-    )
-    client = GitLabClient(api_url, token, token_header="PRIVATE-TOKEN")
+    consensus = cast(Consensus, load_json_file(args.consensus))
+    client = create_runtime_platform(config, access="write", allow_dry_run_defaults=args.dry_run)
     diff_path = Path(args.inputs) / "mr.diff"
     diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(

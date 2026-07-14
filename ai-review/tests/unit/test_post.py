@@ -3,11 +3,31 @@ from __future__ import annotations
 import copy
 import unittest
 from typing import Any
+from unittest.mock import patch
 
+import ai_review.post as post_module
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.gitlab_client import MergeRequestVersion
+from ai_review.gitlab_client import (
+    MergeRequestVersion,
+    build_position,
+    root_note_id_from_discussion,
+)
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
-from ai_review.post import post_consensus, render_body, source_hash
+from ai_review.post import (
+    _classify_post_groups,
+    _desired_discussion_resolved,
+    _initial_post_result,
+    finalize_state,
+    index_ai_review_discussions,
+    load_persisted_state,
+    plan_state,
+    post_consensus,
+    post_inline,
+    prepare_post_context,
+    recover_state_from_discussions,
+    render_body,
+    source_hash,
+)
 from ai_review.schema import validate_instance
 
 
@@ -21,9 +41,53 @@ class FakePostClient:
         self.mr_notes: list[dict[str, Any]] = []
         self.updated_mr_notes: list[dict[str, Any]] = []
         self.created_positions: list[dict[str, Any]] = []
+        self.created_bodies: list[str] = []
+
+    def current_user(self) -> dict[str, Any]:
+        return {"id": 10, "username": "ai-review-bot"}
 
     def fetch_current_mr_head_sha(self, project_id: str, mr_iid: str) -> str:
         return self.current_head_sha
+
+    def current_user_id(self) -> int | None:
+        try:
+            user = self.current_user()
+        except Exception:
+            return None
+        user_id = user.get("id")
+        return user_id if isinstance(user_id, int) else None
+
+    def fetch_current_head_sha(self, project_id: str, change_id: str) -> str:
+        return self.fetch_current_mr_head_sha(project_id, change_id)
+
+    def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
+        return self.fetch_latest_mr_version(project_id, change_id)
+
+    def fetch_diff(self, project_id: str, change_id: str) -> str:
+        return ""
+
+    def build_position(
+        self,
+        anchor: dict[str, Any],
+        version: MergeRequestVersion,
+        *,
+        multiline: bool = False,
+    ) -> dict[str, Any]:
+        return build_position(anchor, version, multiline=multiline)
+
+    def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
+        return isinstance(position.get("line_range"), dict)
+
+    def single_line_position(self, position: dict[str, Any]) -> dict[str, Any]:
+        single_line_position = dict(position)
+        single_line_position.pop("line_range", None)
+        return single_line_position
+
+    def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
+        return root_note_id_from_discussion(response)
+
+    def member_access_level(self, project_id: str, user_id: str | int) -> int | None:
+        return 40
 
     def fetch_latest_mr_version(self, project_id: str, mr_iid: str) -> MergeRequestVersion:
         return MergeRequestVersion("base", "start", self.current_head_sha)
@@ -37,10 +101,24 @@ class FakePostClient:
     ) -> dict[str, Any]:
         self.created += 1
         self.created_positions.append(position)
+        self.created_bodies.append(body)
         return {"id": "discussion", "notes": [{"id": 123}]}
 
     def list_mr_discussions(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
         return self.discussions
+
+    def list_threads(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return self.list_mr_discussions(project_id, change_id)
+
+    def create_inline_comment(
+        self, project_id: str, change_id: str, body: str, position: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.create_discussion(project_id, change_id, body, position)
+
+    def update_comment(
+        self, project_id: str, change_id: str, thread_id: str, comment_id: int, body: str
+    ) -> dict[str, Any]:
+        return self.update_discussion_note(project_id, change_id, thread_id, comment_id, body)
 
     def update_discussion_note(
         self,
@@ -56,6 +134,17 @@ class FakePostClient:
         )
         return {"id": note_id, "body": body}
 
+    def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return list(self.mr_notes)
+
+    def create_state_note(self, project_id: str, change_id: str, body: str) -> dict[str, Any]:
+        return self.create_mr_note(project_id, change_id, body)
+
+    def update_state_note(
+        self, project_id: str, change_id: str, note_id: int, body: str
+    ) -> dict[str, Any]:
+        return self.update_mr_note(project_id, change_id, note_id, body)
+
     def create_mr_note(self, project_id: str, mr_iid: str, body: str) -> dict[str, Any]:
         note_id = 900 + len(self.mr_notes)
         note = {"id": note_id, "body": body}
@@ -65,7 +154,9 @@ class FakePostClient:
         self.discussions.append({"id": f"note-{note_id}", "notes": [{"id": note_id, "body": body}]})
         return note
 
-    def update_mr_note(self, project_id: str, mr_iid: str, note_id: int, body: str) -> dict[str, Any]:
+    def update_mr_note(
+        self, project_id: str, mr_iid: str, note_id: int, body: str
+    ) -> dict[str, Any]:
         self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for discussion in self.discussions:
             for note in discussion.get("notes", []):
@@ -74,14 +165,34 @@ class FakePostClient:
         return {"id": note_id, "body": body}
 
 
+class DiffFailPostClient(FakePostClient):
+    def fetch_diff(self, project_id: str, change_id: str) -> str:
+        raise RuntimeError("diff unavailable")
+
+    def fetch_mr_diff(self, project_id: str, mr_iid: str) -> str:
+        raise RuntimeError("diff unavailable")
+
+
 class StatePostClient(FakePostClient):
     def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
         super().__init__(current_head_sha)
         self.resolve_calls: list[dict[str, Any]] = []
-        self.mr_notes = [{"id": 1, "body": encode_state_note(state)}]
+        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": 10}}]
 
     def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
         return list(self.mr_notes)
+
+    def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+        return self.list_mr_notes(project_id, change_id)
+
+    def resolve_thread(
+        self,
+        project_id: str,
+        change_id: str,
+        thread_id: str,
+        resolved: bool = True,
+    ) -> dict[str, Any]:
+        return self.resolve_discussion(project_id, change_id, thread_id, resolved)
 
     def resolve_discussion(
         self,
@@ -156,6 +267,277 @@ class PostTests(unittest.TestCase):
             },
         }
 
+    def test_initial_post_result_uses_schema_defaults(self) -> None:
+        result = _initial_post_result(
+            consensus=self._consensus(),
+            manifest=self._manifest("head"),
+            current_head_sha="head",
+        )
+
+        self.assertEqual(result["schema_version"], "post_result.v1")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["head_sha"], "head")
+        self.assertEqual(result["current_head_sha"], "head")
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["posted_discussions"], [])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(
+            result["summary_comment"],
+            {
+                "action": "none",
+                "note_id": None,
+                "surface_findings": 0,
+                "fyi_findings": 0,
+            },
+        )
+        validate_instance(result, "post_result.schema.json")
+
+    def test_classify_post_groups_routes_surface_fyi_and_fallbacks(self) -> None:
+        base = self._consensus()["groups"][0]
+        surface = copy.deepcopy(base)
+        surface["issue_id"] = "1" * 64
+        unsupported = copy.deepcopy(base)
+        unsupported["issue_id"] = "2" * 64
+        unsupported["representative_anchor"]["side"] = "old"
+        multiline = copy.deepcopy(base)
+        multiline["issue_id"] = "3" * 64
+        multiline["representative_anchor"]["end"] = {
+            "old_line": None,
+            "new_line": 4,
+            "line_code": None,
+        }
+        fyi = copy.deepcopy(base)
+        fyi["issue_id"] = "4" * 64
+        fyi["decision"] = "fyi"
+
+        classification = _classify_post_groups(
+            [surface, unsupported, multiline, fyi],
+            inline_sides={"new"},
+            inline_multiline=False,
+            max_surface=25,
+        )
+
+        self.assertEqual(
+            [group["issue_id"] for group in classification.inline_candidates], ["1" * 64]
+        )
+        self.assertEqual(
+            [group["issue_id"] for group in classification.summary_fallback_groups],
+            ["2" * 64, "3" * 64],
+        )
+        self.assertEqual([group["issue_id"] for group in classification.fyi_groups], ["4" * 64])
+        self.assertEqual(
+            classification.warnings,
+            [
+                "summary fallback required for unsupported side: old",
+                "summary fallback required for multiline anchor",
+            ],
+        )
+
+    def test_classify_post_groups_applies_surface_cap_by_severity(self) -> None:
+        base = self._consensus()["groups"][0]
+        minor = copy.deepcopy(base)
+        minor["issue_id"] = "1" * 64
+        minor["final_severity"] = "minor"
+        blocker = copy.deepcopy(base)
+        blocker["issue_id"] = "2" * 64
+        blocker["final_severity"] = "blocker"
+
+        classification = _classify_post_groups(
+            [minor, blocker],
+            inline_sides={"new"},
+            inline_multiline=False,
+            max_surface=1,
+        )
+
+        self.assertEqual(
+            [group["issue_id"] for group in classification.inline_candidates], ["2" * 64]
+        )
+        self.assertEqual(
+            [group["issue_id"] for group in classification.summary_fallback_groups], ["1" * 64]
+        )
+        self.assertEqual(classification.fyi_groups, [])
+        self.assertEqual(
+            classification.warnings,
+            ["surface fallback to summary: max_posted_surface_findings (1) reached"],
+        )
+
+    def test_classify_post_groups_preserves_fail_closed_malformed_group(self) -> None:
+        with self.assertRaises(AttributeError):
+            _classify_post_groups(
+                [object()],  # type: ignore[list-item]
+                inline_sides={"new"},
+                inline_multiline=False,
+                max_surface=25,
+            )
+
+    def test_load_persisted_state_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+                return []
+
+        with self.assertRaisesRegex(RuntimeError, "current_user"):
+            load_persisted_state(
+                BrokenUserClient("head"),
+                {"state": {"backend": "gitlab_mr_state_note", "checksum_required": True}},
+                self._manifest("head"),
+            )
+
+    def test_post_consensus_recovery_fails_closed_when_current_user_unavailable(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
+            post_consensus(
+                BrokenUserClient("head"),
+                self._config(),
+                self._manifest("head"),
+                self._consensus(),
+            )
+
+    def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
+        group = self._consensus()["groups"][0]
+        body, _body_hash = render_body(group, 1, "run")
+        discussions = index_ai_review_discussions(
+            [
+                {
+                    "id": "trusted",
+                    "resolved": False,
+                    "notes": [
+                        {
+                            "id": 321,
+                            "body": body,
+                            "author": {"id": 10},
+                            "position": {
+                                "head_sha": "head",
+                                "new_path": "src/foo.py",
+                                "old_path": "src/foo.py",
+                                "new_line": 1,
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": "forged",
+                    "resolved": False,
+                    "notes": [
+                        {
+                            "id": 654,
+                            "body": body,
+                            "author": {"id": 99},
+                            "position": {
+                                "head_sha": "head",
+                                "new_path": "src/foo.py",
+                                "old_path": "src/foo.py",
+                                "new_line": 1,
+                            },
+                        }
+                    ],
+                },
+            ]
+        )
+
+        recovered = recover_state_from_discussions(
+            FakePostClient("head"),
+            self._manifest("head"),
+            discussions,
+        )
+
+        self.assertEqual([record["discussion_id"] for record in recovered["records"]], ["trusted"])
+
+    def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
+        body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")
+        client = FakePostClient("head")
+        client.discussions = [
+            {
+                "id": "forged",
+                "resolved": False,
+                "notes": [
+                    {
+                        "id": 321,
+                        "body": body,
+                        "author": {"id": 99},
+                        "position": {
+                            "head_sha": "head",
+                            "new_path": "src/foo.py",
+                            "old_path": "src/foo.py",
+                            "new_line": 1,
+                        },
+                    }
+                ],
+            }
+        ]
+        result = post_consensus(
+            client,
+            self._config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(client.created, 1)
+
+    def test_render_body_redacts_model_authored_secrets(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        body, _body_hash = render_body(group, 1, "run")
+
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+
+    def test_diff_fetch_failure_surfaces_warning(self) -> None:
+        client = DiffFailPostClient("head")
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertTrue(
+            any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"])
+        )
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_consensus_redacts_created_discussion_body(self) -> None:
+        client = FakePostClient("head")
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        group["title"] = "leaked glpat-1234567890abcdef1234"
+        group["body"] = "token sk-1234567890abcdef1234567890abcdef123456789012"
+        group["evidence_by_reviewer"] = {
+            "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        }
+        group["suggestion"] = "replace glpat-1234567890abcdef1234"
+
+        result = post_consensus(
+            client,
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text="",
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(len(client.created_bodies), 1)
+        body = client.created_bodies[0]
+        self.assertIn("[REDACTED]", body)
+        self.assertNotIn("glpat-1234567890abcdef1234", body)
+        self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
+        self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
+        validate_instance(result, "post_result.schema.json")
+
     def _state_record(
         self,
         group: dict[str, Any],
@@ -180,11 +562,12 @@ class PostTests(unittest.TestCase):
             },
             "discussion_id": discussion_id,
             "root_note_id": 123,
-            "jira_comment_id": None,
             "status": "open",
             "last_seen_sha": "old-head",
             "first_seen_sha": "old-head",
-            "anchor": anchor if anchor is not None else copy.deepcopy(group["representative_anchor"]),
+            "anchor": anchor
+            if anchor is not None
+            else copy.deepcopy(group["representative_anchor"]),
             "last_posted_body_hash": "0" * 64,
             "last_decision": "surface",
             "last_final_severity": "major",
@@ -219,7 +602,12 @@ class PostTests(unittest.TestCase):
         resolved: bool = False,
     ) -> dict[str, Any]:
         body, _body_hash = render_body(group, 1, "previous-run")
-        note: dict[str, Any] = {"id": note_id, "body": body, "resolved": resolved}
+        note: dict[str, Any] = {
+            "id": note_id,
+            "body": body,
+            "resolved": resolved,
+            "author": {"id": 10},
+        }
         if position is not None:
             note["position"] = position
         return {
@@ -227,6 +615,260 @@ class PostTests(unittest.TestCase):
             "resolved": resolved,
             "notes": [note],
         }
+
+    def test_plan_state_marks_ambiguous_matches_stale_without_result_mutation(self) -> None:
+        consensus = self._consensus()
+        group = copy.deepcopy(consensus["groups"][0])
+        group["issue_id"] = "9" * 64
+        record_one = self._state_record(group, issue_id="1" * 64, discussion_id="d1")
+        record_two = self._state_record(group, issue_id="2" * 64, discussion_id="d2")
+        state = self._state_with_records([record_one, record_two])
+
+        plan = plan_state(
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+
+        self.assertEqual(plan.outcome.stale_unverified, 0)
+        self.assertIsNone(plan.outcome.overflow)
+        self.assertEqual(
+            plan.outcome.warnings,
+            [f"ambiguous existing record match for {'9' * 64}; protected 2 candidate record(s)"],
+        )
+        planned_by_id = {record["issue_id"]: record for record in plan.planned_records}
+        self.assertEqual(planned_by_id["1" * 64]["status"], "stale")
+        self.assertEqual(planned_by_id["1" * 64]["remap_status"], "ambiguous")
+        self.assertEqual(planned_by_id["2" * 64]["status"], "stale")
+        self.assertEqual(planned_by_id["2" * 64]["remap_status"], "ambiguous")
+        self.assertNotIn(group["issue_id"], plan.planned_by_issue)
+
+    def test_plan_state_applies_human_commands_to_current_and_stale_records(self) -> None:
+        consensus = self._consensus()
+        current_group = copy.deepcopy(consensus["groups"][0])
+        current_record = self._state_record(current_group, discussion_id="current-discussion")
+        stale_group = copy.deepcopy(consensus["groups"][0])
+        stale_group["issue_id"] = "2" * 64
+        stale_record = self._state_record(stale_group, discussion_id="stale-discussion")
+        state = self._state_with_records([current_record, stale_record])
+
+        plan = plan_state(
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            state,
+            [current_group],
+            [],
+            [],
+            {current_group["issue_id"]: "wontfix", stale_group["issue_id"]: "resolve"},
+        )
+
+        planned_by_id = {record["issue_id"]: record for record in plan.planned_records}
+        self.assertEqual(planned_by_id[current_group["issue_id"]]["status"], "wontfix")
+        self.assertEqual(
+            planned_by_id[current_group["issue_id"]]["human_disposition"],
+            "wontfix",
+        )
+        self.assertEqual(planned_by_id[stale_group["issue_id"]]["status"], "resolved")
+        self.assertEqual(
+            planned_by_id[stale_group["issue_id"]]["human_disposition"],
+            "resolve",
+        )
+        self.assertEqual(plan.outcome.warnings, [])
+
+    def test_plan_state_reports_overflow_without_mutating_post_result(self) -> None:
+        consensus = self._consensus()
+        group = copy.deepcopy(consensus["groups"][0])
+        state = self._state_with_records([])
+        config = self._state_config()
+        config["state"]["retention"]["max_records"] = 0
+
+        plan = plan_state(
+            config,
+            self._manifest("head"),
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+
+        self.assertEqual(
+            plan.outcome.overflow,
+            "state has 1 records, exceeds state.retention.max_records (0)",
+        )
+        self.assertEqual(plan.outcome.warnings, [])
+        self.assertEqual(plan.planned_by_issue, {})
+
+    def test_prepare_post_context_loads_state_discussions_and_commands(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        persisted_state = self._state_with_records([self._state_record(group)])
+        client = StatePostClient("head", persisted_state)
+        discussion = self._existing_discussion(group)
+        discussion["notes"].append(
+            {
+                "id": 124,
+                "body": "/ai-review resolve",
+                "author": {"id": 42, "access_level": 40},
+                "created_at": "2026-07-11T00:00:01Z",
+            }
+        )
+        client.discussions = [discussion]
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+
+        context = prepare_post_context(
+            client,
+            self._state_config(),
+            manifest,
+            result,
+            dry_run=False,
+            diff_text="diff text",
+        )
+
+        self.assertEqual(context.version, MergeRequestVersion("base", "start", "head"))
+        self.assertEqual(context.current_diff_text, "diff text")
+        self.assertEqual(context.raw_discussions, [discussion])
+        self.assertEqual(context.persisted_state["records"][0]["issue_id"], group["issue_id"])
+        self.assertEqual(context.human_commands, {group["issue_id"]: "resolve"})
+        self.assertEqual(result["warnings"], [])
+
+    def test_post_inline_returns_phase_outputs_for_direct_seam_testing(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        client = FakePostClient("head")
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            self._state_with_records([]),
+            [group],
+            [],
+            [],
+            {},
+        )
+        summary_fallback_groups: list[dict[str, Any]] = []
+
+        outcome = post_inline(
+            client,
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [group],
+            summary_fallback_groups,
+            MergeRequestVersion("base", "start", "head"),
+            inline_multiline=False,
+            current_diff_text=None,
+            dry_run=False,
+        )
+
+        self.assertIs(outcome.result, result)
+        self.assertIs(outcome.state_plan, state_plan)
+        self.assertIs(outcome.summary_fallback_groups, summary_fallback_groups)
+        self.assertEqual(outcome.result["created_discussions"], 1)
+        self.assertEqual(outcome.result["posted_discussions"][0]["action"], "created")
+        planned_record = outcome.state_plan.planned_by_issue[group["issue_id"]]
+        self.assertEqual(planned_record["discussion_id"], "discussion")
+        self.assertEqual(planned_record["root_note_id"], 123)
+        self.assertEqual(client.created_positions, [self._position("head")])
+
+    def test_finalize_state_returns_result_after_summary_resolution_and_state_write(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        persisted_state = self._state_with_records([previous_record])
+        client = StatePostClient("head", persisted_state)
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "resolve"},
+        )
+
+        finalized = finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        self.assertIs(finalized, result)
+        self.assertEqual(finalized["summary_comment"]["action"], "created")
+        self.assertEqual(finalized["resolved_discussions"], 1)
+        self.assertEqual(
+            client.resolve_calls,
+            [{"discussion_id": "existing-discussion", "resolved": True}],
+        )
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "resolved")
+
+    def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
+        base_record = self._state_record(self._consensus()["groups"][0])
+
+        resolved_record = dict(base_record, status="resolved")
+        self.assertIs(
+            _desired_discussion_resolved(resolved_record, {base_record["issue_id"]: "open"}),
+            True,
+        )
+        self.assertIsNone(
+            _desired_discussion_resolved(resolved_record, {base_record["issue_id"]: "resolved"})
+        )
+
+        wontfix_record = dict(base_record, status="wontfix")
+        self.assertIs(
+            _desired_discussion_resolved(wontfix_record, {base_record["issue_id"]: "open"}),
+            True,
+        )
+
+        reopened_record = dict(
+            base_record,
+            status="open",
+            human_disposition="reopen",
+        )
+        self.assertIs(
+            _desired_discussion_resolved(reopened_record, {base_record["issue_id"]: "resolved"}),
+            False,
+        )
+        self.assertIsNone(
+            _desired_discussion_resolved(reopened_record, {base_record["issue_id"]: "open"})
+        )
 
     def test_post_stale_head_has_no_side_effects(self) -> None:
         client = FakePostClient("new-head")
@@ -287,6 +929,7 @@ class PostTests(unittest.TestCase):
                 "notes": [
                     {
                         "id": 123,
+                        "author": {"id": 10},
                         "body": (
                             "existing\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=run "
@@ -321,6 +964,7 @@ class PostTests(unittest.TestCase):
                 "notes": [
                     {
                         "id": 123,
+                        "author": {"id": 10},
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
@@ -528,7 +1172,14 @@ class PostTests(unittest.TestCase):
                 self.discussions.append(
                     {
                         "id": discussion_id,
-                        "notes": [{"id": note_id, "body": body, "position": position}],
+                        "notes": [
+                            {
+                                "id": note_id,
+                                "body": body,
+                                "position": position,
+                                "author": {"id": 10},
+                            }
+                        ],
                     }
                 )
                 return {"id": discussion_id, "notes": [{"id": note_id}]}
@@ -764,6 +1415,18 @@ class PostTests(unittest.TestCase):
             def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
                 return list(self.mr_notes)
 
+            def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
+                return self.list_mr_notes(project_id, change_id)
+
+            def resolve_thread(
+                self,
+                project_id: str,
+                change_id: str,
+                thread_id: str,
+                resolved: bool = True,
+            ) -> dict[str, Any]:
+                return self.resolve_discussion(project_id, change_id, thread_id, resolved)
+
             def resolve_discussion(
                 self,
                 project_id: str,
@@ -797,7 +1460,59 @@ class PostTests(unittest.TestCase):
         validate_instance(state, "state.schema.json")
         self.assertEqual(state["records"][0]["discussion_id"], "discussion")
         self.assertEqual(state["records"][0]["status"], "open")
+
+    def test_post_state_processing_runs_before_and_after_mutations(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        persisted_state = self._state_with_records([self._state_record(group)])
+        client = StatePostClient("head", persisted_state)
+
+        normalize_calls = 0
+        compact_calls = 0
+        overflow_calls = 0
+        real_normalize_state = post_module.normalize_state
+        real_compact_state = post_module.compact_state
+        real_state_overflow_reason = post_module.state_overflow_reason
+
+        def spy_normalize_state(*args: Any, **kwargs: Any) -> Any:
+            nonlocal normalize_calls
+            normalize_calls += 1
+            return real_normalize_state(*args, **kwargs)
+
+        def spy_compact_state(*args: Any, **kwargs: Any) -> Any:
+            nonlocal compact_calls
+            compact_calls += 1
+            return real_compact_state(*args, **kwargs)
+
+        def spy_state_overflow_reason(*args: Any, **kwargs: Any) -> Any:
+            nonlocal overflow_calls
+            overflow_calls += 1
+            return real_state_overflow_reason(*args, **kwargs)
+
+        with (
+            patch.object(post_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(post_module, "compact_state", side_effect=spy_compact_state),
+            patch.object(
+                post_module,
+                "state_overflow_reason",
+                side_effect=spy_state_overflow_reason,
+            ),
+        ):
+            result = post_consensus(
+                client,  # type: ignore[arg-type]
+                self._state_config(),
+                self._manifest("head"),
+                consensus,
+            )
+
         validate_instance(result, "post_result.schema.json")
+        self.assertEqual(result["status"], "success")
+        # Loading the persisted state normalizes once. Posting state is checked
+        # before GitLab writes to fail closed on overflow, then re-checked after
+        # inline mutations add discussion ids and body hashes.
+        self.assertEqual(normalize_calls, 3)
+        self.assertEqual(compact_calls, 2)
+        self.assertEqual(overflow_calls, 2)
 
     def test_post_state_match_changed_issue_id_does_not_auto_resolve_prior_record(self) -> None:
         consensus = self._consensus()
@@ -854,7 +1569,9 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["updated_discussions"], 0)
         self.assertEqual(client.resolve_calls, [])
-        self.assertTrue(any("ambiguous existing record match" in item for item in result["warnings"]))
+        self.assertTrue(
+            any("ambiguous existing record match" in item for item in result["warnings"])
+        )
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual({record["status"] for record in state_after["records"]}, {"stale"})
         self.assertEqual(
@@ -964,9 +1681,11 @@ class PostTests(unittest.TestCase):
     def test_post_ambiguous_remap_marks_stale_without_mutation(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
-        block = [f"+ctx-{index}" for index in range(6)] + ["+target"] + [
-            f"+tail-{index}" for index in range(6)
-        ]
+        block = (
+            [f"+ctx-{index}" for index in range(6)]
+            + ["+target"]
+            + [f"+tail-{index}" for index in range(6)]
+        )
         old_diff = "\n".join(
             [
                 "diff --git a/src/foo.py b/src/foo.py",

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import canonical_json, sha256_hex
 from .config import effective_config_summary, enabled_reviewers, load_config
+from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
-from .post import render_body
+from .render import render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
-
-SEVERITY_RANK = {"info": 0, "minor": 1, "major": 2, "blocker": 3}
-SEVERITY_BY_RANK = {value: key for key, value in SEVERITY_RANK.items()}
+from .types import Consensus, FindingGroup, PanelStatus, State
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
@@ -38,7 +38,43 @@ def _ranges_overlap(a: dict[str, Any], b: dict[str, Any], *, tolerance: int = 3)
     b_start = _changed_start_line(b)
     a_end_line = a["anchor"]["end"].get("new_line") or a["anchor"]["end"].get("old_line") or a_start
     b_end_line = b["anchor"]["end"].get("new_line") or b["anchor"]["end"].get("old_line") or b_start
-    return int(a_start) <= int(b_end_line) + tolerance and int(b_start) <= int(a_end_line) + tolerance
+    return (
+        int(a_start) <= int(b_end_line) + tolerance and int(b_start) <= int(a_end_line) + tolerance
+    )
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _normalized_issue_tokens(finding: dict[str, Any]) -> set[str]:
+    text = f"{finding.get('title', '')} {finding.get('body', '')}".lower()
+    words = _WORD_RE.findall(text)
+    if len(words) < 3:
+        return set(words)
+    shingles = {" ".join(words[index : index + 3]) for index in range(len(words) - 2)}
+    return set(words) | shingles
+
+
+# Text similarity is only an opt-in consensus grouping signal. Persisted state
+# recovery remains governed by ai_review.memory.STATE_MATCHING_STRATEGY.
+def _issue_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
+    a_tokens = _normalized_issue_tokens(a)
+    b_tokens = _normalized_issue_tokens(b)
+    if not a_tokens or not b_tokens:
+        return 0.0
+    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+
+
+def _semantic_grouping_enabled(grouping_config: dict[str, Any] | None) -> bool:
+    semantic = (grouping_config or {}).get("semantic", {})
+    return isinstance(semantic, dict) and semantic.get("enabled") is True
+
+
+def _semantic_threshold(grouping_config: dict[str, Any] | None) -> float:
+    semantic = (grouping_config or {}).get("semantic", {})
+    if not isinstance(semantic, dict):
+        return 0.5
+    return float(semantic.get("threshold", 0.5))
 
 
 DuplicateLink = tuple[str, str]
@@ -53,13 +89,18 @@ def same_issue(
     a: dict[str, Any],
     b: dict[str, Any],
     duplicate_links: set[DuplicateLink] | None = None,
+    grouping_config: dict[str, Any] | None = None,
 ) -> bool:
     if a["source_finding_id"] == b["source_finding_id"]:
         return True
-    if duplicate_links and _duplicate_link_key(
-        str(a["source_finding_id"]),
-        str(b["source_finding_id"]),
-    ) in duplicate_links:
+    if (
+        duplicate_links
+        and _duplicate_link_key(
+            str(a["source_finding_id"]),
+            str(b["source_finding_id"]),
+        )
+        in duplicate_links
+    ):
         return True
     a_anchor = a["anchor"]
     b_anchor = b["anchor"]
@@ -70,22 +111,28 @@ def same_issue(
         and a_anchor["context_hash"] == b_anchor["context_hash"]
     ):
         return True
-    if (
+    same_path_category_range = (
         anchor_path_key(a_anchor) == anchor_path_key(b_anchor)
         and a["category"] == b["category"]
         and _ranges_overlap(a, b)
-        and (
-            a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
-            or a["fingerprints"]["evidence_fingerprint"] == b["fingerprints"]["evidence_fingerprint"]
-            or (
-                a_anchor.get("symbol")
-                and b_anchor.get("symbol")
-                and a_anchor.get("symbol") == b_anchor.get("symbol")
-            )
+    )
+    if not same_path_category_range:
+        return False
+    if (
+        a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
+        or a["fingerprints"]["evidence_fingerprint"]
+        == b["fingerprints"]["evidence_fingerprint"]
+        or (
+            a_anchor.get("symbol")
+            and b_anchor.get("symbol")
+            and a_anchor.get("symbol") == b_anchor.get("symbol")
         )
     ):
         return True
-    return False
+    return (
+        _semantic_grouping_enabled(grouping_config)
+        and _issue_text_similarity(a, b) >= _semantic_threshold(grouping_config)
+    )
 
 
 class UnionFind:
@@ -152,15 +199,35 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
     return (1, title, path, source_hash, "")
 
 
+def _split_transitive_component(
+    component: list[dict[str, Any]],
+    duplicate_links: set[DuplicateLink] | None,
+    grouping_config: dict[str, Any] | None,
+) -> list[list[dict[str, Any]]]:
+    groups: list[list[dict[str, Any]]] = []
+    for finding in sorted(component, key=lambda item: item["source_finding_id"]):
+        for group in groups:
+            if all(
+                same_issue(member, finding, duplicate_links, grouping_config)
+                for member in group
+            ):
+                group.append(finding)
+                break
+        else:
+            groups.append([finding])
+    return groups
+
+
 def group_findings(
     findings: list[dict[str, Any]],
     duplicate_links: set[DuplicateLink] | None = None,
+    grouping_config: dict[str, Any] | None = None,
 ) -> list[list[dict[str, Any]]]:
     ordered = sorted(findings, key=lambda item: item["source_finding_id"])
     uf = UnionFind(len(ordered))
     for left_index, left in enumerate(ordered):
         for right_index in range(left_index + 1, len(ordered)):
-            if same_issue(left, ordered[right_index], duplicate_links):
+            if same_issue(left, ordered[right_index], duplicate_links, grouping_config):
                 uf.union(left_index, right_index)
     components: dict[int, list[dict[str, Any]]] = {}
     for index, finding in enumerate(ordered):
@@ -169,8 +236,13 @@ def group_findings(
     for component in components.values():
         buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for finding in component:
-            buckets.setdefault((finding["category"], anchor_path_key(finding["anchor"])), []).append(finding)
-        split_components.extend(sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"]))
+            buckets.setdefault(
+                (finding["category"], anchor_path_key(finding["anchor"])), []
+            ).append(finding)
+        for bucket in sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"]):
+            split_components.extend(
+                _split_transitive_component(bucket, duplicate_links, grouping_config)
+            )
     return sorted(split_components, key=lambda group: group[0]["source_finding_id"])
 
 
@@ -192,7 +264,9 @@ def decision_for_group(
     status: str,
 ) -> tuple[str, bool, bool, str]:
     reviewers = {finding["reviewer"] for finding in findings}
-    severity = max((str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value])
+    severity = max(
+        (str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value]
+    )
     category = str(findings[0]["category"])
     single_policy = config["severity_policy"]["single_reviewer_blocker"]
     # quorum is only required (and validated) when >1 reviewer is enabled; a valid
@@ -201,14 +275,18 @@ def decision_for_group(
     quorum = config.get("panel", {}).get("quorum", {})
     votes_required = int(quorum.get("votes_required", 2)) if isinstance(quorum, dict) else 2
     single_reviewer_blocker = (
-        severity == "blocker" and len(reviewers) == 1 and category in set(single_policy["categories"])
+        severity == "blocker"
+        and len(reviewers) == 1
+        and category in set(single_policy["categories"])
     )
     if status == "advisory_only":
         if single_reviewer_blocker:
             return "surface", False, True, "blocker"
         return "fyi", False, False, severity
     if len(reviewers) >= votes_required:
-        block_merge = severity == "blocker" and bool(config["severity_policy"]["quorum_blocker"]["block_merge"])
+        block_merge = severity == "blocker" and bool(
+            config["severity_policy"]["quorum_blocker"]["block_merge"]
+        )
         return "surface", block_merge, False, severity
     if single_reviewer_blocker:
         return "surface", False, True, "blocker"
@@ -230,21 +308,22 @@ def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, st
     )
 
 
-def _severity_after_one_level_downgrade(current: str, adjusted: Any) -> str:
-    if not isinstance(adjusted, str) or adjusted not in SEVERITY_RANK:
-        return current
+def _severity_after_group_downgrade(current: str, adjusted_values: list[str]) -> str:
+    requested_ranks = [SEVERITY_RANK[value] for value in adjusted_values if value in SEVERITY_RANK]
     current_rank = SEVERITY_RANK[current]
-    adjusted_rank = SEVERITY_RANK[adjusted]
-    if adjusted_rank >= current_rank:
+    lower_ranks = [rank for rank in requested_ranks if rank < current_rank]
+    if not lower_ranks:
         return current
-    return SEVERITY_BY_RANK[max(current_rank - 1, adjusted_rank)]
+    downgraded = SEVERITY_BY_RANK[max(current_rank - 1, min(lower_ranks))]
+    if current == "blocker" and downgraded != "blocker":
+        return current
+    return downgraded
 
 
 def _same_path_and_category(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return (
-        str(left.get("category")) == str(right.get("category"))
-        and anchor_path_key(left["anchor"]) == anchor_path_key(right["anchor"])
-    )
+    return str(left.get("category")) == str(right.get("category")) and anchor_path_key(
+        left["anchor"]
+    ) == anchor_path_key(right["anchor"])
 
 
 def _source_finding_index(findings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -272,7 +351,10 @@ def _valid_duplicate_links(
             duplicate_finding = source_to_finding.get(duplicate_of)
             if target_finding is None or duplicate_finding is None:
                 continue
-            if critic in {str(target_finding.get("reviewer")), str(duplicate_finding.get("reviewer"))}:
+            if critic in {
+                str(target_finding.get("reviewer")),
+                str(duplicate_finding.get("reviewer")),
+            }:
                 continue
             if not _same_path_and_category(target_finding, duplicate_finding):
                 continue
@@ -313,9 +395,8 @@ def _recompute_group_decision(
         group["human_ack_recommended"] = single_reviewer_blocker
     elif int(group["vote_count"]) >= votes_required:
         group["decision"] = "surface"
-        group["block_merge"] = (
-            severity == "blocker"
-            and bool(config["severity_policy"]["quorum_blocker"]["block_merge"])
+        group["block_merge"] = severity == "blocker" and bool(
+            config["severity_policy"]["quorum_blocker"]["block_merge"]
         )
         group["human_ack_recommended"] = False
     elif single_reviewer_blocker:
@@ -337,7 +418,9 @@ def _recompute_group_decision(
         group["human_ack_recommended"] = False
 
 
-def _successful_critique_batches(critique_batches: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _successful_critique_batches(
+    critique_batches: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
     return [
         batch
         for batch in (critique_batches or [])
@@ -387,7 +470,9 @@ def _apply_critiques(
             link_is_valid = (
                 isinstance(duplicate_of, str)
                 and duplicate_of in source_to_group
-                and _duplicate_link_key(str(critique.get("target_source_finding_id", "")), duplicate_of)
+                and _duplicate_link_key(
+                    str(critique.get("target_source_finding_id", "")), duplicate_of
+                )
                 in valid_duplicate_links
             )
             if not link_is_valid:
@@ -403,12 +488,14 @@ def _apply_critiques(
                 downgrades.setdefault(group_index, []).append(adjusted)
 
     allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
-    allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", False))
+    allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", True))
     for index, group in enumerate(groups):
         if group.get("issue_id_source") == "ambiguous_unassigned":
             continue
         eligible_critics = [
-            critic for critic in successful_critics if critic not in set(group["contributing_reviewers"])
+            critic
+            for critic in successful_critics
+            if critic not in set(group["contributing_reviewers"])
         ]
         if eligible_critics and int(group["critique_noise_count"]) > len(eligible_critics) / 2:
             group["decision"] = "drop"
@@ -417,12 +504,13 @@ def _apply_critiques(
             continue
         if allow_downgrade:
             severity = str(group["final_severity"])
-            for adjusted in sorted(
-                downgrades.get(index, []),
-                key=lambda item: SEVERITY_RANK.get(item, SEVERITY_RANK[severity]),
-            ):
-                severity = _severity_after_one_level_downgrade(severity, adjusted)
-            group["final_severity"] = severity
+            group["final_severity"] = _severity_after_group_downgrade(
+                severity,
+                sorted(
+                    downgrades.get(index, []),
+                    key=lambda item: SEVERITY_RANK.get(item, SEVERITY_RANK[severity]),
+                ),
+            )
         _recompute_group_decision(
             group,
             config,
@@ -435,11 +523,13 @@ def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     config: dict[str, Any],
-    state: dict[str, Any] | None = None,
+    state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> Consensus:
     enabled = sorted(enabled_reviewers(config))
-    successful = sorted(batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success")
+    successful = sorted(
+        batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success"
+    )
     failed = sorted(set(enabled) - set(successful))
     status = panel_status(
         successful,
@@ -462,7 +552,9 @@ def build_consensus(
             if _critique_enabled(config)
             else set()
         )
-        for findings in group_findings(all_findings, valid_duplicate_links):
+        for findings in group_findings(
+            all_findings, valid_duplicate_links, config.get("panel", {}).get("grouping")
+        ):
             issue_id = issue_id_for_group(findings)
             representative = _representative(findings)
             decision, block_merge, require_ack, final_severity = decision_for_group(
@@ -502,12 +594,18 @@ def build_consensus(
                 "match_keys": {
                     "path_keys": path_keys,
                     "category": representative["category"],
-                    "context_hashes": sorted({finding["anchor"]["context_hash"] for finding in findings}),
+                    "context_hashes": sorted(
+                        {finding["anchor"]["context_hash"] for finding in findings}
+                    ),
                     "title_fingerprints": sorted(
                         {finding["fingerprints"]["title_fingerprint"] for finding in findings}
                     ),
                     "symbols": sorted(
-                        {finding["anchor"]["symbol"] for finding in findings if finding["anchor"]["symbol"]}
+                        {
+                            finding["anchor"]["symbol"]
+                            for finding in findings
+                            if finding["anchor"]["symbol"]
+                        }
                     ),
                 },
                 "state_match": {
@@ -516,7 +614,7 @@ def build_consensus(
                     "precedence": None,
                 },
             }
-            state_match = find_matching_record(group, state)
+            state_match = find_matching_record(cast(FindingGroup, group), state)
             if state_match.status == "matched" and state_match.record is not None:
                 group["issue_id"] = state_match.record["issue_id"]
                 group["issue_id_source"] = "matched_state"
@@ -541,7 +639,9 @@ def build_consensus(
         valid_duplicate_links = set()
     _apply_critiques(groups, critique_batches, config, status, valid_duplicate_links)
     for group in groups:
-        _body, body_hash = render_body(group, len(successful), manifest["run_id"])
+        _body, body_hash = render_body(
+            cast(FindingGroup, group), len(successful), manifest["run_id"]
+        )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
     return {
@@ -553,13 +653,23 @@ def build_consensus(
         "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
         "successful_reviewers": successful,
         "failed_reviewers": failed,
-        "panel_status": status,
-        "groups": groups,
+        "panel_status": cast(PanelStatus, status),
+        "groups": cast(list[FindingGroup], groups),
         "summary": {
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             "drop_count": sum(1 for group in groups if group["decision"] == "drop"),
             "block_merge": any(group["block_merge"] for group in groups),
+            "panel_convergence": (
+                sum(
+                    1
+                    for group in groups
+                    if group["decision"] == "surface" and group["vote_count"] >= 2
+                )
+                / sum(1 for group in groups if group["decision"] == "surface")
+                if any(group["decision"] == "surface" for group in groups)
+                else 0.0
+            ),
         },
     }
 
@@ -597,11 +707,11 @@ def cli(argv: list[str] | None = None) -> int:
     batches = []
     for path in sorted(Path(args.findings_dir).glob("*.json")):
         batches.append(load_json_file(path))
-    state = load_json_file(args.state) if args.state else None
+    state = cast(State | None, load_json_file(args.state)) if args.state else None
     if state is None:
         aliases_path = inputs / "state_aliases.json"
         if aliases_path.exists():
-            state = state_from_aliases(load_json_file(aliases_path))
+            state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
     critique_batches = []
     if _critique_enabled(config):
         for path in sorted(Path(args.critiques_dir).glob("*.json")):
@@ -612,7 +722,9 @@ def cli(argv: list[str] | None = None) -> int:
                     run_id=str(manifest["run_id"]),
                 )
             )
-    consensus = build_consensus(manifest, batches, config, state=state, critique_batches=critique_batches)
+    consensus = build_consensus(
+        manifest, batches, config, state=state, critique_batches=critique_batches
+    )
     validate_instance(consensus, "consensus.schema.json")
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":

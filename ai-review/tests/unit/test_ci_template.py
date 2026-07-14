@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import json
+import posixpath
 import re
+import shutil
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 
-
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
+_CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _PUBLISH_WORKFLOW = (
-    Path(__file__).resolve().parents[3]
-    / ".github"
-    / "workflows"
-    / "publish-ai-review-images.yml"
+    Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
 )
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
-_ACCEPTANCE_DOC = Path(__file__).resolve().parents[2] / "PHASE_2_ACCEPTANCE.md"
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
+_ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
+_AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -39,7 +42,7 @@ def _template_variables() -> dict[str, dict[str, str]]:
         indent = len(raw_line) - len(raw_line.lstrip(" "))
         stripped = raw_line.strip()
         if indent == 0 and stripped.endswith(":"):
-            current_job = stripped[:-1]
+            current_job = _strip_yaml_string(stripped[:-1])
             in_variables = False
             variables.setdefault(current_job, {})
             continue
@@ -79,7 +82,30 @@ def _workflow_job(text: str, job_name: str) -> str:
     return match.group(0)
 
 
+def _workflow_named_step_script(job: str, step_name: str) -> str:
+    step = re.search(
+        rf"(?ms)^      - name: {re.escape(step_name)}\n.*?(?=^      - |\Z)",
+        job,
+    )
+    if step is None:
+        raise AssertionError(f"Workflow step not found: {step_name}")
+    script = re.search(
+        r"(?ms)^          script: \|\n(?P<script>(?:^            [^\n]*\n?)+)",
+        step.group(0),
+    )
+    if script is None:
+        raise AssertionError(f"Workflow step script not found: {step_name}")
+    return textwrap.dedent(script.group("script"))
+
+
 class GitLabCiTemplateTests(unittest.TestCase):
+    def test_public_readmes_do_not_use_retired_unverifiable_verdict(self) -> None:
+        readmes = [path for path in (_ROOT_README, _AI_REVIEW_README) if path.exists()]
+        self.assertTrue(readmes, "expected at least one README in this test environment")
+        for path in readmes:
+            with self.subTest(path=path):
+                self.assertNotIn("unverifiable", path.read_text(encoding="utf-8"))
+
     def test_template_uses_top_level_immutable_image_variables(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
@@ -147,6 +173,57 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertLess(when_idx, allow_idx)
         self.assertLess(allow_idx, plain_rule_idx)
 
+    def test_template_uses_one_stage_and_same_stage_needs_dag(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        child_text = _CHILD_CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertEqual(text.count("stage: ai_review"), 6)
+        self.assertRegex(child_text, r"(?m)^stages:\n  - ai_review$")
+        self.assertNotRegex(child_text, r"(?m)^include:")
+        for retired_stage in ("prepare", "review", "critique", "consensus", "post", "gate"):
+            self.assertNotIn(f"stage: {retired_stage}\n", text)
+        prepare = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
+        self.assertIsNotNone(prepare)
+        self.assertIn("needs: []", prepare.group(1))
+
+    def test_reviewer_jobs_use_identity_preserving_group_names(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        for phase in ("review", "critique"):
+            for reviewer in ("claude", "codex", "opencode"):
+                self.assertIn(f'"AI {phase}: [{reviewer}]":', text)
+        for old_name in (
+            "review_claude",
+            "review_codex",
+            "review_opencode",
+            "critique_claude",
+            "critique_codex",
+            "critique_opencode",
+        ):
+            self.assertNotIn(old_name, text)
+
+    def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn('$CI_PIPELINE_SOURCE == "parent_pipeline"', text)
+        self.assertIn(
+            '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID '
+            '&& $AI_REVIEW_MANUAL == "true"',
+            text,
+        )
+
+    def test_template_only_declares_artifacts_that_commands_write(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+
+        for stale_path in (
+            "out/status/prepare.json",
+            "out/status/consensus.json",
+            "out/status/post.json",
+            "out/status/gate.json",
+        ):
+            self.assertNotIn(stale_path, text)
+        self.assertIn("out/status/", text)
+
     def test_critique_source_gate_stays_within_prepare_so_needs_never_dangles(self) -> None:
         # Regression: `.critique_template` once used `extends: .ai_review_rules`
         # for pipeline-source gating while ALSO declaring its own rules: block.
@@ -165,9 +242,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             match = re.search(rf"(?ms)^{re.escape(name)}:\n(.*?)(?=^\S)", text)
             self.assertIsNotNone(match, f"{name} block not found")
             return "\n".join(
-                line
-                for line in match.group(1).splitlines()
-                if not line.lstrip().startswith("#")
+                line for line in match.group(1).splitlines() if not line.lstrip().startswith("#")
             )
 
         critique_block = _code_block(".critique_template")
@@ -200,8 +275,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         disable_idx = critique_block.find('$AI_REVIEW_CRITIQUE_ENABLED != "true"')
         never_idx = critique_block.find("when: never")
         first_source_idx = min(
-            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"')
-            for source in critique_sources
+            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"') for source in critique_sources
         )
         self.assertNotEqual(disable_idx, -1, "critique enable-flag disable-guard missing")
         self.assertNotEqual(never_idx, -1, "critique when: never guard missing")
@@ -215,6 +289,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
         )
         self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
         self.assertNotIn("optional: true", prepare_need.group(1))
+
+    def test_gitlab_image_build_uses_repo_pins(self) -> None:
+        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("image_validate", text)
+        self.assertIn("validate_ai_review_supply_chain_pins", text)
+        self.assertIn("python scripts/check_supply_chain_pins.py", text)
+        self.assertNotRegex(text, r"AI_REVIEW_(CLAUDE|CODEX|OPENCODE)_VERSION")
+        self.assertNotIn("CLAUDE_VERSION=", text)
+        self.assertNotIn("CODEX_VERSION=", text)
+        self.assertNotIn("OPENCODE_VERSION=", text)
 
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
@@ -250,24 +334,33 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("ghcr.io", text)
         self.assertIn("seanleecoder/code-tribunal", text)
         self.assertIn('IMAGE_VERSION: "1.0"', text)
-        self.assertIn("AI_REVIEW_CLAUDE_VERSION: ${{ vars.AI_REVIEW_CLAUDE_VERSION }}", text)
-        self.assertIn("AI_REVIEW_CODEX_VERSION: ${{ vars.AI_REVIEW_CODEX_VERSION }}", text)
-        self.assertIn("AI_REVIEW_OPENCODE_VERSION: ${{ vars.AI_REVIEW_OPENCODE_VERSION }}", text)
+        self.assertIn("Validate supply-chain pins", build_preflight)
+        self.assertIn("python scripts/check_supply_chain_pins.py", build_preflight)
+        self.assertNotIn("vars.AI_REVIEW_", text)
+        self.assertNotIn("CLAUDE_VERSION=", text)
+        self.assertNotIn("CODEX_VERSION=", text)
+        self.assertNotIn("OPENCODE_VERSION=", text)
         self.assertIn("github.event_name != 'pull_request'", text)
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertIn("actions/upload-artifact@v4", build_preflight)
+        self.assertRegex(build_preflight, r"uses: actions/upload-artifact@[0-9a-f]{40}")
         self.assertIn("docker save", build_preflight)
         self.assertIn("actions/download-artifact@v4", publish)
+        self.assertRegex(publish, r"uses: actions/download-artifact@[0-9a-f]{40}")
         self.assertIn("docker load", publish)
-        self.assertIn("docker image inspect \"$AI_REVIEW_BASE_TAG\"", publish)
-        self.assertIn("docker image inspect \"$AI_REVIEW_REVIEWER_TAG\"", publish)
+        self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
+        self.assertIn('docker image inspect "$AI_REVIEW_REVIEWER_TAG"', publish)
         self.assertIn("docker push", publish)
-        self.assertIn("docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}'", publish)
+        self.assertIn(
+            "docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}'", publish
+        )
         self.assertIn("sha256:[0-9a-f]{64}", text)
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
         self.assertIn("actions/attest@v4", text)
+        self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
+        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)
         self.assertNotRegex(text, r":1\.0(?:\s|\"|$)")
 
@@ -298,7 +391,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertIn('AI_REVIEW_IMAGE_VERSION: "1_0"', text)
-        self.assertIn("Public GHCR tags use semantic \"1.0-<sha>\"", text)
+        self.assertIn('Public GHCR tags use semantic "1.0-<sha>"', text)
         self.assertIn(
             'AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:'
             'ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',
@@ -347,8 +440,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("critique_antigravity", text)
         self.assertNotIn("antigravity", text)
         self.assertNotRegex(text, r"\bagy\b")
-        self.assertIn("review_opencode", text)
-        self.assertIn("critique_opencode", text)
+        self.assertIn('"AI review: [opencode]"', text)
+        self.assertIn('"AI critique: [opencode]"', text)
         self.assertIn("opencode --version", text)
 
     def test_secret_bearing_jobs_use_trusted_image_code_and_config(self) -> None:
@@ -367,7 +460,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
 
     def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
-        variables = _effective_variables(_template_variables(), "review_claude")
+        variables = _effective_variables(_template_variables(), "AI review: [claude]")
 
         self.assertEqual(variables["REVIEWER"], "claude")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
@@ -380,14 +473,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         template = _template_variables()
 
         for reviewer in ("codex", "opencode"):
-            variables = _effective_variables(template, f"review_{reviewer}")
+            variables = _effective_variables(template, f"AI review: [{reviewer}]")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
     def test_opencode_requires_real_opencode_cli(self) -> None:
-        variables = _effective_variables(_template_variables(), "review_opencode")
+        variables = _effective_variables(_template_variables(), "AI review: [opencode]")
 
         self.assertEqual(variables["REVIEWER"], "opencode")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
@@ -397,7 +490,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
         template = _template_variables()
 
-        claude = _effective_critique_variables(template, "critique_claude")
+        claude = _effective_critique_variables(template, "AI critique: [claude]")
         self.assertEqual(claude["REVIEWER"], "claude")
         self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
@@ -405,12 +498,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(claude["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
 
         for reviewer in ("codex", "opencode"):
-            variables = _effective_critique_variables(template, f"critique_{reviewer}")
+            variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
             self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        opencode = _effective_critique_variables(template, "critique_opencode")
+        opencode = _effective_critique_variables(template, "AI critique: [opencode]")
         self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
@@ -427,14 +520,266 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("critique_batch.schema.json", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
-    def test_acceptance_doc_names_sanitized_opencode_workspace(self) -> None:
-        text = _ACCEPTANCE_DOC.read_text(encoding="utf-8")
+class GitHubActionsTemplateTests(unittest.TestCase):
+    def test_github_actions_template_is_safe_and_runnable(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
 
-        self.assertIn("opencode --pure run", text)
-        self.assertIn("opencode-review-root", text)
-        self.assertIn("temporary OpenCode review root must not expose bundle-root files", text)
-        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR"', text)
-        self.assertNotIn('--dir "$AI_REVIEW_INPUT_DIR/repo_snapshot"', text)
+        self.assertIn("pull_request:", text)
+        active_yaml = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn("pull_request_target", active_yaml)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
+        self.assertIn("python -m ai_review.input_bundle prepare", text)
+        self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
+        self.assertIn("python -m ai_review.consensus", text)
+        self.assertIn("python -m ai_review.post", text)
+        self.assertIn("python -m ai_review.gate", text)
+        self.assertNotIn('echo "Run prepare/reviewer/consensus/post/gate stages here."', text)
+
+    def test_github_actions_template_selects_github_runtime(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        review = _workflow_job(text, "review")
+        critique = _workflow_job(text, "critique")
+
+        self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
+        self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
+        self.assertIn('AI_REVIEW_MERGE_GATE_ENABLED: "true"', text)
+        self.assertNotIn("AI_REVIEW_BASE_IMAGE:", text)
+        self.assertNotIn("AI_REVIEW_REVIEWER_IMAGE:", text)
+        self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
+        self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
+        self.assertIn(
+            "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
+            critique,
+        )
+
+    def test_github_actions_supports_manual_pr_dispatch(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        prepare = _workflow_job(text, "prepare")
+
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("pr_number:", text)
+        self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
+        self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
+        self.assertIn("PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+        self.assertIn("await github.rest.pulls.get", prepare)
+        self.assertIn("ref: ${{ steps.pull-request.outputs.ref }}", prepare)
+        self.assertNotIn("refs/pull/", prepare)
+        self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+
+    def test_github_actions_groups_manual_and_automatic_runs_by_pr(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}",
+            text,
+        )
+
+    def test_github_resolver_rejects_untrusted_heads_before_checkout(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        prepare = _workflow_job(template.read_text(encoding="utf-8"), "prepare")
+        script = _workflow_named_step_script(prepare, "Resolve pull request")
+        resolver_position = prepare.index("- name: Resolve pull request")
+        checkout_position = prepare.index("- uses: actions/checkout@")
+
+        self.assertLess(resolver_position, checkout_position)
+        self.assertIn('context.eventName === "workflow_dispatch"', script)
+        self.assertIn('/^[1-9][0-9]{0,9}$/.test(requestedNumber)', script)
+        self.assertIn("await github.rest.pulls.get", script)
+        self.assertIn("let pullRequest = context.payload.pull_request", script)
+        self.assertIn("pullRequest.head?.repo?.full_name", script)
+        self.assertIn("sourceRepository !== repository", script)
+        self.assertIn("pullRequest.head?.sha", script)
+        self.assertIn('core.setOutput("ref", headSha)', script)
+        self.assertNotIn("${{ inputs.pr_number }}", script)
+        self.assertIn(
+            "uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea",
+            prepare,
+        )
+        self.assertIn("persist-credentials: false", prepare)
+
+    def test_github_resolver_executes_trust_and_input_boundaries(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable in this Python-only test environment")
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        prepare = _workflow_job(template.read_text(encoding="utf-8"), "prepare")
+        script = _workflow_named_step_script(prepare, "Resolve pull request")
+        harness = Path(__file__).resolve().parents[1] / "support" / "github_script_harness.js"
+        repository = "octo/repo"
+        head_sha = "a" * 40
+        same_repository_pr = {
+            "number": 32,
+            "head": {"sha": head_sha, "repo": {"full_name": repository}},
+        }
+        scenarios = [
+            {
+                "name": "manual-same-repository",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": same_repository_pr,
+            },
+            {
+                "name": "automatic-same-repository",
+                "eventName": "pull_request",
+                "eventPullRequest": same_repository_pr,
+            },
+            {
+                "name": "manual-maximum-length-number",
+                "eventName": "workflow_dispatch",
+                "prNumber": "9999999999",
+                "apiPullRequest": same_repository_pr,
+            },
+            {
+                "name": "manual-external-fork",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {
+                    "number": 32,
+                    "head": {"sha": head_sha, "repo": {"full_name": "someone/fork"}},
+                },
+            },
+            {
+                "name": "manual-missing-head-repository",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {"number": 32, "head": {"sha": head_sha, "repo": None}},
+            },
+            {
+                "name": "manual-invalid-head-sha",
+                "eventName": "workflow_dispatch",
+                "prNumber": "32",
+                "apiPullRequest": {
+                    "number": 32,
+                    "head": {"sha": "not-a-sha", "repo": {"full_name": repository}},
+                },
+            },
+            {
+                "name": "automatic-missing-pull-request",
+                "eventName": "pull_request",
+            },
+        ]
+        invalid_numbers = ("", "0", "-1", "32/head", "1" * 11)
+        scenarios.extend(
+            {
+                "name": f"manual-invalid-number-{index}",
+                "eventName": "workflow_dispatch",
+                "prNumber": value,
+                "apiPullRequest": same_repository_pr,
+            }
+            for index, value in enumerate(invalid_numbers)
+        )
+        completed = subprocess.run(
+            [node, str(harness)],
+            input=json.dumps({"script": script, "scenarios": scenarios}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        results = {item["name"]: item for item in json.loads(completed.stdout)}
+        manual = results["manual-same-repository"]
+        self.assertEqual(manual["failures"], [])
+        self.assertEqual(manual["outputs"], {"ref": head_sha})
+        self.assertEqual(
+            manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}]
+        )
+        self.assertIsNone(manual["thrown"])
+
+        automatic = results["automatic-same-repository"]
+        self.assertEqual(automatic["failures"], [])
+        self.assertEqual(automatic["outputs"], {"ref": head_sha})
+        self.assertEqual(automatic["apiCalls"], [])
+        self.assertIsNone(automatic["thrown"])
+
+        maximum = results["manual-maximum-length-number"]
+        self.assertEqual(maximum["failures"], [])
+        self.assertEqual(maximum["outputs"], {"ref": head_sha})
+        self.assertEqual(maximum["apiCalls"][0]["pull_number"], 9_999_999_999)
+        self.assertIsNone(maximum["thrown"])
+
+        for name in ("manual-external-fork", "manual-missing-head-repository"):
+            with self.subTest(name=name):
+                self.assertIn("external fork PR checkout is disabled", results[name]["failures"][0])
+                self.assertEqual(results[name]["outputs"], {})
+                self.assertIsNone(results[name]["thrown"])
+
+        invalid_sha = results["manual-invalid-head-sha"]
+        self.assertIn("head SHA was missing or invalid", invalid_sha["failures"][0])
+        self.assertEqual(invalid_sha["outputs"], {})
+        self.assertIsNone(invalid_sha["thrown"])
+
+        missing_pr = results["automatic-missing-pull-request"]
+        self.assertIn("pull request metadata was unavailable", missing_pr["failures"][0])
+        self.assertEqual(missing_pr["outputs"], {})
+        self.assertEqual(missing_pr["apiCalls"], [])
+        self.assertIsNone(missing_pr["thrown"])
+
+        for index, _value in enumerate(invalid_numbers):
+            name = f"manual-invalid-number-{index}"
+            with self.subTest(name=name):
+                self.assertIn("positive integer of at most 10 digits", results[name]["failures"][0])
+                self.assertEqual(results[name]["outputs"], {})
+                self.assertEqual(results[name]["apiCalls"], [])
+                self.assertIsNone(results[name]["thrown"])
+
+    def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+
+        self.assertNotIn("container: ${{ env.", text)
+        self.assertEqual(text.count("container: ghcr.io/"), 6)
+        self.assertEqual(text.count("@sha256:"), 6)
+
+    def test_github_actions_template_runs_full_critique_panel(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        critique = _workflow_job(text, "critique")
+        consensus = _workflow_job(text, "consensus")
+
+        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("continue-on-error: true", critique)
+        self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
+        self.assertIn("pattern: ai-review-review-*", critique)
+        self.assertIn("pattern: ai-review-critique-*", consensus)
+        self.assertIn("needs: [prepare, review, critique]", consensus)
+        self.assertEqual(
+            text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
+            2,
+        )
+
+    def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        consensus = _workflow_job(template.read_text(encoding="utf-8"), "consensus")
+        download = re.search(
+            r"(?ms)- name: Download critique artifacts\n(.*?)(?=\n      - name:)",
+            consensus,
+        )
+
+        self.assertIsNotNone(download)
+        self.assertIn("continue-on-error: true", download.group(1))
+        self.assertIn("steps.download-critiques.outcome == 'failure'", consensus)
+        self.assertIn("consensus will use reviewer findings only", consensus)
+
+    def test_github_critique_artifact_paths_extract_under_expected_root(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        critique = _workflow_job(template.read_text(encoding="utf-8"), "critique")
+        upload_paths = re.findall(
+            r"(?m)^\s+(out/(?:critiques|pooled_findings|status)/.+)$", critique
+        )
+
+        self.assertEqual(len(upload_paths), 3)
+        self.assertEqual(posixpath.commonpath(upload_paths), "out")
+        self.assertIn("out/status/critique-${{ matrix.reviewer }}.json", upload_paths)
+        extracted_paths = {path.removeprefix("out/").split("/", 1)[0] for path in upload_paths}
+        self.assertEqual(extracted_paths, {"critiques", "pooled_findings", "status"})
 
 
 if __name__ == "__main__":

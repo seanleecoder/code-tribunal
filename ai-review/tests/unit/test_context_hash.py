@@ -42,13 +42,17 @@ class ContextHashTests(unittest.TestCase):
             "side": "new",
             "context_hash": "a" * 64,
         }
-        base = compute_source_finding_id("claude", anchor, "correctness", title_fingerprint("Title"))
+        base = compute_source_finding_id(
+            "claude", anchor, "correctness", title_fingerprint("Title")
+        )
         changed_path = dict(anchor, new_path="src/bar.py")
         changed_context = dict(anchor, context_hash="b" * 64)
         changed_side = dict(anchor, side="old")
         self.assertNotEqual(
             base,
-            compute_source_finding_id("claude", changed_path, "correctness", title_fingerprint("Title")),
+            compute_source_finding_id(
+                "claude", changed_path, "correctness", title_fingerprint("Title")
+            ),
         )
         self.assertNotEqual(
             base,
@@ -56,11 +60,15 @@ class ContextHashTests(unittest.TestCase):
         )
         self.assertNotEqual(
             base,
-            compute_source_finding_id("claude", changed_context, "correctness", title_fingerprint("Title")),
+            compute_source_finding_id(
+                "claude", changed_context, "correctness", title_fingerprint("Title")
+            ),
         )
         self.assertNotEqual(
             base,
-            compute_source_finding_id("claude", changed_side, "correctness", title_fingerprint("Title")),
+            compute_source_finding_id(
+                "claude", changed_side, "correctness", title_fingerprint("Title")
+            ),
         )
         self.assertNotEqual(
             base,
@@ -68,7 +76,9 @@ class ContextHashTests(unittest.TestCase):
         )
 
     def test_evidence_fingerprint_uses_first_512_chars(self) -> None:
-        self.assertEqual(evidence_fingerprint("a" * 512 + "x"), evidence_fingerprint("a" * 512 + "y"))
+        self.assertEqual(
+            evidence_fingerprint("a" * 512 + "x"), evidence_fingerprint("a" * 512 + "y")
+        )
 
 
 if __name__ == "__main__":
