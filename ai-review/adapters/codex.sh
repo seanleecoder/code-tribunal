@@ -92,6 +92,7 @@ env -i \
   codex exec \
   --cd "$CODEX_REVIEW_ROOT" \
   --ephemeral \
+  --skip-git-repo-check \
   --ignore-user-config \
   --ignore-rules \
   --sandbox read-only \

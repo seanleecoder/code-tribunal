@@ -537,6 +537,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
+        self.assertIn('AI_REVIEW_MERGE_GATE_ENABLED: "false"', text)
         self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
         self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
         self.assertIn(
@@ -591,6 +593,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertEqual(len(upload_paths), 3)
         self.assertEqual(posixpath.commonpath(upload_paths), "out")
+        self.assertIn("out/status/critique-${{ matrix.reviewer }}.json", upload_paths)
         extracted_paths = {path.removeprefix("out/").split("/", 1)[0] for path in upload_paths}
         self.assertEqual(extracted_paths, {"critiques", "pooled_findings", "status"})
 

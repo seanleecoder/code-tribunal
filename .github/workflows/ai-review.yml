@@ -24,7 +24,9 @@ env:
   PYTHONPATH: /opt/ai-review/src
   AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_STATE_BACKEND: github_pr_comment
+  AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
   AI_REVIEW_CRITIQUE_ENABLED: "true"
+  AI_REVIEW_MERGE_GATE_ENABLED: "false"
 
 jobs:
   prepare:
@@ -121,7 +123,7 @@ jobs:
           path: |
             out/critiques/${{ matrix.reviewer }}.json
             out/pooled_findings/${{ matrix.reviewer }}.json
-            out/status/${{ matrix.reviewer }}.json
+            out/status/critique-${{ matrix.reviewer }}.json
 
   consensus:
     needs: [prepare, review, critique]

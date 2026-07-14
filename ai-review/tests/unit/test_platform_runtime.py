@@ -51,6 +51,22 @@ class PlatformRuntimeTests(unittest.TestCase):
             factory.call_args_list[1].args, ("https://gitlab.example/api/v4", "w")
         )
 
+    def test_github_mode_passes_configured_bot_login(self) -> None:
+        with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
+            create_runtime_platform(
+                {"posting": {"mode": "github_reviews"}},
+                access="write",
+                env={
+                    "GITHUB_TOKEN": "x",
+                    "AI_REVIEW_GITHUB_BOT_LOGIN": "github-actions[bot]",
+                },
+            )
+        factory.assert_called_once_with(
+            "https://api.github.com",
+            "x",
+            bot_login="github-actions[bot]",
+        )
+
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
             create_runtime_platform(
