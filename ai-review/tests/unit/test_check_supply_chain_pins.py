@@ -53,6 +53,17 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
         )
 
+
+    def test_detects_zero_cursor_agent_pin_placeholder(self) -> None:
+        self.assertIn(
+            "cursor-agent.pin sha256 must not be the all-zero placeholder",
+            check_supply_chain_pins._cursor_agent_pin_issues(
+                "version=2026.03.20-44cb435\n"
+                "url=https://downloads.cursor.com/lab/2026.03.20-44cb435/linux/x64/agent-cli-package.tar.gz\n"
+                "sha256=" + "0" * 64 + "\n"
+            ),
+        )
+
     def test_detects_stale_gitlab_cli_package_variables(self) -> None:
         original = check_supply_chain_pins.GITLAB_BUILD_TEMPLATE
         with tempfile.TemporaryDirectory() as tmp:

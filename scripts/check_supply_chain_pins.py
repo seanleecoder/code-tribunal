@@ -190,6 +190,8 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
         issues.append("cursor-agent.pin url must use downloads.cursor.com")
     if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
         issues.append("cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest")
+    if sha256 == "0" * 64:
+        issues.append("cursor-agent.pin sha256 must not be the all-zero placeholder")
     return issues
 
 def main() -> int:

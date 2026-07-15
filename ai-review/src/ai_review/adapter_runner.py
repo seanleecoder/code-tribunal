@@ -483,7 +483,8 @@ def _build_adapter_env(
 
     anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
     if (
-        anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
+        reviewer == "claude"
+        and anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
         and (openrouter_key := os.environ.get("OPENROUTER_API_KEY")) is not None
     ):
         env["OPENROUTER_API_KEY"] = openrouter_key
@@ -537,8 +538,8 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     if reviewer == "cursor":
         # Cursor CLI exposes no endpoint/base-url env to pin. Its backend is an
         # explicit, opt-in second egress destination gated by reviewers.cursor
-        # enabled=false and a dedicated CURSOR_API_KEY credential; the runner
-        # injects only that declared credential, and cursor.sh scrubs env again.
+        # enabled=false and a dedicated CURSOR_API_KEY credential; _build_adapter_env
+        # injects no OpenRouter fallback for cursor, and cursor.sh scrubs env again.
         return None
     if reviewer in {"codex", "opencode"}:
         base_url = os.environ.get("OPENROUTER_BASE_URL")

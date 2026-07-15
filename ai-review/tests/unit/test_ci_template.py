@@ -190,15 +190,17 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
         for phase in ("review", "critique"):
-            for reviewer in ("claude", "codex", "opencode"):
+            for reviewer in ("claude", "codex", "opencode", "cursor"):
                 self.assertIn(f'"AI {phase}: [{reviewer}]":', text)
         for old_name in (
             "review_claude",
             "review_codex",
             "review_opencode",
+            "review_cursor",
             "critique_claude",
             "critique_codex",
             "critique_opencode",
+            "critique_cursor",
         ):
             self.assertNotIn(old_name, text)
 
@@ -442,7 +444,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotRegex(text, r"\bagy\b")
         self.assertIn('"AI review: [opencode]"', text)
         self.assertIn('"AI critique: [opencode]"', text)
+        self.assertIn('"AI review: [cursor]"', text)
+        self.assertIn('"AI critique: [cursor]"', text)
         self.assertIn("opencode --version", text)
+        self.assertIn("cursor-agent --version", text)
 
     def test_secret_bearing_jobs_use_trusted_image_code_and_config(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -487,6 +492,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
 
+    def test_cursor_requires_real_cursor_cli_without_enabling_in_template(self) -> None:
+        variables = _effective_variables(_template_variables(), "AI review: [cursor]")
+
+        self.assertEqual(variables["REVIEWER"], "cursor")
+        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
+        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
+        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
+
     def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
         template = _template_variables()
 
@@ -505,6 +518,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         opencode = _effective_critique_variables(template, "AI critique: [opencode]")
         self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
+        cursor = _effective_critique_variables(template, "AI critique: [cursor]")
+        self.assertEqual(cursor["REVIEWER"], "cursor")
+        self.assertEqual(cursor["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
+        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", cursor)
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -753,6 +770,19 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(
             text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
             2,
+        )
+        self.assertEqual(
+            text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
+            2,
+        )
+        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
+        self.assertIn(
+            "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
+            text,
+        )
+        self.assertIn(
+            "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}",
+            text,
         )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:

@@ -17,7 +17,7 @@ COPY ai-review/images/cursor-agent.pin ./cursor-agent.pin
 RUN set -eu; \
     . ./cursor-agent.pin; \
     test -n "$version"; test -n "$url"; test -n "$sha256"; \
-    if [ "$sha256" = "TO_BE_REFRESHED_WITH_ACCESSIBLE_CURSOR_ARTIFACT_SHA256" ]; then \
+    if [ "$sha256" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then \
       echo "cursor-agent.pin must be refreshed with the artifact sha256 before building" >&2; exit 1; \
     fi; \
     apt-get update; apt-get install -y --no-install-recommends ca-certificates curl tar; rm -rf /var/lib/apt/lists/*; \
@@ -26,7 +26,7 @@ RUN set -eu; \
     mkdir -p /usr/local/cursor-agent; \
     tar -xzf cursor-agent.tar.gz -C /usr/local/cursor-agent --strip-components=1; \
     find /usr/local/cursor-agent -type f -name cursor-agent -exec chmod 0755 {} \; ; \
-    test -x /usr/local/cursor-agent/cursor-agent || find /usr/local/cursor-agent -type f -perm /111 -maxdepth 3 -print -quit | xargs -r -I{} ln -sf {} /usr/local/cursor-agent/cursor-agent
+    test -x /usr/local/cursor-agent/cursor-agent || find /usr/local/cursor-agent -maxdepth 3 -type f -perm /111 -print -quit | xargs -r -I{} ln -sf {} /usr/local/cursor-agent/cursor-agent
 
 FROM ${AI_REVIEW_BASE_IMAGE}
 
