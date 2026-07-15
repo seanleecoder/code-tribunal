@@ -60,6 +60,16 @@ cat > "$CURSOR_HOME_DIR/.cursor/cli-config.json" <<'JSON'
 JSON
 
 cd "$CURSOR_REVIEW_ROOT"
+# Cursor's kernel sandbox is unavailable in GitHub's job containers. Use its
+# allowlist mode in the disposable HOME instead; cli-config.json still denies
+# writes and shell commands, and the workspace is the sanitized snapshot.
+env -i \
+  PATH="${PATH:-/usr/bin:/bin}" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  HOME="$CURSOR_HOME_DIR" \
+  CURSOR_API_KEY="$CURSOR_API_KEY" \
+  cursor-agent sandbox disable >/dev/null
+
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
   TMPDIR="${TMPDIR:-/tmp}" \
@@ -68,6 +78,5 @@ env -i \
   cursor-agent -p \
   --output-format json \
   --trust \
-  --sandbox enabled \
   --model "$AI_REVIEW_MODEL" \
   < "$PROMPT_FILE"
