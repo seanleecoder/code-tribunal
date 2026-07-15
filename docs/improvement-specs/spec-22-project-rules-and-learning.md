@@ -1,10 +1,10 @@
 # Project Review Rules and Human-Gated Learning Loop — Design Spec
 
-- **ID**: SPEC-19 (umbrella proposal; phases A0–E below are the execution units)
+- **ID**: SPEC-22 (umbrella proposal; phases A0–E below are the execution units)
 - **Title**: Project review rules from the protected target branch + human-gated learning loop + rule-level tracing
 - **Severity**: Medium (capability gap — reviews ignore adopter knowledge and repeat known false positives; not a defect)
 - **Effort**: L overall; per-phase S–M (see Phasing)
-- **ROI rank**: unranked — first proposal after the Phase 0–3 roadmap closed
+- **ROI rank**: unranked — proposed alongside Phase 4 (SPEC-19…21); independent of that phase's reviewer cost/panel work
 - **Depends on**: v0.4.0 platform abstraction (`platform/base.py` `ReviewPlatform` port, SPEC-15/16); the strict-schema and config-validation conventions of Phases 1–2
 - **Status**: PROPOSED design — nothing below is implemented; verified against `main` at v0.4.0
 
@@ -12,6 +12,9 @@ Baseline note: the original monolithic spec is archived
 (`docs/archived-improvement-plans/legacy-ai-review-implementation-ready-spec.md`)
 and is not a current product contract. This document is written against the
 v0.4.0 code: dual-platform (GitLab MRs and GitHub PRs), post-placeholder-cleanup.
+SPEC-19–21 (Phase 4, reviewer cost/panel flexibility, merged in PR #39) are a
+parallel, unrelated proposal track; this spec does not depend on or conflict
+with them, but reuses their next-free ID space (SPEC-22).
 
 ---
 

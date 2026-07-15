@@ -225,4 +225,4 @@ receive `OPENROUTER_API_KEY`.
 
 ## Planned Features
 
-- [Project Review Rules and Human-Gated Learning Loop](../docs/improvement-specs/project-rules-and-learning-spec.md) (design spec): trusted target-branch project rules injected into reviewer/critique prompts, plus a scheduled job that turns cross-MR/PR `wontfix` outcomes into human-approved `learned.md` rule proposals with rule-level usage tracing.
+- [SPEC-22: Project Review Rules and Human-Gated Learning Loop](../docs/improvement-specs/spec-22-project-rules-and-learning.md) (design spec): trusted target-branch project rules injected into reviewer/critique prompts, plus a scheduled job that turns cross-MR/PR `wontfix` outcomes into human-approved `learned.md` rule proposals with rule-level usage tracing.
