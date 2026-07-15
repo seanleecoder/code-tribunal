@@ -2,8 +2,9 @@
 
 These documents began as agent-ready work units derived from the Staff+ and
 security review. Phases 0–3 are retained as implementation and decision history.
-There is no active follow-on roadmap in this directory; paused ideas are stored
-under [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
+The active follow-on work is SPEC-19–21 below (spec IDs continue after the
+archived SPEC-17/18); paused ideas are stored under
+[`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
 
 Each spec follows the same template so an agent can execute it without extra
 context:
@@ -32,6 +33,22 @@ reasoning and security invariants are not lost.
 | **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
+| **4** | Reviewer cost + panel flexibility | SPEC-19…21 | Proposed / ready to implement. |
+
+## Phase 4 — Reviewer cost + panel flexibility (proposed)
+
+Prompted by real-run observations: the opencode reviewer is the slowest and
+most expensive panel seat (occasional timeouts; on
+`google/gemini-3.1-flash-lite` it out-costs the claude/codex seats on stronger
+models), and no token/cost data is recorded anywhere to steer tuning. Each
+spec is independently implementable; SPEC-20 is the measurement instrument
+that validates SPEC-19.
+
+| Spec | Title | Effort | Depends on |
+|---|---|---|---|
+| [SPEC-19](spec-19-opencode-reviewer-optimization.md) | OpenCode reviewer cost/latency optimization | S | none (SPEC-20 recommended alongside) |
+| [SPEC-20](spec-20-reviewer-usage-accounting.md) | Per-reviewer token/cost usage accounting | S | none |
+| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Cursor CLI as an opt-in substitute reviewer | M | none hard (SPEC-20 recommended first) |
 
 ## Downstream validation
 
