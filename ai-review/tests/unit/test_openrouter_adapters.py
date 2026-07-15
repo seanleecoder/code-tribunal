@@ -15,11 +15,13 @@ from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
-_MODEL_OVERRIDE_KEYS = (
+_REVIEWER_OVERRIDE_KEYS = (
     "AI_REVIEW_CLAUDE_MODEL",
+    "AI_REVIEW_CLAUDE_EFFORT",
     "AI_REVIEW_CODEX_MODEL",
     "AI_REVIEW_CODEX_EFFORT",
     "AI_REVIEW_OPENCODE_MODEL",
+    "AI_REVIEW_OPENCODE_EFFORT",
 )
 
 _ENV_KEYS = [
@@ -29,9 +31,12 @@ _ENV_KEYS = [
     "AI_REVIEW_LOCAL_MOCK",
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
+    "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
     "AI_REVIEW_CLAUDE_MODEL",
+    "AI_REVIEW_CLAUDE_EFFORT",
     "AI_REVIEW_CODEX_MODEL",
+    "AI_REVIEW_CODEX_EFFORT",
     "AI_REVIEW_OPENCODE_MODEL",
     "AI_REVIEW_OPENCODE_EFFORT",
     "OPENROUTER_API_KEY",
@@ -248,7 +253,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["OPENCODE_CONFIG_CONTENT"] = '{"host":true}'
             os.environ["XDG_CONFIG_HOME"] = "/tmp/host-xdg-config"
             os.environ["XDG_DATA_HOME"] = "/tmp/host-xdg-data"
-            for key in _MODEL_OVERRIDE_KEYS:
+            for key in _REVIEWER_OVERRIDE_KEYS:
                 os.environ.pop(key, None)
             for key, value in (extra_env or {}).items():
                 os.environ[key] = value
@@ -768,7 +773,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = base_url
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            for key in _MODEL_OVERRIDE_KEYS:
+            for key in _REVIEWER_OVERRIDE_KEYS:
                 os.environ.pop(key, None)
             for key, value in (extra_env or {}).items():
                 os.environ[key] = value

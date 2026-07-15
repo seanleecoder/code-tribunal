@@ -110,7 +110,8 @@ runs its agent loop. Root-cause chain, verified against the pinned
   **comments only**; and unit tests in `test_openrouter_adapters.py`,
   `test_adapter_runner.py`, and `test_config_env_overrides.py`.
 - **Out:** `ai-review/prompts/*` (parity); any default `effort` value in
-  `review.yaml`; OpenCode agent `prompt` replacement; the codex adapter.
+  `review.yaml`; OpenCode agent `prompt` replacement; other Codex adapter
+  behavior beyond the effort mapping.
 
 ## Implementation
 
@@ -208,9 +209,14 @@ be injection-safe (see each item).
 - With `AI_REVIEW_CODEX_EFFORT=xhigh`: Codex receives
   `model_reasoning_effort="xhigh"`; with `max`: the setting is absent.
 - A `max_turns` key in `review.yaml` fails config validation.
-- One real review run (`AI_REVIEW_REQUIRE_REAL_OPENCODE=1`, real
+- **Manual, credential-gated acceptance (not exercised by this PR):** one real
+  OpenCode review (`AI_REVIEW_REQUIRE_REAL_OPENCODE=1`, real
   `OPENROUTER_API_KEY`, fixture MR) completes within `timeout_seconds` and
   produces a valid finding batch.
+- **Manual, credential-gated acceptance (not exercised by this PR):** one real
+  Codex review (`AI_REVIEW_REQUIRE_REAL_CODEX=1`, real `OPENROUTER_API_KEY`,
+  fixture MR) accepts `AI_REVIEW_CODEX_EFFORT=xhigh` and produces a valid
+  finding batch. The fake-CLI test verifies argument construction only.
 - With SPEC-20 landed: before/after comparison of `usage` in
   `out/status/opencode.json` shows reduced input tokens per run on the same
   fixture MR.
@@ -244,7 +250,8 @@ config is recoverable from the `OPENCODE_CONFIG_CONTENT` env var it records):
 - **Behavioral risk:** near zero for the default set — trimmed tools are
   already denied, and LSP/formatters produce no reviewer-visible signal
   (the reviewer never edits, so diagnostics never fire).
-- **Rollback:** revert `adapters/opencode.sh`. No schema, state, or artifact
-  contract is touched by the OpenCode optimization. The separate, intentional
+- **Rollback:** revert `adapters/opencode.sh` and `adapters/codex.sh` together
+  for the effort and OpenCode optimization changes. No schema, state, or
+  artifact contract is touched by that rollback. The separate, intentional
   turn-cap policy change rolls back with `claude.sh`, `adapter_runner.py`,
   `config.py`, and its validation test as one unit.
