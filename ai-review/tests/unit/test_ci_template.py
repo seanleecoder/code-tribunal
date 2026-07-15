@@ -204,6 +204,17 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(old_name, text)
 
+
+    def test_root_readme_explains_cursor_gitlab_static_job_graph(self) -> None:
+        text = _ROOT_README.read_text(encoding="utf-8")
+
+        self.assertIn("AI review: [cursor]", text)
+        self.assertIn("AI critique: [cursor]", text)
+        self.assertIn("GitLab creates jobs from the included YAML", text)
+        self.assertIn("consumer is still including an older template ref", text)
+        self.assertIn("with OpenCode", text)
+        self.assertIn("disabled they should complete quickly with skipped artifacts", text)
+
     def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
@@ -755,13 +766,15 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(text.count("container: ghcr.io/"), 6)
         self.assertEqual(text.count("@sha256:"), 6)
 
-    def test_github_actions_template_runs_full_critique_panel(self) -> None:
+    def test_github_actions_template_defers_cursor_until_its_image_is_published(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
-        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode, cursor]", critique)
+        self.assertIn("matrix:", critique)
+        self.assertIn("reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("The pinned image predates Cursor.", critique)
         self.assertIn("continue-on-error: true", critique)
         self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
         self.assertIn("pattern: ai-review-review-*", critique)
@@ -771,12 +784,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
             2,
         )
-        self.assertEqual(
-            text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
-            2,
-        )
-        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
-        self.assertIn(
+        self.assertNotIn('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"', text)
+        self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
+        self.assertNotIn(
             "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
             text,
         )
