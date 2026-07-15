@@ -197,6 +197,20 @@ class LoadConfigOverrideTests(unittest.TestCase):
                     ):
                         load_config(config_path)
 
+    def test_reviewer_max_turns_is_rejected(self) -> None:
+        # Turn caps were deliberately removed from the cross-adapter config
+        # contract; timeout_seconds is the sole hang-catch.
+        config_text = _REPO_CONFIG.read_text(encoding="utf-8")
+        mutated = config_text.replace("  claude:\n", "  claude:\n    max_turns: 7\n", 1)
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "review.yaml"
+            config_path.write_text(mutated, encoding="utf-8")
+            with (
+                mock.patch.dict("os.environ", {}, clear=True),
+                self.assertRaisesRegex(ConfigError, r"reviewers\.claude"),
+            ):
+                load_config(config_path)
+
     def test_missing_advisory_escalation_uses_enabled_default(self) -> None:
         config = load_config(_REPO_CONFIG)
         config["critique"].pop("allow_advisory_escalation")

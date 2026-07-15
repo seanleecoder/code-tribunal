@@ -79,12 +79,11 @@ else
   :
 fi
 
-# Map validated reviewer effort onto opencode/OpenRouter reasoning effort.
-# The runner/config schema allow low|medium|high|xhigh|max; OpenRouter accepts
-# low|medium|high, so clamp the top tiers and drop anything unexpected.
+# Map only OpenRouter-supported reviewer effort values onto OpenCode's
+# reasoningEffort. Higher Claude-specific levels deliberately leave the provider
+# default in place rather than silently changing the requested effort.
 case "${AI_REVIEW_EFFORT:-}" in
   low|medium|high) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
-  xhigh|max) OPENCODE_REASONING_EFFORT="high" ;;
   *) OPENCODE_REASONING_EFFORT="" ;;
 esac
 

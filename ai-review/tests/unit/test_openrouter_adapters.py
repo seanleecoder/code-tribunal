@@ -633,7 +633,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(agent["permission"]["skill"], "deny")
 
     def test_opencode_effort_reaches_reasoning_effort(self) -> None:
-        for configured, expected in (("low", "low"), ("xhigh", "high")):
+        for configured in ("low", "medium", "high"):
             with self.subTest(configured=configured):
                 batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
                     "opencode",
@@ -645,7 +645,23 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 config = meta["opencode_config"]
                 assert isinstance(config, dict)
                 agent = config["agent"]["ai-reviewer"]
-                self.assertEqual(agent["reasoningEffort"], expected)
+                self.assertEqual(agent["reasoningEffort"], configured)
+
+    def test_opencode_unsupported_effort_uses_provider_default(self) -> None:
+        # xhigh/max are valid Claude effort levels but not OpenRouter
+        # reasoningEffort values. Do not silently coerce them to high.
+        for configured in ("xhigh", "max"):
+            with self.subTest(configured=configured):
+                batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
+                    "opencode",
+                    "opencode",
+                    extra_env={"AI_REVIEW_OPENCODE_EFFORT": configured},
+                )
+
+                self.assertEqual(batch["adapter_status"], "success")
+                config = meta["opencode_config"]
+                assert isinstance(config, dict)
+                self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(

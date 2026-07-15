@@ -28,9 +28,9 @@ reviewers:
     enabled: true # Override: AI_REVIEW_OPENCODE_ENABLED
     adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
     model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
-    # Optional effort/reasoning depth (low|medium|high|xhigh|max) now reaches
-    # opencode as reasoningEffort (xhigh/max clamp to high). Leave unset for the
-    # provider default; once SPEC-20 usage data is available, low is the
+    # Optional effort/reasoning depth: low|medium|high reaches opencode as
+    # reasoningEffort. Leave it (or use Claude-only xhigh/max) unset here for
+    # the provider default; once SPEC-20 usage data is available, low is the
     # recommended starting point for flash-class models. Override:
     # AI_REVIEW_OPENCODE_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
