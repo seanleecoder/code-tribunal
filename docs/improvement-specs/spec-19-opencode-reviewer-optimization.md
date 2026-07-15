@@ -52,12 +52,10 @@ runs its agent loop. Root-cause chain, verified against the pinned
 
 Decisions already made (do not relitigate in implementation):
 
-- **No default turn cap.** The operator preference is no hard cap on agentic
-  turns. Wire the *existing opt-in* knob only (see below); ship no `max_turns`
-  value in `review.yaml`. Precedent: the claude adapter's cap is opt-in for the
-  same reason (a hard-coded low cap made stronger models fail with
-  `error_max_turns` — see the comment block in `config/review.yaml` and
-  `claude.sh`).
+- **No turn-cap controls.** The operator preference is no hard cap on agentic
+  turns. Do not wire OpenCode `steps`, ship no `max_turns` value in
+  `review.yaml`, and do not expose `AI_REVIEW_MAX_TURNS` /
+  `AI_REVIEW_<REVIEWER>_MAX_TURNS` controls. Timeout remains the hang-catch.
 - **No quality degradation by default.** Default-on changes are limited to
   no-signal-loss items: schema-trimming tools that are already
   permission-denied (this also stops the model wasting turns attempting calls
@@ -75,11 +73,11 @@ Decisions already made (do not relitigate in implementation):
   `OPENCODE_CONFIG_JSON` heredoc plus a small preamble block);
   `ai-review/config/review.yaml` **comments only**;
   `ai-review/tests/unit/test_openrouter_adapters.py`.
-- **Out:** `ai-review/prompts/*` (parity); any default `max_turns`/`effort`
-  value in `review.yaml`; OpenCode agent `prompt` replacement;
-  `adapter_runner.py` / `config.py` (no runner or config-schema change is
-  needed — `effort` and `max_turns` are already allowed reviewer keys and
-  already flow to the adapter env); the claude/codex adapters.
+- **Out:** `ai-review/prompts/*` (parity); any default `effort` value in
+  `review.yaml`; OpenCode agent `prompt` replacement; `adapter_runner.py` /
+  `config.py` (no runner or config-schema change is needed — `effort` is
+  already an allowed reviewer key and already flows to the adapter env); the
+  claude/codex adapters.
 
 ## Implementation
 
@@ -111,24 +109,7 @@ so every interpolated value must be injection-safe (see each item).
    `OPENCODE_AGENT_EXTRA_JSON`) and interpolate that into the heredoc, so the
    emitted config contains no dangling keys when the option is absent.
 
-2. **Wire opt-in `AI_REVIEW_MAX_TURNS` → agent `steps`.** The runner already
-   exports `AI_REVIEW_MAX_TURNS` when the operator sets the env var or a
-   reviewer `max_turns` config value (`adapter_runner._build_adapter_env`; env
-   override wins). The env var passes the runner's allowlist **unvalidated**,
-   and here it is interpolated into generated JSON — so a numeric-only guard is
-   mandatory:
-
-   ```sh
-   OPENCODE_STEPS="${AI_REVIEW_MAX_TURNS:-}"
-   case "$OPENCODE_STEPS" in ''|*[!0-9]*) OPENCODE_STEPS="" ;; esac
-   ```
-
-   When non-empty, emit `"steps": $OPENCODE_STEPS,` in the agent block.
-   OpenCode's `steps` caps agentic iterations and forces a **text-only
-   conclusion turn** at the cap (findings still get emitted, unlike claude's
-   `error_max_turns`). Do **not** set any default; this stays operator opt-in.
-
-3. **Trim denied tools from the request schema.** Add to the
+2. **Trim denied tools from the request schema.** Add to the
    `agent.ai-reviewer` block (and keep the existing `permission` maps exactly
    as they are — permission remains the enforcement layer; `tools` is the
    token-saving layer):
@@ -154,32 +135,25 @@ so every interpolated value must be injection-safe (see each item).
    turn attempting a denied call). Record this rationale as a comment in the
    heredoc.
 
-4. **Pin LSP and formatters off.** At the config top level (sibling of
+3. **Pin LSP and formatters off.** At the config top level (sibling of
    `"provider"`): `"lsp": false, "formatter": false`. Keep the existing
    `OPENCODE_DISABLE_LSP_DOWNLOAD=1` env var (belt and braces; it only prevents
    downloads, not startup).
 
-5. **`config/review.yaml` comment updates only** (no value changes):
+4. **`config/review.yaml` comment updates only** (no value changes):
    - On `reviewers.opencode`: document that `effort` /
      `AI_REVIEW_OPENCODE_EFFORT` now reaches opencode as `reasoningEffort`
      (previously claude-only), and that `low` is the recommended starting point
      for flash-class models once usage numbers (SPEC-20) are available.
-   - On the existing `max_turns` comment block (claude section): note the
-     operator env `AI_REVIEW_MAX_TURNS` now applies to **both** claude
-     (`--max-turns`) and opencode (agent `steps`), while per-reviewer
-     `max_turns` config stays per-reviewer.
 
 ## Acceptance criteria
 
 - Unit suite green (`python -m unittest discover` from `ai-review/`).
 - Generated opencode config (observable via the fake-CLI harness) contains, by
   default: the `tools` map above, `"lsp": false`, `"formatter": false`, and
-  **no** `"steps"` / `"reasoningEffort"` keys.
+  **no** `"reasoningEffort"` key.
 - With `AI_REVIEW_OPENCODE_EFFORT=low`: config contains
   `"reasoningEffort": "low"`; with `xhigh`: `"high"`.
-- With `AI_REVIEW_MAX_TURNS=5`: config contains `"steps": 5`; with a
-  non-numeric value (e.g. `13; rm -rf /`): no `"steps"` key and the adapter
-  still runs.
 - One real review run (`AI_REVIEW_REQUIRE_REAL_OPENCODE=1`, real
   `OPENROUTER_API_KEY`, fixture MR) completes within `timeout_seconds` and
   produces a valid finding batch.
@@ -195,23 +169,19 @@ config is recoverable from the `OPENCODE_CONFIG_CONTENT` env var it records):
 
 - Extend `test_opencode_real_path_invokes_opencode_cli`: parse the recorded
   `OPENCODE_CONFIG_CONTENT` as JSON and assert the default shape (tools map
-  entries false, `lsp` false, `formatter` false, `steps`/`reasoningEffort`
-  absent, existing `permission` map unchanged).
+  entries false, `lsp` false, `formatter` false, `reasoningEffort` absent,
+  existing `permission` map unchanged).
 - New: `AI_REVIEW_OPENCODE_EFFORT=low` (via `extra_env`) → `reasoningEffort ==
   "low"`; `AI_REVIEW_OPENCODE_EFFORT=xhigh` → `"high"`.
-- New: `AI_REVIEW_MAX_TURNS=5` → `steps == 5` (integer, not string).
-- New: `AI_REVIEW_MAX_TURNS="13; rm -rf /"` → no `steps` key, config still
-  parses as JSON, run still succeeds (injection guard).
 - Assert the emitted config is valid JSON in every case (guards the optional
   fragment assembly against trailing-comma mistakes).
 
 ## Risk / rollback
 
 - **Silently ignored keys:** if the pinned opencode-ai 1.17.18 ignores any of
-  `tools`/`lsp`/`formatter`/`reasoningEffort`/`steps`, the change degrades to a
-  no-op, not a failure. SPEC-20's per-run `steps`/token fields are the
-  detector: a recorded `steps` above a configured cap, or unchanged token
-  counts, means a key is not being honored.
+  `tools`/`lsp`/`formatter`/`reasoningEffort`, the change degrades to a no-op,
+  not a failure. SPEC-20's per-run token fields are the detector: unchanged
+  token counts mean a key is not being honored.
 - **Behavioral risk:** near zero for the default set — trimmed tools are
   already denied, and LSP/formatters produce no reviewer-visible signal
   (the reviewer never edits, so diagnostics never fire).
