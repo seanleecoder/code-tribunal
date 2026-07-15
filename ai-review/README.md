@@ -224,3 +224,7 @@ skipped runs as well, maintain a repository-specific installation with the
 intentionally diverges from the canonical auto-capable template.
 Manual dispatch remains unavailable for external-fork PRs because model jobs
 receive `OPENROUTER_API_KEY`.
+
+## Planned Features
+
+- [SPEC-22: Project Review Rules and Human-Gated Learning Loop](../docs/improvement-specs/spec-22-project-rules-and-learning.md) (design spec): trusted target-branch project rules injected into reviewer/critique prompts, plus a scheduled job that turns cross-MR/PR `wontfix` outcomes into human-approved `learned.md` rule proposals with rule-level usage tracing.
