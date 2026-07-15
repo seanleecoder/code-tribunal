@@ -17,7 +17,7 @@ def _base_config() -> dict:
             "claude": {"model": "claude-haiku-4.5", "enabled": True},
             "codex": {"model": "openai/gpt-5.4-mini", "enabled": True},
             "opencode": {"model": "google/gemini-3.1-flash-lite", "enabled": True},
-            "cursor": {"model": "composer", "enabled": False},
+            "cursor": {"model": "auto", "enabled": False},
         },
         "critique": {"enabled": True, "rounds": 1},
         "merge_gate": {"enabled": True},
@@ -149,7 +149,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
         summary = effective_config_summary(config)
         self.assertIn("cursor", summary["reviewers"])
         self.assertTrue(summary["reviewers"]["cursor"]["enabled"])
-        self.assertEqual(summary["reviewers"]["cursor"]["model"], "composer")
+        self.assertEqual(summary["reviewers"]["cursor"]["model"], "auto")
 
     def test_cursor_disabled_override_round_trips_to_summary(self) -> None:
         from ai_review.config import effective_config_summary

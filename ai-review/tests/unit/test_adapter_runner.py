@@ -72,7 +72,7 @@ class AdapterEndpointValidationTests(unittest.TestCase):
             env = _build_adapter_env(
                 reviewer="cursor",
                 stage="review",
-                model="composer",
+                model="auto",
                 input_dir=Path("inputs"),
                 output_dir=Path("out"),
                 reviewer_config={"credential_variable": "CURSOR_API_KEY", "timeout_seconds": 600},
