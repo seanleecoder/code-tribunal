@@ -83,10 +83,15 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
         (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
         (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
+        (repo_snapshot / ".cursorrules").write_text("cursor project rules\n", encoding="utf-8")
+        (repo_snapshot / ".cursorignore").write_text("cursor ignore\n", encoding="utf-8")
+        (repo_snapshot / "CLAUDE.md").write_text("claude project rules\n", encoding="utf-8")
         (repo_snapshot / ".opencode").mkdir()
         (repo_snapshot / ".opencode" / "plugin.js").write_text(
             "module.exports = {}\n", encoding="utf-8"
         )
+        (repo_snapshot / ".cursor").mkdir()
+        (repo_snapshot / ".cursor" / "rules.md").write_text("cursor rules\n", encoding="utf-8")
         (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
         (repo_snapshot / ".codex").mkdir()
         (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
@@ -98,6 +103,11 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "nested" / ".opencode").mkdir()
         (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
             "nested agent\n",
+            encoding="utf-8",
+        )
+        (repo_snapshot / "nested" / ".cursor").mkdir()
+        (repo_snapshot / "nested" / ".cursor" / "rules.md").write_text(
+            "nested cursor rules\n",
             encoding="utf-8",
         )
         write_canonical_json(
@@ -504,6 +514,13 @@ PY
                 ".opencode/plugin.js",
                 "nested/.opencode/",
                 "nested/.opencode/agent.md",
+                "CLAUDE.md",
+                ".cursorrules",
+                ".cursorignore",
+                ".cursor/",
+                ".cursor/rules.md",
+                "nested/.cursor/",
+                "nested/.cursor/rules.md",
                 "steer.txt",
                 "symdir/",
                 "symdir/CLAUDE.md",
@@ -544,6 +561,7 @@ PY
             # a symlink named CLAUDE.md/AGENTS.md would otherwise be followed.
             snapshot = input_dir / "repo_snapshot"
             (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
+            (snapshot / "CLAUDE.md").unlink()
             os.symlink("steer.txt", snapshot / "CLAUDE.md")
             (snapshot / "symdir").mkdir()
             os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
@@ -739,6 +757,13 @@ PY
                 "src/reviewed.py",
                 ".codex/",
                 ".codex/config.toml",
+                "CLAUDE.md",
+                ".cursorrules",
+                ".cursorignore",
+                ".cursor/",
+                ".cursor/rules.md",
+                "nested/.cursor/",
+                "nested/.cursor/rules.md",
                 "steer.txt",
                 "symdir/",
                 "symdir/CLAUDE.md",
@@ -883,6 +908,8 @@ PY
                 else:
                     self.assertIn("CURSOR_API_KEY=cursor-test-key", cli_env)
                     self.assertNotIn("OPENROUTER_API_KEY=", cli_env)
+                    self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
+                    self.assertNotIn("ANTHROPIC_BASE_URL=", cli_env)
                 for forbidden in (
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",

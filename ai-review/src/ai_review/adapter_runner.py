@@ -473,9 +473,14 @@ def _build_adapter_env(
             if (value := os.environ.get(key)) is not None
         }
     )
-    env.update(
-        {key: value for key in _PROVIDER_ENDPOINT_ENV if (value := os.environ.get(key)) is not None}
-    )
+    if reviewer != "cursor":
+        env.update(
+            {
+                key: value
+                for key in _PROVIDER_ENDPOINT_ENV
+                if (value := os.environ.get(key)) is not None
+            }
+        )
 
     credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
     if credential_variable and (credential := os.environ.get(credential_variable)) is not None:
