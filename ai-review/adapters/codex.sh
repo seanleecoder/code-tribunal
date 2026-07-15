@@ -84,11 +84,15 @@ else
   :
 fi
 
-env -i \
-  PATH="${PATH:-/usr/bin:/bin}" \
-  TMPDIR="${TMPDIR:-/tmp}" \
-  OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
-  CODEX_HOME="$CODEX_HOME_DIR" \
+# Codex's configured gpt-5.4-mini route accepts low|medium|high|xhigh for
+# model_reasoning_effort. Keep Claude-only max at the provider default rather
+# than silently coercing it to a lower supported value.
+case "${AI_REVIEW_EFFORT:-}" in
+  low|medium|high|xhigh) CODEX_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
+  *) CODEX_REASONING_EFFORT="" ;;
+esac
+
+set -- \
   codex exec \
   --cd "$CODEX_REVIEW_ROOT" \
   --ephemeral \
@@ -100,9 +104,17 @@ env -i \
   --config 'model_provider="openrouter"' \
   --config 'model_providers.openrouter.name="OpenRouter"' \
   --config "model_providers.openrouter.base_url=\"$BASE_URL\"" \
-  --config 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"' \
-  --output-schema "$OUTPUT_SCHEMA" \
-  -o "$RAW_OUT" \
-  - < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
+  --config 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"'
+if [ -n "$CODEX_REASONING_EFFORT" ]; then
+  set -- "$@" --config "model_reasoning_effort=\"$CODEX_REASONING_EFFORT\""
+fi
+set -- "$@" --output-schema "$OUTPUT_SCHEMA" -o "$RAW_OUT" -
+
+env -i \
+  PATH="${PATH:-/usr/bin:/bin}" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  CODEX_HOME="$CODEX_HOME_DIR" \
+  "$@" < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
 
 cat "$RAW_OUT"

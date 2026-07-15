@@ -12,16 +12,18 @@ reviewers:
     model: claude-haiku-4.5 # Model identifier passed to CLI adapter (override: AI_REVIEW_CLAUDE_MODEL)
     effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — timeout_seconds stays the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
-    # No max_turns: like the codex/opencode adapters, Claude runs its agentic
-    # loop to completion, bounded by timeout_seconds. A low cap (was 4) made
-    # stronger, more exploratory models hit error_max_turns before emitting
-    # findings. Set max_turns here (or AI_REVIEW_MAX_TURNS) only to re-impose one.
+    # No turn cap: Claude runs its agentic loop to completion, bounded by
+    # timeout_seconds as the hang-catch. A hard-coded low cap made stronger,
+    # more exploratory models stop before emitting findings.
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token. Note: on the OpenRouter route the adapter blanks this and authenticates via ANTHROPIC_AUTH_TOKEN mapped from OPENROUTER_API_KEY (see adapters/claude.sh); this variable is used for direct-Anthropic runs.
   codex:
     enabled: true # Override: AI_REVIEW_CODEX_ENABLED
     adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
     model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
+    # Optional reasoning effort: low|medium|high|xhigh reaches Codex unchanged
+    # as model_reasoning_effort. Claude-only max leaves the Codex provider
+    # default unchanged. Override: AI_REVIEW_CODEX_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
@@ -29,6 +31,11 @@ reviewers:
     enabled: true # Override: AI_REVIEW_OPENCODE_ENABLED
     adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
     model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
+    # Optional effort/reasoning depth: low|medium|high reaches opencode as
+    # reasoningEffort. Leave it (or use Claude-only xhigh/max) unset here for
+    # the provider default; once SPEC-20 usage data is available, low is the
+    # recommended starting point for flash-class models. Override:
+    # AI_REVIEW_OPENCODE_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
