@@ -438,7 +438,7 @@ PY
         self.assertIn("/cursor-agent -p", cli_args)
         self.assertIn("--output-format json", cli_args)
         self.assertIn("--sandbox enabled", cli_args)
-        self.assertIn("--model composer", cli_args)
+        self.assertIn("--model auto", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
         self.assertIn("src/reviewed.py", meta["workspace_entries"])
         for stripped in (
