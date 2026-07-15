@@ -3,7 +3,8 @@
 These documents began as agent-ready work units derived from the Staff+ and
 security review. Phases 0–3 are retained as implementation and decision history.
 The active follow-on work is SPEC-19–21 below (spec IDs continue after the
-archived SPEC-17/18); paused ideas are stored under
+archived SPEC-17/18); SPEC-22 is a further, independent proposal (see
+[Proposed](#proposed)). Paused ideas are stored under
 [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
 
 Each spec follows the same template so an agent can execute it without extra
@@ -34,6 +35,7 @@ reasoning and security invariants are not lost.
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
 | **4** | Reviewer cost + panel flexibility | SPEC-19…21 | SPEC-19 implemented in this branch; SPEC-20/21 proposed. |
+| — | Project rules, learning loop, rule tracing | SPEC-22 | Proposed design; phases A0–E not started. |
 
 ## Phase 4 — Reviewer cost + panel flexibility
 
@@ -49,6 +51,14 @@ that validates SPEC-19.
 | [SPEC-19](spec-19-opencode-reviewer-optimization.md) | OpenCode reviewer cost/latency optimization | S | Implemented in this branch (SPEC-20 recommended for measurement) |
 | [SPEC-20](spec-20-reviewer-usage-accounting.md) | Per-reviewer token/cost usage accounting | S | none |
 | [SPEC-21](spec-21-cursor-cli-reviewer.md) | Cursor CLI as an opt-in substitute reviewer | M | none hard (SPEC-20 recommended first) |
+
+## Proposed
+
+Independent of Phase 4 (SPEC-19…21); no shared dependency in either direction.
+
+| Spec | Title | Status |
+|---|---|---|
+| [SPEC-22](spec-22-project-rules-and-learning.md) | Project review rules from the target branch + human-gated learning loop + rule-level tracing (rule-trace interop) | Proposed design; phases A0–E not started. |
 
 ## Downstream validation
 
