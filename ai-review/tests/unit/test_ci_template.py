@@ -766,13 +766,15 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(text.count("container: ghcr.io/"), 6)
         self.assertEqual(text.count("@sha256:"), 6)
 
-    def test_github_actions_template_runs_full_critique_panel(self) -> None:
+    def test_github_actions_template_defers_cursor_until_its_image_is_published(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
-        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode, cursor]", critique)
+        self.assertIn("matrix:", critique)
+        self.assertIn("reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("The pinned image predates Cursor.", critique)
         self.assertIn("continue-on-error: true", critique)
         self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
         self.assertIn("pattern: ai-review-review-*", critique)
@@ -782,12 +784,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
             2,
         )
-        self.assertEqual(
-            text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
-            2,
-        )
-        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
-        self.assertIn(
+        self.assertNotIn('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"', text)
+        self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
+        self.assertNotIn(
             "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
             text,
         )
