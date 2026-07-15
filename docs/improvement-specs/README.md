@@ -33,9 +33,9 @@ reasoning and security invariants are not lost.
 | **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
 | **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
-| **4** | Reviewer cost + panel flexibility | SPEC-19…21 | Proposed / ready to implement. |
+| **4** | Reviewer cost + panel flexibility | SPEC-19…21 | SPEC-19 implemented in this branch; SPEC-20/21 proposed. |
 
-## Phase 4 — Reviewer cost + panel flexibility (proposed)
+## Phase 4 — Reviewer cost + panel flexibility
 
 Prompted by real-run observations: the opencode reviewer is the slowest and
 most expensive panel seat (occasional timeouts; on
@@ -46,7 +46,7 @@ that validates SPEC-19.
 
 | Spec | Title | Effort | Depends on |
 |---|---|---|---|
-| [SPEC-19](spec-19-opencode-reviewer-optimization.md) | OpenCode reviewer cost/latency optimization | S | none (SPEC-20 recommended alongside) |
+| [SPEC-19](spec-19-opencode-reviewer-optimization.md) | OpenCode reviewer cost/latency optimization | S | Implemented in this branch (SPEC-20 recommended for measurement) |
 | [SPEC-20](spec-20-reviewer-usage-accounting.md) | Per-reviewer token/cost usage accounting | S | none |
 | [SPEC-21](spec-21-cursor-cli-reviewer.md) | Cursor CLI as an opt-in substitute reviewer | M | none hard (SPEC-20 recommended first) |
 

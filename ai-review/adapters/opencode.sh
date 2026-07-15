@@ -79,11 +79,29 @@ else
   :
 fi
 
-# Unquoted heredoc so $AI_REVIEW_MODEL expands; \$schema stays literal and the
-# {env:OPENROUTER_API_KEY} template (no leading $) is passed through untouched.
+# Map validated reviewer effort onto opencode/OpenRouter reasoning effort.
+# The runner/config schema allow low|medium|high|xhigh|max; OpenRouter accepts
+# low|medium|high, so clamp the top tiers and drop anything unexpected.
+case "${AI_REVIEW_EFFORT:-}" in
+  low|medium|high) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
+  xhigh|max) OPENCODE_REASONING_EFFORT="high" ;;
+  *) OPENCODE_REASONING_EFFORT="" ;;
+esac
+
+OPENCODE_AGENT_EXTRA_JSON=""
+if [ -n "$OPENCODE_REASONING_EFFORT" ]; then
+  OPENCODE_AGENT_EXTRA_JSON="${OPENCODE_AGENT_EXTRA_JSON}      \"reasoningEffort\": \"$OPENCODE_REASONING_EFFORT\",
+"
+fi
+
+# Unquoted heredoc so $AI_REVIEW_MODEL and guarded optional fragments expand;
+# \$schema stays literal and the {env:OPENROUTER_API_KEY} template (no leading
+# $) is passed through untouched.
 OPENCODE_CONFIG_JSON=$(cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
+  "lsp": false,
+  "formatter": false,
   "provider": {
     "openrouter": {
       "options": {
@@ -100,7 +118,7 @@ OPENCODE_CONFIG_JSON=$(cat <<EOF
     "ai-reviewer": {
       "description": "Read-only AI code reviewer",
       "model": "openrouter/$AI_REVIEW_MODEL",
-      "permission": {
+$OPENCODE_AGENT_EXTRA_JSON      "permission": {
         "*": "deny",
         "read": "allow",
         "glob": "allow",
@@ -112,6 +130,19 @@ OPENCODE_CONFIG_JSON=$(cat <<EOF
         "websearch": "deny",
         "task": "deny",
         "skill": "deny"
+      },
+      "// tools": "Trim schemas for tools already denied by permission; permission remains enforcement.",
+      "tools": {
+        "bash": false,
+        "edit": false,
+        "write": false,
+        "patch": false,
+        "webfetch": false,
+        "websearch": false,
+        "task": false,
+        "todowrite": false,
+        "todoread": false,
+        "skill": false
       }
     }
   },

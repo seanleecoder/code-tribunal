@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import stat
@@ -31,6 +32,7 @@ _ENV_KEYS = [
     "AI_REVIEW_CLAUDE_MODEL",
     "AI_REVIEW_CODEX_MODEL",
     "AI_REVIEW_OPENCODE_MODEL",
+    "AI_REVIEW_OPENCODE_EFFORT",
     "OPENROUTER_API_KEY",
     "OPENROUTER_BASE_URL",
     "ANTHROPIC_BASE_URL",
@@ -180,6 +182,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             '  printf \'%s\\n\' "$0 $args" > "$trace_dir/cli.args"\n'
             '  env | sort > "$trace_dir/cli.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
+            '  if [ -n "${OPENCODE_CONFIG_CONTENT:-}" ]; then\n'
+            '    printf \'%s\' "$OPENCODE_CONFIG_CONTENT" > "$trace_dir/opencode_config.json"\n'
+            '  fi\n'
             "fi\n"
             "out=''\n"
             'while [ "$#" -gt 0 ]; do\n'
@@ -268,11 +273,17 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 cli_env = cli_env_path.read_text(encoding="utf-8")
                 key_seen = cli_key_path.read_text(encoding="utf-8").strip()
                 self.assertEqual(key_seen, "sk-or-v1-test")
+                opencode_config_path = cli_args_path.parent / "opencode_config.json"
                 meta: dict[str, object] = {
                     "input_dir": str(input_dir),
                     "repo_snapshot_dir": str(input_dir / "repo_snapshot"),
                     "selected_dir": "",
                     "workspace_entries": set(),
+                    "opencode_config": (
+                        json.loads(opencode_config_path.read_text(encoding="utf-8"))
+                        if opencode_config_path.exists()
+                        else None
+                    ),
                 }
                 dir_flag = {"opencode": "--dir", "codex": "--cd"}.get(cli_name)
                 if dir_flag is not None and dir_flag in shlex.split(cli_args):
@@ -586,6 +597,55 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn('"websearch": "deny"', cli_env)
         self.assertIn('"task": "deny"', cli_env)
         self.assertIn('"skill": "deny"', cli_env)
+        config = meta["opencode_config"]
+        self.assertIsInstance(config, dict)
+        assert isinstance(config, dict)
+        self.assertIs(config["lsp"], False)
+        self.assertIs(config["formatter"], False)
+        agent = config["agent"]["ai-reviewer"]
+        self.assertNotIn("steps", agent)
+        self.assertNotIn("reasoningEffort", agent)
+        self.assertEqual(
+            agent["tools"],
+            {
+                "bash": False,
+                "edit": False,
+                "write": False,
+                "patch": False,
+                "webfetch": False,
+                "websearch": False,
+                "task": False,
+                "todowrite": False,
+                "todoread": False,
+                "skill": False,
+            },
+        )
+        self.assertEqual(agent["permission"]["*"], "deny")
+        self.assertEqual(agent["permission"]["read"], "allow")
+        self.assertEqual(agent["permission"]["glob"], "allow")
+        self.assertEqual(agent["permission"]["grep"], "allow")
+        self.assertEqual(agent["permission"]["bash"], "deny")
+        self.assertEqual(agent["permission"]["edit"], "deny")
+        self.assertEqual(agent["permission"]["write"], "deny")
+        self.assertEqual(agent["permission"]["webfetch"], "deny")
+        self.assertEqual(agent["permission"]["websearch"], "deny")
+        self.assertEqual(agent["permission"]["task"], "deny")
+        self.assertEqual(agent["permission"]["skill"], "deny")
+
+    def test_opencode_effort_reaches_reasoning_effort(self) -> None:
+        for configured, expected in (("low", "low"), ("xhigh", "high")):
+            with self.subTest(configured=configured):
+                batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
+                    "opencode",
+                    "opencode",
+                    extra_env={"AI_REVIEW_OPENCODE_EFFORT": configured},
+                )
+
+                self.assertEqual(batch["adapter_status"], "success")
+                config = meta["opencode_config"]
+                assert isinstance(config, dict)
+                agent = config["agent"]["ai-reviewer"]
+                self.assertEqual(agent["reasoningEffort"], expected)
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(

@@ -63,12 +63,6 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
-    # Optional operator-set turn cap for the claude adapter. The sanitized
-    # adapter env is built from allowlists only, so without this entry an outer
-    # AI_REVIEW_MAX_TURNS would be stripped and never reach claude.sh. A numeric
-    # value flows into a quoted `--max-turns` arg; a config `max_turns` (if any)
-    # only fills it in when the env var is absent (env override wins).
-    "AI_REVIEW_MAX_TURNS",
 }
 
 _PROVIDER_ENDPOINT_ENV = {
@@ -501,11 +495,8 @@ def _build_adapter_env(
     env["AI_REVIEW_TIMEOUT_SECONDS"] = str(
         max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10)
     )
-    # An outer AI_REVIEW_MAX_TURNS (allowlisted above) takes precedence; config
-    # only supplies the value when the operator did not set the env override.
-    if reviewer_config.get("max_turns") is not None and "AI_REVIEW_MAX_TURNS" not in env:
-        env["AI_REVIEW_MAX_TURNS"] = str(int(reviewer_config["max_turns"]))
-    # Reasoning-effort hint for CLIs that support it (claude's --effort).
+    # Reasoning-effort hint for CLIs that support it (for example claude's
+    # --effort and opencode's reasoningEffort).
     # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
     # runtime override is already folded in at config load, and the value is
     # validated against a closed set in validate_config.

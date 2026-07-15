@@ -30,7 +30,7 @@ REVIEWER_REQUIRED_KEYS = {
     "max_findings",
     "credential_variable",
 }
-REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "max_turns"}
+REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort"}
 PANEL_KEYS = {
     "min_successful_reviewers_for_blocking",
     "min_successful_reviewers_for_resolution",
@@ -245,8 +245,8 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
     - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``
     - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` (one of
-      ``low|medium|high|xhigh|max``, validated in ``validate_config``; currently
-      consumed only by the claude adapter's ``--effort`` flag)
+      ``low|medium|high|xhigh|max``, validated in ``validate_config``; consumed
+      by adapters that expose an effort/reasoning knob)
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.

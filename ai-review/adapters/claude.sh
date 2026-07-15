@@ -133,16 +133,6 @@ else
   set -- "$@" --tools ""
 fi
 
-# Turn cap is opt-in. Unset by default so Claude runs its agentic loop to
-# completion (bounded by the reviewer timeout), matching the codex/opencode
-# adapters. A hard-coded low cap made stronger models hit error_max_turns
-# before emitting findings. Set AI_REVIEW_MAX_TURNS (or the reviewer's
-# max_turns in review.yaml) to re-impose one.
-MAX_TURNS_VALUE="${AI_REVIEW_MAX_TURNS:-${MAX_TURNS:-}}"
-if [ -n "$MAX_TURNS_VALUE" ]; then
-  set -- "$@" --max-turns "$MAX_TURNS_VALUE"
-fi
-
 # Effort modulates how much reasoning/exploration the model volunteers — it is
 # NOT a turn cap; the agentic loop still runs to completion (bounded only by
 # timeout_seconds as a hang-catch). Sourced from reviewers.<name>.effort in
