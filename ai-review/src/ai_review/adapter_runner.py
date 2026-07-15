@@ -63,6 +63,7 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+    "AI_REVIEW_REQUIRE_REAL_CURSOR",
 }
 
 _PROVIDER_ENDPOINT_ENV = {
@@ -532,6 +533,12 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
         if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
             return f"ANTHROPIC_BASE_URL must be unset or exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
+        return None
+    if reviewer == "cursor":
+        # Cursor CLI exposes no endpoint/base-url env to pin. Its backend is an
+        # explicit, opt-in second egress destination gated by reviewers.cursor
+        # enabled=false and a dedicated CURSOR_API_KEY credential; the runner
+        # injects only that declared credential, and cursor.sh scrubs env again.
         return None
     if reviewer in {"codex", "opencode"}:
         base_url = os.environ.get("OPENROUTER_BASE_URL")

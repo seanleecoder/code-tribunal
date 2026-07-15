@@ -99,6 +99,12 @@ prepare_ai_review:
     REVIEWER: opencode
     AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
+"AI review: [cursor]":
+  extends: .review_template
+  variables:
+    REVIEWER: cursor
+    AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
+
 .critique_template:
   stage: ai_review
   image: "$AI_REVIEW_REVIEWER_IMAGE"
@@ -138,6 +144,9 @@ prepare_ai_review:
     - job: "AI review: [opencode]"
       artifacts: true
       optional: true
+    - job: "AI review: [cursor]"
+      artifacts: true
+      optional: true
   script:
     - /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
   artifacts:
@@ -166,6 +175,12 @@ prepare_ai_review:
     REVIEWER: opencode
     AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
 
+"AI critique: [cursor]":
+  extends: .critique_template
+  variables:
+    REVIEWER: cursor
+    AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
+
 consensus_ai_review:
   stage: ai_review
   extends: .ai_review_rules
@@ -183,6 +198,9 @@ consensus_ai_review:
     - job: "AI review: [opencode]"
       artifacts: true
       optional: true
+    - job: "AI review: [cursor]"
+      artifacts: true
+      optional: true
     - job: "AI critique: [claude]"
       artifacts: true
       optional: true
@@ -190,6 +208,9 @@ consensus_ai_review:
       artifacts: true
       optional: true
     - job: "AI critique: [opencode]"
+      artifacts: true
+      optional: true
+    - job: "AI critique: [cursor]"
       artifacts: true
       optional: true
   script:

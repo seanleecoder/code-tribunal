@@ -10,6 +10,24 @@ RUN npm ci --omit=dev \
     && ./node_modules/.bin/codex --version \
     && ./node_modules/.bin/opencode --version
 
+FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS cursor-cli
+
+WORKDIR /opt/cursor-agent-src
+COPY ai-review/images/cursor-agent.pin ./cursor-agent.pin
+RUN set -eu; \
+    . ./cursor-agent.pin; \
+    test -n "$version"; test -n "$url"; test -n "$sha256"; \
+    if [ "$sha256" = "TO_BE_REFRESHED_WITH_ACCESSIBLE_CURSOR_ARTIFACT_SHA256" ]; then \
+      echo "cursor-agent.pin must be refreshed with the artifact sha256 before building" >&2; exit 1; \
+    fi; \
+    apt-get update; apt-get install -y --no-install-recommends ca-certificates curl tar; rm -rf /var/lib/apt/lists/*; \
+    curl -fL "$url" -o cursor-agent.tar.gz; \
+    echo "$sha256  cursor-agent.tar.gz" | sha256sum -c -; \
+    mkdir -p /usr/local/cursor-agent; \
+    tar -xzf cursor-agent.tar.gz -C /usr/local/cursor-agent --strip-components=1; \
+    find /usr/local/cursor-agent -type f -name cursor-agent -exec chmod 0755 {} \; ; \
+    test -x /usr/local/cursor-agent/cursor-agent || find /usr/local/cursor-agent -type f -perm /111 -maxdepth 3 -print -quit | xargs -r -I{} ln -sf {} /usr/local/cursor-agent/cursor-agent
+
 FROM ${AI_REVIEW_BASE_IMAGE}
 
 ARG CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code
@@ -20,6 +38,10 @@ COPY --from=reviewer-clis /usr/local/bin/node /usr/local/bin/node
 COPY --from=reviewer-clis /usr/local/bin/npm /usr/local/bin/npm
 COPY --from=reviewer-clis /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=reviewer-clis /opt/ai-review/reviewer-clis/node_modules /usr/local/lib/node_modules
+COPY --from=cursor-cli /usr/local/cursor-agent /usr/local/cursor-agent
+
+RUN ln -sf /usr/local/cursor-agent/cursor-agent /usr/local/bin/cursor-agent \
+    && if [ ! -e /usr/local/bin/agent ]; then ln -sf /usr/local/cursor-agent/cursor-agent /usr/local/bin/agent; fi
 
 RUN node -e 'const fs = require("fs"); \
 const path = require("path"); \
@@ -53,7 +75,8 @@ for (const packageName of process.argv.slice(1)) { \
 
 RUN claude --version \
     && codex --version \
-    && opencode --version
+    && opencode --version \
+    && cursor-agent --version
 
 # Fail the image build if the pinned CLI ever rejects either of the claude
 # adapter's stage flag sets (claude.sh) — the review probe (finding schema,

@@ -40,6 +40,20 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
+  # Cursor is an opt-in substitute reviewer. Cursor CLI cannot route through
+  # OpenRouter/BYOK/custom-base-URL; enabling it sends review prompts, diffs,
+  # and any repo snapshot content it reads to Cursor's backend as a deliberate
+  # second egress destination. Substitute opencode with:
+  # AI_REVIEW_CURSOR_ENABLED=true, AI_REVIEW_OPENCODE_ENABLED=false, and a
+  # CURSOR_API_KEY secret. Do not use OPENROUTER_API_KEY for this reviewer.
+  cursor:
+    enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
+    adapter: adapters/cursor.sh
+    model: composer # Cursor Composer model id; verify current id via `cursor-agent models`. Override: AI_REVIEW_CURSOR_MODEL
+    timeout_seconds: 600
+    max_findings: 50
+    credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
+
 # Panel voting and consensus aggregation rules
 panel:
   min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict

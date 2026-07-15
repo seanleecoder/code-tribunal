@@ -744,7 +744,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
-        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode]", critique)
+        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode, cursor]", critique)
         self.assertIn("continue-on-error: true", critique)
         self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
         self.assertIn("pattern: ai-review-review-*", critique)

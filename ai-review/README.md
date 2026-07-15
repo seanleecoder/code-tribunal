@@ -66,25 +66,26 @@ The local harness writes output files strictly under `.ai-review-local/` unless 
 
 ## CLI Reviewers & OpenRouter Configuration
 
-Reviewer models (default **Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter:
+Reviewer models (default **Claude Haiku 4.5**, **Codex / GPT-5.4-mini**, and **OpenCode / Gemini 3.1 Flash Lite**) execute through their provider CLIs configured for OpenRouter. **Cursor / Composer** is also available as a disabled-by-default substitute reviewer.
 
 ### Required CI Project Variables
 
 - `OPENROUTER_API_KEY`: Masked and Protected project variable, shared by the three `AI review: [reviewer]` jobs.
 - `OPENROUTER_BASE_URL`: Defaults to `https://openrouter.ai/api/v1` in the CI template; only override for a non-default OpenRouter deployment. This endpoint remains a **hard boundary** for the Codex/OpenCode adapters even though the model is no longer pinned.
 - `ANTHROPIC_BASE_URL`: Set by the CI template for `AI review: [claude]` to `https://openrouter.ai/api`; `claude.sh` maps the shared `OPENROUTER_API_KEY` into `ANTHROPIC_AUTH_TOKEN` only when this value is exactly `https://openrouter.ai/api` (no trailing slash or host aliases).
+- `CURSOR_API_KEY`: Optional Cursor account/service key. Cursor CLI has no OpenRouter/custom-base-URL route, so enabling it creates a deliberate second egress destination to Cursor's backend and Cursor-plan billing; Cursor CLI also does not report token usage, so usage is `null` and cost must be checked in Cursor's dashboard.
 
 ### Runtime Overrides (no rebuild)
 
 The per-reviewer model is supplied via `AI_REVIEW_MODEL` (resolved from config, or an
 `AI_REVIEW_<REVIEWER>_MODEL` override) and is **no longer hard-pinned** in the adapters
-— set `AI_REVIEW_CLAUDE_MODEL`, `AI_REVIEW_CODEX_MODEL`, or `AI_REVIEW_OPENCODE_MODEL`
+— set `AI_REVIEW_CLAUDE_MODEL`, `AI_REVIEW_CODEX_MODEL`, `AI_REVIEW_OPENCODE_MODEL`, or `AI_REVIEW_CURSOR_MODEL`
 to change a model at runtime. Reviewer enablement, critique, and the merge gate are
 likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
 `AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
 On GitHub, disabling critique keeps the matrix jobs present for stable artifact
-dependencies, but the runner writes skipped artifacts without invoking a model.
+dependencies, but the runner writes skipped artifacts without invoking a model. To substitute Cursor for OpenCode, set `AI_REVIEW_CURSOR_ENABLED=true`, `AI_REVIEW_OPENCODE_ENABLED=false`, and provide `CURSOR_API_KEY`; leave cursor disabled to preserve the single-OpenRouter egress boundary.
 
 ### Debugging a slow or stuck reviewer
 
@@ -136,7 +137,7 @@ The publish job pushes the exact preflighted Docker image artifact instead of re
 1. **Bootstrap State**: The first public GHCR publish has succeeded and is verified (see [PHASE_5_5_ACCEPTANCE.md](docs/acceptance/PHASE_5_5_ACCEPTANCE.md)), and [ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml) has been cut over from the temporary Phase 5.5 private bootstrap refs to the published GHCR `@sha256:` digests.
 2. **CLI Version Pinning**: Reviewer CLI versions are pinned in `images/package.json` and `images/package-lock.json`, installed with `npm ci`, and checked by `scripts/check_supply_chain_pins.py`. Update CLI versions through a reviewed lockfile change, not repository variables.
 3. **Public Registry Change**: After the workflow runs on `main`, change both GHCR packages to public in package settings, verify anonymous pulls by digest, then bump `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and `AI_REVIEW_TRUSTED_IMAGE_SHA` together from the workflow summary.
-4. **Preflight Audit**: The reviewer image preflight probes `claude --version`, `codex --version`, and `opencode --version`, then validates local mock fan-out and consensus calculation. Do not run MR smoke against images that install CLIs inside the smoke job.
+4. **Preflight Audit**: The reviewer image preflight probes `claude --version`, `codex --version`, `opencode --version`, and `cursor-agent --version`, then validates local mock fan-out and consensus calculation. Do not run MR smoke against images that install CLIs inside the smoke job.
 
 ---
 

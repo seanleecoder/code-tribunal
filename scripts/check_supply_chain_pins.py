@@ -18,6 +18,7 @@ GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
+CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "python-gitlab", "requests"}
 
@@ -162,6 +163,35 @@ def _github_review_container_issues(text: str) -> list[str]:
     return issues
 
 
+
+def _cursor_agent_pin_issues(text: str) -> list[str]:
+    values: dict[str, str] = {}
+    issues: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            issues.append(f"cursor-agent.pin line is not key=value: {line!r}")
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    for key in ("version", "url", "sha256"):
+        if not values.get(key):
+            issues.append(f"cursor-agent.pin missing {key}")
+    version = values.get("version", "")
+    url = values.get("url", "")
+    sha256 = values.get("sha256", "")
+    if version and not re.fullmatch(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9A-Za-z]+", version):
+        issues.append("cursor-agent.pin version must be an exact Cursor CLI version")
+    if url and version and version not in url:
+        issues.append("cursor-agent.pin url must contain the pinned version")
+    if url and not url.startswith("https://downloads.cursor.com/"):
+        issues.append("cursor-agent.pin url must use downloads.cursor.com")
+    if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        issues.append("cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest")
+    return issues
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -196,6 +226,7 @@ def main() -> int:
             failures += 1
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
+    cursor_pin = _read(CURSOR_AGENT_PIN)
     package = json.loads(_read(PACKAGE_JSON))
     lock = json.loads(_read(PACKAGE_LOCK))
 
@@ -231,6 +262,15 @@ def main() -> int:
         failures += 1
     if "npm install -g" in reviewer:
         error("reviewer.Dockerfile must use npm ci against the committed lockfile")
+        failures += 1
+    if (
+        "COPY ai-review/images/cursor-agent.pin" not in reviewer
+        or "cursor-agent --version" not in reviewer
+    ):
+        error("reviewer.Dockerfile must install pinned cursor-agent and smoke-test --version")
+        failures += 1
+    for issue in _cursor_agent_pin_issues(cursor_pin):
+        error(issue)
         failures += 1
     if "npm ci" not in reviewer:
         error("reviewer.Dockerfile does not invoke npm ci")

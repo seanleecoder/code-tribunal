@@ -1024,3 +1024,119 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class CursorAdapterEndToEndTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._keys = [
+            "AI_REVIEW_INPUT_DIR", "AI_REVIEW_OUTPUT_DIR", "AI_REVIEW_CONFIG",
+            "AI_REVIEW_CURSOR_ENABLED", "CURSOR_API_KEY", "OPENROUTER_API_KEY",
+            "PATH", "AI_REVIEW_REQUIRE_REAL_CURSOR", "CURSOR_FAKE_RECORD", "AI_REVIEW_CURSOR_MODEL",
+        ]
+        self._previous = {key: os.environ.get(key) for key in self._keys}
+
+    def tearDown(self) -> None:
+        for key, value in self._previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _prepare(self, tmp: str) -> tuple[Path, Path, Path]:
+        root = Path(tmp)
+        input_dir = root / "inputs"
+        output_dir = root / "out"
+        fake_bin = root / "bin"
+        snapshot = input_dir / "repo_snapshot"
+        snapshot.mkdir(parents=True)
+        fake_bin.mkdir()
+        (input_dir / "mr.diff").write_text("", encoding="utf-8")
+        (snapshot / "src").mkdir()
+        (snapshot / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+        for name in ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".cursorignore"]:
+            (snapshot / name).write_text("steer", encoding="utf-8")
+        (snapshot / ".cursor").mkdir()
+        (snapshot / ".cursor" / "rules.md").write_text("steer", encoding="utf-8")
+        write_canonical_json(input_dir / "manifest.json", {
+            "schema_version": "input_manifest.v1", "run_id": "local-test", "project_id": "local",
+            "project_path": "local/project", "merge_request_iid": "1", "source_branch": "s",
+            "target_branch": "t", "base_sha": "0"*40, "start_sha": "0"*40,
+            "head_sha": "1"*40, "diff_sha256": "0"*64, "repo_snapshot_sha256": "0"*64,
+            "config_sha256": "0"*64, "rules_sha256": "0"*64, "created_at": "2026-06-29T00:00:00Z",
+        })
+        write_canonical_json(
+            input_dir / "prior_decisions.json",
+            {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
+        )
+        fake = fake_bin / "cursor-agent"
+        record = root / "record.json"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, sys\n"
+            f"out=pathlib.Path({str(record)!r})\n"
+            "tree=sorted(str(p.relative_to(os.getcwd())) "
+            "for p in pathlib.Path(os.getcwd()).rglob('*'))\n"
+            "out.write_text(json.dumps({'argv':sys.argv[1:],'cwd':os.getcwd(),"
+            "'env':dict(os.environ),'tree':tree}))\n"
+            "print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'{\\\"findings\\\":[]}'}))\n",
+            encoding="utf-8",
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        return input_dir, output_dir, fake_bin
+
+    def test_cursor_fake_cli_review_sanitizes_snapshot_and_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir, output_dir, fake_bin = self._prepare(tmp)
+            record = Path(tmp) / "record.json"
+            os.environ.update({
+                "AI_REVIEW_INPUT_DIR": str(input_dir),
+                "AI_REVIEW_OUTPUT_DIR": str(output_dir),
+                "AI_REVIEW_CONFIG": str(
+                    Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+                ),
+                "AI_REVIEW_CURSOR_ENABLED": "true",
+                "CURSOR_API_KEY": "cursor-secret",
+                "OPENROUTER_API_KEY": "openrouter-secret",
+                "AI_REVIEW_REQUIRE_REAL_CURSOR": "1",
+                "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+            })
+
+            self.assertEqual(run_adapter("cursor", "review"), 0)
+
+            seen = json.loads(record.read_text(encoding="utf-8"))
+            self.assertIn("-p", seen["argv"])
+            self.assertIn("--output-format", seen["argv"])
+            self.assertIn("json", seen["argv"])
+            self.assertIn("--model", seen["argv"])
+            self.assertIn("composer", seen["argv"])
+            self.assertRegex(seen["cwd"], r"cursor-review-root\.\d+$")
+            self.assertIn("src/app.py", seen["tree"])
+            self.assertNotIn("AGENTS.md", seen["tree"])
+            self.assertNotIn("CLAUDE.md", seen["tree"])
+            self.assertNotIn(".cursorrules", seen["tree"])
+            self.assertNotIn(".cursorignore", seen["tree"])
+            self.assertFalse(
+                any(path.startswith(".cursor/") or path == ".cursor" for path in seen["tree"])
+            )
+            self.assertEqual(seen["env"].get("CURSOR_API_KEY"), "cursor-secret")
+            self.assertNotIn("OPENROUTER_API_KEY", seen["env"])
+
+    def test_cursor_invalid_model_is_model_error_without_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir, output_dir, fake_bin = self._prepare(tmp)
+            record = Path(tmp) / "record.json"
+            os.environ.update({
+                "AI_REVIEW_INPUT_DIR": str(input_dir),
+                "AI_REVIEW_OUTPUT_DIR": str(output_dir),
+                "AI_REVIEW_CONFIG": str(
+                    Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+                ),
+                "AI_REVIEW_CURSOR_ENABLED": "true",
+                "AI_REVIEW_CURSOR_MODEL": "bad'quote",
+                "CURSOR_API_KEY": "cursor-secret",
+                "AI_REVIEW_REQUIRE_REAL_CURSOR": "1",
+                "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+            })
+            self.assertEqual(run_adapter("cursor", "review"), _EXIT_ERROR)
+            self.assertFalse(record.exists())
+            status = load_json_file(output_dir / "status" / "cursor.json")
+            self.assertEqual(status["status"], "model_error")
