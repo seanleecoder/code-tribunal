@@ -22,6 +22,7 @@ _REVIEWER_OVERRIDE_KEYS = (
     "AI_REVIEW_CODEX_EFFORT",
     "AI_REVIEW_OPENCODE_MODEL",
     "AI_REVIEW_OPENCODE_EFFORT",
+    "AI_REVIEW_CURSOR_MODEL",
 )
 
 _ENV_KEYS = [
@@ -33,6 +34,10 @@ _ENV_KEYS = [
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+    "AI_REVIEW_REQUIRE_REAL_CURSOR",
+    "AI_REVIEW_CURSOR_ENABLED",
+    "AI_REVIEW_CURSOR_MODEL",
+    "CURSOR_API_KEY",
     "AI_REVIEW_CLAUDE_MODEL",
     "AI_REVIEW_CLAUDE_EFFORT",
     "AI_REVIEW_CODEX_MODEL",
@@ -78,10 +83,15 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
         (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
         (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
+        (repo_snapshot / ".cursorrules").write_text("cursor project rules\n", encoding="utf-8")
+        (repo_snapshot / ".cursorignore").write_text("cursor ignore\n", encoding="utf-8")
+        (repo_snapshot / "CLAUDE.md").write_text("claude project rules\n", encoding="utf-8")
         (repo_snapshot / ".opencode").mkdir()
         (repo_snapshot / ".opencode" / "plugin.js").write_text(
             "module.exports = {}\n", encoding="utf-8"
         )
+        (repo_snapshot / ".cursor").mkdir()
+        (repo_snapshot / ".cursor" / "rules.md").write_text("cursor rules\n", encoding="utf-8")
         (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
         (repo_snapshot / ".codex").mkdir()
         (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
@@ -93,6 +103,11 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         (repo_snapshot / "nested" / ".opencode").mkdir()
         (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
             "nested agent\n",
+            encoding="utf-8",
+        )
+        (repo_snapshot / "nested" / ".cursor").mkdir()
+        (repo_snapshot / "nested" / ".cursor" / "rules.md").write_text(
+            "nested cursor rules\n",
             encoding="utf-8",
         )
         write_canonical_json(
@@ -131,6 +146,8 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
+            if reviewer == "cursor":
+                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
             os.environ.pop("AI_REVIEW_REQUIRE_REAL_OPENROUTER", None)
             os.environ.pop("OPENROUTER_API_KEY", None)
             try:
@@ -153,8 +170,43 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
 
+    def test_cursor_mock_fallback_produces_valid_batch_when_enabled(self) -> None:
+        batch = self._run_mocked("cursor")
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["reviewer"], "cursor")
+
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name
+        if name == "cursor-agent":
+            script = """#!/bin/sh
+args="$*"
+trace_dir="$HOME"
+mkdir -p "$trace_dir"
+printf '%s\n' "$0 $args" > "$trace_dir/cli.args"
+env | sort > "$trace_dir/cli.env"
+printf '%s\n' "$CURSOR_API_KEY" > "$trace_dir/cli.key"
+pwd > "$trace_dir/cli.pwd"
+find . -mindepth 1 > "$trace_dir/cli.tree"
+if [ "$AI_REVIEW_STAGE" = critique ]; then
+  result='{"critiques":[]}'
+else
+  result='{"findings":[]}'
+fi
+RESULT="$result" python3 - <<'PY'
+import json
+import os
+payload = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": os.environ["RESULT"],
+}
+print(json.dumps(payload))
+PY
+"""
+            cli.write_text(script, encoding="utf-8")
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+            return
         if name == "claude":
             cli.write_text(
                 "#!/bin/sh\n"
@@ -239,6 +291,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = "https://openrouter.ai/api/v1"
+            if reviewer == "cursor":
+                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
+                os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
@@ -261,11 +317,22 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 self.assertEqual(run_adapter(reviewer, stage), 0)
                 stage_dir = {"review": "findings", "critique": "critiques"}[stage]
                 batch = load_json_file(output_dir / stage_dir / f"{reviewer}.json")
-                if Path(f"{raw_out}.args").exists():
+                if cli_name == "cursor-agent":
+                    trace_dir = output_dir / ".tmp" / "cursor-home"
+                    cli_args_path = trace_dir / "cli.args"
+                    cli_env_path = trace_dir / "cli.env"
+                    cli_key_path = trace_dir / "cli.key"
+                    cli_pwd_path = trace_dir / "cli.pwd"
+                    cli_tree_path = trace_dir / "cli.tree"
+                    expected_key = "cursor-test-key"
+                elif Path(f"{raw_out}.args").exists():
                     trace_prefix = Path(str(raw_out))
                     cli_args_path = Path(f"{trace_prefix}.args")
                     cli_env_path = Path(f"{trace_prefix}.env")
                     cli_key_path = Path(f"{trace_prefix}.key")
+                    cli_pwd_path = None
+                    cli_tree_path = None
+                    expected_key = "sk-or-v1-test"
                 else:
                     trace_dir = (
                         output_dir
@@ -275,10 +342,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     cli_args_path = trace_dir / "cli.args"
                     cli_env_path = trace_dir / "cli.env"
                     cli_key_path = trace_dir / "cli.key"
+                    cli_pwd_path = None
+                    cli_tree_path = None
+                    expected_key = "sk-or-v1-test"
                 cli_args = cli_args_path.read_text(encoding="utf-8")
                 cli_env = cli_env_path.read_text(encoding="utf-8")
                 key_seen = cli_key_path.read_text(encoding="utf-8").strip()
-                self.assertEqual(key_seen, "sk-or-v1-test")
+                self.assertEqual(key_seen, expected_key)
                 opencode_config_path = cli_args_path.parent / "opencode_config.json"
                 meta: dict[str, object] = {
                     "input_dir": str(input_dir),
@@ -290,7 +360,17 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                         if opencode_config_path.exists()
                         else None
                     ),
+                    "cwd": (
+                        cli_pwd_path.read_text(encoding="utf-8").strip()
+                        if cli_pwd_path is not None and cli_pwd_path.exists()
+                        else ""
+                    ),
                 }
+                if cli_tree_path is not None and cli_tree_path.exists():
+                    meta["workspace_entries"] = {
+                        line.removeprefix("./")
+                        for line in cli_tree_path.read_text(encoding="utf-8").splitlines()
+                    }
                 dir_flag = {"opencode": "--dir", "codex": "--cd"}.get(cli_name)
                 if dir_flag is not None and dir_flag in shlex.split(cli_args):
                     argv = shlex.split(cli_args)
@@ -310,10 +390,84 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                         os.environ[key] = value
 
     def _add_symlinked_agent_config(self, snapshot: Path) -> None:
-        # A symlinked AGENTS.md must be stripped too, not just regular files.
+        # Symlinked steering files must be stripped too, not just regular files.
         (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
         (snapshot / "symdir").mkdir()
         os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
+        os.symlink("../steer.txt", snapshot / "symdir" / "CLAUDE.md")
+        os.symlink("../steer.txt", snapshot / "symdir" / ".cursorrules")
+        os.symlink("../steer.txt", snapshot / "symdir" / ".cursorignore")
+
+    def test_cursor_disabled_by_default_skips_without_cli_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            self._write_inputs(input_dir)
+            self._write_fake_cli(bin_dir, "cursor-agent")
+            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
+            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
+            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
+            os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
+            os.environ["CURSOR_API_KEY"] = "cursor-test-key"
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            try:
+                self.assertEqual(run_adapter("cursor", "review"), 0)
+                batch = load_json_file(output_dir / "findings" / "cursor.json")
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(batch["adapter_status"], "skipped")
+        self.assertFalse((output_dir / ".tmp" / "cursor-home" / "cli.args").exists())
+
+    def test_cursor_real_path_invokes_cursor_cli(self) -> None:
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "cursor", "cursor-agent", prepare_snapshot=self._add_symlinked_agent_config
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["reviewer"], "cursor")
+        self.assertIn("/cursor-agent -p", cli_args)
+        self.assertIn("--output-format json", cli_args)
+        self.assertIn("--sandbox enabled", cli_args)
+        self.assertIn("--model composer", cli_args)
+        self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
+        self.assertIn("src/reviewed.py", meta["workspace_entries"])
+        for stripped in (
+            "AGENTS.md",
+            "nested/AGENTS.md",
+            "CLAUDE.md",
+            "symdir/CLAUDE.md",
+            ".cursorrules",
+            "symdir/.cursorrules",
+            ".cursorignore",
+            "symdir/.cursorignore",
+            ".cursor",
+            ".cursor/rules.md",
+            "nested/.cursor",
+            "nested/.cursor/rules.md",
+        ):
+            self.assertNotIn(stripped, meta["workspace_entries"])
+        self.assertIn("steer.txt", meta["workspace_entries"])
+
+    def test_cursor_critique_runs_with_empty_working_root(self) -> None:
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "cursor", "cursor-agent", stage="critique"
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
+        self.assertIn("critiques", batch)
+        self.assertIn("--sandbox enabled", cli_args)
+        self.assertEqual(meta["workspace_entries"], set())
 
     def test_codex_real_path_invokes_codex_cli(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
@@ -360,8 +514,18 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 ".opencode/plugin.js",
                 "nested/.opencode/",
                 "nested/.opencode/agent.md",
+                "CLAUDE.md",
+                ".cursorrules",
+                ".cursorignore",
+                ".cursor/",
+                ".cursor/rules.md",
+                "nested/.cursor/",
+                "nested/.cursor/rules.md",
                 "steer.txt",
                 "symdir/",
+                "symdir/CLAUDE.md",
+                "symdir/.cursorrules",
+                "symdir/.cursorignore",
             },
         )
 
@@ -397,6 +561,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             # a symlink named CLAUDE.md/AGENTS.md would otherwise be followed.
             snapshot = input_dir / "repo_snapshot"
             (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
+            (snapshot / "CLAUDE.md").unlink()
             os.symlink("steer.txt", snapshot / "CLAUDE.md")
             (snapshot / "symdir").mkdir()
             os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
@@ -592,8 +757,18 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 "src/reviewed.py",
                 ".codex/",
                 ".codex/config.toml",
+                "CLAUDE.md",
+                ".cursorrules",
+                ".cursorignore",
+                ".cursor/",
+                ".cursor/rules.md",
+                "nested/.cursor/",
+                "nested/.cursor/rules.md",
                 "steer.txt",
                 "symdir/",
+                "symdir/CLAUDE.md",
+                "symdir/.cursorrules",
+                "symdir/.cursorignore",
             },
         )
         self.assertNotIn(" exec ", cli_args)
@@ -719,11 +894,22 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
-        for reviewer, cli_name in (("codex", "codex"), ("opencode", "opencode")):
+        for reviewer, cli_name, key_name in (
+            ("codex", "codex", "OPENROUTER_API_KEY"),
+            ("opencode", "opencode", "OPENROUTER_API_KEY"),
+            ("cursor", "cursor-agent", "CURSOR_API_KEY"),
+        ):
             with self.subTest(reviewer=reviewer):
                 _batch, _cli_args, cli_env, _meta = self._run_with_fake_cli(reviewer, cli_name)
 
-                self.assertIn("OPENROUTER_API_KEY=sk-or-v1-test", cli_env)
+                if key_name == "OPENROUTER_API_KEY":
+                    self.assertIn("OPENROUTER_API_KEY=sk-or-v1-test", cli_env)
+                    self.assertNotIn("CURSOR_API_KEY=", cli_env)
+                else:
+                    self.assertIn("CURSOR_API_KEY=cursor-test-key", cli_env)
+                    self.assertNotIn("OPENROUTER_API_KEY=", cli_env)
+                    self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
+                    self.assertNotIn("ANTHROPIC_BASE_URL=", cli_env)
                 for forbidden in (
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",
@@ -770,6 +956,10 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             if reviewer == "opencode":
                 os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
+            if reviewer == "cursor":
+                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
+                os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = base_url
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
@@ -891,7 +1081,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
     def test_invalid_model_format_is_model_error_without_cli_invocation(self) -> None:
         # A model override with shell/JSON-unsafe characters (quote + space) must be
         # rejected before the adapter — and the opencode config JSON — ever runs.
-        for reviewer in ("codex", "opencode", "claude"):
+        for reviewer in ("codex", "opencode", "claude", "cursor"):
             with self.subTest(reviewer=reviewer):
                 batch = self._run_invalid_cli_config(
                     reviewer,

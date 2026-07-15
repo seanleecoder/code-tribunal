@@ -63,6 +63,7 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+    "AI_REVIEW_REQUIRE_REAL_CURSOR",
 }
 
 _PROVIDER_ENDPOINT_ENV = {
@@ -472,9 +473,14 @@ def _build_adapter_env(
             if (value := os.environ.get(key)) is not None
         }
     )
-    env.update(
-        {key: value for key in _PROVIDER_ENDPOINT_ENV if (value := os.environ.get(key)) is not None}
-    )
+    if reviewer != "cursor":
+        env.update(
+            {
+                key: value
+                for key in _PROVIDER_ENDPOINT_ENV
+                if (value := os.environ.get(key)) is not None
+            }
+        )
 
     credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
     if credential_variable and (credential := os.environ.get(credential_variable)) is not None:
@@ -482,7 +488,8 @@ def _build_adapter_env(
 
     anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
     if (
-        anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
+        reviewer == "claude"
+        and anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
         and (openrouter_key := os.environ.get("OPENROUTER_API_KEY")) is not None
     ):
         env["OPENROUTER_API_KEY"] = openrouter_key
@@ -532,6 +539,12 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
         if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
             return f"ANTHROPIC_BASE_URL must be unset or exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
+        return None
+    if reviewer == "cursor":
+        # Cursor CLI exposes no endpoint/base-url env to pin. Its backend is an
+        # explicit, opt-in second egress destination gated by reviewers.cursor
+        # enabled=false and a dedicated CURSOR_API_KEY credential; _build_adapter_env
+        # injects no OpenRouter fallback for cursor, and cursor.sh scrubs env again.
         return None
     if reviewer in {"codex", "opencode"}:
         base_url = os.environ.get("OPENROUTER_BASE_URL")
