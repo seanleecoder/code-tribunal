@@ -21,6 +21,9 @@ reviewers:
     enabled: true # Override: AI_REVIEW_CODEX_ENABLED
     adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
     model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
+    # Optional reasoning effort: low|medium|high|xhigh reaches Codex unchanged
+    # as model_reasoning_effort. Claude-only max leaves the Codex provider
+    # default unchanged. Override: AI_REVIEW_CODEX_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token

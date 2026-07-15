@@ -495,8 +495,8 @@ def _build_adapter_env(
     env["AI_REVIEW_TIMEOUT_SECONDS"] = str(
         max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10)
     )
-    # Reasoning-effort hint for CLIs that support it (for example claude's
-    # --effort and opencode's reasoningEffort).
+    # Reasoning-effort hint for CLIs that support it (Claude's --effort,
+    # Codex's model_reasoning_effort, and OpenCode's reasoningEffort).
     # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
     # runtime override is already folded in at config load, and the value is
     # validated against a closed set in validate_config.

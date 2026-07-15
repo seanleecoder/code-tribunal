@@ -18,6 +18,7 @@ _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _MODEL_OVERRIDE_KEYS = (
     "AI_REVIEW_CLAUDE_MODEL",
     "AI_REVIEW_CODEX_MODEL",
+    "AI_REVIEW_CODEX_EFFORT",
     "AI_REVIEW_OPENCODE_MODEL",
 )
 
@@ -327,6 +328,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertIn('model_providers.openrouter.name="OpenRouter"', cli_args)
         self.assertIn("schemas/raw_finding_batch.schema.json", cli_args)
         self.assertIn("--output-schema ", cli_args)
+        self.assertNotIn("model_reasoning_effort", cli_args)
         self.assertNotIn("schemas/finding_batch.schema.json", cli_args)
         # codex explores a clean copy of the pinned MR snapshot, not the ambient
         # CI checkout nor the input/snapshot dirs directly.
@@ -357,6 +359,26 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 "symdir/",
             },
         )
+
+    def test_codex_effort_reaches_model_reasoning_effort_without_coercion(self) -> None:
+        for configured in ("low", "medium", "high", "xhigh"):
+            with self.subTest(configured=configured):
+                batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+                    "codex",
+                    "codex",
+                    extra_env={"AI_REVIEW_CODEX_EFFORT": configured},
+                )
+
+                self.assertEqual(batch["adapter_status"], "success")
+                self.assertIn(f'model_reasoning_effort="{configured}"', cli_args)
+
+    def test_codex_unsupported_effort_uses_provider_default(self) -> None:
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+            "codex", "codex", extra_env={"AI_REVIEW_CODEX_EFFORT": "max"}
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertNotIn("model_reasoning_effort", cli_args)
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
