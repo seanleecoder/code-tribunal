@@ -7,3 +7,6 @@ __pycache__/
 .coverage
 build/
 *.egg-info/
+
+# Internal-only material (company-internal evidence, case studies, presentations — never commit)
+docs/internal/

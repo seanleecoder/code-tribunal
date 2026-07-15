@@ -5,31 +5,56 @@
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
-**Code Tribunal** is an enterprise-grade, multi-agent AI code review engine designed for automated GitLab Merge Request (MR) evaluation, consensus-driven defect detection, blind cross-examination (critique), and automated merge gating.
+**Code Tribunal** is a multi-agent AI code review engine for **GitLab Merge Requests and GitHub Pull Requests**: consensus-driven defect detection, blind cross-examination (critique), persistent finding identity across revisions, and automated merge gating.
 
-It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs optional blind cross-examination, posts idempotent inline GitLab discussions, maintains state across MR revisions, and enforces CI/CD merge gating.
+It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs blind cross-examination, posts idempotent inline discussions, maintains state across MR/PR revisions, and enforces CI/CD merge gating.
+
+## Why Code Tribunal exists
+
+A single AI reviewer gives you one interpretation of a diff, comments that get re-posted or orphaned on every push, and an opaque verdict you cannot audit. Code Tribunal's design principle is:
+
+> **LLMs propose. Deterministic code decides.**
+
+Three independent reviewers inspect the same immutable input and must emit schema-constrained findings; they then cross-examine each other's *anonymized* findings; and everything with consequences — grouping, voting, severity policy, posting, merge blocking — is reproducible Python, not a model. A reviewer outage degrades the panel by defined rules instead of silently ending the review, and every finding is a stateful object that keeps its identity (and its one discussion thread) across commits.
+
+## Documentation map
+
+| Reader goal | Start here |
+|---|---|
+| Understand the concept & pipeline | this README |
+| Understand the architecture & trust boundaries | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Understand how consensus decides | [docs/CONSENSUS.md](docs/CONSENSUS.md) |
+| Understand follow-up reviews across revisions | [docs/REVISION_LIFECYCLE.md](docs/REVISION_LIFECYCLE.md) |
+| Run a safe local demo (no API keys) | [Local Development & Harness](#local-development--harness) |
+| Integrate with GitLab | [GitLab CI Integration Guide](#gitlab-ci-integration-guide--image-pinning) |
+| Integrate with GitHub | [ai-review/README.md — GitHub pull request reviews](ai-review/README.md) |
+| Diagnose a failing/quiet pipeline | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
+| Security model & known gaps | [Security Model](#security-model--container-isolation) · [SECURITY.md](SECURITY.md) |
+| See a worked example run | [ai-review/EXAMPLE_PIPELINE_WALKTHROUGH.md](ai-review/EXAMPLE_PIPELINE_WALKTHROUGH.md) |
 
 ---
 
 ## Key Features
 
-- **Multi-Agent Consensus Panel**: Combines independent model reviewers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, and **Google Gemini 3.1 Flash Lite**) to eliminate single-model hallucination and bias.
+- **Multi-Agent Consensus Panel**: Combines independent model reviewers to reduce single-model hallucination and bias. Shipped defaults are cost-efficient tiers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, **Google Gemini 3.1 Flash Lite**); operators typically override models per deployment via `AI_REVIEW_<REVIEWER>_MODEL` (no image rebuild required).
 - **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), disputes (`dispute`), noise classifications (`noise`), or duplicate markers (`duplicate`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
-- **Zero-Trust Security & Container Isolation**: Reviewer containers run in read-only repository sandboxes with CLI-policy-dependent provider access (runner/container egress enforcement is planned), no shell execution capabilities, and zero access to GitLab API tokens or host environment variables.
-- **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs without creating duplicate threads across commits.
-- **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`), mapping historical issues across code revisions using line remapping (`anchors.py`).
-- **Automated Merge Gating**: Integrates natively with GitLab CI/CD `pipelines_must_succeed` setting, automatically failing the pipeline when unresolved blocking findings exist.
+- **Credential Isolation & Reviewer Sandboxing** *(stable)*: Reviewer containers run in read-only repository sandboxes with no shell execution capabilities and zero access to GitLab/GitHub API tokens or host environment variables. Provider endpoint pinning is enforced at the adapter layer; **container-level network egress enforcement is a known limitation, planned but not yet implemented** (tracked as H2 in [SECURITY.md](SECURITY.md)).
+- **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs (and GitHub PR reviews) without creating duplicate threads across commits.
+- **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`) or GitHub PR comments, mapping historical issues across code revisions using line remapping (`anchors.py`). See [docs/REVISION_LIFECYCLE.md](docs/REVISION_LIFECYCLE.md).
+- **Automated Merge Gating**: Integrates natively with GitLab's "Pipelines must succeed" setting and GitHub required status checks, automatically failing the pipeline when unresolved blocking findings exist.
+- **GitLab & GitHub support**: The same six-phase DAG ships as a GitLab CI template ([ai-review/ci/review.gitlab-ci.yml](ai-review/ci/review.gitlab-ci.yml), including a hardened child-pipeline mode) and a GitHub Actions workflow ([ai-review/ci/review.github-actions.yml](ai-review/ci/review.github-actions.yml)); platform selection is a runtime setting (`posting.mode`, `state.backend`).
+- **Feature maturity at a glance**: consensus/posting/state/gating on GitLab and GitHub — *stable, dogfooded*; blind critique — *enabled by default*; semantic (similarity-based) grouping — *implemented, **disabled by default** pending calibration*; critique severity downgrades — *disabled by default*; container-level egress enforcement — *planned, not implemented*.
 
 ---
 
 ## High-Level System Architecture
 
-Code Tribunal enforces a strict zero-trust boundary. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab credential access.
+Code Tribunal treats MR/PR content as untrusted input. Reviewers execute inside pre-built Docker containers (`$AI_REVIEW_REVIEWER_IMAGE`) with read-only repository snapshots, CLI-policy-dependent provider access, and no GitLab/GitHub credential access. (The diagram shows the GitLab flow with the shipped default models; the GitHub Actions flow is identical apart from the posting/state backend, and models are routinely overridden per deployment.) A more detailed trust-boundary view lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```mermaid
 flowchart TD
-    MR[GitLab Merge Request Event] --> Prepare[ai_review DAG: prepare\nBuild Immutable Input Bundle]
+    MR[GitLab MR / GitHub PR Event] --> Prepare[ai_review DAG: prepare\nBuild Immutable Input Bundle]
     Prepare -->|input_bundle/| Reviewers[ai_review DAG: review\nParallel Reviewer Fan-Out]
 
     subgraph Panel ["Reviewer Panel (Isolated Containers)"]
@@ -97,7 +122,7 @@ pipeline.
   - `fyi_findings`: Non-blocking informational items.
   - `block_merge`: Boolean indicating whether merge must be blocked.
 - Outputs `out/consensus/consensus.json` conforming to [ai-review/schemas/consensus.schema.json](ai-review/schemas/consensus.schema.json).
-- For a full walkthrough of the "LLMs propose, deterministic Python decides" model — how differently-shaped reviewer output is normalized and how the vote/severity/critique logic reaches a reproducible decision — see [ai-review/CONSENSUS.md](ai-review/CONSENSUS.md).
+- For a full walkthrough of the "LLMs propose, deterministic Python decides" model — how differently-shaped reviewer output is normalized and how the vote/severity/critique logic reaches a reproducible decision — see [docs/CONSENSUS.md](docs/CONSENSUS.md).
 
 ### 5. `post` (Idempotent Upsert & State Persistence)
 - Executed by `python -m ai_review.post`.
@@ -114,15 +139,30 @@ pipeline.
 ### 6. `gate` (CI Pipeline Gate Enforcement)
 - Executed by `python -m ai_review.gate`.
 - Reads `consensus.json` and `post_result.json`.
-- Enforces merge policy: if `block_merge: true` and active blocking findings exist, exits with non-zero exit code (`1`), blocking the MR pipeline.
-- Handles stale HEAD safety (`pass_noop` when pipeline HEAD no longer matches current MR HEAD).
+- Enforces merge policy: if consensus decided `block_merge: true`, exits with code `7` (`failed_blocking_findings`), failing the MR pipeline.
+- **Fails closed** on posting/state failures: a `failed`, `partial_failed`, or `state_overflow` post result also exits `7` (`failed_post_result`) — a review whose results could not be recorded does not pass silently.
+- Handles stale HEAD safety (`passed_stale_head` when the pipeline HEAD no longer matches the current MR HEAD), and `skipped_disabled` when `merge_gate.enabled: false` (advisory mode).
 - Outputs `out/gate/gate_result.json` matching [ai-review/schemas/gate_result.schema.json](ai-review/schemas/gate_result.schema.json).
 
 ---
 
 ## Active configuration surface
 
-The shipped [runtime configuration](ai-review/config/review.yaml) contains only controls consumed by production code. Future or paused controls are intentionally absent rather than exposed as reserved placeholders.
+The shipped [runtime configuration](ai-review/config/review.yaml) contains only controls consumed by production code. Future or paused controls are intentionally absent rather than exposed as reserved placeholders. In brief:
+
+| Block | Key controls (defaults) |
+|---|---|
+| `reviewers.<claude\|codex\|opencode>` | `enabled`, `model`, `adapter`, `timeout_seconds: 600`, `max_findings: 50`, `credential_variable`; claude also `effort: medium` |
+| `panel` | `quorum.votes_required: 2`, `min_successful_reviewers_for_blocking: 2`, `min_successful_reviewers_for_resolution: 2`, `grouping.semantic.enabled: false` *(experimental, keep off until calibrated)* |
+| `severity_policy` | `single_reviewer_blocker.categories: [security, correctness]` (surfaces with human-ack flag, never blocks alone), `quorum_blocker.block_merge: true` |
+| `critique` | `enabled: true`, `rounds: 1` (fixed in v1), `blind_reviewer_identity: true`, `allow_advisory_escalation: true`, `allow_severity_downgrade: false`, `can_add_quorum_votes: false` (must stay false in v1) |
+| `posting` | `mode: gitlab_discussions` or `github_reviews`, `fyi_mode: summary_comment`, `stale_head_guard: true` |
+| `merge_gate` | `enabled: true` (set `false` for advisory mode) |
+| `state` | `backend: gitlab_mr_state_note` or `github_pr_comment`, `checksum_required: true`, `recover_from_discussion_markers: true`, retention caps (fail-closed on overflow) |
+| `limits` | `max_diff_bytes: 250000`, `max_files: 200`, `max_posted_surface_findings: 25`, `max_prompt_bytes: 500000` |
+| `security` | `allow_external_fork_secrets: false` (fail-closed on fork MRs) |
+
+The config schema rejects unknown keys at every nesting level. Runtime-overridable subsets are listed under [Runtime Environment Overrides](#runtime-environment-overrides).
 
 ## Security Model & Container Isolation
 
@@ -168,7 +208,7 @@ All inter-stage data exchanges are governed by 9 JSON Schemas located in [ai-rev
 | [state_aliases.schema.json](ai-review/schemas/state_aliases.schema.json) | `state_aliases.v1` | State alias records passed to `prepare` for historical issue matching across commits. |
 | [adapter_status.schema.json](ai-review/schemas/adapter_status.schema.json) | `adapter_status.v1` | Execution summary per reviewer (`success`, `model_error`, `schema_error`, `timeout`, `skipped`). |
 | [post_result.schema.json](ai-review/schemas/post_result.schema.json) | `post_result.v1` | Details of created, updated, skipped, or resolved GitLab MR discussion threads and summary note writes. |
-| [gate_result.schema.json](ai-review/schemas/gate_result.schema.json) | `gate_result.v1` | Merge gate verdict (`passed`, `failed_blocking_findings`, `stale_head_pass`). |
+| [gate_result.schema.json](ai-review/schemas/gate_result.schema.json) | `gate_result.v1` | Merge gate verdict (`passed`, `failed_blocking_findings`, `failed_post_result`, `passed_stale_head`, `skipped_disabled`). |
 
 ### Normalization & Hashing
 - **Canonical JSON (`canonical.py`)**: Key sorting, 2-space indentation or compact formatting without trailing whitespace.
@@ -223,11 +263,11 @@ make validate-local
 
 To integrate Code Tribunal into downstream projects:
 
-> **Unreleased compatibility note:** the grouped job names replace
-> `review_<reviewer>` and `critique_<reviewer>`. Consumers with custom `needs`,
-> overrides, dashboards, or scripts that reference those identifiers must move
-> to `AI review: [reviewer]` and `AI critique: [reviewer]` before adopting this
-> template revision.
+> **Compatibility note (shipped in 0.3.1):** the grouped job names replaced
+> `review_<reviewer>` and `critique_<reviewer>`. Consumers upgrading from a
+> pre-0.3.1 template with custom `needs`, overrides, dashboards, or scripts
+> that reference the old identifiers must move to `AI review: [reviewer]` and
+> `AI critique: [reviewer]`.
 
 | Previous job | Grouped job |
 |---|---|
@@ -447,31 +487,45 @@ The system was implemented and validated across 6 milestone phases:
 ```
 code-tribunal/
 ├── README.md                                  # Main repository documentation
+├── SECURITY.md                                # Vulnerability reporting & known tracked issues
+├── CHANGELOG.md                               # Release history (Keep a Changelog)
 ├── pyproject.toml                             # Python packaging & tool configuration
 ├── Makefile                                   # Local development & testing targets
+├── scripts/
+│   ├── verify_pipeline_trust.py               # Consumer CI composition auditor (child/direct mode)
+│   └── check_supply_chain_pins.py             # Image/action/dependency pin validation
 ├── .github/
 │   └── workflows/
+│       ├── ai-review.yml                      # Installed GitHub PR review workflow (mirrors the canonical template)
+│       ├── ci.yml                             # Repo quality gate (ruff, pytest, mypy)
 │       └── publish-ai-review-images.yml       # GHCR image build, preflight, & attestation workflow
 ├── docs/
-│   ├── improvement-specs/                    # Completed specs and reconciliation audit
-│   └── archived-improvement-plans/           # Paused and superseded plans
+│   ├── ARCHITECTURE.md                        # Architecture & trust-boundary overview
+│   ├── CONSENSUS.md                           # Deterministic consensus engine deep dive
+│   ├── REVISION_LIFECYCLE.md                  # Finding identity & behavior across MR revisions
+│   ├── TROUBLESHOOTING.md                     # Symptom-first pipeline diagnosis guide
+│   ├── improvement-specs/                     # Completed specs and reconciliation audit
+│   └── archived-improvement-plans/            # Paused and superseded plans
 └── ai-review/
-    ├── README.md                              # Subsystem sitemap & operational guide
-    ├── docs/acceptance/                       # Acceptance evidence records
+    ├── README.md                              # Subsystem sitemap, operational guide & GitHub PR reviews
     ├── EXAMPLE_PIPELINE_WALKTHROUGH.md        # Worked example: one real pipeline run, stage by stage
+    ├── docs/acceptance/                       # Acceptance evidence records
     ├── adapters/                              # Shell wrappers for model CLI tools
     │   ├── run_reviewer.sh                    # Reviewer execution dispatcher & env isolation
     │   ├── claude.sh                          # Claude Code CLI wrapper script
     │   ├── codex.sh                           # Codex CLI wrapper script
     │   └── opencode.sh                        # OpenCode CLI wrapper script
-    ├── ci/                                    # GitLab CI pipeline definitions
-    │   ├── review.gitlab-ci.yml               # Production 6-stage review pipeline template
+    ├── ci/                                    # CI pipeline templates (GitLab & GitHub)
+    │   ├── review.gitlab-ci.yml               # Production single-stage (six-phase) review DAG
+    │   ├── review-child.gitlab-ci.yml         # Protected child-pipeline stage wrapper
+    │   ├── review.github-actions.yml          # Canonical GitHub Actions review workflow
     │   └── build-images.gitlab-ci.yml         # Internal container image build pipeline
     ├── config/
     │   └── review.yaml                        # Core system configuration (panel, quorum, limits)
     ├── images/                                # Dockerfiles for base & reviewer images
     │   ├── base.Dockerfile
-    │   └── reviewer.Dockerfile
+    │   ├── reviewer.Dockerfile
+    │   └── SUPPLY_CHAIN.md                    # Image pin/refresh process & residual limits
     ├── prompts/                               # Markdown prompt templates
     │   ├── review.md                          # Main review prompt template
     │   ├── critique.md                        # Blind cross-examination critique prompt template
@@ -489,24 +543,33 @@ code-tribunal/
     │   ├── state.schema.json
     │   └── state_aliases.schema.json
     └── src/
-        └── ai_review/                         # Core Python engine package (19 modules)
-            ├── __init__.py
+        └── ai_review/                         # Core Python engine package
             ├── adapter_runner.py              # Runner subprocess dispatch, timeout & log redaction
-            ├── anchors.py                     # Diff line parsing & fuzzy anchor drift remapping
+            ├── anchors.py                     # Diff line parsing & anchor drift remapping
             ├── canonical.py                   # Canonical JSON formatting & SHA-256 context hashing
-            ├── config.py                      # Config loader (review_config.v1) & default merger
-            ├── consensus.py                   # Deduplication, quorum voting, panel degradation logic
+            ├── config.py                      # Config loader (review_config.v1), env overrides & strict validation
+            ├── consensus.py                   # Grouping, quorum voting, critique application, panel degradation
+            ├── constants.py                   # Shared enums & severity ranks
             ├── gate.py                        # CI merge gate evaluator
             ├── gitlab_client.py               # GitLab API client (discussions, notes, DiffNotes)
             ├── input_bundle.py                # Diff extraction & input bundle packager
-            ├── memory.py                      # Historical state matching & record reconciliation
+            ├── memory.py                      # State note codec, historical matching & record reconciliation
             ├── mock_reviewer.py               # Deterministic mock reviewer for offline testing
             ├── openrouter_reviewer.py         # OpenRouter direct Chat Completions client
+            ├── pipeline_trust.py              # Consumer CI trust validation logic
             ├── post.py                        # Discussion upsert engine & state note writer
             ├── prompt_render.py               # Prompt renderer for review, critique, & respond
             ├── redact.py                      # Secret & token redaction engine
-            ├── schema.py                      # jsonschema validator wrapper
-            └── trigger.py                     # Pipeline trigger evaluator helper
+            ├── render.py                      # Discussion body rendering & markers
+            ├── schema.py                      # jsonschema validator wrapper & finding finalization
+            ├── trigger.py                     # Pipeline trigger evaluator helper
+            ├── types.py                       # Typed structures shared across stages
+            └── platform/                      # Review-platform abstraction
+                ├── base.py                    # ReviewPlatform protocol
+                ├── factory.py                 # Platform selection from posting mode
+                ├── gitlab.py                  # GitLab implementation
+                ├── github.py                  # GitHub implementation
+                └── runtime.py                 # Composition root & credential-scoped construction
 ```
 
 For completed requirements and implementation gaps, see the [improvement-spec completion audit](docs/improvement-specs/completion-audit.md).

@@ -9,7 +9,9 @@ For high-level system architecture, pipeline execution stages, local harness usa
 ## Directory Layout
 
 - **[config/review.yaml](config/review.yaml)**: Primary runtime configuration defining panel quorum, reviewer models, limits, posting rules, and security controls.
-- **[ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml)**: Production 6-stage GitLab CI pipeline template (`prepare`, `review`, `critique`, `consensus`, `post`, `gate`).
+- **[ci/review.gitlab-ci.yml](ci/review.gitlab-ci.yml)**: Production GitLab CI review pipeline template — one `ai_review` stage with six `needs`-ordered phases (`prepare`, `review`, `critique`, `consensus`, `post`, `gate`).
+- **[ci/review-child.gitlab-ci.yml](ci/review-child.gitlab-ci.yml)**: Protected child-pipeline stage wrapper for the hardened child-pipeline integration mode.
+- **[ci/review.github-actions.yml](ci/review.github-actions.yml)**: Canonical GitHub Actions review workflow (the installed copy lives at `.github/workflows/ai-review.yml` and must stay byte-identical).
 - **[ci/build-images.gitlab-ci.yml](ci/build-images.gitlab-ci.yml)**: Internal GitLab image building and preflight pipeline.
 - **[src/ai_review/](src/ai_review/)**: Core Python engine package for input bundle packaging, consensus voting, canonical hashing, line remapping, platform discussion posting, state management, and merge gate evaluation.
 - **[adapters/](adapters/)**: Shell script adapters wrapping CLI reviewer executables (`run_reviewer.sh`, `claude.sh`, `codex.sh`, `opencode.sh`).
@@ -46,7 +48,7 @@ make validate-local
 make consensus-local
 ```
 
-For how the deterministic consensus engine turns differently-shaped reviewer output into a reproducible decision, see [CONSENSUS.md](CONSENSUS.md).
+For how the deterministic consensus engine turns differently-shaped reviewer output into a reproducible decision, see [../docs/CONSENSUS.md](../docs/CONSENSUS.md).
 
 ### 3. Run Test Suites & Code Checks
 
@@ -168,7 +170,7 @@ For a concrete, artifact-backed walkthrough of every stage on one real pipeline 
 
 ## Active Configuration
 
-The shipped configuration contains only controls consumed by production code. Paused and future-facing controls are omitted rather than represented by inert placeholders.
+The shipped configuration contains only controls consumed by production code. Paused and future-facing controls are omitted rather than represented by inert placeholders. A block-by-block summary of [config/review.yaml](config/review.yaml) lives in the top-level README's ["Active configuration surface"](../README.md#active-configuration-surface) section; runtime-overridable knobs are listed under ["Runtime Environment Overrides"](../README.md#runtime-environment-overrides).
 
 ### GitHub pull request reviews
 

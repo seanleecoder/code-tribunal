@@ -6,13 +6,17 @@ of independent LLM reviewers into a single, reproducible merge decision.
 The governing principle is: **LLMs propose, deterministic Python decides.**
 
 > No LLM call may decide the final surfaced set. The consensus engine
-> ([`src/ai_review/consensus.py`](src/ai_review/consensus.py)) makes **no network
+> ([`src/ai_review/consensus.py`](../ai-review/src/ai_review/consensus.py)) makes **no network
 > calls and no model calls** — given the same input artifacts it always produces a
 > byte-identical `consensus.json`.
 
 Models only ever emit *candidate* findings and critiques. A pure function reduces
 those candidates to `surfaced` / `fyi` / `drop` decisions and a `block_merge`
 boolean.
+
+Related reading: [ARCHITECTURE.md](ARCHITECTURE.md) for the overall
+trust-boundary picture, and [REVISION_LIFECYCLE.md](REVISION_LIFECYCLE.md)
+for what happens to consensus findings across MR revisions.
 
 ---
 
@@ -25,10 +29,10 @@ regex-scraping of prose** for findings — the funnel is:
 
 1. **Prompt contract + JSON mode.** Each reviewer is instructed to emit a single
    strict-JSON object. The OpenRouter HTTP path
-   ([`openrouter_reviewer.py`](src/ai_review/openrouter_reviewer.py)) additionally
+   ([`openrouter_reviewer.py`](../ai-review/src/ai_review/openrouter_reviewer.py)) additionally
    sets `response_format: json_object` and `temperature: 0.0`.
 
-2. **Tolerant extraction** ([`adapter_runner.py`](src/ai_review/adapter_runner.py)).
+2. **Tolerant extraction** ([`adapter_runner.py`](../ai-review/src/ai_review/adapter_runner.py)).
    Strips markdown code fences, uses `JSONDecoder().raw_decode()` to find the first
    valid JSON value embedded in prose, parses streaming/JSONL event formats
    (Claude Code / OpenCode emit event streams rather than one flat object), and
@@ -42,7 +46,7 @@ regex-scraping of prose** for findings — the funnel is:
    is capped at `max_findings`, but sorted by severity/confidence first so blockers
    survive a verbose or prompt-injected flood.
 
-4. **Hard JSON-Schema validation** ([`schemas/`](schemas/)). Closed enums for
+4. **Hard JSON-Schema validation** ([`schemas/`](../ai-review/schemas/)). Closed enums for
    `severity` (`info|minor|major|blocker`) and `category`; every id must be a
    64-char SHA-256 hex string. If a reviewer's output fails validation it is written
    as an empty batch with `adapter_status: "schema_error"` and that reviewer simply
@@ -130,7 +134,7 @@ Same inputs → identical `consensus.json`, every time.
    `summary.block_merge = any(group.block_merge)`. The summary also reports
    `panel_convergence`, the fraction of surfaced groups whose `vote_count >= 2`;
    FYI and dropped groups do not contribute to the denominator. The `gate` stage
-   ([`gate.py`](src/ai_review/gate.py)) then reads `summary.block_merge` to pass or
+   ([`gate.py`](../ai-review/src/ai_review/gate.py)) then reads `summary.block_merge` to pass or
    fail the CI job.
 
 ---
@@ -156,7 +160,7 @@ so `review.yaml`'s value simply acts as the default when the variable is unset.)
 
 ## 5. Tests that pin this behavior
 
-Under [`tests/unit/`](tests/unit/): `test_voting.py` (panel status + decision
+Under [`tests/unit/`](../ai-review/tests/unit/): `test_voting.py` (panel status + decision
 policy), `test_grouping.py` (union-find, semantic grouping, transitive splitting,
 and the labeled grouping corpus), `test_phase5_consensus.py` (critique merges,
 majority-noise drop, `agree` doesn't add a vote, opt-in escalation/downgrade,
@@ -165,17 +169,17 @@ matching + deterministic tie-breaking + semantic grouping in full consensus outp
 and `test_consensus_cli.py` (failed panel still writes an artifact and exits `3`;
 critic identity is bound from the filename even if the payload lies).
 
-Under [`tests/contract/`](tests/contract/), `test_golden_consensus.py` compares
+Under [`tests/contract/`](../ai-review/tests/contract/), `test_golden_consensus.py` compares
 semantic-on and default semantic-off consensus artifacts against checked-in
 canonical JSON snapshots. The default snapshot is especially important because the
 transitive-chain split runs even when semantic grouping is disabled. Intentional
 changes to grouping output should run `make update-golden`, include the changed
 files in the same PR, and explain the semantic change.
 
-Under [`tests/integration/`](tests/integration/), `test_post_gate_e2e.py` drives
+Under [`tests/integration/`](../ai-review/tests/integration/), `test_post_gate_e2e.py` drives
 the SPEC-12 fake-GitLab post→gate harness through blocking, FYI-only, and
 idempotent re-run scenarios. The reusable in-memory client lives in
-[`tests/support/fake_gitlab.py`](tests/support/fake_gitlab.py) so SPEC-14 and
+[`tests/support/fake_gitlab.py`](../ai-review/tests/support/fake_gitlab.py) so SPEC-14 and
 SPEC-15 refactors can assert posting and gate behavior without contacting a real
 GitLab instance.
 

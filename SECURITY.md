@@ -32,8 +32,8 @@ The following known issues are already tracked in the improvement specs and do n
 
 - C1: reviewer/CI trust-boundary hardening.
 - H1: state authenticity and tamper resistance.
-- H2: runner/container egress enforcement.
-- H3: provider endpoint pinning for CLI adapters.
+- H2: runner/container egress enforcement — **open**. Provider endpoints are pinned at the adapter validation layer, but nothing at the container/runner layer prevents a misbehaving CLI from reaching other network destinations. Treat egress control as *planned, not implemented*.
+- H3: provider endpoint pinning for CLI adapters — **mitigated at the adapter layer** (base-URL validation before spawning, re-checked inside the adapter shells; model-id format checks). The remaining exposure is the container-layer enforcement tracked by H2; reports about bypassing the adapter-layer pinning itself are still in scope.
 
 ## Supported Versions
 
