@@ -17,6 +17,7 @@ def _base_config() -> dict:
             "claude": {"model": "claude-haiku-4.5", "enabled": True},
             "codex": {"model": "openai/gpt-5.4-mini", "enabled": True},
             "opencode": {"model": "google/gemini-3.1-flash-lite", "enabled": True},
+            "cursor": {"model": "composer", "enabled": False},
         },
         "critique": {"enabled": True, "rounds": 1},
         "merge_gate": {"enabled": True},
@@ -55,9 +56,14 @@ class ApplyEnvOverridesTests(unittest.TestCase):
 
     def test_reviewer_enabled_override(self) -> None:
         config = _base_config()
-        with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}, clear=True):
+        with mock.patch.dict(
+            "os.environ",
+            {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CURSOR_ENABLED": "true"},
+            clear=True,
+        ):
             apply_env_overrides(config)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
         self.assertTrue(config["reviewers"]["codex"]["enabled"])
 
     def test_effort_override_per_reviewer(self) -> None:
@@ -131,6 +137,30 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+
+
+    def test_cursor_enabled_override_round_trips_to_summary(self) -> None:
+        from ai_review.config import effective_config_summary
+
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_ENABLED": "true"}):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
+        summary = effective_config_summary(config)
+        self.assertIn("cursor", summary["reviewers"])
+        self.assertTrue(summary["reviewers"]["cursor"]["enabled"])
+        self.assertEqual(summary["reviewers"]["cursor"]["model"], "composer")
+
+    def test_cursor_disabled_override_round_trips_to_summary(self) -> None:
+        from ai_review.config import effective_config_summary
+
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_ENABLED": "false"}):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertFalse(config["reviewers"]["cursor"]["enabled"])
+        summary = effective_config_summary(config)
+        self.assertIn("cursor", summary["reviewers"])
+        self.assertFalse(summary["reviewers"]["cursor"]["enabled"])
 
     def test_github_platform_env_overrides_load_valid_config(self) -> None:
         with mock.patch.dict(

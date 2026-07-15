@@ -101,7 +101,7 @@ pipeline.
   - `config.review.yaml`: Active runtime configuration.
 
 ### 2. `review` (Parallel Reviewer Fan-Out)
-- Executes `AI review: [claude]`, `AI review: [codex]`, and `AI review: [opencode]` in parallel (`allow_failure: true`). The bracket suffixes preserve reviewer identity while allowing GitLab's regular pipeline graph to collapse the jobs into one group.
+- Executes `AI review: [claude]`, `AI review: [codex]`, `AI review: [opencode]`, and disabled-by-default `AI review: [cursor]` in parallel (`allow_failure: true`). The bracket suffixes preserve reviewer identity while allowing GitLab's regular pipeline graph to collapse the jobs into one group. Reviewer enablement variables are runtime config only: disabling OpenCode leaves its static job present and writing skipped artifacts; enabling Cursor requires the included GitLab template ref to already contain the Cursor jobs.
 - Each reviewer job runs inside `$AI_REVIEW_REVIEWER_IMAGE` executing wrapper scripts ([ai-review/adapters/run_reviewer.sh](ai-review/adapters/run_reviewer.sh)).
 - Output findings are strictly validated against [ai-review/schemas/finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json).
 - Status reports are saved to `out/status/<reviewer>.json`.
@@ -152,7 +152,7 @@ The shipped [runtime configuration](ai-review/config/review.yaml) contains only 
 
 | Block | Key controls (defaults) |
 |---|---|
-| `reviewers.<claude\|codex\|opencode>` | `enabled`, `model`, `adapter`, `timeout_seconds: 600`, `max_findings: 50`, `credential_variable`; Claude defaults to `effort: medium`, while Codex/OpenCode effort is optional. |
+| `reviewers.<claude\|codex\|opencode\|cursor>` | `enabled`, `model`, `adapter`, `timeout_seconds: 600`, `max_findings: 50`, `credential_variable`; Claude defaults to `effort: medium`, Cursor is disabled by default and uses `CURSOR_API_KEY`, while Codex/OpenCode effort is optional. |
 | `panel` | `quorum.votes_required: 2`, `min_successful_reviewers_for_blocking: 2`, `min_successful_reviewers_for_resolution: 2`, `grouping.semantic.enabled: false` *(experimental, keep off until calibrated)* |
 | `severity_policy` | `single_reviewer_blocker.categories: [security, correctness]` (surfaces with human-ack flag, never blocks alone), `quorum_blocker.block_merge: true` |
 | `critique` | `enabled: true`, `rounds: 1` (fixed in v1), `blind_reviewer_identity: true`, `allow_advisory_escalation: true`, `allow_severity_downgrade: false`, `can_add_quorum_votes: false` (must stay false in v1) |
@@ -274,9 +274,20 @@ To integrate Code Tribunal into downstream projects:
 | `review_claude` | `AI review: [claude]` |
 | `review_codex` | `AI review: [codex]` |
 | `review_opencode` | `AI review: [opencode]` |
+| _new optional Cursor job_ | `AI review: [cursor]` |
 | `critique_claude` | `AI critique: [claude]` |
 | `critique_codex` | `AI critique: [codex]` |
 | `critique_opencode` | `AI critique: [opencode]` |
+| _new optional Cursor job_ | `AI critique: [cursor]` |
+
+> **Cursor substitution note:** GitLab creates jobs from the included YAML before
+> any reviewer enablement variables are read. If you set
+> `AI_REVIEW_CURSOR_ENABLED=true` and `AI_REVIEW_OPENCODE_ENABLED=false` but the
+> graph still has no `AI review: [cursor]` / `AI critique: [cursor]` jobs, the
+> consumer is still including an older template ref (or mirror) that predates
+> Cursor. Update the trusted include `ref` and the pinned review images together.
+> The `AI review: [opencode]` jobs remain visible by design; with OpenCode
+> disabled they should complete quickly with skipped artifacts.
 
 1. **Choose direct or child-pipeline integration from a trusted template project.**
 
@@ -408,6 +419,7 @@ under `effective_config` in `inputs/manifest.json` for audit).
 | `AI_REVIEW_CLAUDE_MODEL` | `reviewers.claude.model` | Any provider model id; no rebuild needed. Must match `[A-Za-z0-9._:/-]` (covers OpenRouter `:free`/`:nitro` variants); other characters are rejected as a `model_error`. |
 | `AI_REVIEW_CODEX_MODEL` | `reviewers.codex.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
 | `AI_REVIEW_OPENCODE_MODEL` | `reviewers.opencode.model` | Model pin relaxed (same charset as above); the OpenRouter endpoint stays fixed. |
+| `AI_REVIEW_CURSOR_MODEL` | `reviewers.cursor.model` | Cursor Composer model id passed to `cursor-agent`; Cursor does not use OpenRouter. |
 | `AI_REVIEW_<REVIEWER>_ENABLED` | `reviewers.<name>.enabled` | Strict `true`/`false`. Disabling below `panel.min_successful_reviewers_for_blocking` fails validation loudly. |
 | `AI_REVIEW_<REVIEWER>_EFFORT` | `reviewers.<name>.effort` | Reasoning/exploration effort, one of `low`/`medium`/`high`/`xhigh`/`max` (anything else fails config validation). Voluntary stopping, not a turn cap. Claude uses all levels (`--effort`). Codex emits `model_reasoning_effort` unchanged for `low`/`medium`/`high`/`xhigh`; OpenCode emits `reasoningEffort` unchanged for `low`/`medium`/`high`. Unsupported levels leave each provider default unchanged; none are coerced. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `critique.enabled`; GitLab critique job creation | The GitLab template gates job creation on this value. The GitHub template always creates the matrix and emits skipped artifacts without model calls when set to `false`. |
@@ -455,7 +467,7 @@ Container images are automatically built, preflighted, and published to GitHub C
 
 ### Preflight Verification & Attestations
 Before publishing to GHCR, the workflow verifies:
-1. Pinned CLI binaries (`claude --version`, `codex --version`, `opencode --version`).
+1. Pinned CLI binaries (`claude --version`, `codex --version`, `opencode --version`, `cursor-agent --version`).
 2. Local mock fan-out and consensus calculation.
 3. Cryptographic attestation signatures using GitHub Artifact Attestations (`actions/attest`).
 

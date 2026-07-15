@@ -13,6 +13,7 @@ from unittest import mock
 
 from ai_review.adapter_runner import (
     _EXIT_ERROR,
+    _build_adapter_env,
     _cli_reviewer_validation_error,
     _load_adapter_json,
     run_adapter,
@@ -56,6 +57,33 @@ _CONFIG_TAIL = [
 
 
 class AdapterEndpointValidationTests(unittest.TestCase):
+
+    def test_cursor_adapter_env_excludes_provider_endpoint_envs(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+                "OPENROUTER_API_KEY": "openrouter-secret",
+                "CURSOR_API_KEY": "cursor-secret",
+            },
+            clear=False,
+        ):
+            env = _build_adapter_env(
+                reviewer="cursor",
+                stage="review",
+                model="composer",
+                input_dir=Path("inputs"),
+                output_dir=Path("out"),
+                reviewer_config={"credential_variable": "CURSOR_API_KEY", "timeout_seconds": 600},
+                prompt_tmp=Path("prompt.md"),
+            )
+
+        self.assertEqual(env["CURSOR_API_KEY"], "cursor-secret")
+        self.assertNotIn("OPENROUTER_API_KEY", env)
+        self.assertNotIn("OPENROUTER_BASE_URL", env)
+        self.assertNotIn("ANTHROPIC_BASE_URL", env)
+
     def test_claude_rejects_hostile_anthropic_openrouter_lookalike(self) -> None:
         with mock.patch.dict(
             os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False
@@ -1024,3 +1052,4 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
