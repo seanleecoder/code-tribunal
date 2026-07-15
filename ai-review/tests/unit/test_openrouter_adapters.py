@@ -437,6 +437,7 @@ PY
         self.assertEqual(batch["reviewer"], "cursor")
         self.assertIn("/cursor-agent -p", cli_args)
         self.assertIn("--output-format json", cli_args)
+        self.assertIn("--trust", cli_args)
         self.assertIn("--sandbox enabled", cli_args)
         self.assertIn("--model auto", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
@@ -466,6 +467,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
+        self.assertIn("--trust", cli_args)
         self.assertIn("--sandbox enabled", cli_args)
         self.assertEqual(meta["workspace_entries"], set())
 

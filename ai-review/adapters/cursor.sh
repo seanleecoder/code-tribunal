@@ -67,6 +67,7 @@ env -i \
   CURSOR_API_KEY="$CURSOR_API_KEY" \
   cursor-agent -p \
   --output-format json \
+  --trust \
   --sandbox enabled \
   --model "$AI_REVIEW_MODEL" \
   < "$PROMPT_FILE"
