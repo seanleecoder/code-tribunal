@@ -13,6 +13,12 @@
   for every adapter, including Claude's `--max-turns` path. `timeout_seconds`
   is the sole hang-catch. This is a deliberate breaking operator-contract
   change, not an incidental OpenCode optimization.
+- **2026-07-15 — effort mapping revised.** The earlier plan mapped OpenCode
+  `xhigh` and `max` effort to provider `high`. The implementation decision
+  supersedes that coercion: OpenCode emits `reasoningEffort` only for
+  `low`/`medium`/`high`; its unsupported `xhigh`/`max` values leave the provider
+  default unchanged. This avoids silently applying a different effort than the
+  operator selected.
 
 ## Why
 
