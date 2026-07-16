@@ -14,7 +14,6 @@ from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
-_CURSOR_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "cursor.sh"
 
 _REVIEWER_OVERRIDE_KEYS = (
     "AI_REVIEW_CLAUDE_MODEL",
@@ -436,11 +435,13 @@ PY
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "cursor")
-        self.assertIn("/cursor-agent -p", cli_args)
+        invocations = cli_args.splitlines()
+        self.assertEqual(len(invocations), 1)
+        self.assertIn("/cursor-agent -p", invocations[0])
         self.assertIn("--output-format json", cli_args)
         self.assertIn("--trust", cli_args)
+        self.assertIn("--sandbox disabled", cli_args)
         self.assertNotIn("--sandbox enabled", cli_args)
-        self.assertIn("cursor-agent sandbox disable", _CURSOR_ADAPTER.read_text(encoding="utf-8"))
         self.assertIn("--model auto", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
         self.assertIn("src/reviewed.py", meta["workspace_entries"])
@@ -469,7 +470,11 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
+        invocations = cli_args.splitlines()
+        self.assertEqual(len(invocations), 1)
+        self.assertIn("/cursor-agent -p", invocations[0])
         self.assertIn("--trust", cli_args)
+        self.assertIn("--sandbox disabled", cli_args)
         self.assertNotIn("--sandbox enabled", cli_args)
         self.assertEqual(meta["workspace_entries"], set())
 

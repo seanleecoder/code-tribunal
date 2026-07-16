@@ -119,6 +119,18 @@ jobs:
               --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
           '
 
+      - name: Verify Cursor denies write and shell tools
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$CURSOR_API_KEY" ]]; then
+            echo "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY is not configured. Keep Cursor disabled."
+            exit 0
+          fi
+          scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"
+
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash

@@ -16,8 +16,12 @@ _PUBLISH_WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
 )
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
+_BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
+_CURSOR_PERMISSION_SMOKE = (
+    Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
+)
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
@@ -204,7 +208,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(old_name, text)
 
-
     def test_root_readme_explains_cursor_gitlab_static_job_graph(self) -> None:
         text = _ROOT_README.read_text(encoding="utf-8")
 
@@ -386,6 +389,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "AI_REVIEW_LOCAL_MOCK=1",
             'run_reviewer.sh "$reviewer" review',
             "consensus.schema.json",
+            "Verify Cursor denies write and shell tools",
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
         ):
             self.assertIn(preflight, build_preflight)
             self.assertNotIn(preflight, publish)
@@ -399,6 +404,11 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         for forbidden_secret in ("OPENROUTER_API_KEY", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
             self.assertNotIn(forbidden_secret, text)
+
+        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", build_preflight)
+        self.assertIn("github.event_name != 'pull_request'", build_preflight)
+        self.assertIn('if [[ -z "$CURSOR_API_KEY" ]]', build_preflight)
+        self.assertIn("Keep Cursor disabled", build_preflight)
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
@@ -420,6 +430,28 @@ class GitLabCiTemplateTests(unittest.TestCase):
         for dockerfile in _IMAGE_DOCKERFILES:
             text = dockerfile.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
+
+    def test_base_image_copies_root_readme_to_documented_runtime_path(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("COPY README.md /opt/README.md", text)
+        self.assertIn(
+            "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
+            text,
+        )
+
+    def test_cursor_permission_smoke_checks_multiple_write_boundaries(self) -> None:
+        text = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
+
+        self.assertIn("--sandbox disabled", text)
+        self.assertNotIn("cursor-agent sandbox disable", text)
+        self.assertIn('workspace_before="$(workspace_manifest)"', text)
+        self.assertIn('workspace_after="$(workspace_manifest)"', text)
+        self.assertIn("/workspace/fixture.txt", text)
+        self.assertIn("/cursor-home/cursor-home-sentinel", text)
+        self.assertIn("/permission-tmp/cursor-tmp-sentinel", text)
+        self.assertIn("security failure", text)
+        self.assertIn("execution failure", text)
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
@@ -766,15 +798,13 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(text.count("container: ghcr.io/"), 6)
         self.assertEqual(text.count("@sha256:"), 6)
 
-    def test_github_actions_template_defers_cursor_until_its_image_is_published(self) -> None:
+    def test_github_actions_template_runs_full_critique_panel(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
-        self.assertIn("matrix:", critique)
-        self.assertIn("reviewer: [claude, codex, opencode]", critique)
-        self.assertIn("The pinned image predates Cursor.", critique)
+        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode, cursor]", critique)
         self.assertIn("continue-on-error: true", critique)
         self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
         self.assertIn("pattern: ai-review-review-*", critique)
@@ -784,15 +814,26 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
             2,
         )
-        self.assertNotIn('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"', text)
+        self.assertEqual(
+            text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
+            2,
+        )
+        conditional_cursor_secret = (
+            "CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' "
+            "&& secrets.CURSOR_API_KEY || '' }}"
+        )
+        self.assertEqual(text.count(conditional_cursor_secret), 2)
         self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
-        self.assertNotIn(
+        self.assertIn(
             "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
             text,
         )
-        self.assertIn(
-            "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}",
-            text,
+        self.assertEqual(
+            text.count(
+                "AI_REVIEW_OPENCODE_ENABLED: "
+                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+            ),
+            2,
         )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:

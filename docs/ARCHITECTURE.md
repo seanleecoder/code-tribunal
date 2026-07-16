@@ -76,7 +76,7 @@ flowchart TB
         GATE2["gate — no tokens"]
     end
     subgraph SANDBOX["Reviewer sandboxes — pinned reviewer image"]
-        REV2["review / critique jobs<br/>provider API key ONLY<br/>read-only tools, no shell<br/>allowlisted environment"]
+        REV2["review / critique jobs<br/>provider API key ONLY<br/>read-only tool policy<br/>allowlisted environment"]
     end
     HOSTILE["Untrusted input: MR diff + repo snapshot<br/>(may contain prompt-injection text)"]
     HOSTILE --> PREP2
@@ -90,8 +90,14 @@ flowchart TB
   is rebuilt from allowlists ([adapter_runner.py](../ai-review/src/ai_review/adapter_runner.py)),
   and the codex/opencode adapters additionally run under `env -i`.
 - **Read-only reviewers**: Claude Code runs with `--tools "Read,Grep,Glob"`,
-  Codex with `--sandbox read-only`, OpenCode with a deny-all permission config
-  allowing only read/glob/grep. Repository instruction files (`CLAUDE.md`,
+  Codex with `--sandbox read-only`, and OpenCode with a deny-all permission
+  config allowing only read/glob/grep. Opt-in Cursor runs with
+  `--sandbox disabled --trust` and a clean-home permission config allowing
+  `Read(**)` while denying `Write(**)` and `Shell(**)`. Cursor's kernel sandbox
+  cannot initialize in nested GitHub
+  Actions job containers, so this allowlist is a weaker compensating control
+  and must be verified against the pinned image before enablement. Repository
+  instruction files (`CLAUDE.md`,
   `AGENTS.md`, `.claude/`, `.codex/`, `.opencode/`) are stripped from the
   snapshot before a model sees it — MR content is treated as hostile input.
 - **Provider endpoint pinning** is enforced at the adapter validation layer

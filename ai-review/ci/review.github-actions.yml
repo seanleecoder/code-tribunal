@@ -42,7 +42,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
     steps:
       - name: Resolve pull request
         id: pull-request
@@ -106,13 +106,11 @@ jobs:
     # succeeds, so this does not turn a total panel failure into a green gate.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:4e2d4a61a679dfc611432c8719b8a7d105540dfd489618a530e1673ee8bf4eb5
     strategy:
       fail-fast: false
       matrix:
-        # The pinned image predates Cursor. Add Cursor in the follow-up that
-        # advances this digest after main publishes the Cursor-capable image.
-        reviewer: [claude, codex, opencode]
+        reviewer: [claude, codex, opencode, cursor]
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -126,10 +124,13 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
           AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -144,13 +145,11 @@ jobs:
     # over otherwise valid reviewer findings.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:4e2d4a61a679dfc611432c8719b8a7d105540dfd489618a530e1673ee8bf4eb5
     strategy:
       fail-fast: false
       matrix:
-        # The pinned image predates Cursor. Add Cursor in the follow-up that
-        # advances this digest after main publishes the Cursor-capable image.
-        reviewer: [claude, codex, opencode]
+        reviewer: [claude, codex, opencode, cursor]
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -169,10 +168,13 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
           AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -188,7 +190,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -220,7 +222,7 @@ jobs:
   post:
     needs: [prepare, consensus]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -243,7 +245,7 @@ jobs:
   gate:
     needs: [consensus, post]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
