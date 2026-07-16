@@ -43,13 +43,14 @@ fields in CLI output** (open upstream feature request); install is
 
 **Runtime sandbox tradeoff discovered during implementation:** the pinned CLI's
 kernel sandbox cannot initialize inside nested GitHub Actions job containers.
-The shipped adapter performs the CLI's sandbox-disable setup in a disposable
-home, then runs `-p --trust` with `cli-config.json` allowing `Read(**)` and
-denying `Write(**)` and `Shell(**)`. This is a weaker allowlist boundary, not a
-claim of kernel isolation. A real pinned-image smoke test must demonstrate that
-hostile write and shell requests have no side effects before an operator enables
-Cursor. If a later pinned CLI documents a non-mutating sandbox mode or config
-setting that works in nested containers, prefer it over the setup command.
+The shipped adapter selects allowlist mode without mutating persistent CLI
+state by running `-p --sandbox disabled --trust` in a disposable home, with
+`cli-config.json` allowing `Read(**)` and denying `Write(**)` and `Shell(**)`.
+This is a weaker allowlist boundary, not a claim of kernel isolation. A real
+pinned-image smoke test must demonstrate that hostile write and shell requests
+have no side effects before an operator enables Cursor. Re-evaluate
+`--sandbox enabled` whenever the pinned CLI changes in case a future release
+supports kernel isolation in nested containers.
 
 The `--output-format json` result envelope is
 `{"type": "result", "subtype": ..., "is_error": bool, "result": "<text>",

@@ -68,15 +68,9 @@ env -i \
   TMPDIR="${TMPDIR:-/tmp}" \
   HOME="$CURSOR_HOME_DIR" \
   CURSOR_API_KEY="$CURSOR_API_KEY" \
-  cursor-agent sandbox disable >/dev/null
-
-env -i \
-  PATH="${PATH:-/usr/bin:/bin}" \
-  TMPDIR="${TMPDIR:-/tmp}" \
-  HOME="$CURSOR_HOME_DIR" \
-  CURSOR_API_KEY="$CURSOR_API_KEY" \
   cursor-agent -p \
   --output-format json \
   --trust \
+  --sandbox disabled \
   --model "$AI_REVIEW_MODEL" \
   < "$PROMPT_FILE"

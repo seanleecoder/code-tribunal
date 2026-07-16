@@ -91,9 +91,10 @@ flowchart TB
   and the codex/opencode adapters additionally run under `env -i`.
 - **Read-only reviewers**: Claude Code runs with `--tools "Read,Grep,Glob"`,
   Codex with `--sandbox read-only`, and OpenCode with a deny-all permission
-  config allowing only read/glob/grep. Opt-in Cursor runs with `--trust` and a
-  clean-home permission config allowing `Read(**)` while denying `Write(**)`
-  and `Shell(**)`. Cursor's kernel sandbox cannot initialize in nested GitHub
+  config allowing only read/glob/grep. Opt-in Cursor runs with
+  `--sandbox disabled --trust` and a clean-home permission config allowing
+  `Read(**)` while denying `Write(**)` and `Shell(**)`. Cursor's kernel sandbox
+  cannot initialize in nested GitHub
   Actions job containers, so this allowlist is a weaker compensating control
   and must be verified against the pinned image before enablement. Repository
   instruction files (`CLAUDE.md`,

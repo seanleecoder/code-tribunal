@@ -19,6 +19,7 @@ _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewe
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
+_CURSOR_PERMISSION_SMOKE = Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
@@ -204,7 +205,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "critique_cursor",
         ):
             self.assertNotIn(old_name, text)
-
 
     def test_root_readme_explains_cursor_gitlab_static_job_graph(self) -> None:
         text = _ROOT_README.read_text(encoding="utf-8")
@@ -431,6 +431,19 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
         self.assertIn("COPY README.md /opt/README.md", text)
+
+    def test_cursor_permission_smoke_checks_multiple_write_boundaries(self) -> None:
+        text = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
+
+        self.assertIn("--sandbox disabled", text)
+        self.assertNotIn("cursor-agent sandbox disable", text)
+        self.assertIn('workspace_before="$(workspace_manifest)"', text)
+        self.assertIn('workspace_after="$(workspace_manifest)"', text)
+        self.assertIn("/workspace/fixture.txt", text)
+        self.assertIn("/cursor-home/cursor-home-sentinel", text)
+        self.assertIn("/permission-tmp/cursor-tmp-sentinel", text)
+        self.assertIn("security failure", text)
+        self.assertIn("execution failure", text)
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
