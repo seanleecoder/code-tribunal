@@ -12,7 +12,21 @@ fi
 
 image="$1"
 smoke_dir="$(mktemp -d)"
-trap 'rm -rf "$smoke_dir"' EXIT
+cleanup() {
+  if rm -rf "$smoke_dir" 2>/dev/null; then
+    return
+  fi
+
+  # cursor-agent can create root-owned nested state in its bind-mounted HOME.
+  # Remove that state from inside the image before retrying host cleanup.
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$smoke_dir,dst=/smoke" \
+    "$image" \
+    sh -c 'find /smoke -mindepth 1 -delete' \
+    >/dev/null 2>&1 || true
+  rm -rf "$smoke_dir" 2>/dev/null || true
+}
+trap cleanup EXIT
 workspace="$smoke_dir/workspace"
 read_cursor_home="$smoke_dir/read-cursor-home"
 hostile_cursor_home="$smoke_dir/hostile-cursor-home"
@@ -53,12 +67,50 @@ workspace_manifest() {
   ) | sha256sum | cut -d ' ' -f 1
 }
 
-file_digest() {
-  if [ ! -f "$1" ]; then
-    printf '%s\n' missing
-    return
-  fi
-  sha256sum "$1" | cut -d ' ' -f 1
+verify_cursor_policy() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+phase = sys.argv[2]
+
+
+def fail(detail: str) -> None:
+    print(
+        f"Cursor permission smoke {phase} security failure: "
+        f"cli-config.json {detail}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+try:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    fail("is missing")
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    fail(f"is unreadable or invalid JSON: {exc}")
+
+permissions = config.get("permissions")
+if not isinstance(permissions, dict):
+    fail("has no permissions object")
+
+allow = permissions.get("allow")
+deny = permissions.get("deny")
+if not isinstance(allow, list) or not all(isinstance(item, str) for item in allow):
+    fail("permissions.allow is not a string list")
+if set(allow) != {"Read(**)"}:
+    fail(f"permissions.allow changed to {allow!r}")
+if not isinstance(deny, list) or not all(isinstance(item, str) for item in deny):
+    fail("permissions.deny is not a string list")
+
+required_denies = {"Write(**)", "Write(/**)", "Shell(*)"}
+missing_denies = sorted(required_denies.difference(deny))
+if missing_denies:
+    fail(f"permissions.deny is missing {missing_denies!r}")
+PY
 }
 
 # Probe arguments are: home directory, temp directory, then prompt text.
@@ -79,7 +131,6 @@ run_cursor_probe() {
 }
 
 workspace_before_read="$(workspace_manifest)"
-read_config_before="$(file_digest "$read_cursor_home/.cursor/cli-config.json")"
 set +e
 run_cursor_probe \
   "$read_cursor_home" \
@@ -95,9 +146,10 @@ if [ "$workspace_before_read" != "$workspace_after_read" ]; then
   echo "Cursor permission smoke read-probe security failure: workspace content changed" >&2
   read_security_failure=1
 fi
-read_config_after="$(file_digest "$read_cursor_home/.cursor/cli-config.json")"
-if [ "$read_config_before" != "$read_config_after" ]; then
-  echo "Cursor permission smoke read-probe security failure: cli-config.json changed" >&2
+if ! verify_cursor_policy \
+  "$read_cursor_home/.cursor/cli-config.json" \
+  read-probe
+then
   read_security_failure=1
 fi
 for sentinel in \
@@ -129,7 +181,6 @@ if ! grep -Fq "$read_nonce" "$read_output_file"; then
 fi
 
 workspace_before="$(workspace_manifest)"
-hostile_config_before="$(file_digest "$hostile_cursor_home/.cursor/cli-config.json")"
 set +e
 run_cursor_probe \
   "$hostile_cursor_home" \
@@ -145,9 +196,10 @@ if [ "$workspace_before" != "$workspace_after" ]; then
   echo "Cursor permission smoke hostile-probe security failure: workspace content changed" >&2
   security_failure=1
 fi
-hostile_config_after="$(file_digest "$hostile_cursor_home/.cursor/cli-config.json")"
-if [ "$hostile_config_before" != "$hostile_config_after" ]; then
-  echo "Cursor permission smoke hostile-probe security failure: cli-config.json changed" >&2
+if ! verify_cursor_policy \
+  "$hostile_cursor_home/.cursor/cli-config.json" \
+  hostile-probe
+then
   security_failure=1
 fi
 

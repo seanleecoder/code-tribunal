@@ -41,6 +41,24 @@ printf '%s\n' "$*" >> "$state_dir/invocations"
 workspace=''
 cursor_home=''
 probe_tmp=''
+write_normalized_config() {
+  printf '%s\n' \
+    '{"permissions":{"allow":["Read(**)"],'\
+'"deny":["Write(**)","Write(/**)","Shell(*)"]},'\
+'"version":1,"approvalMode":"allowlist","sandbox":{"mode":"disabled"}}' \
+    > "$cursor_home/.cursor/cli-config.json"
+}
+write_config_without_denies() {
+  printf '%s\n' \
+    '{"permissions":{"allow":["Read(**)"],"deny":["Write(**)"]}}' \
+    > "$cursor_home/.cursor/cli-config.json"
+}
+write_config_with_extra_allow() {
+  printf '%s\n' \
+    '{"permissions":{"allow":["Read(**)","Shell(*)"],'\
+'"deny":["Write(**)","Write(/**)","Shell(*)"]}}' \
+    > "$cursor_home/.cursor/cli-config.json"
+}
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--mount" ]; then
     shift
@@ -62,7 +80,10 @@ if [ "$count" -eq 1 ]; then
   case "${FAKE_DOCKER_READ_MUTATE:-}" in
     workspace) printf '%s\n' mutated > "$workspace/fixture.txt" ;;
     workspace-sentinel) : > "$workspace/cursor-write-sentinel" ;;
+    config-normalize) write_normalized_config ;;
     config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
+    config-drop-deny) write_config_without_denies ;;
+    config-add-allow) write_config_with_extra_allow ;;
     config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
     home) : > "$cursor_home/cursor-home-sentinel" ;;
     tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
@@ -74,7 +95,10 @@ fi
 case "${FAKE_DOCKER_MUTATE:-}" in
   workspace) printf '%s\n' mutated > "$workspace/fixture.txt" ;;
   workspace-sentinel) : > "$workspace/cursor-write-sentinel" ;;
+  config-normalize) write_normalized_config ;;
   config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
+  config-drop-deny) write_config_without_denies ;;
+  config-add-allow) write_config_with_extra_allow ;;
   config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
   home) : > "$cursor_home/cursor-home-sentinel" ;;
   tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
@@ -119,6 +143,15 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.invocations.count("--trust"), 2)
         self.assertIn("permission smoke passed", result.stdout)
 
+    def test_cursor_config_normalization_preserving_policy_is_allowed(self) -> None:
+        result = self._run_smoke(
+            FAKE_DOCKER_READ_MUTATE="config-normalize",
+            FAKE_DOCKER_MUTATE="config-normalize",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.invocation_count, 2)
+
     def test_read_control_failure_is_diagnosed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_STATUS="7")
 
@@ -139,6 +172,8 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
             "home",
             "tmp",
             "config",
+            "config-drop-deny",
+            "config-add-allow",
             "config-delete",
         ):
             with self.subTest(mutation=mutation):
@@ -155,13 +190,18 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.invocation_count, 1)
 
     def test_read_probe_config_tampering_fails_closed(self) -> None:
-        for mutation in ("config", "config-delete"):
+        for mutation in (
+            "config",
+            "config-drop-deny",
+            "config-add-allow",
+            "config-delete",
+        ):
             with self.subTest(mutation=mutation):
                 result = self._run_smoke(FAKE_DOCKER_READ_MUTATE=mutation)
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(
-                    "read-probe security failure: cli-config.json changed", result.stderr
+                    "read-probe security failure: cli-config.json", result.stderr
                 )
                 self.assertEqual(result.invocation_count, 1)
 
