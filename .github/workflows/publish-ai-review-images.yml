@@ -124,7 +124,12 @@ jobs:
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         shell: bash
-        run: scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"
+        run: |
+          if [[ -z "$CURSOR_API_KEY" ]]; then
+            echo "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY is not configured. Keep Cursor disabled."
+            exit 0
+          fi
+          scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"
 
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

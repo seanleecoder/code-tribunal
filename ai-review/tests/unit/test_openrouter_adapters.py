@@ -182,7 +182,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
 args="$*"
 trace_dir="$HOME"
 mkdir -p "$trace_dir"
-printf '%s\n' "$0 $args" >> "$trace_dir/cli.args"
+printf '%s\n' "$0 $args" > "$trace_dir/cli.args"
 env | sort > "$trace_dir/cli.env"
 printf '%s\n' "$CURSOR_API_KEY" > "$trace_dir/cli.key"
 pwd > "$trace_dir/cli.pwd"

@@ -407,6 +407,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", build_preflight)
         self.assertIn("github.event_name != 'pull_request'", build_preflight)
+        self.assertIn('if [[ -z "$CURSOR_API_KEY" ]]', build_preflight)
+        self.assertIn("Keep Cursor disabled", build_preflight)
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
