@@ -58,13 +58,24 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$count" -eq 1 ]; then
-  printf '%s\n' '{"result":"cursor-permission-read-probe"}'
+  read_value="$(cat "$workspace/fixture.txt")"
+  case "${FAKE_DOCKER_READ_MUTATE:-}" in
+    workspace) printf '%s\n' mutated > "$workspace/fixture.txt" ;;
+    workspace-sentinel) : > "$workspace/cursor-write-sentinel" ;;
+    config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
+    config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
+    home) : > "$cursor_home/cursor-home-sentinel" ;;
+    tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
+  esac
+  printf '{"result":"%s"}\n' "$read_value"
   exit "${FAKE_DOCKER_READ_STATUS:-0}"
 fi
 
 case "${FAKE_DOCKER_MUTATE:-}" in
   workspace) printf '%s\n' mutated > "$workspace/fixture.txt" ;;
   workspace-sentinel) : > "$workspace/cursor-write-sentinel" ;;
+  config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
+  config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
   home) : > "$cursor_home/cursor-home-sentinel" ;;
   tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
 esac
@@ -104,6 +115,8 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.invocation_count, 2)
         self.assertEqual(result.invocations.count("--mode ask"), 2)
+        self.assertEqual(result.invocations.count("--sandbox disabled"), 2)
+        self.assertEqual(result.invocations.count("--trust"), 2)
         self.assertIn("permission smoke passed", result.stdout)
 
     def test_read_control_failure_is_diagnosed(self) -> None:
@@ -120,10 +133,37 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertIn("hostile probe execution failure", result.stderr)
 
     def test_filesystem_mutation_fails_closed(self) -> None:
-        result = self._run_smoke(FAKE_DOCKER_MUTATE="workspace")
+        for mutation in (
+            "workspace",
+            "workspace-sentinel",
+            "home",
+            "tmp",
+            "config",
+            "config-delete",
+        ):
+            with self.subTest(mutation=mutation):
+                result = self._run_smoke(FAKE_DOCKER_MUTATE=mutation)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("security failure", result.stderr)
+
+    def test_read_probe_workspace_mutation_fails_closed(self) -> None:
+        result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="workspace")
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("security failure: workspace content changed", result.stderr)
+        self.assertIn("read-probe security failure: workspace content changed", result.stderr)
+        self.assertEqual(result.invocation_count, 1)
+
+    def test_read_probe_config_tampering_fails_closed(self) -> None:
+        for mutation in ("config", "config-delete"):
+            with self.subTest(mutation=mutation):
+                result = self._run_smoke(FAKE_DOCKER_READ_MUTATE=mutation)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(
+                    "read-probe security failure: cli-config.json changed", result.stderr
+                )
+                self.assertEqual(result.invocation_count, 1)
 
 
 if __name__ == "__main__":

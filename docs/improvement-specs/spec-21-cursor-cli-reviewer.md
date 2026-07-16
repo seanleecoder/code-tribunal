@@ -50,7 +50,10 @@ mutating persistent CLI state by running
 and `Shell(*)`.
 This is a weaker CLI-policy boundary, not a claim of kernel isolation. A real
 pinned-image smoke test must demonstrate that hostile write and shell requests
-have no side effects before an operator enables Cursor. Re-evaluate
+have no side effects before an operator enables Cursor. Unit tests verify that
+`Shell(*)` is consistently configured but cannot prove how the pinned CLI's
+glob engine interprets it; the trusted-main smoke remains the enablement gate.
+Re-evaluate
 `--sandbox enabled` whenever the pinned CLI changes in case a future release
 supports kernel isolation in nested containers.
 
