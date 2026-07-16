@@ -61,6 +61,20 @@ branch so the probe can be iterated with the real `CURSOR_API_KEY` without
 merging to main, and on failure it dumps the agent transcripts from the
 disposable home so the log shows whether a tool call was attempted, allowed,
 or denied.
+
+**Headless ask-mode read limitation (confirmed 2026-07-16):** with the pinned
+CLI, `-p --mode ask` records a `Read` `tool_use` in the agent transcript but
+never executes it — no tool result is returned to the model, which then
+fabricates plausible file contents in its reply (observed across four real
+runs with distinct fabrications). The smoke's read probe therefore asserts
+that a result envelope is produced and that the transcript proves a `Read`
+tool call was attempted; whether the fixture nonce actually comes back is
+reported but non-fatal. Consequence for the production adapter: in ask mode
+Cursor reviews cannot read repo-snapshot files and operate on the rendered
+prompt bundle alone. Before flipping `cursor.enabled` on, either accept
+prompt-bundle-only reviews or re-evaluate the invocation (e.g. an execution
+mode whose reads run under the `cli-config.json` allowlist) and re-run this
+smoke as the gate.
 Re-evaluate
 `--sandbox enabled` whenever the pinned CLI changes in case a future release
 supports kernel isolation in nested containers.

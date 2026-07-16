@@ -153,6 +153,18 @@ dump_cursor_transcripts() {
     ' >&2 || true
 }
 
+# Search the root-owned agent transcripts from inside the image. Arguments
+# are: home directory, then a fixed string to match.
+transcript_matches() {
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -euc '
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec cat {} + | grep -Fq -- "$1"
+    ' sh "$2"
+}
+
 # Probe arguments are: home directory, temp directory, then prompt text.
 run_cursor_probe() {
   timeout 180 docker run --rm \
@@ -215,12 +227,29 @@ if [ "$read_status" -ne 0 ]; then
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
-if ! grep -Fq "$read_nonce" "$read_output_file"; then
-  echo "Cursor permission smoke read probe execution failure: expected fixture content was not returned" >&2
+if ! grep -Fq '"type":"result"' "$read_output_file"; then
+  echo "Cursor permission smoke read probe execution failure: no result envelope was produced" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
+fi
+# The pinned CLI's headless ask mode records the Read tool_use in the agent
+# transcript but never executes it, so the response cannot be trusted to echo
+# the fixture nonce (observed: the model fabricates plausible contents; see
+# spec-21). Require proof that the probe drove the file-reading tool path, and
+# report — without failing — whether the read actually executed.
+if ! transcript_matches "$read_cursor_home" '"name":"Read"'; then
+  echo "Cursor permission smoke read probe execution failure: no Read tool call was attempted" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
+fi
+if grep -Fq "$read_nonce" "$read_output_file"; then
+  echo "Cursor read probe returned the fixture nonce: the pinned CLI executed the read."
+else
+  echo "Cursor read probe attempted the Read tool without returning the fixture nonce (known pinned-CLI ask-mode limitation; see spec-21)."
 fi
 
 workspace_before="$(workspace_manifest)"

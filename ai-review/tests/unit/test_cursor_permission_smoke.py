@@ -55,6 +55,7 @@ if [ -f "$count_file" ]; then count="$(cat "$count_file")"; fi
 count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
 printf '%s\n' "$*" >> "$state_dir/invocations"
+all_args="$*"
 
 workspace=''
 cursor_home=''
@@ -109,9 +110,18 @@ if [ -n "$cleanup_root" ]; then
 fi
 
 if [ -n "$transcripts_root" ]; then
+  case "$all_args" in
+    *"grep -Fq"*)
+      printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-matches"
+      if [ "${FAKE_TRANSCRIPT_READ_ATTEMPTED:-true}" = "true" ]; then
+        exit 0
+      fi
+      exit 1
+      ;;
+  esac
   printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-dumps"
   echo '==== /transcripts/.cursor/projects/workspace/agent-transcripts/fake/fake.jsonl ===='
-  echo '{"type":"tool_call","tool":"read","status":"fake"}'
+  echo '{"type":"tool_use","name":"Read","status":"fake"}'
   exit 0
 fi
 
@@ -130,9 +140,9 @@ if [ "$count" -eq 1 ]; then
     tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
   esac
   if [ "${FAKE_DOCKER_READ_FABRICATE:-}" = "true" ]; then
-    printf '%s\n' '{"result":"fixture contents for read test"}'
+    printf '%s\n' '{"type":"result","is_error":false,"result":"fixture contents for read test"}'
   else
-    printf '{"result":"%s"}\n' "$read_value"
+    printf '{"type":"result","is_error":false,"result":"%s"}\n' "$read_value"
   fi
   exit "${FAKE_DOCKER_READ_STATUS:-0}"
 fi
@@ -187,10 +197,11 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         result = self._run_smoke()
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.invocation_count, 2)
+        self.assertEqual(result.invocation_count, 3)
         self.assertEqual(result.invocations.count("--mode ask"), 2)
         self.assertEqual(result.invocations.count("--sandbox disabled"), 2)
         self.assertEqual(result.invocations.count("--trust"), 2)
+        self.assertIn("returned the fixture nonce", result.stdout)
         self.assertIn("permission smoke passed", result.stdout)
 
     def test_cursor_config_normalization_preserving_policy_is_allowed(self) -> None:
@@ -200,21 +211,21 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.invocation_count, 2)
+        self.assertEqual(result.invocation_count, 3)
 
     def test_cleanup_falls_back_to_reviewer_container(self) -> None:
         result = self._run_smoke(FAKE_RM_FAIL_FIRST="true")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.invocation_count, 3)
+        self.assertEqual(result.invocation_count, 4)
         self.assertIn("dst=/smoke", result.invocations)
 
     def test_exhausted_cleanup_warns_without_changing_probe_status(self) -> None:
         # A hostile-probe failure also dumps the agent transcripts, so the
         # failing subtest expects one extra docker invocation.
         for hostile_status, expected_status, expected_count in (
-            ("0", 0, 3),
-            ("9", 1, 4),
+            ("0", 0, 4),
+            ("9", 1, 5),
         ):
             with self.subTest(
                 hostile_status=hostile_status, expected_status=expected_status
@@ -239,15 +250,24 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertIn("dst=/transcripts", result.invocations)
         self.assertEqual(result.invocation_count, 2)
 
-    def test_fabricated_read_response_fails_and_dumps_transcripts(self) -> None:
+    def test_fabricated_read_response_passes_with_ask_mode_notice(self) -> None:
+        # Headless ask mode records the Read tool_use but never executes it,
+        # so a fabricated response with a real Read attempt is the expected
+        # pinned-CLI behavior: report it without failing the smoke.
         result = self._run_smoke(FAKE_DOCKER_READ_FABRICATE="true")
 
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("without returning the fixture nonce", result.stdout)
+        self.assertIn("permission smoke passed", result.stdout)
+        self.assertEqual(result.invocation_count, 3)
+
+    def test_missing_read_tool_attempt_fails_and_dumps_transcripts(self) -> None:
+        result = self._run_smoke(FAKE_TRANSCRIPT_READ_ATTEMPTED="false")
+
         self.assertEqual(result.returncode, 1)
-        self.assertIn("expected fixture content was not returned", result.stderr)
-        self.assertIn("fixture contents for read test", result.stderr)
+        self.assertIn("no Read tool call was attempted", result.stderr)
         self.assertIn("read-probe agent transcripts follow", result.stderr)
-        self.assertIn("dst=/transcripts", result.invocations)
-        self.assertEqual(result.invocation_count, 2)
+        self.assertEqual(result.invocation_count, 3)
 
     def test_hostile_probe_execution_failure_is_diagnosed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_HOSTILE_STATUS="9")
@@ -314,7 +334,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("hostile-probe security failure: cli-config.json", result.stderr)
                 self.assertIn(expected_detail, result.stderr)
-                self.assertEqual(result.invocation_count, 3)
+                self.assertEqual(result.invocation_count, 4)
 
     def test_read_probe_home_mutation_fails_closed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="home")
