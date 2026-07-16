@@ -39,7 +39,7 @@ Three independent reviewers inspect the same immutable input and must emit schem
 - **Multi-Agent Consensus Panel**: Combines independent model reviewers to reduce single-model hallucination and bias. Shipped defaults are cost-efficient tiers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, **Google Gemini 3.1 Flash Lite**); operators typically override models per deployment via `AI_REVIEW_<REVIEWER>_MODEL` (no image rebuild required).
 - **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), disputes (`dispute`), noise classifications (`noise`), or duplicate markers (`duplicate`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
-- **Credential Isolation & Reviewer Sandboxing** *(stable)*: Reviewer containers run in read-only repository sandboxes with no shell execution capabilities and zero access to GitLab/GitHub API tokens or host environment variables. Provider endpoint pinning is enforced at the adapter layer; **container-level network egress enforcement is a known limitation, planned but not yet implemented** (tracked as H2 in [SECURITY.md](SECURITY.md)).
+- **Credential Isolation & Reviewer Sandboxing** *(stable)*: Reviewer containers receive disposable repository snapshots and zero access to GitLab/GitHub API tokens or host environment variables. Claude, Codex, and OpenCode use read-only/no-shell tool policies. Cursor is opt-in and uses an explicit `Read(**)` allowlist with `Write(**)` and `Shell(**)` denied because its kernel sandbox is unavailable inside nested GitHub Actions containers; see the Cursor caveat below. Provider endpoint pinning is enforced where the CLI supports it; **container-level network egress enforcement is a known limitation, planned but not yet implemented** (tracked as H2 in [SECURITY.md](SECURITY.md)).
 - **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs (and GitHub PR reviews) without creating duplicate threads across commits.
 - **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`) or GitHub PR comments, mapping historical issues across code revisions using line remapping (`anchors.py`). See [docs/REVISION_LIFECYCLE.md](docs/REVISION_LIFECYCLE.md).
 - **Automated Merge Gating**: Integrates natively with GitLab's "Pipelines must succeed" setting and GitHub required status checks, automatically failing the pipeline when unresolved blocking findings exist.
@@ -189,6 +189,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
   - **Claude Code**: Invoked via `claude.sh` with stream output parsing and disabled legacy model remap.
   - **Codex CLI**: Executed via `codex.sh` with `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only`.
   - **OpenCode CLI**: Invoked via `opencode.sh` with `opencode --pure run --agent ai-reviewer --format json` in an isolated directory with `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, and `OPENCODE_DISABLE_LSP_DOWNLOAD=1`.
+  - **Cursor CLI (opt-in)**: Runs from a disposable, sanitized snapshot under a clean `HOME`. The pinned CLI cannot initialize its kernel sandbox in nested GitHub Actions job containers, so the adapter disables that sandbox and uses `--trust` with `cli-config.json` allowing only `Read(**)` and explicitly denying `Write(**)` and `Shell(**)`. This is a weaker isolation boundary than a working kernel sandbox; enable Cursor only after validating the pinned image's permission-denial smoke test in the target runner environment.
 - **Egress Control**: Provider endpoint pinning is enforced in adapter validation, but runner/container network egress is CLI-policy-dependent and not yet enforced at the container layer (tracked by H2/SPEC-06).
 - **Immutable Container Images**: Pre-built base and reviewer container images are preflighted and signed/attested via GitHub Actions.
 
@@ -288,6 +289,13 @@ To integrate Code Tribunal into downstream projects:
 > Cursor. Update the trusted include `ref` and the pinned review images together.
 > The `AI review: [opencode]` jobs remain visible by design; with OpenCode
 > disabled they should complete quickly with skipped artifacts.
+
+GitHub Actions likewise uses a static review and critique matrix. Cursor is
+present in that matrix even when `AI_REVIEW_CURSOR_ENABLED` is unset or false;
+the runner exits before credential validation or CLI invocation and writes a
+small skipped artifact. The two short no-op jobs are intentional so enablement
+remains runtime configuration rather than workflow graph generation. Cursor's
+secret is materialized only when the repository variable is exactly `true`.
 
 1. **Choose direct or child-pipeline integration from a trusted template project.**
 

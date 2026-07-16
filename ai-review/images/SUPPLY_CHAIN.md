@@ -25,3 +25,7 @@ The base image installs Debian `ca-certificates` and `git` from the Bookworm apt
 ## Cursor CLI egress exception
 
 Cursor CLI cannot use OpenRouter or a custom base URL in agent mode. The default config keeps `reviewers.cursor.enabled: false`; when operators opt in, prompts, MR diffs, and readable repo-snapshot content are sent to Cursor's backend and billed through the Cursor account associated with `CURSOR_API_KEY`. The runner injects only the reviewer's declared credential and `adapters/cursor.sh` runs under `env -i`, so `OPENROUTER_API_KEY` is not forwarded to Cursor.
+
+## Cursor sandbox exception
+
+The pinned Cursor CLI's kernel sandbox is unavailable inside nested GitHub Actions job containers. The adapter therefore performs the CLI's sandbox-disable setup in a disposable `HOME` and invokes print mode with `--trust`. Isolation for this reviewer depends on the sanitized disposable workspace plus `cli-config.json`, which allows `Read(**)` and denies `Write(**)` and `Shell(**)`. This is an explicit, weaker tradeoff rather than an equivalent replacement for kernel isolation. Before publishing an image from trusted `main`, `scripts/smoke_cursor_permissions.sh` gives the real pinned CLI a hostile prompt and fails if either a file-write or shell-command sentinel appears. Pull requests never receive `CURSOR_API_KEY` for this smoke. Keep Cursor disabled for consumers until the trusted-main check passes. Prefer a supported non-mutating runtime or config option if a future pinned Cursor release provides one; do not guess an undocumented flag.

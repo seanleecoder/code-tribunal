@@ -16,6 +16,7 @@ _PUBLISH_WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
 )
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
+_BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
@@ -386,6 +387,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "AI_REVIEW_LOCAL_MOCK=1",
             'run_reviewer.sh "$reviewer" review',
             "consensus.schema.json",
+            "Verify Cursor denies write and shell tools",
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
         ):
             self.assertIn(preflight, build_preflight)
             self.assertNotIn(preflight, publish)
@@ -399,6 +402,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         for forbidden_secret in ("OPENROUTER_API_KEY", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
             self.assertNotIn(forbidden_secret, text)
+
+        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", build_preflight)
+        self.assertIn("github.event_name != 'pull_request'", build_preflight)
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
@@ -420,6 +426,11 @@ class GitLabCiTemplateTests(unittest.TestCase):
         for dockerfile in _IMAGE_DOCKERFILES:
             text = dockerfile.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
+
+    def test_base_image_copies_root_readme_to_documented_runtime_path(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn("COPY README.md /opt/README.md", text)
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
@@ -786,14 +797,22 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
             2,
         )
-        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
+        conditional_cursor_secret = (
+            "CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' "
+            "&& secrets.CURSOR_API_KEY || '' }}"
+        )
+        self.assertEqual(text.count(conditional_cursor_secret), 2)
+        self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
         self.assertIn(
             "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
             text,
         )
-        self.assertIn(
-            "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}",
-            text,
+        self.assertEqual(
+            text.count(
+                "AI_REVIEW_OPENCODE_ENABLED: "
+                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+            ),
+            2,
         )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:

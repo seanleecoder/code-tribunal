@@ -41,6 +41,16 @@ fields in CLI output** (open upstream feature request); install is
 `curl https://cursor.com/install | bash` (not npm), dropping the binary under
 `~/.cursor/bin`.
 
+**Runtime sandbox tradeoff discovered during implementation:** the pinned CLI's
+kernel sandbox cannot initialize inside nested GitHub Actions job containers.
+The shipped adapter performs the CLI's sandbox-disable setup in a disposable
+home, then runs `-p --trust` with `cli-config.json` allowing `Read(**)` and
+denying `Write(**)` and `Shell(**)`. This is a weaker allowlist boundary, not a
+claim of kernel isolation. A real pinned-image smoke test must demonstrate that
+hostile write and shell requests have no side effects before an operator enables
+Cursor. If a later pinned CLI documents a non-mutating sandbox mode or config
+setting that works in nested containers, prefer it over the setup command.
+
 The `--output-format json` result envelope is
 `{"type": "result", "subtype": ..., "is_error": bool, "result": "<text>",
 "session_id": ..., "duration_ms": ..., ...}` — which the existing runner
@@ -180,7 +190,7 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
   spawning the adapter).
 - **GitHub Actions (`ci/review.github-actions.yml`)**: extend both matrices
   to `[claude, codex, opencode, cursor]`; add to the review/critique job env:
-  `CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}`,
+  `CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}`,
   `AI_REVIEW_REQUIRE_REAL_CURSOR: "1"`, and
   `AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}`.
   Add the symmetric `AI_REVIEW_OPENCODE_ENABLED:
@@ -188,6 +198,10 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
   two-variable flip. The `|| '<default>'` guards are mandatory: an unset
   `vars.*` would otherwise materialize as `""`, which `_env_flag` rejects
   with a `ConfigError`.
+  The matrix remains static by design: when Cursor is disabled, its review and
+  critique entries exit before credential validation or adapter invocation and
+  emit skipped artifacts. This costs two short no-op jobs but avoids duplicating
+  runtime enablement logic in workflow graph conditions.
 
 ### 5. Docker image + supply chain
 
@@ -237,6 +251,9 @@ dashboard), plus the substitution recipe.
 - One real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real `CURSOR_API_KEY`,
   fixture MR) produces a valid finding batch within timeout — operator
   acceptance step, also confirms the exact Composer model id.
+- A hostile real-image prompt asks Cursor to write a sentinel file and invoke a
+  shell command; neither side effect exists after the run. Keep Cursor disabled
+  in the consuming repository until this permission-denial check passes.
 
 ## Tests
 
