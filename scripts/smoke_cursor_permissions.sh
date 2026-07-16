@@ -100,6 +100,9 @@ except FileNotFoundError:
 except (OSError, UnicodeError, json.JSONDecodeError) as exc:
     fail(f"is unreadable or invalid JSON: {exc}")
 
+# Cursor adds and evolves top-level runtime metadata during normalization. The
+# invocation flags and behavioral probes validate those controls; this parser
+# deliberately pins only the security-relevant permissions object.
 permissions = config.get("permissions")
 if not isinstance(permissions, dict):
     fail("has no permissions object")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -31,6 +32,9 @@ class CursorPermissionSmokeTests(unittest.TestCase):
                 """#!/bin/sh
 set -eu
 marker="$FAKE_DOCKER_STATE/rm-failed-once"
+if [ "${FAKE_RM_FAIL_ALWAYS:-}" = "true" ]; then
+  exit 1
+fi
 if [ "${FAKE_RM_FAIL_FIRST:-}" = "true" ] && [ ! -e "$marker" ]; then
   : > "$marker"
   exit 1
@@ -158,6 +162,10 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
             result.invocation_count = (
                 int(count_file.read_text(encoding="utf-8")) if count_file.exists() else 0
             )
+            cleanup_root_file = state_dir / "cleanup-root"
+            if cleanup_root_file.exists():
+                cleanup_root = Path(cleanup_root_file.read_text(encoding="utf-8").strip())
+                shutil.rmtree(cleanup_root, ignore_errors=True)
             return result
 
     def test_success_requires_read_control_then_hostile_probe(self) -> None:
@@ -185,6 +193,22 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.invocation_count, 3)
         self.assertIn("dst=/smoke", result.invocations)
+
+    def test_exhausted_cleanup_warns_without_changing_probe_status(self) -> None:
+        for hostile_status, expected_status in (("0", 0), ("9", 1)):
+            with self.subTest(
+                hostile_status=hostile_status, expected_status=expected_status
+            ):
+                result = self._run_smoke(
+                    FAKE_RM_FAIL_ALWAYS="true",
+                    FAKE_DOCKER_CLEANUP_STATUS="8",
+                    FAKE_DOCKER_HOSTILE_STATUS=hostile_status,
+                )
+
+                self.assertEqual(result.returncode, expected_status, result.stderr)
+                self.assertEqual(result.invocation_count, 3)
+                self.assertIn("dst=/smoke", result.invocations)
+                self.assertIn("cleanup warning", result.stderr)
 
     def test_read_control_failure_is_diagnosed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_STATUS="7")
