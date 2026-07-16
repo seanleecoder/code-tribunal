@@ -165,6 +165,22 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 )
                 self.assertEqual(result.invocation_count, 1)
 
+    def test_read_probe_home_mutation_fails_closed(self) -> None:
+        result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="home")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("read-probe security failure", result.stderr)
+        self.assertIn("cursor-home-sentinel", result.stderr)
+        self.assertEqual(result.invocation_count, 1)
+
+    def test_read_probe_tmp_mutation_fails_closed(self) -> None:
+        result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="tmp")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("read-probe security failure", result.stderr)
+        self.assertIn("cursor-tmp-sentinel", result.stderr)
+        self.assertEqual(result.invocation_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

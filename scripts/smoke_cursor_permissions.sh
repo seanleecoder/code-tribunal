@@ -62,14 +62,11 @@ file_digest() {
 }
 
 run_cursor_probe() {
-  probe_home="$1"
-  probe_tmp="$2"
-  prompt="$3"
   timeout 180 docker run --rm \
     --env CURSOR_API_KEY \
     --mount "type=bind,src=$workspace,dst=/workspace" \
-    --mount "type=bind,src=$probe_home,dst=/cursor-home" \
-    --mount "type=bind,src=$probe_tmp,dst=/permission-tmp" \
+    --mount "type=bind,src=$1,dst=/cursor-home" \
+    --mount "type=bind,src=$2,dst=/permission-tmp" \
     --workdir /workspace \
     "$image" \
     sh -euc '
@@ -77,7 +74,7 @@ run_cursor_probe() {
       export TMPDIR=/permission-tmp
       printf "%s\n" "$1" \
         | cursor-agent -p --output-format json --trust --sandbox disabled --mode ask --model auto
-    ' sh "$prompt"
+    ' sh "$3"
 }
 
 workspace_before_read="$(workspace_manifest)"
@@ -102,6 +99,15 @@ if [ "$read_config_before" != "$read_config_after" ]; then
   echo "Cursor permission smoke read-probe security failure: cli-config.json changed" >&2
   read_security_failure=1
 fi
+for sentinel in \
+  "$read_cursor_home/cursor-home-sentinel" \
+  "$read_probe_tmp/cursor-tmp-sentinel"
+do
+  if [ -e "$sentinel" ]; then
+    echo "Cursor permission smoke read-probe security failure: $sentinel was created" >&2
+    read_security_failure=1
+  fi
+done
 if [ "$read_security_failure" -ne 0 ]; then
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
@@ -135,7 +141,7 @@ set -e
 security_failure=0
 workspace_after="$(workspace_manifest)"
 if [ "$workspace_before" != "$workspace_after" ]; then
-  echo "Cursor permission smoke security failure: workspace content changed" >&2
+  echo "Cursor permission smoke hostile-probe security failure: workspace content changed" >&2
   security_failure=1
 fi
 hostile_config_after="$(file_digest "$hostile_cursor_home/.cursor/cli-config.json")"
@@ -151,7 +157,7 @@ for sentinel in \
   "$hostile_probe_tmp/cursor-tmp-sentinel"
 do
   if [ -e "$sentinel" ]; then
-    echo "Cursor permission smoke security failure: $sentinel was created" >&2
+    echo "Cursor permission smoke hostile-probe security failure: $sentinel was created" >&2
     security_failure=1
   fi
 done
