@@ -119,20 +119,8 @@ jobs:
               --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
           '
 
-      - name: Verify Cursor denies write and shell tools
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-        shell: bash
-        run: |
-          if [[ -z "$CURSOR_API_KEY" ]]; then
-            echo "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY is not configured. Keep Cursor disabled."
-            exit 0
-          fi
-          scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"
-
       - name: Save preflighted image artifact
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -141,7 +129,7 @@ jobs:
             | gzip -c > image-artifacts/ai-review-images.tar.gz
 
       - name: Upload preflighted image artifact
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         # actions/upload-artifact@v4.6.2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -153,6 +141,64 @@ jobs:
       - name: Report preflight-only run
         if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         run: echo "Built and preflighted images only; publishing is restricted to main."
+
+  cursor-permission-smoke:
+    name: Cursor permission smoke
+    # Cursor-enablement gate (spec-21): this probe must pass before an operator
+    # flips cursor.enabled on in ai-review/config/review.yaml, but it is
+    # deliberately NOT in publish's needs — Cursor is disabled in review.yaml,
+    # so its permission smoke must not block publishing images for the enabled
+    # reviewers. Runs on main pushes and on workflow_dispatch from any branch
+    # so the probe can be iterated without merging to main first.
+    runs-on: ubuntu-latest
+    needs: build-preflight
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@v6.0.3
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Define image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-base"
+          reviewer_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-reviewer"
+          image_tag="${IMAGE_VERSION}-${GITHUB_SHA}"
+          {
+            echo "AI_REVIEW_BASE_IMAGE=${base_image}"
+            echo "AI_REVIEW_REVIEWER_IMAGE=${reviewer_image}"
+            echo "AI_REVIEW_IMAGE_TAG=${image_tag}"
+            echo "AI_REVIEW_BASE_TAG=${base_image}:${image_tag}"
+            echo "AI_REVIEW_REVIEWER_TAG=${reviewer_image}:${image_tag}"
+          } >> "$GITHUB_ENV"
+
+      - name: Download preflighted image artifact
+        # actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ai-review-images
+          path: image-artifacts
+
+      - name: Load preflighted images
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip -dc image-artifacts/ai-review-images.tar.gz | docker load
+          docker image inspect "$AI_REVIEW_REVIEWER_TAG" >/dev/null
+
+      - name: Verify Cursor denies write and shell tools
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$CURSOR_API_KEY" ]]; then
+            echo "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY is not configured. Keep Cursor disabled."
+            exit 0
+          fi
+          scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"
 
   publish:
     name: Publish and attest

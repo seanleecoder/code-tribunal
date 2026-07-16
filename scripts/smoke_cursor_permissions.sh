@@ -131,6 +131,100 @@ if missing_denies:
 PY
 }
 
+# Cursor state under the bind-mounted HOME is root-owned, so read the agent
+# transcripts from inside the image. On probe failures they show whether the
+# agent attempted a tool call and whether the policy allowed or denied it.
+# Arguments are: home directory, then probe label.
+dump_cursor_transcripts() {
+  echo "Cursor $2 agent transcripts follow:" >&2
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -c '
+      if [ -z "$(find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null)" ]; then
+        echo "no agent transcripts found under /transcripts/.cursor"
+        exit 0
+      fi
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec sh -c '\''echo "==== $1 ===="; sed -n "1,200p" "$1"'\'' _ {} \;
+    ' >&2 || true
+}
+
+# Search the root-owned agent transcripts from inside the image. Arguments
+# are: home directory, then a fixed string to match.
+transcript_matches() {
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -euc '
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec cat {} + | grep -Fq -- "$1"
+    ' sh "$2"
+}
+
+# Parse the read probe's result envelope rather than grepping for literal
+# substrings, so a future cursor-agent release that reformats or reorders the
+# JSON (e.g. pretty-printed `"is_error": false`) doesn't silently misclassify
+# it. Prints "missing" (no result envelope found), "error" (is_error is not
+# literally false), or "ok". Argument is the read probe's captured output file.
+classify_read_envelope() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+
+
+def is_result(candidate: object) -> bool:
+    return isinstance(candidate, dict) and candidate.get("type") == "result"
+
+
+result = None
+try:
+    whole = json.loads(text)
+except json.JSONDecodeError:
+    whole = None
+if is_result(whole):
+    result = whole
+
+if result is None:
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if is_result(candidate):
+            result = candidate
+            break
+
+if result is None:
+    print("missing")
+elif result.get("is_error") is False:
+    print("ok")
+else:
+    print("error")
+PY
+}
+
+# Best-effort detection of an explicit policy denial recorded in the
+# transcripts. The pinned CLI has never been observed recording one (headless
+# ask mode leaves the Read tool_use without any outcome), so match a
+# conservative marker set case-insensitively. Argument is the home directory.
+transcript_shows_denial() {
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -euc '
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec cat {} + \
+        | grep -Fiq -e "permission denied" -e "\"denied\"" -e "not allowed" -e "rejected"
+    '
+}
+
 # Probe arguments are: home directory, temp directory, then prompt text.
 run_cursor_probe() {
   timeout 180 docker run --rm \
@@ -182,6 +276,7 @@ done
 if [ "$read_security_failure" -ne 0 ]; then
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
 
@@ -189,13 +284,50 @@ if [ "$read_status" -ne 0 ]; then
   echo "Cursor permission smoke read probe execution failure: cursor-agent exited $read_status" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
-if ! grep -Fq "$read_nonce" "$read_output_file"; then
-  echo "Cursor permission smoke read probe execution failure: expected fixture content was not returned" >&2
+read_envelope_status="$(classify_read_envelope "$read_output_file")"
+if [ "$read_envelope_status" = "missing" ]; then
+  echo "Cursor permission smoke read probe execution failure: no result envelope was produced" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
+fi
+if [ "$read_envelope_status" = "error" ]; then
+  echo "Cursor permission smoke read probe execution failure: result envelope reported an error" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
+fi
+# The pinned CLI's headless ask mode records the Read tool_use in the agent
+# transcript but never executes it, so the response cannot be trusted to echo
+# the fixture nonce (observed: the model fabricates plausible contents; see
+# spec-21). Require proof that the probe drove the file-reading tool path,
+# then classify the outcome: the nonce anywhere (reply or transcript) proves
+# the read executed; an explicit denial marker means the policy rejected the
+# sole allowed tool and must fail; only the marker-free "attempted but never
+# executed" case is the accepted ask-mode limitation.
+if ! transcript_matches "$read_cursor_home" '"name":"Read"'; then
+  echo "Cursor permission smoke read probe execution failure: no Read tool call was attempted" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
+fi
+if grep -Fq "$read_nonce" "$read_output_file" \
+  || transcript_matches "$read_cursor_home" "$read_nonce"; then
+  echo "Cursor read probe returned the fixture nonce: the pinned CLI executed the read."
+elif transcript_shows_denial "$read_cursor_home"; then
+  echo "Cursor permission smoke read probe execution failure: the transcript records the Read tool as denied" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
+else
+  echo "Cursor read probe attempted the Read tool without returning the fixture nonce (known pinned-CLI ask-mode limitation; see spec-21)."
 fi
 
 workspace_before="$(workspace_manifest)"
@@ -236,6 +368,7 @@ done
 if [ "$security_failure" -ne 0 ]; then
   echo "Cursor hostile-probe output follows:" >&2
   sed -n '1,240p' "$hostile_output_file" >&2
+  dump_cursor_transcripts "$hostile_cursor_home" hostile-probe
   exit 1
 fi
 
@@ -243,6 +376,7 @@ if [ "$hostile_status" -ne 0 ]; then
   echo "Cursor permission smoke hostile probe execution failure: cursor-agent exited $hostile_status without a detected filesystem side effect" >&2
   echo "Cursor hostile-probe output follows:" >&2
   sed -n '1,240p' "$hostile_output_file" >&2
+  dump_cursor_transcripts "$hostile_cursor_home" hostile-probe
   exit 1
 fi
 
