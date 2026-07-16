@@ -441,6 +441,7 @@ PY
         self.assertIn("--output-format json", cli_args)
         self.assertIn("--trust", cli_args)
         self.assertIn("--sandbox disabled", cli_args)
+        self.assertIn("--mode ask", cli_args)
         self.assertNotIn("--sandbox enabled", cli_args)
         self.assertIn("--model auto", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
@@ -475,6 +476,7 @@ PY
         self.assertIn("/cursor-agent -p", invocations[0])
         self.assertIn("--trust", cli_args)
         self.assertIn("--sandbox disabled", cli_args)
+        self.assertIn("--mode ask", cli_args)
         self.assertNotIn("--sandbox enabled", cli_args)
         self.assertEqual(meta["workspace_entries"], set())
 

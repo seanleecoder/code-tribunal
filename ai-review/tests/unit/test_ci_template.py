@@ -444,7 +444,24 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
 
         self.assertIn("--sandbox disabled", text)
+        self.assertEqual(text.count("--mode ask"), 1)
+        self.assertIn("run_cursor_probe()", text)
         self.assertNotIn("cursor-agent sandbox disable", text)
+        self.assertIn('"Write(/**)"', text)
+        self.assertIn('"Shell(*)"', text)
+        self.assertNotIn('"Shell(**)"', text)
+        self.assertIn('read_nonce="cursor-read-', text)
+        self.assertIn("/dev/urandom", text)
+        self.assertIn("read probe execution failure", text)
+        self.assertIn("hostile probe execution failure", text)
+        self.assertIn('workspace_before_read="$(workspace_manifest)"', text)
+        self.assertIn('workspace_after_read="$(workspace_manifest)"', text)
+        self.assertIn("read-probe security failure", text)
+        self.assertIn("read-cursor-home", text)
+        self.assertIn("hostile-cursor-home", text)
+        self.assertIn('"$read_cursor_home/cursor-home-sentinel"', text)
+        self.assertIn('"$read_probe_tmp/cursor-tmp-sentinel"', text)
+        self.assertIn("hostile-probe security failure: workspace content changed", text)
         self.assertIn('workspace_before="$(workspace_manifest)"', text)
         self.assertIn('workspace_after="$(workspace_manifest)"', text)
         self.assertIn("/workspace/fixture.txt", text)
@@ -471,6 +488,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("claude --version", text)
         self.assertIn("codex --version", text)
         self.assertIn("opencode --version", text)
+        self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
         text = "\n".join(
