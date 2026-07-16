@@ -111,9 +111,23 @@ fi
 
 if [ -n "$transcripts_root" ]; then
   case "$all_args" in
-    *"grep -Fq"*)
+    *'"name":"Read"'*)
       printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-matches"
       if [ "${FAKE_TRANSCRIPT_READ_ATTEMPTED:-true}" = "true" ]; then
+        exit 0
+      fi
+      exit 1
+      ;;
+    *"grep -Fiq"*)
+      printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-denial-checks"
+      if [ "${FAKE_TRANSCRIPT_DENIED:-false}" = "true" ]; then
+        exit 0
+      fi
+      exit 1
+      ;;
+    *"grep -Fq"*)
+      printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-matches"
+      if [ "${FAKE_TRANSCRIPT_NONCE:-false}" = "true" ]; then
         exit 0
       fi
       exit 1
@@ -139,7 +153,9 @@ if [ "$count" -eq 1 ]; then
     home) : > "$cursor_home/cursor-home-sentinel" ;;
     tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
   esac
-  if [ "${FAKE_DOCKER_READ_FABRICATE:-}" = "true" ]; then
+  if [ "${FAKE_DOCKER_READ_IS_ERROR:-}" = "true" ]; then
+    printf '%s\n' '{"type":"result","is_error":true,"result":"Invalid API key"}'
+  elif [ "${FAKE_DOCKER_READ_FABRICATE:-}" = "true" ]; then
     printf '%s\n' '{"type":"result","is_error":false,"result":"fixture contents for read test"}'
   else
     printf '{"type":"result","is_error":false,"result":"%s"}\n' "$read_value"
@@ -252,14 +268,45 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
 
     def test_fabricated_read_response_passes_with_ask_mode_notice(self) -> None:
         # Headless ask mode records the Read tool_use but never executes it,
-        # so a fabricated response with a real Read attempt is the expected
-        # pinned-CLI behavior: report it without failing the smoke.
+        # so a fabricated response with a real Read attempt — and no denial
+        # recorded — is the expected pinned-CLI behavior: report it without
+        # failing the smoke.
         result = self._run_smoke(FAKE_DOCKER_READ_FABRICATE="true")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("without returning the fixture nonce", result.stdout)
         self.assertIn("permission smoke passed", result.stdout)
-        self.assertEqual(result.invocation_count, 3)
+        self.assertEqual(result.invocation_count, 5)
+
+    def test_error_result_envelope_fails_and_dumps_transcripts(self) -> None:
+        result = self._run_smoke(FAKE_DOCKER_READ_IS_ERROR="true")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("result envelope reported an error", result.stderr)
+        self.assertIn("read-probe agent transcripts follow", result.stderr)
+        self.assertEqual(result.invocation_count, 2)
+
+    def test_transcript_denial_fails_and_dumps_transcripts(self) -> None:
+        result = self._run_smoke(
+            FAKE_DOCKER_READ_FABRICATE="true",
+            FAKE_TRANSCRIPT_DENIED="true",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("records the Read tool as denied", result.stderr)
+        self.assertIn("read-probe agent transcripts follow", result.stderr)
+        self.assertEqual(result.invocation_count, 5)
+
+    def test_nonce_in_transcript_counts_as_executed_read(self) -> None:
+        result = self._run_smoke(
+            FAKE_DOCKER_READ_FABRICATE="true",
+            FAKE_TRANSCRIPT_NONCE="true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("the pinned CLI executed the read", result.stdout)
+        self.assertIn("permission smoke passed", result.stdout)
+        self.assertEqual(result.invocation_count, 4)
 
     def test_missing_read_tool_attempt_fails_and_dumps_transcripts(self) -> None:
         result = self._run_smoke(FAKE_TRANSCRIPT_READ_ATTEMPTED="false")

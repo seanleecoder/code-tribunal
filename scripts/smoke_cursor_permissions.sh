@@ -141,15 +141,12 @@ dump_cursor_transcripts() {
     --mount "type=bind,src=$1,dst=/transcripts" \
     "$image" \
     sh -c '
-      transcripts="$(find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null | LC_ALL=C sort)"
-      if [ -z "$transcripts" ]; then
+      if [ -z "$(find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null)" ]; then
         echo "no agent transcripts found under /transcripts/.cursor"
         exit 0
       fi
-      for transcript in $transcripts; do
-        echo "==== $transcript ===="
-        sed -n "1,200p" "$transcript"
-      done
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec sh -c '\''echo "==== $1 ===="; sed -n "1,200p" "$1"'\'' _ {} \;
     ' >&2 || true
 }
 
@@ -163,6 +160,21 @@ transcript_matches() {
       find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
         -exec cat {} + | grep -Fq -- "$1"
     ' sh "$2"
+}
+
+# Best-effort detection of an explicit policy denial recorded in the
+# transcripts. The pinned CLI has never been observed recording one (headless
+# ask mode leaves the Read tool_use without any outcome), so match a
+# conservative marker set case-insensitively. Argument is the home directory.
+transcript_shows_denial() {
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -euc '
+      find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null \
+        -exec cat {} + \
+        | grep -Fiq -e "permission denied" -e "\"denied\"" -e "not allowed" -e "rejected"
+    '
 }
 
 # Probe arguments are: home directory, temp directory, then prompt text.
@@ -234,11 +246,21 @@ if ! grep -Fq '"type":"result"' "$read_output_file"; then
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
+if ! grep -Fq '"is_error":false' "$read_output_file"; then
+  echo "Cursor permission smoke read probe execution failure: result envelope reported an error" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
+fi
 # The pinned CLI's headless ask mode records the Read tool_use in the agent
 # transcript but never executes it, so the response cannot be trusted to echo
 # the fixture nonce (observed: the model fabricates plausible contents; see
-# spec-21). Require proof that the probe drove the file-reading tool path, and
-# report — without failing — whether the read actually executed.
+# spec-21). Require proof that the probe drove the file-reading tool path,
+# then classify the outcome: the nonce anywhere (reply or transcript) proves
+# the read executed; an explicit denial marker means the policy rejected the
+# sole allowed tool and must fail; only the marker-free "attempted but never
+# executed" case is the accepted ask-mode limitation.
 if ! transcript_matches "$read_cursor_home" '"name":"Read"'; then
   echo "Cursor permission smoke read probe execution failure: no Read tool call was attempted" >&2
   echo "Cursor read-probe output follows:" >&2
@@ -246,8 +268,15 @@ if ! transcript_matches "$read_cursor_home" '"name":"Read"'; then
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
-if grep -Fq "$read_nonce" "$read_output_file"; then
+if grep -Fq "$read_nonce" "$read_output_file" \
+  || transcript_matches "$read_cursor_home" "$read_nonce"; then
   echo "Cursor read probe returned the fixture nonce: the pinned CLI executed the read."
+elif transcript_shows_denial "$read_cursor_home"; then
+  echo "Cursor permission smoke read probe execution failure: the transcript records the Read tool as denied" >&2
+  echo "Cursor read-probe output follows:" >&2
+  sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
+  exit 1
 else
   echo "Cursor read probe attempted the Read tool without returning the fixture nonce (known pinned-CLI ask-mode limitation; see spec-21)."
 fi
