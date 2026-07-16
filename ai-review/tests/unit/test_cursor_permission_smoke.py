@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 _SMOKE = Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 
 
