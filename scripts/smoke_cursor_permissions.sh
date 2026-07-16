@@ -61,6 +61,7 @@ file_digest() {
   sha256sum "$1" | cut -d ' ' -f 1
 }
 
+# Probe arguments are: home directory, temp directory, then prompt text.
 run_cursor_probe() {
   timeout 180 docker run --rm \
     --env CURSOR_API_KEY \
