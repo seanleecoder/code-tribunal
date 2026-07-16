@@ -43,10 +43,12 @@ fields in CLI output** (open upstream feature request); install is
 
 **Runtime sandbox tradeoff discovered during implementation:** the pinned CLI's
 kernel sandbox cannot initialize inside nested GitHub Actions job containers.
-The shipped adapter selects allowlist mode without mutating persistent CLI
-state by running `-p --sandbox disabled --trust` in a disposable home, with
-`cli-config.json` allowing `Read(**)` and denying `Write(**)` and `Shell(**)`.
-This is a weaker allowlist boundary, not a claim of kernel isolation. A real
+The shipped adapter selects the pinned CLI's native read-only Q&A mode without
+mutating persistent CLI state by running
+`-p --mode ask --sandbox disabled --trust` in a disposable home, with
+`cli-config.json` allowing `Read(**)` and denying `Write(**)`, `Write(/**)`,
+and `Shell(*)`.
+This is a weaker CLI-policy boundary, not a claim of kernel isolation. A real
 pinned-image smoke test must demonstrate that hostile write and shell requests
 have no side effects before an operator enables Cursor. Re-evaluate
 `--sandbox enabled` whenever the pinned CLI changes in case a future release
@@ -145,7 +147,7 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
    against the pinned CLI):
 
    ```json
-   {"permissions": {"allow": ["Read(**)"], "deny": ["Write(**)", "Shell(**)"]}}
+   {"permissions": {"allow": ["Read(**)"], "deny": ["Write(**)", "Write(/**)", "Shell(*)"]}}
    ```
 
    Deny wins over allow in cursor's model. If the pinned binary supports a
@@ -161,6 +163,9 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
      CURSOR_API_KEY="$CURSOR_API_KEY" \
      cursor-agent -p \
      --output-format json \
+     --trust \
+     --sandbox disabled \
+     --mode ask \
      --model "$AI_REVIEW_MODEL" \
      < "$PROMPT_FILE"
    ```

@@ -56,13 +56,14 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
 fi
 
 cat > "$CURSOR_HOME_DIR/.cursor/cli-config.json" <<'JSON'
-{"permissions":{"allow":["Read(**)"],"deny":["Write(**)","Shell(**)"]}}
+{"permissions":{"allow":["Read(**)"],"deny":["Write(**)","Write(/**)","Shell(*)"]}}
 JSON
 
 cd "$CURSOR_REVIEW_ROOT"
 # Cursor's kernel sandbox is unavailable in GitHub's job containers. Use its
-# allowlist mode in the disposable HOME instead; cli-config.json still denies
-# writes and shell commands, and the workspace is the sanitized snapshot.
+# native read-only ask mode in the disposable HOME instead; cli-config.json
+# also denies relative and absolute writes plus every shell command, and the
+# workspace is the sanitized snapshot.
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
   TMPDIR="${TMPDIR:-/tmp}" \
@@ -72,5 +73,6 @@ env -i \
   --output-format json \
   --trust \
   --sandbox disabled \
+  --mode ask \
   --model "$AI_REVIEW_MODEL" \
   < "$PROMPT_FILE"

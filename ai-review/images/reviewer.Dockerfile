@@ -78,6 +78,10 @@ RUN claude --version \
     && opencode --version \
     && cursor-agent --version
 
+# The adapter's read-only boundary depends on this pinned CLI surface. Fail the
+# image build if a future pin drops or renames native ask mode.
+RUN cursor-agent --help | grep -F -- '--mode <mode>'
+
 # Fail the image build if the pinned CLI ever rejects either of the claude
 # adapter's stage flag sets (claude.sh) — the review probe (finding schema,
 # --add-dir, repo tools) and the critique probe (critique schema, --tools "",

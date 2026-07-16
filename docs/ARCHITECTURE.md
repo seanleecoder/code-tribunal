@@ -92,11 +92,11 @@ flowchart TB
 - **Read-only reviewers**: Claude Code runs with `--tools "Read,Grep,Glob"`,
   Codex with `--sandbox read-only`, and OpenCode with a deny-all permission
   config allowing only read/glob/grep. Opt-in Cursor runs with
-  `--sandbox disabled --trust` and a clean-home permission config allowing
-  `Read(**)` while denying `Write(**)` and `Shell(**)`. Cursor's kernel sandbox
-  cannot initialize in nested GitHub
-  Actions job containers, so this allowlist is a weaker compensating control
-  and must be verified against the pinned image before enablement. Repository
+  `--mode ask --sandbox disabled --trust` and a clean-home permission config
+  allowing `Read(**)` while denying `Write(**)`, `Write(/**)`, and `Shell(*)`.
+  Cursor's kernel sandbox cannot initialize in nested GitHub Actions job
+  containers, so this CLI-policy boundary is a weaker compensating control and
+  must be verified against the pinned image before enablement. Repository
   instruction files (`CLAUDE.md`,
   `AGENTS.md`, `.claude/`, `.codex/`, `.opencode/`) are stripped from the
   snapshot before a model sees it — MR content is treated as hostile input.
