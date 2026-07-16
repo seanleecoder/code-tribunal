@@ -27,6 +27,7 @@ COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src /opt/ai-review/src
 COPY ai-review/tests /opt/ai-review/tests
 COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
+COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
 

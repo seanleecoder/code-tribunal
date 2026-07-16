@@ -19,7 +19,9 @@ _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewe
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
-_CURSOR_PERMISSION_SMOKE = Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
+_CURSOR_PERMISSION_SMOKE = (
+    Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
+)
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
@@ -431,6 +433,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
         self.assertIn("COPY README.md /opt/README.md", text)
+        self.assertIn(
+            "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
+            text,
+        )
 
     def test_cursor_permission_smoke_checks_multiple_write_boundaries(self) -> None:
         text = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
