@@ -162,6 +162,54 @@ transcript_matches() {
     ' sh "$2"
 }
 
+# Parse the read probe's result envelope rather than grepping for literal
+# substrings, so a future cursor-agent release that reformats or reorders the
+# JSON (e.g. pretty-printed `"is_error": false`) doesn't silently misclassify
+# it. Prints "missing" (no result envelope found), "error" (is_error is not
+# literally false), or "ok". Argument is the read probe's captured output file.
+classify_read_envelope() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+
+
+def is_result(candidate: object) -> bool:
+    return isinstance(candidate, dict) and candidate.get("type") == "result"
+
+
+result = None
+try:
+    whole = json.loads(text)
+except json.JSONDecodeError:
+    whole = None
+if is_result(whole):
+    result = whole
+
+if result is None:
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if is_result(candidate):
+            result = candidate
+            break
+
+if result is None:
+    print("missing")
+elif result.get("is_error") is False:
+    print("ok")
+else:
+    print("error")
+PY
+}
+
 # Best-effort detection of an explicit policy denial recorded in the
 # transcripts. The pinned CLI has never been observed recording one (headless
 # ask mode leaves the Read tool_use without any outcome), so match a
@@ -239,14 +287,15 @@ if [ "$read_status" -ne 0 ]; then
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
-if ! grep -Fq '"type":"result"' "$read_output_file"; then
+read_envelope_status="$(classify_read_envelope "$read_output_file")"
+if [ "$read_envelope_status" = "missing" ]; then
   echo "Cursor permission smoke read probe execution failure: no result envelope was produced" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
-if ! grep -Fq '"is_error":false' "$read_output_file"; then
+if [ "$read_envelope_status" = "error" ]; then
   echo "Cursor permission smoke read probe execution failure: result envelope reported an error" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2

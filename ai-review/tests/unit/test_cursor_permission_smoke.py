@@ -155,6 +155,8 @@ if [ "$count" -eq 1 ]; then
   esac
   if [ "${FAKE_DOCKER_READ_IS_ERROR:-}" = "true" ]; then
     printf '%s\n' '{"type":"result","is_error":true,"result":"Invalid API key"}'
+  elif [ "${FAKE_DOCKER_READ_SPACED_JSON:-}" = "true" ]; then
+    printf '{\n  "type": "result",\n  "is_error": false,\n  "result": "%s"\n}\n' "$read_value"
   elif [ "${FAKE_DOCKER_READ_FABRICATE:-}" = "true" ]; then
     printf '%s\n' '{"type":"result","is_error":false,"result":"fixture contents for read test"}'
   else
@@ -285,6 +287,18 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertIn("result envelope reported an error", result.stderr)
         self.assertIn("read-probe agent transcripts follow", result.stderr)
         self.assertEqual(result.invocation_count, 2)
+
+    def test_spaced_and_reordered_envelope_json_is_parsed_correctly(self) -> None:
+        # Regression test for the envelope classifier: pretty-printed JSON
+        # with spaces after colons would have silently failed the old
+        # substring greps (`'"is_error":false'`); real JSON parsing handles
+        # any formatting.
+        result = self._run_smoke(FAKE_DOCKER_READ_SPACED_JSON="true")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("returned the fixture nonce", result.stdout)
+        self.assertIn("permission smoke passed", result.stdout)
+        self.assertEqual(result.invocation_count, 3)
 
     def test_transcript_denial_fails_and_dumps_transcripts(self) -> None:
         result = self._run_smoke(
