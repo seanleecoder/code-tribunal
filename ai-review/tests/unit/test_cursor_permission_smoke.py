@@ -27,6 +27,18 @@ class CursorPermissionSmokeTests(unittest.TestCase):
                 "#!/bin/sh\nshift\nexec \"$@\"\n",
             )
             self._write_executable(
+                bin_dir / "rm",
+                """#!/bin/sh
+set -eu
+marker="$FAKE_DOCKER_STATE/rm-failed-once"
+if [ "${FAKE_RM_FAIL_FIRST:-}" = "true" ] && [ ! -e "$marker" ]; then
+  : > "$marker"
+  exit 1
+fi
+exec /bin/rm "$@"
+""",
+            )
+            self._write_executable(
                 bin_dir / "docker",
                 """#!/bin/sh
 set -eu
@@ -41,6 +53,7 @@ printf '%s\n' "$*" >> "$state_dir/invocations"
 workspace=''
 cursor_home=''
 probe_tmp=''
+cleanup_root=''
 write_normalized_config() {
   printf '%s\n' \
     '{"permissions":{"allow":["Read(**)"],'\
@@ -59,6 +72,12 @@ write_config_with_extra_allow() {
 '"deny":["Write(**)","Write(/**)","Shell(*)"]}}' \
     > "$cursor_home/.cursor/cli-config.json"
 }
+write_config_with_extra_bucket() {
+  printf '%s\n' \
+    '{"permissions":{"allow":["Read(**)"],'\
+'"deny":["Write(**)","Write(/**)","Shell(*)"],"ask":["Shell(*)"]}}' \
+    > "$cursor_home/.cursor/cli-config.json"
+}
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--mount" ]; then
     shift
@@ -70,10 +89,16 @@ while [ "$#" -gt 0 ]; do
       /workspace) workspace="$src" ;;
       /cursor-home) cursor_home="$src" ;;
       /permission-tmp) probe_tmp="$src" ;;
+      /smoke) cleanup_root="$src" ;;
     esac
   fi
   shift
 done
+
+if [ -n "$cleanup_root" ]; then
+  printf '%s\n' "$cleanup_root" > "$state_dir/cleanup-root"
+  exit "${FAKE_DOCKER_CLEANUP_STATUS:-0}"
+fi
 
 if [ "$count" -eq 1 ]; then
   read_value="$(cat "$workspace/fixture.txt")"
@@ -84,6 +109,7 @@ if [ "$count" -eq 1 ]; then
     config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
     config-drop-deny) write_config_without_denies ;;
     config-add-allow) write_config_with_extra_allow ;;
+    config-add-bucket) write_config_with_extra_bucket ;;
     config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
     home) : > "$cursor_home/cursor-home-sentinel" ;;
     tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
@@ -99,6 +125,7 @@ case "${FAKE_DOCKER_MUTATE:-}" in
   config) printf '%s\n' tampered > "$cursor_home/.cursor/cli-config.json" ;;
   config-drop-deny) write_config_without_denies ;;
   config-add-allow) write_config_with_extra_allow ;;
+  config-add-bucket) write_config_with_extra_bucket ;;
   config-delete) rm -f "$cursor_home/.cursor/cli-config.json" ;;
   home) : > "$cursor_home/cursor-home-sentinel" ;;
   tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
@@ -152,6 +179,13 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.invocation_count, 2)
 
+    def test_cleanup_falls_back_to_reviewer_container(self) -> None:
+        result = self._run_smoke(FAKE_RM_FAIL_FIRST="true")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.invocation_count, 3)
+        self.assertIn("dst=/smoke", result.invocations)
+
     def test_read_control_failure_is_diagnosed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_STATUS="7")
 
@@ -174,6 +208,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
             "config",
             "config-drop-deny",
             "config-add-allow",
+            "config-add-bucket",
             "config-delete",
         ):
             with self.subTest(mutation=mutation):
@@ -190,20 +225,38 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.invocation_count, 1)
 
     def test_read_probe_config_tampering_fails_closed(self) -> None:
-        for mutation in (
-            "config",
-            "config-drop-deny",
-            "config-add-allow",
-            "config-delete",
-        ):
-            with self.subTest(mutation=mutation):
+        expected_details = {
+            "config": "invalid JSON",
+            "config-drop-deny": "permissions.deny is missing",
+            "config-add-allow": "permissions.allow changed",
+            "config-add-bucket": "permissions has unexpected keys",
+            "config-delete": "is missing",
+        }
+        for mutation, expected_detail in expected_details.items():
+            with self.subTest(mutation=mutation, expected_detail=expected_detail):
                 result = self._run_smoke(FAKE_DOCKER_READ_MUTATE=mutation)
 
                 self.assertEqual(result.returncode, 1)
-                self.assertIn(
-                    "read-probe security failure: cli-config.json", result.stderr
-                )
+                self.assertIn("read-probe security failure: cli-config.json", result.stderr)
+                self.assertIn(expected_detail, result.stderr)
                 self.assertEqual(result.invocation_count, 1)
+
+    def test_hostile_probe_config_tampering_reports_specific_reason(self) -> None:
+        expected_details = {
+            "config": "invalid JSON",
+            "config-drop-deny": "permissions.deny is missing",
+            "config-add-allow": "permissions.allow changed",
+            "config-add-bucket": "permissions has unexpected keys",
+            "config-delete": "is missing",
+        }
+        for mutation, expected_detail in expected_details.items():
+            with self.subTest(mutation=mutation, expected_detail=expected_detail):
+                result = self._run_smoke(FAKE_DOCKER_MUTATE=mutation)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("hostile-probe security failure: cli-config.json", result.stderr)
+                self.assertIn(expected_detail, result.stderr)
+                self.assertEqual(result.invocation_count, 2)
 
     def test_read_probe_home_mutation_fails_closed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="home")

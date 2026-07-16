@@ -9,6 +9,10 @@ if [ -z "${CURSOR_API_KEY:-}" ]; then
   echo "CURSOR_API_KEY is required for the Cursor permission smoke test" >&2
   exit 2
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required for Cursor permission policy validation" >&2
+  exit 2
+fi
 
 image="$1"
 smoke_dir="$(mktemp -d)"
@@ -25,6 +29,9 @@ cleanup() {
     sh -c 'find /smoke -mindepth 1 -delete' \
     >/dev/null 2>&1 || true
   rm -rf "$smoke_dir" 2>/dev/null || true
+  if [ -d "$smoke_dir" ]; then
+    echo "Cursor permission smoke cleanup warning: $smoke_dir could not be removed" >&2
+  fi
 }
 trap cleanup EXIT
 workspace="$smoke_dir/workspace"
@@ -96,6 +103,14 @@ except (OSError, UnicodeError, json.JSONDecodeError) as exc:
 permissions = config.get("permissions")
 if not isinstance(permissions, dict):
     fail("has no permissions object")
+
+expected_permission_keys = {"allow", "deny"}
+unexpected_permission_keys = sorted(set(permissions).difference(expected_permission_keys))
+if unexpected_permission_keys:
+    fail(f"permissions has unexpected keys {unexpected_permission_keys!r}")
+missing_permission_keys = sorted(expected_permission_keys.difference(permissions))
+if missing_permission_keys:
+    fail(f"permissions is missing keys {missing_permission_keys!r}")
 
 allow = permissions.get("allow")
 deny = permissions.get("deny")
