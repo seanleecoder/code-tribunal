@@ -32,12 +32,14 @@ class CursorPermissionSmokeTests(unittest.TestCase):
                 """#!/bin/sh
 set -eu
 marker="$FAKE_DOCKER_STATE/rm-failed-once"
-if [ "${FAKE_RM_FAIL_ALWAYS:-}" = "true" ]; then
-  exit 1
-fi
-if [ "${FAKE_RM_FAIL_FIRST:-}" = "true" ] && [ ! -e "$marker" ]; then
-  : > "$marker"
-  exit 1
+if [ "${1:-}" = "-rf" ]; then
+  if [ "${FAKE_RM_FAIL_ALWAYS:-}" = "true" ]; then
+    exit 1
+  fi
+  if [ "${FAKE_RM_FAIL_FIRST:-}" = "true" ] && [ ! -e "$marker" ]; then
+    : > "$marker"
+    exit 1
+  fi
 fi
 exec /bin/rm "$@"
 """,
