@@ -60,6 +60,7 @@ workspace=''
 cursor_home=''
 probe_tmp=''
 cleanup_root=''
+transcripts_root=''
 write_normalized_config() {
   printf '%s\n' \
     '{"permissions":{"allow":["Read(**)"],'\
@@ -96,6 +97,7 @@ while [ "$#" -gt 0 ]; do
       /cursor-home) cursor_home="$src" ;;
       /permission-tmp) probe_tmp="$src" ;;
       /smoke) cleanup_root="$src" ;;
+      /transcripts) transcripts_root="$src" ;;
     esac
   fi
   shift
@@ -104,6 +106,13 @@ done
 if [ -n "$cleanup_root" ]; then
   printf '%s\n' "$cleanup_root" > "$state_dir/cleanup-root"
   exit "${FAKE_DOCKER_CLEANUP_STATUS:-0}"
+fi
+
+if [ -n "$transcripts_root" ]; then
+  printf '%s\n' "$transcripts_root" >> "$state_dir/transcript-dumps"
+  echo '==== /transcripts/.cursor/projects/workspace/agent-transcripts/fake/fake.jsonl ===='
+  echo '{"type":"tool_call","tool":"read","status":"fake"}'
+  exit 0
 fi
 
 if [ "$count" -eq 1 ]; then
@@ -120,7 +129,11 @@ if [ "$count" -eq 1 ]; then
     home) : > "$cursor_home/cursor-home-sentinel" ;;
     tmp) : > "$probe_tmp/cursor-tmp-sentinel" ;;
   esac
-  printf '{"result":"%s"}\n' "$read_value"
+  if [ "${FAKE_DOCKER_READ_FABRICATE:-}" = "true" ]; then
+    printf '%s\n' '{"result":"fixture contents for read test"}'
+  else
+    printf '{"result":"%s"}\n' "$read_value"
+  fi
   exit "${FAKE_DOCKER_READ_STATUS:-0}"
 fi
 
@@ -197,7 +210,12 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertIn("dst=/smoke", result.invocations)
 
     def test_exhausted_cleanup_warns_without_changing_probe_status(self) -> None:
-        for hostile_status, expected_status in (("0", 0), ("9", 1)):
+        # A hostile-probe failure also dumps the agent transcripts, so the
+        # failing subtest expects one extra docker invocation.
+        for hostile_status, expected_status, expected_count in (
+            ("0", 0, 3),
+            ("9", 1, 4),
+        ):
             with self.subTest(
                 hostile_status=hostile_status, expected_status=expected_status
             ):
@@ -208,7 +226,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 )
 
                 self.assertEqual(result.returncode, expected_status, result.stderr)
-                self.assertEqual(result.invocation_count, 3)
+                self.assertEqual(result.invocation_count, expected_count)
                 self.assertIn("dst=/smoke", result.invocations)
                 self.assertIn("cleanup warning", result.stderr)
 
@@ -217,13 +235,27 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("read probe execution failure", result.stderr)
-        self.assertEqual(result.invocation_count, 1)
+        self.assertIn("read-probe agent transcripts follow", result.stderr)
+        self.assertIn("dst=/transcripts", result.invocations)
+        self.assertEqual(result.invocation_count, 2)
+
+    def test_fabricated_read_response_fails_and_dumps_transcripts(self) -> None:
+        result = self._run_smoke(FAKE_DOCKER_READ_FABRICATE="true")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("expected fixture content was not returned", result.stderr)
+        self.assertIn("fixture contents for read test", result.stderr)
+        self.assertIn("read-probe agent transcripts follow", result.stderr)
+        self.assertIn("dst=/transcripts", result.invocations)
+        self.assertEqual(result.invocation_count, 2)
 
     def test_hostile_probe_execution_failure_is_diagnosed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_HOSTILE_STATUS="9")
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("hostile probe execution failure", result.stderr)
+        self.assertIn("hostile-probe agent transcripts follow", result.stderr)
+        self.assertIn("dst=/transcripts", result.invocations)
 
     def test_filesystem_mutation_fails_closed(self) -> None:
         for mutation in (
@@ -248,7 +280,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("read-probe security failure: workspace content changed", result.stderr)
-        self.assertEqual(result.invocation_count, 1)
+        self.assertEqual(result.invocation_count, 2)
 
     def test_read_probe_config_tampering_fails_closed(self) -> None:
         expected_details = {
@@ -265,7 +297,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("read-probe security failure: cli-config.json", result.stderr)
                 self.assertIn(expected_detail, result.stderr)
-                self.assertEqual(result.invocation_count, 1)
+                self.assertEqual(result.invocation_count, 2)
 
     def test_hostile_probe_config_tampering_reports_specific_reason(self) -> None:
         expected_details = {
@@ -282,7 +314,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("hostile-probe security failure: cli-config.json", result.stderr)
                 self.assertIn(expected_detail, result.stderr)
-                self.assertEqual(result.invocation_count, 2)
+                self.assertEqual(result.invocation_count, 3)
 
     def test_read_probe_home_mutation_fails_closed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="home")
@@ -290,7 +322,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.returncode, 1)
         self.assertIn("read-probe security failure", result.stderr)
         self.assertIn("cursor-home-sentinel", result.stderr)
-        self.assertEqual(result.invocation_count, 1)
+        self.assertEqual(result.invocation_count, 2)
 
     def test_read_probe_tmp_mutation_fails_closed(self) -> None:
         result = self._run_smoke(FAKE_DOCKER_READ_MUTATE="tmp")
@@ -298,7 +330,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.returncode, 1)
         self.assertIn("read-probe security failure", result.stderr)
         self.assertIn("cursor-tmp-sentinel", result.stderr)
-        self.assertEqual(result.invocation_count, 1)
+        self.assertEqual(result.invocation_count, 2)
 
 
 if __name__ == "__main__":

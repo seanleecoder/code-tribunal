@@ -131,6 +131,28 @@ if missing_denies:
 PY
 }
 
+# Cursor state under the bind-mounted HOME is root-owned, so read the agent
+# transcripts from inside the image. On probe failures they show whether the
+# agent attempted a tool call and whether the policy allowed or denied it.
+# Arguments are: home directory, then probe label.
+dump_cursor_transcripts() {
+  echo "Cursor $2 agent transcripts follow:" >&2
+  timeout 60 docker run --rm \
+    --mount "type=bind,src=$1,dst=/transcripts" \
+    "$image" \
+    sh -c '
+      transcripts="$(find /transcripts/.cursor -type f -path "*agent-transcripts*" -name "*.jsonl" 2>/dev/null | LC_ALL=C sort)"
+      if [ -z "$transcripts" ]; then
+        echo "no agent transcripts found under /transcripts/.cursor"
+        exit 0
+      fi
+      for transcript in $transcripts; do
+        echo "==== $transcript ===="
+        sed -n "1,200p" "$transcript"
+      done
+    ' >&2 || true
+}
+
 # Probe arguments are: home directory, temp directory, then prompt text.
 run_cursor_probe() {
   timeout 180 docker run --rm \
@@ -182,6 +204,7 @@ done
 if [ "$read_security_failure" -ne 0 ]; then
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
 
@@ -189,12 +212,14 @@ if [ "$read_status" -ne 0 ]; then
   echo "Cursor permission smoke read probe execution failure: cursor-agent exited $read_status" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
 if ! grep -Fq "$read_nonce" "$read_output_file"; then
   echo "Cursor permission smoke read probe execution failure: expected fixture content was not returned" >&2
   echo "Cursor read-probe output follows:" >&2
   sed -n '1,240p' "$read_output_file" >&2
+  dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 fi
 
@@ -236,6 +261,7 @@ done
 if [ "$security_failure" -ne 0 ]; then
   echo "Cursor hostile-probe output follows:" >&2
   sed -n '1,240p' "$hostile_output_file" >&2
+  dump_cursor_transcripts "$hostile_cursor_home" hostile-probe
   exit 1
 fi
 
@@ -243,6 +269,7 @@ if [ "$hostile_status" -ne 0 ]; then
   echo "Cursor permission smoke hostile probe execution failure: cursor-agent exited $hostile_status without a detected filesystem side effect" >&2
   echo "Cursor hostile-probe output follows:" >&2
   sed -n '1,240p' "$hostile_output_file" >&2
+  dump_cursor_transcripts "$hostile_cursor_home" hostile-probe
   exit 1
 fi
 

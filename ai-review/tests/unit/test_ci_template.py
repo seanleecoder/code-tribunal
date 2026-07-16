@@ -322,6 +322,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         text = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
         build_preflight = _workflow_job(text, "build-preflight")
+        cursor_smoke = _workflow_job(text, "cursor-permission-smoke")
         publish = _workflow_job(text, "publish")
 
         self.assertIn("pull_request:", text)
@@ -389,8 +390,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "AI_REVIEW_LOCAL_MOCK=1",
             'run_reviewer.sh "$reviewer" review',
             "consensus.schema.json",
-            "Verify Cursor denies write and shell tools",
-            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
         ):
             self.assertIn(preflight, build_preflight)
             self.assertNotIn(preflight, publish)
@@ -405,10 +404,29 @@ class GitLabCiTemplateTests(unittest.TestCase):
         for forbidden_secret in ("OPENROUTER_API_KEY", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
             self.assertNotIn(forbidden_secret, text)
 
-        self.assertIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", build_preflight)
-        self.assertIn("github.event_name != 'pull_request'", build_preflight)
-        self.assertIn('if [[ -z "$CURSOR_API_KEY" ]]', build_preflight)
-        self.assertIn("Keep Cursor disabled", build_preflight)
+        # The Cursor permission smoke is the Cursor-enablement gate. It runs as
+        # its own job so a Cursor-only failure cannot block publishing images
+        # for the enabled reviewers, and it stays dispatchable from branches so
+        # the probe can be iterated without merging to main.
+        for smoke_marker in (
+            "Verify Cursor denies write and shell tools",
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
+            "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
+            'if [[ -z "$CURSOR_API_KEY" ]]',
+            "Keep Cursor disabled",
+        ):
+            self.assertIn(smoke_marker, cursor_smoke)
+            self.assertNotIn(smoke_marker, build_preflight)
+            self.assertNotIn(smoke_marker, publish)
+        self.assertIn("needs: build-preflight", cursor_smoke)
+        self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
+        self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)
+        self.assertIn("actions/download-artifact@v4", cursor_smoke)
+        self.assertRegex(cursor_smoke, r"uses: actions/download-artifact@[0-9a-f]{40}")
+        # Publish must not wait on the Cursor smoke.
+        publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
+        self.assertIsNotNone(publish_needs)
+        self.assertEqual(publish_needs.group(1), "build-preflight")
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")

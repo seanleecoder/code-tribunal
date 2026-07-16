@@ -53,6 +53,14 @@ pinned-image smoke test must demonstrate that hostile write and shell requests
 have no side effects before an operator enables Cursor. Unit tests verify that
 `Shell(*)` is consistently configured but cannot prove how the pinned CLI's
 glob engine interprets it; the trusted-main smoke remains the enablement gate.
+The smoke runs as its own `cursor-permission-smoke` job in the publish
+workflow: it gates Cursor enablement only and deliberately does not block
+image publishing for the already-enabled reviewers while Cursor stays
+disabled in `review.yaml`. The job also runs on `workflow_dispatch` from any
+branch so the probe can be iterated with the real `CURSOR_API_KEY` without
+merging to main, and on failure it dumps the agent transcripts from the
+disposable home so the log shows whether a tool call was attempted, allowed,
+or denied.
 Re-evaluate
 `--sandbox enabled` whenever the pinned CLI changes in case a future release
 supports kernel isolation in nested containers.
