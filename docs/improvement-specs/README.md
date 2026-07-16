@@ -4,7 +4,9 @@ These documents began as agent-ready work units derived from the Staff+ and
 security review. Phases 0–3 are retained as implementation and decision history.
 The active follow-on work is SPEC-19–21 below (spec IDs continue after the
 archived SPEC-17/18); SPEC-22 is a further, independent proposal (see
-[Proposed](#proposed)). Paused ideas are stored under
+[Proposed](#proposed)); SPEC-23–30 are the maintainer-triaged outcomes of the
+2026-07 1.0.0 release-readiness review (see
+[Phase 5](#phase-5--10-release-readiness)). Paused ideas are stored under
 [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
 
 Each spec follows the same template so an agent can execute it without extra
@@ -36,6 +38,7 @@ reasoning and security invariants are not lost.
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
 | **4** | Reviewer cost + panel flexibility | SPEC-19…21 | SPEC-19 implemented in this branch; SPEC-20/21 proposed. |
 | — | Project rules, learning loop, rule tracing | SPEC-22 | Proposed design; phases A0–E not started. |
+| **5** | 1.0 release readiness | SPEC-23…30 | Specified; not started. SPEC-23…29 gate the 1.0.0 release; SPEC-30 may follow in 1.0.x. |
 
 ## Phase 4 — Reviewer cost + panel flexibility
 
@@ -59,6 +62,25 @@ Independent of Phase 4 (SPEC-19…21); no shared dependency in either direction.
 | Spec | Title | Status |
 |---|---|---|
 | [SPEC-22](spec-22-project-rules-and-learning.md) | Project review rules from the target branch + human-gated learning loop + rule-level tracing (rule-trace interop) | Proposed design; phases A0–E not started. |
+
+## Phase 5 — 1.0 release readiness
+
+Outcomes of the 2026-07 release-readiness review after maintainer triage.
+Each spec is self-contained and independently implementable; SPEC-26 shares a
+`RENDER_BODY_VERSION` bump with SPEC-25 and should land after or with it.
+Release sequencing: SPEC-23…29 land before the 1.0.0 version bump + `v1.0.0`
+tag + image publish; SPEC-30 may ship in 1.0.x.
+
+| Spec | Title | Effort | Depends on |
+|---|---|---|---|
+| [SPEC-23](spec-23-github-thread-commands.md) | GitHub review-thread grouping: working `/ai-review` commands + real thread resolution | M | none |
+| [SPEC-24](spec-24-single-gitlab-token.md) | Single GitLab token; fix self-recognition of state notes and posts | S | none |
+| [SPEC-25](spec-25-suggestion-evidence-dissent.md) | Propagate suggestion/evidence into groups; surface dispute rationale | M | none |
+| [SPEC-26](spec-26-untruncated-rendering-platform-limits.md) | Remove fixed truncation; enforce platform comment limits | S | SPEC-25 |
+| [SPEC-27](spec-27-node24-action-pins.md) | Upgrade GitHub Actions pins off the deprecated node20 runtime | S | none |
+| [SPEC-28](spec-28-packaging-metadata.md) | Drop unused python-gitlab; correct package description | XS | none |
+| [SPEC-29](spec-29-pre-1.0-fix-batch.md) | Pre-1.0 fix batch: pin drift, CI rules, dead surface, trust auditor, config validation, doc claims | M | none |
+| [SPEC-30](spec-30-post-1.0-robustness.md) | Post-1.0 robustness: posting resilience, diff endpoint, fallback-parser removal | M | SPEC-23, SPEC-24 |
 
 ## Downstream validation
 
