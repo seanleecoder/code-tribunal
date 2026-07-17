@@ -628,6 +628,18 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):
+    def test_installed_workflow_matches_canonical_template(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        installed = root / ".github" / "workflows" / "ai-review.yml"
+        canonical = root / "ai-review" / "ci" / "review.github-actions.yml"
+        if not installed.exists():
+            self.skipTest("installed workflow is not included in the runtime image")
+
+        self.assertEqual(
+            installed.read_text(encoding="utf-8"),
+            canonical.read_text(encoding="utf-8"),
+        )
+
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
@@ -667,6 +679,19 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
             critique,
         )
+
+    def test_github_post_uses_dedicated_resolution_secret(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        post = _workflow_job(text, "post")
+
+        self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", post)
+        self.assertIn(
+            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: "
+            "${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
+            post,
+        )
+        self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
 
     def test_github_actions_maps_runtime_overrides_at_workflow_scope(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

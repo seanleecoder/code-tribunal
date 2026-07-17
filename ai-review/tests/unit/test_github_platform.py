@@ -269,11 +269,13 @@ class GraphQLSession:
         *,
         lookup_response: Any | None = None,
         mutation_response: Any | None = None,
+        mutation_status_code: int = 200,
         thread_node_ids: dict[int, str] | None = None,
     ) -> None:
         self.thread_found = thread_found
         self.lookup_response = lookup_response
         self.mutation_response = mutation_response
+        self.mutation_status_code = mutation_status_code
         self.thread_node_ids = (
             thread_node_ids
             if thread_node_ids is not None
@@ -309,7 +311,7 @@ class GraphQLSession:
                 )
             elif "mutation(" in query:
                 if self.mutation_response is not None:
-                    return Response(200, self.mutation_response)
+                    return Response(self.mutation_status_code, self.mutation_response)
                 mutation_key = (
                     "unresolveReviewThread"
                     if "unresolveReviewThread" in query
@@ -340,6 +342,23 @@ def test_resolve_thread_uses_graphql_mutation() -> None:
 
     assert thread["id"] == "123"
     assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-1"
+    assert session.calls[-1][2]["headers"]["Authorization"] == "Bearer token"
+
+
+def test_resolve_thread_uses_dedicated_token_only_for_mutation() -> None:
+    session = GraphQLSession(thread_found=True)
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "primary-token",
+        resolution_token="resolution-token",
+        session=session,
+    )
+
+    platform.resolve_thread("octo/repo", 7, "123")
+
+    lookup, mutation = session.calls
+    assert lookup[2]["headers"]["Authorization"] == "Bearer primary-token"
+    assert mutation[2]["headers"]["Authorization"] == "Bearer resolution-token"
 
 
 def test_resolve_thread_caches_thread_map_across_mutations() -> None:
@@ -454,6 +473,84 @@ def test_resolve_thread_normalizes_graphql_mutation_errors() -> None:
         assert "denied" in str(exc)
     else:
         raise AssertionError("GraphQL mutation error was accepted")
+
+
+def test_resolve_thread_hints_when_builtin_token_lacks_permission() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {"resolveReviewThread": None},
+            "errors": [{"message": "Resource not accessible by integration"}],
+        }
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "AI_REVIEW_GITHUB_RESOLVE_TOKEN" in str(exc)
+        assert "Pull requests read/write" in str(exc)
+    else:
+        raise AssertionError("GraphQL permission error was accepted")
+
+
+def test_resolve_thread_does_not_blame_missing_secret_when_dedicated_token_fails() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {"resolveReviewThread": None},
+            "errors": [{"message": "Resource not accessible by integration"}],
+        }
+    )
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        resolution_token="resolve-token",
+        session=session,
+    )
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "AI_REVIEW_GITHUB_RESOLVE_TOKEN" not in str(exc)
+    else:
+        raise AssertionError("GraphQL permission error was accepted")
+
+
+def test_resolve_thread_hints_when_builtin_token_gets_http_403() -> None:
+    session = GraphQLSession(
+        mutation_response={"message": "Forbidden"},
+        mutation_status_code=403,
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "failed: 403" in str(exc)
+        assert "may lack review-thread mutation permission" in str(exc)
+        assert "optional AI_REVIEW_GITHUB_RESOLVE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("HTTP 403 mutation response was accepted")
+
+
+def test_resolve_thread_keeps_http_403_generic_with_dedicated_token() -> None:
+    session = GraphQLSession(
+        mutation_response={"message": "Forbidden"},
+        mutation_status_code=403,
+    )
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        resolution_token="resolve-token",
+        session=session,
+    )
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "failed: 403" in str(exc)
+        assert "AI_REVIEW_GITHUB_RESOLVE_TOKEN" not in str(exc)
+    else:
+        raise AssertionError("HTTP 403 mutation response was accepted")
 
 
 def test_resolve_thread_rejects_unexpected_mutation_state() -> None:

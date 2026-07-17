@@ -859,6 +859,8 @@ def _plan_stale_records(
                 updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
                 if not resolution_quorum:
                     outcome.stale_unverified += 1
+            elif record.get("status") == "stale_unverified" and resolution_quorum:
+                updated["status"] = "resolved"
         planned_records.append(
             cast(
                 StateRecord,

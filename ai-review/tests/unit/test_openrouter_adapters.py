@@ -51,6 +51,7 @@ _ENV_KEYS = [
     "GITLAB_TOKEN",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
+    "AI_REVIEW_GITHUB_RESOLVE_TOKEN",
     "CI_JOB_TOKEN",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -300,6 +301,7 @@ PY
             os.environ["GITLAB_TOKEN"] = "gl-token-secret"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
+            os.environ["AI_REVIEW_GITHUB_RESOLVE_TOKEN"] = "github-resolve-secret"
             os.environ["CI_JOB_TOKEN"] = "ci-job-secret"
             os.environ["OPENAI_API_KEY"] = "openai-secret"
             os.environ["ANTHROPIC_API_KEY"] = "anthropic-secret"
@@ -927,6 +929,7 @@ PY
                     "GITLAB_TOKEN",
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",
+                    "AI_REVIEW_GITHUB_RESOLVE_TOKEN",
                     "CI_JOB_TOKEN",
                     "OPENAI_API_KEY",
                     "ANTHROPIC_API_KEY",

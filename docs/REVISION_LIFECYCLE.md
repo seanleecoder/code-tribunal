@@ -89,6 +89,9 @@ immediately declared fixed:
 - If the panel was degraded below that quorum → `stale_unverified`: the
   absence might just mean the reviewers that would have seen it didn't run.
   A degraded panel cannot "resolve away" your findings.
+- A later run with resolution quorum retries records left `stale_unverified`;
+  if the finding remains absent, the record and its review thread become
+  `resolved`.
 
 If a later revision reintroduces the issue, the record can transition back to
 `open` and the same thread is reused.
@@ -132,6 +135,7 @@ stateDiagram-v2
     open --> open: matched in later run (thread updated in place)
     open --> resolved: absent + resolution quorum met
     open --> stale_unverified: absent, but panel degraded / anchor missing
+    stale_unverified --> resolved: absent in later run + resolution quorum met
     open --> stale: anchor ambiguous after remap
     open --> wontfix: /ai-review wontfix
     wontfix --> open: /ai-review reopen
