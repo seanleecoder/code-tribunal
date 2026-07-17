@@ -20,7 +20,7 @@ PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 
-PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "python-gitlab", "requests"}
+PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
 # Version labels are documentation, but incorrect labels conceal dependency
 # upgrades. Keep this registry offline and reviewable so CI can verify every
