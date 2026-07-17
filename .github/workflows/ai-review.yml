@@ -63,7 +63,7 @@ jobs:
     steps:
       - name: Resolve pull request
         id: pull-request
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
         with:
@@ -101,7 +101,7 @@ jobs:
               return;
             }
             core.setOutput("ref", headSha);
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -111,7 +111,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}
         run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review-inputs
           path: inputs/
@@ -129,7 +129,7 @@ jobs:
       matrix:
         reviewer: [claude, codex, opencode, cursor]
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
           path: inputs
@@ -148,7 +148,7 @@ jobs:
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: ai-review-review-${{ matrix.reviewer }}
@@ -166,11 +166,11 @@ jobs:
       matrix:
         reviewer: [claude, codex, opencode, cursor]
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ai-review-review-*
           path: out
@@ -190,7 +190,7 @@ jobs:
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
           ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: ai-review-critique-${{ matrix.reviewer }}
@@ -205,11 +205,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e647fec37534d2d4f0821971331edbcb2b54f55b@sha256:b7324f0529af53c60b535cfa909e43a58f1d26867eab1a8168ac1a0d0b710070
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ai-review-review-*
           path: reviewer-artifacts
@@ -217,7 +217,7 @@ jobs:
       - name: Download critique artifacts
         id: download-critiques
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ai-review-critique-*
           path: reviewer-artifacts
@@ -227,7 +227,7 @@ jobs:
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
         run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review-consensus
           path: out/consensus/
@@ -237,11 +237,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e647fec37534d2d4f0821971331edbcb2b54f55b@sha256:b7324f0529af53c60b535cfa909e43a58f1d26867eab1a8168ac1a0d0b710070
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-consensus
           path: out/consensus
@@ -250,7 +250,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
         run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: ai-review-post
@@ -261,11 +261,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e647fec37534d2d4f0821971331edbcb2b54f55b@sha256:b7324f0529af53c60b535cfa909e43a58f1d26867eab1a8168ac1a0d0b710070
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-consensus
           path: out/consensus
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-post
           path: out/post

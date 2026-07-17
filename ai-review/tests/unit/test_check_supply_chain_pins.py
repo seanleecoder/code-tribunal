@@ -117,17 +117,42 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_detects_mislabeled_action_pin(self) -> None:
         text = (
-            "steps:\n  - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v4.3.0\n"
+            "steps:\n  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.3.0\n"
         )
 
         self.assertEqual(
             check_supply_chain_pins._workflow_action_issues(text),
             [
                 "line 2: actions/checkout@"
-                "df4cb1c069e1874edd31b4311f1884172cec0e10 is v6.0.3, "
+                "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 is v7.0.0, "
                 "but its version label is v4.3.0"
             ],
         )
+
+    def test_rejects_superseded_node20_action_pins(self) -> None:
+        stale_pins = {
+            ("actions/checkout", "08eba0b27e820071cde6df949e0beb9ba4906955"): "v4.3.0",
+            ("actions/setup-python", "a26af69be951a213d495a4c3e4e4022e16d87065"): "v5.6.0",
+            ("actions/github-script", "60a0d83039c74a4aee543508d2ffcb1c3799cdea"): "v7.0.1",
+            ("actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"): "v4.6.2",
+            ("actions/download-artifact", "d3f86a106a0bac45b974a628896c90dbdf5c8093"): "v4.3.0",
+        }
+
+        for (action, sha), version in stale_pins.items():
+            with self.subTest(action=action):
+                self.assertNotIn(
+                    (action, sha),
+                    check_supply_chain_pins.APPROVED_ACTION_PINS,
+                )
+                self.assertEqual(
+                    check_supply_chain_pins._workflow_action_issues(
+                        f"steps:\n  - uses: {action}@{sha} # {version}\n"
+                    ),
+                    [
+                        f"line 2: {action}@{sha} has unregistered version label "
+                        f"{version}"
+                    ],
+                )
 
     def test_detects_mutable_third_party_action(self) -> None:
         self.assertEqual(
@@ -145,8 +170,8 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_accepts_registered_preceding_version_label(self) -> None:
         text = (
             "steps:\n"
-            "  # actions/checkout@v6.0.3\n"
-            "  - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10\n"
+            "  # actions/checkout@v7.0.0\n"
+            "  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n"
         )
 
         self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])

@@ -359,10 +359,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("OPENCODE_VERSION=", text)
         self.assertIn("github.event_name != 'pull_request'", text)
         self.assertIn("github.ref == 'refs/heads/main'", text)
-        self.assertIn("actions/upload-artifact@v4", build_preflight)
+        self.assertIn("actions/upload-artifact@v7", build_preflight)
         self.assertRegex(build_preflight, r"uses: actions/upload-artifact@[0-9a-f]{40}")
         self.assertIn("docker save", build_preflight)
-        self.assertIn("actions/download-artifact@v4", publish)
+        self.assertIn("actions/download-artifact@v8", publish)
         self.assertRegex(publish, r"uses: actions/download-artifact@[0-9a-f]{40}")
         self.assertIn("docker load", publish)
         self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
@@ -426,7 +426,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("needs: build-preflight", cursor_smoke)
         self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
         self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)
-        self.assertIn("actions/download-artifact@v4", cursor_smoke)
+        self.assertIn("actions/download-artifact@v8", cursor_smoke)
         self.assertRegex(cursor_smoke, r"uses: actions/download-artifact@[0-9a-f]{40}")
         # Publish must not wait on the Cursor smoke.
         publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
@@ -771,7 +771,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn('core.setOutput("ref", headSha)', script)
         self.assertNotIn("${{ inputs.pr_number }}", script)
         self.assertIn(
-            "uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea",
+            "uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
             prepare,
         )
         self.assertIn("persist-credentials: false", prepare)
