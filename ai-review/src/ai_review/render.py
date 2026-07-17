@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from .canonical import canonical_json, sha256_hex
+from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-RENDER_BODY_VERSION = "render-body.v1"
+RENDER_BODY_VERSION = "render-body.v2"
 
 
 def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
@@ -60,24 +60,47 @@ def render_body(
     reviewers = sorted(group.get("contributing_reviewers", []))
     title = sanitize_model_text(str(group["title"]), max_length=240)
     summary = sanitize_model_text(str(group.get("body", "")), max_length=1200)
-    evidence_lines = []
+    normalized_title = normalize_text(str(group["title"]))
+    normalized_summary = normalize_text(str(group.get("body", "")))
+    evidence_lines: list[str] = []
     evidence_by_reviewer = group.get("evidence_by_reviewer", {})
     if isinstance(evidence_by_reviewer, dict):
         for reviewer in reviewers:
+            raw_evidence = evidence_by_reviewer.get(reviewer)
+            if not isinstance(raw_evidence, str) or not raw_evidence.strip():
+                continue
+            if normalize_text(raw_evidence) in {normalized_summary, normalized_title}:
+                continue
             evidence = sanitize_model_text(
-                str(evidence_by_reviewer.get(reviewer, summary)),
+                raw_evidence,
                 max_length=300,
             )
             evidence_lines.append(f"- {reviewer}: {evidence}")
-    if not evidence_lines:
-        evidence_lines.append(f"- {', '.join(reviewers) or 'reviewer'}: {summary}")
+
+    dissent_lines: list[str] = []
+    critique_disputes = group.get("critique_disputes", [])
+    if isinstance(critique_disputes, list):
+        for dispute in critique_disputes:
+            if not isinstance(dispute, dict):
+                continue
+            critic = sanitize_model_text(str(dispute.get("critic", "")), max_length=240)
+            rationale = sanitize_model_text(str(dispute.get("rationale", "")), max_length=1200)
+            line = f"- {critic} disputes: {rationale}"
+            adjusted = dispute.get("adjusted_severity")
+            if isinstance(adjusted, str):
+                line += (
+                    " (suggested severity: "
+                    + sanitize_model_text(adjusted, max_length=32)
+                    + ")"
+                )
+            dissent_lines.append(line)
 
     suggestion = group.get("suggestion")
     suggestion_block = ""
     if isinstance(suggestion, str) and validate_suggestion(suggestion):
         suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion, max_length=1200)
 
-    body_without_marker = (
+    sections = [
         "\n".join(
             [
                 f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
@@ -85,10 +108,16 @@ def render_body(
                 title,
                 "",
                 summary,
-                "",
-                "Evidence:",
-                *evidence_lines,
-                "",
+            ]
+        )
+    ]
+    if evidence_lines:
+        sections.append("\n".join(["Evidence:", *evidence_lines]))
+    if dissent_lines:
+        sections.append("\n".join(["Dissent:", *dissent_lines]))
+    sections.append(
+        "\n".join(
+            [
                 "Consensus:",
                 f"- Reviewers: {', '.join(reviewers)}",
                 f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
@@ -99,8 +128,8 @@ def render_body(
                 + ("recommended" if group.get("human_ack_recommended") else "not required"),
             ]
         )
-        + suggestion_block
     )
+    body_without_marker = "\n\n".join(sections) + suggestion_block
     body_hash = compute_body_hash(group, body_without_marker)
     marker = (
         f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "

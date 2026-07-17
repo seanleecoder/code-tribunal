@@ -126,6 +126,24 @@
         "category": { "type": "string", "minLength": 1 },
         "title": { "type": "string", "minLength": 1 },
         "body": { "type": "string" },
+        "suggestion": { "type": ["string", "null"] },
+        "evidence_by_reviewer": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "critique_disputes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["critic", "rationale"],
+            "properties": {
+              "critic": { "type": "string" },
+              "rationale": { "type": "string" },
+              "adjusted_severity": { "type": ["string", "null"] }
+            }
+          }
+        },
         "body_hash": { "$ref": "#/$defs/sha256" },
         "vote_count": { "type": "integer", "minimum": 0 },
         "critique_support_count": { "type": "integer", "minimum": 0 },

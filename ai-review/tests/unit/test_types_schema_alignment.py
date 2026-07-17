@@ -44,6 +44,22 @@ def test_finding_matches_finding_schema_required_fields_and_evidence_type() -> N
     assert "candidate_issue_signature" in hints
 
 
+def test_finding_group_optional_content_matches_consensus_schema() -> None:
+    schema = load_schema("consensus.schema.json")["$defs"]["group"]
+    hints = get_type_hints(domain_types.FindingGroup)
+    optional_content = {"suggestion", "evidence_by_reviewer", "critique_disputes"}
+    assert optional_content <= set(schema["properties"])
+    assert optional_content <= set(hints)
+    assert optional_content.isdisjoint(schema["required"])
+    assert set(domain_types.CritiqueDispute.__required_keys__) == {
+        "critic",
+        "rationale",
+    }
+    assert set(
+        schema["properties"]["critique_disputes"]["items"]["required"]
+    ) == {"critic", "rationale"}
+
+
 def test_post_result_matches_schema_required_fields() -> None:
     assert set(domain_types.PostResult.__required_keys__) == _schema_required(
         "post_result.schema.json"
