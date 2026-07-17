@@ -289,7 +289,7 @@ def newest_valid_state_from_notes(
         note_id = int(note.get("id") or state.get("state_note_id") or 0)
         valid.append((updated_at, note_id, state))
     if not valid:
-        if author_mismatches > 0:
+        if author_mismatches > 0 and not candidates:
             warnings.append(
                 "all state notes were rejected for author mismatch — this usually means "
                 "the GitLab token was rotated or read/write tokens belong to "
