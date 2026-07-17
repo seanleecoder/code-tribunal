@@ -277,6 +277,7 @@ def newest_valid_state_from_notes(
     expected_author_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     candidates, warnings = state_note_candidates(notes, expected_author_id=expected_author_id)
+    author_mismatches = sum(1 for w in warnings if "from non-bot author" in w)
     valid: list[tuple[str, int, dict[str, Any]]] = []
     for note in candidates:
         try:
@@ -288,6 +289,11 @@ def newest_valid_state_from_notes(
         note_id = int(note.get("id") or state.get("state_note_id") or 0)
         valid.append((updated_at, note_id, state))
     if not valid:
+        if author_mismatches > 0:
+            warnings.append(
+                "all state notes were rejected for author mismatch — this usually means "
+                "the GitLab token was rotated or read/write tokens belong to different bot users; see TROUBLESHOOTING"
+            )
         return None, warnings
     valid.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return valid[0][2], warnings

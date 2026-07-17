@@ -95,7 +95,7 @@ class InputBundleLimitTests(unittest.TestCase):
                     "CI_API_V4_URL": "https://gitlab.example/api/v4",
                     "CI_PROJECT_ID": "1",
                     "CI_MERGE_REQUEST_IID": "2",
-                    "GITLAB_READ_TOKEN": "token",
+                    "GITLAB_TOKEN": "token",
                 },
                 clear=True,
             ),

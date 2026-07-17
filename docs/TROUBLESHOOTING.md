@@ -108,6 +108,13 @@ indexes existing discussions by marker and edits in place. What you may see:
   under different categories produce two groups. Known limitation; the
   optional semantic grouping flag is off by default pending calibration.
 
+## Bot doesn't recognise its own previous posts / duplicates after a token change
+
+On GitLab, each project access token is its own bot user.
+
+- **Token rotation consequences**: Rotating `GITLAB_TOKEN` creates a new bot user. By design, the pipeline distrusts state notes and discussions authored by the old bot user. This causes a one-time re-post of active findings under the new identity.
+- **Two-token identity split (legacy)**: Using `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` as two separate tokens creates an identity split where the read step rejects the write step's notes on every run. Use a single `GITLAB_TOKEN` to fix this pitfall.
+
 ## Wrong line anchor
 
 Decode the state note (base64url payload after `ai-review-state:v1` in the
@@ -135,7 +142,7 @@ Check in order:
 
 ## Missing protected variables
 
-`OPENROUTER_API_KEY`, `GITLAB_READ_TOKEN`, `GITLAB_WRITE_TOKEN` must be
+`OPENROUTER_API_KEY` and `GITLAB_TOKEN` must be
 Masked + Protected project variables. Two classic traps:
 
 - Protected variables are **absent on unprotected branches** and in fork MRs —

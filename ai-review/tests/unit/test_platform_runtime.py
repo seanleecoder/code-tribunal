@@ -25,17 +25,20 @@ class PlatformRuntimeTests(unittest.TestCase):
             )
         factory.assert_called_once_with("https://github.example/api", "x")
 
-    def test_gitlab_mode_selects_access_specific_token(self) -> None:
+    def test_gitlab_mode_uses_gitlab_token_first_and_falls_back(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
         with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
+            # Uses GITLAB_TOKEN
             create_runtime_platform(
                 config,
                 access="read",
                 env={
                     "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                    "GITLAB_TOKEN": "t",
                     "GITLAB_READ_TOKEN": "r",
                 },
             )
+            # Falls back to legacy tokens
             create_runtime_platform(
                 config,
                 access="write",
@@ -44,7 +47,7 @@ class PlatformRuntimeTests(unittest.TestCase):
                     "GITLAB_WRITE_TOKEN": "w",
                 },
             )
-        self.assertEqual(factory.call_args_list[0].args, ("https://gitlab.example/api/v4", "r"))
+        self.assertEqual(factory.call_args_list[0].args, ("https://gitlab.example/api/v4", "t"))
         self.assertEqual(factory.call_args_list[1].args, ("https://gitlab.example/api/v4", "w"))
 
     def test_github_mode_passes_configured_bot_login(self) -> None:

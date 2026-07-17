@@ -48,6 +48,7 @@ _ENV_KEYS = [
     "OPENROUTER_BASE_URL",
     "ANTHROPIC_BASE_URL",
     "PATH",
+    "GITLAB_TOKEN",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
     "CI_JOB_TOKEN",
@@ -296,6 +297,7 @@ PY
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            os.environ["GITLAB_TOKEN"] = "gl-token-secret"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
             os.environ["CI_JOB_TOKEN"] = "ci-job-secret"
@@ -922,6 +924,7 @@ PY
                     self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
                     self.assertNotIn("ANTHROPIC_BASE_URL=", cli_env)
                 for forbidden in (
+                    "GITLAB_TOKEN",
                     "GITLAB_READ_TOKEN",
                     "GITLAB_WRITE_TOKEN",
                     "CI_JOB_TOKEN",
