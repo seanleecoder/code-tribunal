@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -50,22 +51,17 @@ def create_runtime_platform(
     if mode != "gitlab_discussions":
         raise PlatformRuntimeError(f"unsupported posting.mode: {mode!r}")
 
-    token_name = "GITLAB_TOKEN"
-    token = runtime_env.get(token_name)
+    legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
+    token = runtime_env.get("GITLAB_TOKEN")
     if not token:
-        legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
         token = runtime_env.get(legacy_name)
         if token:
-            import sys
-
             print(
                 f"ai-review: DEPRECATED: {legacy_name} is deprecated; use GITLAB_TOKEN instead.",
                 file=sys.stderr,
             )
-            token_name = legacy_name
 
     if not token and not allow_dry_run_defaults:
-        legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
         raise PlatformRuntimeError(
             f"gitlab_discussions requires GITLAB_TOKEN (or legacy {legacy_name})"
         )

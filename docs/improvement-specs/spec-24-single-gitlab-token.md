@@ -47,7 +47,8 @@ GitHub token handling (unchanged); any weakening of author verification
    - Error message when nothing is set names `GITLAB_TOKEN` first.
 2. Diagnosability (`ai-review/src/ai_review/memory.py` + callers): when
    `state_note_candidates` rejected ≥1 marker-bearing note for author
-   mismatch AND no valid state remains, append one summary warning:
+   mismatch AND no marker-bearing note survives the author check, append one
+   summary warning:
    `all state notes were rejected for author mismatch — this usually means
    the GitLab token was rotated or read/write tokens belong to different bot
    users; see TROUBLESHOOTING`. Surface it in prepare stdout and in
@@ -69,16 +70,20 @@ GitHub token handling (unchanged); any weakening of author verification
   state persisted and recognized across two consecutive runs on one MR
   (second run: no `ignored state note` warnings; `skipped_unchanged` > 0).
 - Split tokens still work, with a deprecation note in the job log.
-- The author-mismatch summary warning appears when all candidate state notes
-  are rejected.
+- The author-mismatch summary warning appears when all marker-bearing state
+  notes are rejected by the author check. If an author-valid note survives
+  that check but later fails checksum or payload validation, only the corrupt
+  note warning appears because bot identity was verified successfully.
 
 ## Tests
 
 - `test_platform_runtime.py`: `GITLAB_TOKEN` used for both accesses;
-  precedence over split tokens; split fallback still works; missing-token
-  error names `GITLAB_TOKEN`.
-- Memory/post unit tests: summary warning emitted exactly when ≥1 rejection
-  and zero surviving state; not emitted when a valid state survives.
+  precedence over split tokens; split fallback still works and emits its
+  deprecation note; missing-token error names `GITLAB_TOKEN`.
+- Memory/post unit tests: summary warning emitted exactly when ≥1 author
+  rejection and zero marker-bearing notes survive the author check; not
+  emitted when an author-valid note survives that check, whether it later
+  validates successfully or is reported as corrupt.
 
 ## Risk / rollback
 

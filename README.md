@@ -176,7 +176,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
 |  +-------------------------------------+   +-----------------------------------+  |
 |  |   Trusted Host Job (prepare/post)   |   |  Reviewer Container (review_*)    |  |
 |  |                                     |   |                                   |  |
-|  | - Access to GITLAB_TOKEN              |   | - Isolated Read-Only /opt/ai-review|  |
+|  | - Access to GITLAB_TOKEN           |   | - Isolated Read-Only /opt/ai-review|  |
 |  | - Full git access                   |   | - ONLY OPENROUTER_API_KEY exposed |  |
 |  | - Posts Discussions & State Notes   |   | - Provider access: CLI-policy dependent |  |
 |  +-------------------------------------+   | - Shell & File Edits DENIED       |  |
