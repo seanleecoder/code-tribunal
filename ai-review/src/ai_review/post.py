@@ -1362,8 +1362,9 @@ def finalize_state(
         ),
     )
     if _state_enabled(config):
+        prior_records = {record["issue_id"]: record for record in state_plan.base_records}
         prior_status = {
-            record["issue_id"]: record.get("status") for record in state_plan.base_records
+            issue_id: record.get("status") for issue_id, record in prior_records.items()
         }
         for record in state_plan.planned_records:
             discussion_id = record.get("discussion_id")
@@ -1387,9 +1388,11 @@ def finalize_state(
                     f"failed to {action} thread {discussion_id}: {exc}"
                 )
                 if desired:
-                    old_status = prior_status.get(record["issue_id"])
-                    if old_status is not None:
-                        record["status"] = old_status
+                    previous = prior_records.get(record["issue_id"])
+                    record["status"] = previous.get("status", "open") if previous else "open"
+                    record["human_disposition"] = (
+                        previous.get("human_disposition") if previous else None
+                    )
         final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,
