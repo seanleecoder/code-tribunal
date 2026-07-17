@@ -67,11 +67,11 @@ def create_runtime_platform(
     if not token and not allow_dry_run_defaults:
         legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
         raise PlatformRuntimeError(f"gitlab_discussions requires GITLAB_TOKEN (or legacy {legacy_name})")
-    api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
-    if not api_url and not allow_dry_run_defaults:
+    gitlab_api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
+    if not gitlab_api_url and not allow_dry_run_defaults:
         raise PlatformRuntimeError("gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL")
     return create_gitlab_platform(
-        api_url or "https://gitlab.example.com/api/v4",
+        gitlab_api_url or "https://gitlab.example.com/api/v4",
         token or "dry-run-token",
         token_header="PRIVATE-TOKEN",
     )
