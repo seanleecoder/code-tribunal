@@ -64,10 +64,11 @@ def _critique_batch(critic: str, critiques: list[dict], status: str = "success")
 class Phase5ConsensusTests(unittest.TestCase):
     def test_group_propagates_representative_suggestion_and_ordered_evidence(self) -> None:
         first = _finding("claude", "1" * 64, "major")
-        first["evidence"] = ["first fact", ""]
+        first["evidence"] = ["first fact", "", " \t\n"]
         first["suggestion"] = "Guard the lookup."
         second = _finding("claude", "2" * 64, "major")
         second["evidence"] = ["second fact"]
+        second["suggestion"] = "Use a default value instead."
         third = _finding("codex", "3" * 64, "major")
         third["evidence"] = ["third fact"]
         claude_batch = _batch("claude", first)

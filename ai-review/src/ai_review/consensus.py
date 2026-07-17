@@ -262,7 +262,7 @@ def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
         entries = [
             item
             for item in finding.get("evidence", [])
-            if isinstance(item, str) and item
+            if isinstance(item, str) and item.strip()
         ]
         if entries:
             evidence.setdefault(reviewer, []).extend(entries)
@@ -498,7 +498,7 @@ def _apply_critiques(
             group["critique_noise_count"] += 1
         elif verdict == "dispute":
             rationale = str(critique.get("rationale", ""))
-            if rationale.strip():
+            if critic.strip() and rationale.strip():
                 group["critique_disputes"].append(
                     {
                         "critic": critic,

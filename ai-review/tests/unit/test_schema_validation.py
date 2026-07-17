@@ -33,13 +33,22 @@ class SchemaValidationTests(unittest.TestCase):
         )
         invalid_values = [
             ("empty evidence", {"evidence_by_reviewer": {"claude": ""}}),
+            ("whitespace evidence", {"evidence_by_reviewer": {"claude": " \t\n"}}),
             (
                 "empty critic",
                 {"critique_disputes": [{"critic": "", "rationale": "valid"}]},
             ),
             (
+                "whitespace critic",
+                {"critique_disputes": [{"critic": " \t\n", "rationale": "valid"}]},
+            ),
+            (
                 "empty rationale",
                 {"critique_disputes": [{"critic": "codex", "rationale": ""}]},
+            ),
+            (
+                "whitespace rationale",
+                {"critique_disputes": [{"critic": "codex", "rationale": " \t\n"}]},
             ),
             (
                 "unknown adjusted severity",
@@ -61,6 +70,43 @@ class SchemaValidationTests(unittest.TestCase):
                 consensus["groups"][0].update(replacement)
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
+
+    def test_critique_batch_rejects_whitespace_only_identity_and_rationale(self) -> None:
+        batch = empty_critique_batch(
+            "codex",
+            "success",
+            run_id="local",
+            started_at=now_iso(),
+        )
+        batch["critiques"] = [
+            {
+                "target_source_finding_id": "1" * 64,
+                "critic": "codex",
+                "verdict": "dispute",
+                "duplicate_of_source_finding_id": None,
+                "rationale": "valid",
+                "adjusted_severity": None,
+                "confidence": 0.7,
+            }
+        ]
+        mutations = [
+            ("batch critic", lambda value: value.update({"critic": " \t\n"})),
+            (
+                "critique critic",
+                lambda value: value["critiques"][0].update({"critic": " \t\n"}),
+            ),
+            (
+                "rationale",
+                lambda value: value["critiques"][0].update({"rationale": " \t\n"}),
+            ),
+        ]
+
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                invalid = copy.deepcopy(batch)
+                mutate(invalid)
+                with self.assertRaises(SchemaValidationError):
+                    validate_instance(invalid, "critique_batch.schema.json")
 
     def test_empty_raw_finding_batch_validates_only_against_raw_schema(self) -> None:
         raw = {"findings": []}

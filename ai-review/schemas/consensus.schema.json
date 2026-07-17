@@ -129,7 +129,11 @@
         "suggestion": { "type": ["string", "null"] },
         "evidence_by_reviewer": {
           "type": "object",
-          "additionalProperties": { "type": "string", "minLength": 1 }
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          }
         },
         "critique_disputes": {
           "type": "array",
@@ -138,8 +142,16 @@
             "additionalProperties": false,
             "required": ["critic", "rationale"],
             "properties": {
-              "critic": { "type": "string", "minLength": 1 },
-              "rationale": { "type": "string", "minLength": 1 },
+              "critic": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
               "adjusted_severity": {
                 "type": ["string", "null"],
                 "enum": ["info", "minor", "major", "blocker", null]
