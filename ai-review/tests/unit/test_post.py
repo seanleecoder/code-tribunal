@@ -888,6 +888,60 @@ class PostTests(unittest.TestCase):
 
         self.assertEqual(finalized["resolved_discussions"], 0)
         self.assertTrue(any("Simulated GraphQL error" in w for w in finalized["warnings"]))
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "open")
+
+    def test_finalize_state_keeps_reopen_blocking_after_unresolve_failure(self) -> None:
+        from ai_review.platform.base import ReviewPlatformError
+
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        previous_record["status"] = "resolved"
+        persisted_state = self._state_with_records([previous_record])
+        client = StatePostClient("head", persisted_state)
+
+        def raising_unresolve(*args: Any, **kwargs: Any) -> Any:
+            raise ReviewPlatformError("Simulated GraphQL unresolve error")
+
+        client.resolve_thread = raising_unresolve  # type: ignore
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "reopen"},
+        )
+
+        finalized = finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        self.assertTrue(any("unresolve error" in w for w in finalized["warnings"]))
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "open")
+        self.assertEqual(state_after["records"][0]["human_disposition"], "reopen")
 
     def test_collect_human_commands_with_github_threads(self) -> None:
         import sys

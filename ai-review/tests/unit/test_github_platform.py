@@ -252,8 +252,16 @@ def test_list_threads_groups_replies() -> None:
 
 
 class GraphQLSession:
-    def __init__(self, thread_found: bool = True) -> None:
+    def __init__(
+        self,
+        thread_found: bool = True,
+        *,
+        lookup_response: Any | None = None,
+        mutation_response: Any | None = None,
+    ) -> None:
         self.thread_found = thread_found
+        self.lookup_response = lookup_response
+        self.mutation_response = mutation_response
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def request(self, method: str, url: str, **kwargs: Any) -> Response:
@@ -261,6 +269,8 @@ class GraphQLSession:
         if url.endswith("/graphql"):
             query = kwargs.get("json", {}).get("query", "")
             if "query(" in query:
+                if self.lookup_response is not None:
+                    return Response(200, self.lookup_response)
                 nodes = []
                 if self.thread_found:
                     nodes.append({"id": "node-1", "comments": {"nodes": [{"databaseId": 123}]}})
@@ -280,11 +290,23 @@ class GraphQLSession:
                     },
                 )
             elif "mutation(" in query:
+                if self.mutation_response is not None:
+                    return Response(200, self.mutation_response)
+                mutation_key = (
+                    "unresolveReviewThread"
+                    if "unresolveReviewThread" in query
+                    else "resolveReviewThread"
+                )
                 return Response(
                     200,
                     {
                         "data": {
-                            "resolveReviewThread": {"thread": {"id": "node-1", "isResolved": True}}
+                            mutation_key: {
+                                "thread": {
+                                    "id": "node-1",
+                                    "isResolved": mutation_key == "resolveReviewThread",
+                                }
+                            }
                         }
                     },
                 )
@@ -311,3 +333,83 @@ def test_resolve_thread_raises_error_if_not_found() -> None:
         assert "not found via GraphQL" in str(exc)
     else:
         raise AssertionError("missing thread did not raise")
+
+
+def test_resolve_thread_normalizes_graphql_lookup_errors() -> None:
+    session = GraphQLSession(lookup_response={"data": None, "errors": [{"message": "denied"}]})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "review thread lookup failed" in str(exc)
+        assert "denied" in str(exc)
+    else:
+        raise AssertionError("GraphQL lookup error was accepted")
+
+
+def test_resolve_thread_rejects_null_graphql_lookup_data() -> None:
+    session = GraphQLSession(lookup_response={"data": None})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "did not contain data" in str(exc)
+    else:
+        raise AssertionError("null GraphQL lookup data was accepted")
+
+
+def test_resolve_thread_rejects_null_mutation_payload() -> None:
+    session = GraphQLSession(mutation_response={"data": {"resolveReviewThread": None}})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "returned no thread" in str(exc)
+    else:
+        raise AssertionError("null GraphQL mutation payload was accepted")
+
+
+def test_resolve_thread_normalizes_graphql_mutation_errors() -> None:
+    session = GraphQLSession(
+        mutation_response={"data": {"resolveReviewThread": None}, "errors": [{"message": "denied"}]}
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "review thread resolve failed" in str(exc)
+        assert "denied" in str(exc)
+    else:
+        raise AssertionError("GraphQL mutation error was accepted")
+
+
+def test_resolve_thread_rejects_unexpected_mutation_state() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {
+                "resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}
+            }
+        }
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "unexpected thread state" in str(exc)
+    else:
+        raise AssertionError("unexpected GraphQL mutation state was accepted")
+
+
+def test_unresolve_thread_validates_successful_mutation() -> None:
+    session = GraphQLSession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    thread = platform.resolve_thread("octo/repo", 7, "123", resolved=False)
+
+    assert thread["resolved"] is False
+    assert "unresolveReviewThread" in session.calls[-1][2]["json"]["query"]

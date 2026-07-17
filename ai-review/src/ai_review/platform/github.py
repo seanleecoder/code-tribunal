@@ -79,6 +79,24 @@ class GitHubReviewPlatform:
             return response.text
         return response.json()
 
+    @staticmethod
+    def _graphql_data(response: Any, *, operation: str) -> dict[str, Any]:
+        if not isinstance(response, dict):
+            raise GitHubReviewPlatformError(
+                f"GitHub GraphQL {operation} response was not an object"
+            )
+        errors = response.get("errors")
+        if errors:
+            raise GitHubReviewPlatformError(
+                f"GitHub GraphQL {operation} failed: {errors}"
+            )
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise GitHubReviewPlatformError(
+                f"GitHub GraphQL {operation} response did not contain data"
+            )
+        return data
+
     def _get_all_pages(self, path: str, **kwargs: Any) -> list[dict[str, Any]]:
         params = dict(kwargs.pop("params", {}))
         params.setdefault("per_page", 100)
@@ -236,27 +254,62 @@ class GitHubReviewPlatform:
             response = self._request(
                 "POST", "/graphql", json={"query": query, "variables": variables}
             )
-
-            repo = response.get("data", {}).get("repository")
-            if not repo:
-                break
+            data = self._graphql_data(response, operation="review thread lookup")
+            repo = data.get("repository")
+            if not isinstance(repo, dict):
+                raise GitHubReviewPlatformError(
+                    "GitHub GraphQL review thread lookup returned no repository"
+                )
             pr_data = repo.get("pullRequest")
-            if not pr_data:
-                break
-            threads = pr_data.get("reviewThreads", {})
-            for node in threads.get("nodes", []):
-                comments_nodes = node.get("comments", {}).get("nodes", [])
-                if comments_nodes and str(comments_nodes[0].get("databaseId")) == thread_id:
-                    target_node_id = node.get("id")
+            if not isinstance(pr_data, dict):
+                raise GitHubReviewPlatformError(
+                    "GitHub GraphQL review thread lookup returned no pull request"
+                )
+            threads = pr_data.get("reviewThreads")
+            if not isinstance(threads, dict) or not isinstance(threads.get("nodes"), list):
+                raise GitHubReviewPlatformError(
+                    "GitHub GraphQL review thread lookup returned malformed threads"
+                )
+            for node in threads["nodes"]:
+                if not isinstance(node, dict):
+                    raise GitHubReviewPlatformError(
+                        "GitHub GraphQL review thread lookup returned a malformed thread"
+                    )
+                comments = node.get("comments")
+                comments_nodes = comments.get("nodes") if isinstance(comments, dict) else None
+                if not isinstance(comments_nodes, list):
+                    raise GitHubReviewPlatformError(
+                        "GitHub GraphQL review thread lookup returned malformed comments"
+                    )
+                root_comment = comments_nodes[0] if comments_nodes else None
+                if root_comment is not None and not isinstance(root_comment, dict):
+                    raise GitHubReviewPlatformError(
+                        "GitHub GraphQL review thread lookup returned a malformed comment"
+                    )
+                if root_comment and str(root_comment.get("databaseId")) == thread_id:
+                    node_id = node.get("id")
+                    if not isinstance(node_id, str) or not node_id:
+                        raise GitHubReviewPlatformError(
+                            "GitHub GraphQL review thread lookup returned no thread id"
+                        )
+                    target_node_id = node_id
                     break
 
             if target_node_id:
                 break
 
-            page_info = threads.get("pageInfo", {})
+            page_info = threads.get("pageInfo")
+            if not isinstance(page_info, dict):
+                raise GitHubReviewPlatformError(
+                    "GitHub GraphQL review thread lookup returned malformed pagination"
+                )
             if not page_info.get("hasNextPage"):
                 break
             cursor = page_info.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise GitHubReviewPlatformError(
+                    "GitHub GraphQL review thread lookup omitted the next cursor"
+                )
 
         if not target_node_id:
             raise GitHubReviewPlatformError(f"review thread {thread_id} not found via GraphQL")
@@ -278,9 +331,19 @@ class GitHubReviewPlatform:
         response = self._request(
             "POST", "/graphql", json={"query": mutation, "variables": {"threadId": target_node_id}}
         )
-        if "errors" in response:
-            action = "resolve" if resolved else "unresolve"
-            raise ReviewPlatformError(f"GraphQL error during {action}: {response['errors']}")
+        action = "resolve" if resolved else "unresolve"
+        data = self._graphql_data(response, operation=f"review thread {action}")
+        mutation_key = "resolveReviewThread" if resolved else "unresolveReviewThread"
+        payload = data.get(mutation_key)
+        thread = payload.get("thread") if isinstance(payload, dict) else None
+        if not isinstance(thread, dict):
+            raise GitHubReviewPlatformError(
+                f"GitHub GraphQL review thread {action} returned no thread"
+            )
+        if thread.get("id") != target_node_id or thread.get("isResolved") is not resolved:
+            raise GitHubReviewPlatformError(
+                f"GitHub GraphQL review thread {action} returned an unexpected thread state"
+            )
         return {"id": thread_id, "resolved": resolved, "notes": []}
 
     def list_state_notes(
