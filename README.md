@@ -176,7 +176,7 @@ Code Tribunal isolates model reviewers to protect codebase confidentiality and p
 |  +-------------------------------------+   +-----------------------------------+  |
 |  |   Trusted Host Job (prepare/post)   |   |  Reviewer Container (review_*)    |  |
 |  |                                     |   |                                   |  |
-|  | - Access to GITLAB_WRITE_TOKEN      |   | - Isolated Read-Only /opt/ai-review|  |
+|  | - Access to GITLAB_TOKEN            |   | - Isolated Read-Only /opt/ai-review|  |
 |  | - Full git access                   |   | - ONLY OPENROUTER_API_KEY exposed |  |
 |  | - Posts Discussions & State Notes   |   | - Provider access: CLI-policy dependent |  |
 |  +-------------------------------------+   | - Shell & File Edits DENIED       |  |
@@ -386,8 +386,7 @@ secret is materialized only when the repository variable is exactly `true`.
 | Variable | Description | Masked | Protected | Required |
 |---|---|---|---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
-| `GITLAB_READ_TOKEN` | Project access token with `read_api` scope. | Yes | Yes | Yes |
-| `GITLAB_WRITE_TOKEN` | Project access token with `api` scope for discussion posting. | Yes | Yes | Yes |
+| `GITLAB_TOKEN` | Project access token with `api` scope. (Legacy `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` are deprecated). | Yes | Yes | Yes |
 
 Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
 

@@ -70,9 +70,9 @@ Two consequences worth internalizing:
 ```mermaid
 flowchart TB
     subgraph TRUSTED["Trusted jobs — pinned base image"]
-        PREP2["prepare — GITLAB_READ_TOKEN"]
+        PREP2["prepare — GITLAB_TOKEN"]
         CONS2["consensus — no tokens"]
-        POST2["post — GITLAB_WRITE_TOKEN"]
+        POST2["post — GITLAB_TOKEN"]
         GATE2["gate — no tokens"]
     end
     subgraph SANDBOX["Reviewer sandboxes — pinned reviewer image"]
@@ -85,8 +85,7 @@ flowchart TB
 ```
 
 - **Credential separation** ([platform/runtime.py](../ai-review/src/ai_review/platform/runtime.py)):
-  the read-scoped token exists only in `prepare`; the write-scoped token only in
-  `post`. Reviewer jobs receive a single provider credential; their environment
+  `GITLAB_TOKEN` provides platform access to trusted jobs but is never passed to reviewer jobs. Reviewer jobs receive a single provider credential; their environment
   is rebuilt from allowlists ([adapter_runner.py](../ai-review/src/ai_review/adapter_runner.py)),
   and the codex/opencode adapters additionally run under `env -i`.
 - **Read-only reviewers**: Claude Code runs with `--tools "Read,Grep,Glob"`,

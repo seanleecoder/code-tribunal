@@ -248,9 +248,10 @@ def state_note_candidates(
     notes: list[dict[str, Any]],
     *,
     expected_author_id: int | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], int]:
     candidates: list[dict[str, Any]] = []
     warnings: list[str] = []
+    author_mismatches = 0
     for note in notes:
         if not (
             isinstance(note, dict)
@@ -262,12 +263,13 @@ def state_note_candidates(
         ):
             continue
         if expected_author_id is not None and _note_author_id(note) != expected_author_id:
+            author_mismatches += 1
             warnings.append(
                 f"ignored state note {note.get('id')} from non-bot author {_note_author_id(note)}"
             )
             continue
         candidates.append(note)
-    return candidates, warnings
+    return candidates, warnings, author_mismatches
 
 
 def newest_valid_state_from_notes(
@@ -276,7 +278,9 @@ def newest_valid_state_from_notes(
     checksum_required: bool = True,
     expected_author_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    candidates, warnings = state_note_candidates(notes, expected_author_id=expected_author_id)
+    candidates, warnings, author_mismatches = state_note_candidates(
+        notes, expected_author_id=expected_author_id
+    )
     valid: list[tuple[str, int, dict[str, Any]]] = []
     for note in candidates:
         try:
@@ -288,6 +292,14 @@ def newest_valid_state_from_notes(
         note_id = int(note.get("id") or state.get("state_note_id") or 0)
         valid.append((updated_at, note_id, state))
     if not valid:
+        # Diagnose an identity split only when every marker-bearing note failed
+        # authorship. An author-valid but corrupt note points to a different failure.
+        if author_mismatches > 0 and not candidates:
+            warnings.append(
+                "all state notes were rejected for author mismatch — this usually means "
+                "the GitLab token was rotated or read/write tokens belong to "
+                "different bot users; see TROUBLESHOOTING"
+            )
         return None, warnings
     valid.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return valid[0][2], warnings

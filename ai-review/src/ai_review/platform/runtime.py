@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -50,15 +51,25 @@ def create_runtime_platform(
     if mode != "gitlab_discussions":
         raise PlatformRuntimeError(f"unsupported posting.mode: {mode!r}")
 
-    token_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
-    token = runtime_env.get(token_name)
+    legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
+    token = runtime_env.get("GITLAB_TOKEN")
+    if not token:
+        token = runtime_env.get(legacy_name)
+        if token:
+            print(
+                f"ai-review: DEPRECATED: {legacy_name} is deprecated; use GITLAB_TOKEN instead.",
+                file=sys.stderr,
+            )
+
     if not token and not allow_dry_run_defaults:
-        raise PlatformRuntimeError(f"gitlab_discussions requires {token_name}")
-    api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
-    if not api_url and not allow_dry_run_defaults:
+        raise PlatformRuntimeError(
+            f"gitlab_discussions requires GITLAB_TOKEN (or legacy {legacy_name})"
+        )
+    gitlab_api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
+    if not gitlab_api_url and not allow_dry_run_defaults:
         raise PlatformRuntimeError("gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL")
     return create_gitlab_platform(
-        api_url or "https://gitlab.example.com/api/v4",
+        gitlab_api_url or "https://gitlab.example.com/api/v4",
         token or "dry-run-token",
         token_header="PRIVATE-TOKEN",
     )
