@@ -369,9 +369,9 @@ secret is materialized only when the repository variable is exactly `true`.
    `ai-review/ci/review.gitlab-ci.yml` now pins the public GHCR images published and verified in [ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md](ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md) — the private bootstrap refs have been cut over:
    ```yaml
    variables:
-     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:8fe25eb473eb539ae19e93053413731cd221f9a931f73259e1a61ceeb31fd701"
-     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-6e084960750a46faf0235a9641bdba1f97074555@sha256:2d66c68ad8fd8c2770c26b170330eb78d3864f2a4d0dcac7ca696d84d4d4190a"
-     AI_REVIEW_TRUSTED_IMAGE_SHA: "6e084960750a46faf0235a9641bdba1f97074555"
+     AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a"
+     AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:1f206998d4f8232eab7086c5486862d6942384d5c246f7ab4497ddf1f7935e1f"
+     AI_REVIEW_TRUSTED_IMAGE_SHA: "2381334b99ae25a0621889839dc461cc0781fcc7"
    ```
    **GHCR Cutover Procedure**: When [.github/workflows/publish-ai-review-images.yml](.github/workflows/publish-ai-review-images.yml) runs on `main` and publishes a newer commit, update these 3 variables together in `ai-review/ci/review.gitlab-ci.yml` to use the new immutable GHCR `@sha256:` digest refs provided in the workflow summary:
    ```yaml

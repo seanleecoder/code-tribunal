@@ -114,3 +114,17 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   three reviews and all three critiques succeeded, consensus reported a full
   panel with zero findings, authenticated state persistence succeeded, and the
   enforcing gate passed.
+
+### GitHub thread-command images
+
+- Source merge commit: `2381334b99ae25a0621889839dc461cc0781fcc7`.
+- Publication workflow: GitHub Actions run `29579519434`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a`.
+- Reviewer image digest:
+  `sha256:1f206998d4f8232eab7086c5486862d6942384d5c246f7ab4497ddf1f7935e1f`.
+- These images contain the GitHub thread-command and automatic-resolution
+  support merged in PR #52. The installed GitHub workflow and the canonical
+  GitHub and GitLab templates were advanced together to these immutable pins.
+- Exact-runtime dogfood verification remains pending on an open pull request.

@@ -59,7 +59,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a
     steps:
       - name: Resolve pull request
         id: pull-request
@@ -123,7 +123,7 @@ jobs:
     # succeeds, so this does not turn a total panel failure into a green gate.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:4e2d4a61a679dfc611432c8719b8a7d105540dfd489618a530e1673ee8bf4eb5
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:1f206998d4f8232eab7086c5486862d6942384d5c246f7ab4497ddf1f7935e1f
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +160,7 @@ jobs:
     # over otherwise valid reviewer findings.
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:4e2d4a61a679dfc611432c8719b8a7d105540dfd489618a530e1673ee8bf4eb5
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:1f206998d4f8232eab7086c5486862d6942384d5c246f7ab4497ddf1f7935e1f
     strategy:
       fail-fast: false
       matrix:
@@ -203,7 +203,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -235,7 +235,7 @@ jobs:
   post:
     needs: [prepare, consensus]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -258,7 +258,7 @@ jobs:
   gate:
     needs: [consensus, post]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-02c748ddda3cd145779b1381ed53236b86b4fe81@sha256:57181b92b5e5e709923a29d3a4db67ad7816ae97813b0f66bdd41076f7023df1
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2381334b99ae25a0621889839dc461cc0781fcc7@sha256:a683ba1aa940a06c34a45c8739b1b16a539cf25614841e5107f0d6228a79c84a
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
