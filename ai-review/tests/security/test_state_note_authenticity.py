@@ -51,9 +51,11 @@ class StateNoteAuthenticityTests(unittest.TestCase):
 
         self.assertIsNone(state)
         self.assertTrue(any("non-bot author" in warning for warning in warnings))
-        self.assertTrue(any("all state notes were rejected for author mismatch" in warning for warning in warnings))
+        self.assertTrue(
+            any("all state notes were rejected for author mismatch" in w for w in warnings)
+        )
 
-    def test_author_mismatch_summary_warning_is_omitted_if_some_notes_survive_author_check(self) -> None:
+    def test_author_mismatch_summary_warning_omitted_if_notes_survive_check(self) -> None:
         # A note that matches the marker regex but fails validation (e.g. checksum/base64)
         corrupt_body = f"<!-- ai-review-state:v1 invalid_payload state_hash={'0'*64} -->"
         state, warnings = newest_valid_state_from_notes(
@@ -73,7 +75,9 @@ class StateNoteAuthenticityTests(unittest.TestCase):
         )
 
         self.assertIsNone(state)
-        self.assertFalse(any("all state notes were rejected for author mismatch" in warning for warning in warnings))
+        self.assertFalse(
+            any("all state notes were rejected for author mismatch" in w for w in warnings)
+        )
         self.assertTrue(any("non-bot author" in warning for warning in warnings))
         self.assertTrue(any("ignored corrupt state note" in warning for warning in warnings))
 
