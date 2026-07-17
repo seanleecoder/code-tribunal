@@ -10,6 +10,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 - Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
   findings surface critique dispute rationales in a Dissent section.
+- Posted findings and advisory summaries preserve complete model-authored content up to
+  the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
 
 ### Migration
 

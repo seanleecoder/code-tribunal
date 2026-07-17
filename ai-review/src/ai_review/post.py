@@ -28,10 +28,11 @@ from .render import (
     compute_body_hash as _compute_body_hash,
 )
 from .render import (
-    render_body as _render_body,
+    platform_comment_limit,
+    sanitize_model_text,
 )
 from .render import (
-    sanitize_model_text,
+    render_body as _render_body,
 )
 from .render import (
     source_hash as _source_hash,
@@ -68,8 +69,15 @@ def render_body(
     group: FindingGroup,
     successful_reviewer_count: int,
     run_id: str,
+    *,
+    posting_mode: str,
 ) -> tuple[str, str]:
-    return _render_body(group, successful_reviewer_count, run_id)
+    return _render_body(
+        group,
+        successful_reviewer_count,
+        run_id,
+        posting_mode=posting_mode,
+    )
 
 
 MARKER_RE = re.compile(
@@ -564,11 +572,8 @@ def _anchor_location(anchor: dict[str, Any]) -> str:
     return f"{path}:{line}" if isinstance(line, int) else path
 
 
-def _one_line(text: str, *, max_length: int) -> str:
-    collapsed = " ".join(sanitize_model_text(text, max_length=max_length * 2).split())
-    if len(collapsed) > max_length:
-        collapsed = collapsed[: max_length - 1].rstrip() + "…"
-    return collapsed
+def _one_line(text: str) -> str:
+    return " ".join(sanitize_model_text(text).split())
 
 
 def _summary_line(group: Mapping[str, Any]) -> str:
@@ -576,14 +581,16 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     location = _anchor_location(anchor)
     severity = str(group.get("final_severity") or "").upper()
     category = str(group.get("category") or "")
-    title = _one_line(str(group.get("title") or ""), max_length=160)
+    title = _one_line(str(group.get("title") or ""))
     category_part = f" {category}" if category else ""
     header = f"- **{severity}**{category_part} — `{location}`: {title}"
-    detail = _one_line(str(group.get("body") or ""), max_length=240)
-    if detail and detail != title:
-        # Continuation line indented two spaces so it renders under the bullet.
-        return f"{header}\n  {detail}"
-    return header
+    detail = sanitize_model_text(str(group.get("body") or ""))
+    if not detail:
+        return header
+    # Keep every line in the blockquote, including blank lines, so multiline
+    # model output remains visually attached to its finding header.
+    quoted_detail = "\n".join(f"  > {line}" for line in detail.split("\n"))
+    return f"{header}\n{quoted_detail}"
 
 
 @overload
@@ -609,25 +616,113 @@ def render_summary_body(
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     max_fyi: int,
+    *,
+    posting_mode: str,
 ) -> tuple[str, str]:
-    lines = ["**AI review summary**", ""]
     fallback_sorted = _sort_groups(fallback_groups)
-    if fallback_sorted:
-        lines.append(f"Findings not posted inline ({len(fallback_sorted)}):")
-        lines.extend(_summary_line(group) for group in fallback_sorted)
-        lines.append("")
     fyi_sorted = _sort_groups(fyi_groups)
-    if fyi_sorted:
-        shown = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
-        lines.append(f"Advisory (FYI) findings ({len(fyi_sorted)}):")
-        lines.extend(_summary_line(group) for group in shown)
-        remaining = len(fyi_sorted) - len(shown)
-        if remaining > 0:
-            lines.append(f"…and {remaining} more advisory findings")
-        lines.append("")
-    body_without_marker = "\n".join(lines).rstrip()
+    capped_fyi = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
+    fallback_entries = [_summary_line(group) for group in fallback_sorted]
+    fyi_entries = [_summary_line(group) for group in capped_fyi]
+    max_comment_size = platform_comment_limit(posting_mode)
+    placeholder_marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={'0' * 64} -->"
+    configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
+
+    def entry_prefix_lengths(entries: list[str]) -> list[int]:
+        lengths = [0]
+        for entry in entries:
+            lengths.append(lengths[-1] + len(entry))
+        return lengths
+
+    fallback_lengths = entry_prefix_lengths(fallback_entries)
+    fyi_lengths = entry_prefix_lengths(fyi_entries)
+
+    def section_header(label: str, shown: int, total: int) -> str:
+        if shown < total:
+            return f"{label} (showing {shown} of {total}):"
+        return f"{label} ({total}):"
+
+    def fallback_trailers(size_omitted: int) -> list[str]:
+        if not size_omitted:
+            return []
+        return [f"…and {size_omitted} more findings not posted inline (size limit)"]
+
+    def fyi_trailers(size_omitted: int) -> list[str]:
+        trailers: list[str] = []
+        if size_omitted:
+            trailers.append(f"…and {size_omitted} more advisory findings (size limit)")
+        if configured_fyi_omitted:
+            trailers.append(
+                f"…and {configured_fyi_omitted} more advisory findings (configured count limit)"
+            )
+        return trailers
+
+    def section_length(header: str, entries_length: int, item_count: int) -> int:
+        if not item_count:
+            return len(header)
+        return len(header) + entries_length + item_count
+
+    def rendered_size(fallback_count: int, fyi_count: int) -> int:
+        total = len("**AI review summary**") + len("\n\n") + len(placeholder_marker)
+        if fallback_sorted:
+            trailers = fallback_trailers(len(fallback_entries) - fallback_count)
+            header = section_header(
+                "Findings not posted inline", fallback_count, len(fallback_sorted)
+            )
+            items_length = fallback_lengths[fallback_count] + sum(map(len, trailers))
+            total += 2 + section_length(header, items_length, fallback_count + len(trailers))
+        if fyi_sorted:
+            trailers = fyi_trailers(len(fyi_entries) - fyi_count)
+            header = section_header("Advisory (FYI) findings", fyi_count, len(fyi_sorted))
+            items_length = fyi_lengths[fyi_count] + sum(map(len, trailers))
+            total += 2 + section_length(header, items_length, fyi_count + len(trailers))
+        return total
+
+    def compose(
+        fallback_count: int,
+        fyi_count: int,
+    ) -> str:
+        sections = ["**AI review summary**"]
+        if fallback_sorted:
+            section = [
+                section_header("Findings not posted inline", fallback_count, len(fallback_sorted)),
+                *fallback_entries[:fallback_count],
+                *fallback_trailers(len(fallback_entries) - fallback_count),
+            ]
+            sections.append("\n".join(section))
+        if fyi_sorted:
+            section = [
+                section_header("Advisory (FYI) findings", fyi_count, len(fyi_sorted)),
+                *fyi_entries[:fyi_count],
+                *fyi_trailers(len(fyi_entries) - fyi_count),
+            ]
+            sections.append("\n".join(section))
+        return "\n\n".join(sections)
+
+    fallback_count = len(fallback_entries)
+    fyi_count = len(fyi_entries)
+
+    def drop_trailing_entry(fallback_count: int, fyi_count: int) -> tuple[int, int]:
+        if fyi_count > 0:
+            return fallback_count, fyi_count - 1
+        if fallback_count > 0:
+            return fallback_count - 1, fyi_count
+        raise ValueError("platform comment limit is too small for summary marker")
+
+    while rendered_size(fallback_count, fyi_count) > max_comment_size:
+        fallback_count, fyi_count = drop_trailing_entry(fallback_count, fyi_count)
+
+    body_without_marker = compose(fallback_count, fyi_count)
+    # The composed string is the source of truth. If layout and size arithmetic
+    # ever drift, keep dropping whole trailing entries until the real payload fits.
+    while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
+        fallback_count, fyi_count = drop_trailing_entry(fallback_count, fyi_count)
+        body_without_marker = compose(fallback_count, fyi_count)
+
     body_hash = sha256_hex(body_without_marker)
     marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={body_hash} -->"
+    if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
+        raise ValueError("rendered summary exceeds platform comment size limit")
     return body_without_marker + "\n\n" + marker, body_hash
 
 
@@ -667,6 +762,7 @@ def upsert_summary_comment(
     fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
+    posting_mode: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary = {
@@ -677,7 +773,13 @@ def upsert_summary_comment(
     }
     if not fallback_groups and not fyi_groups:
         return summary
-    body, body_hash = render_summary_body(run_id, fallback_groups, fyi_groups, max_fyi)
+    body, body_hash = render_summary_body(
+        run_id,
+        fallback_groups,
+        fyi_groups,
+        max_fyi,
+        posting_mode=posting_mode,
+    )
     if dry_run:
         summary["action"] = "created"
         return summary
@@ -1192,6 +1294,7 @@ def post_inline(
     summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
+    posting_mode: str,
     inline_multiline: bool,
     current_diff_text: str | None,
     dry_run: bool,
@@ -1276,6 +1379,7 @@ def post_inline(
             cast(FindingGroup, post_group),
             len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
+            posting_mode=posting_mode,
         )
         if (
             existing is not None
@@ -1343,6 +1447,7 @@ def finalize_state(
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     *,
+    posting_mode: str,
     fallback_to_summary: bool,
     fyi_mode: str,
     max_fyi: int,
@@ -1360,6 +1465,7 @@ def finalize_state(
             fallback_to_post,
             fyi_to_post,
             max_fyi,
+            posting_mode=posting_mode,
             dry_run=dry_run,
         ),
     )
@@ -1504,6 +1610,10 @@ def post_consensus(
     dry_run: bool = False,
     diff_text: str | None = None,
 ) -> PostResult:
+    posting = config.get("posting", {})
+    posting_mode = str(posting.get("mode", "gitlab_discussions"))
+    # Fail fast on unsupported modes before fetching or mutating platform state.
+    platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
         manifest["project_id"],
         manifest["merge_request_iid"],
@@ -1513,7 +1623,6 @@ def post_consensus(
         manifest=manifest,
         current_head_sha=current_head_sha,
     )
-    posting = config.get("posting", {})
     limits = config.get("limits", {})
     if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
         result["status"] = "stale_head"
@@ -1572,6 +1681,7 @@ def post_consensus(
         inline_candidates,
         summary_fallback_groups,
         context.version,
+        posting_mode=posting_mode,
         inline_multiline=inline_multiline,
         current_diff_text=context.current_diff_text,
         dry_run=dry_run,
@@ -1587,6 +1697,7 @@ def post_consensus(
         context.raw_discussions,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
+        posting_mode=posting_mode,
         fallback_to_summary=fallback_to_summary,
         fyi_mode=fyi_mode,
         max_fyi=max_fyi,
