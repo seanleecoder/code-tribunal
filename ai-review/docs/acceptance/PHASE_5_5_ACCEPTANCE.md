@@ -128,3 +128,17 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   support merged in PR #52. The installed GitHub workflow and the canonical
   GitHub and GitLab templates were advanced together to these immutable pins.
 - Exact-runtime dogfood verification remains pending on an open pull request.
+
+### Reliable GitHub thread-resolution images
+
+- Source merge commit: `e647fec37534d2d4f0821971331edbcb2b54f55b`.
+- Publication workflow: GitHub Actions run `29591515636`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:b7324f0529af53c60b535cfa909e43a58f1d26867eab1a8168ac1a0d0b710070`.
+- Reviewer image digest:
+  `sha256:f9487d9496d5946623a0a606f81131f9c80590d986af4d0686b2975907d84039`.
+- These images contain the GitHub thread-resolution reliability fixes merged
+  in PR #54. The installed GitHub workflow and the canonical GitHub and GitLab
+  templates were advanced together to these immutable pins.
+- Exact-runtime dogfood verification remains pending on an open pull request.
