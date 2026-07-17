@@ -36,12 +36,13 @@ def _critique(
     *,
     duplicate_of: str | None = None,
     adjusted_severity: str | None = None,
+    rationale: str = "checked against the diff",
 ) -> dict:
     critique = {
         "target_source_finding_id": target,
         "critic": critic,
         "verdict": verdict,
-        "rationale": "checked against the diff",
+        "rationale": rationale,
         "adjusted_severity": adjusted_severity,
         "confidence": 0.8,
     }
@@ -61,6 +62,38 @@ def _critique_batch(critic: str, critiques: list[dict], status: str = "success")
 
 
 class Phase5ConsensusTests(unittest.TestCase):
+    def test_group_propagates_representative_suggestion_and_ordered_evidence(self) -> None:
+        first = _finding("claude", "1" * 64, "major")
+        first["evidence"] = [" first fact ", "", " \t\n"]
+        first["suggestion"] = "Guard the lookup."
+        second = _finding("claude", "2" * 64, "major")
+        second["evidence"] = ["\tsecond fact\n"]
+        second["suggestion"] = "Use a default value instead."
+        third = _finding("codex", "3" * 64, "major")
+        third["evidence"] = ["third fact"]
+        claude_batch = _batch("claude", first)
+        claude_batch["findings"] = [second, first]
+        reordered_claude_batch = _batch("claude", first)
+        reordered_claude_batch["findings"] = [first, second]
+        codex_batch = _batch("codex", third)
+
+        first_consensus = build_consensus(
+            _manifest(), [codex_batch, claude_batch], _critique_config(enabled=False)
+        )
+        second_consensus = build_consensus(
+            _manifest(), [reordered_claude_batch, codex_batch], _critique_config(enabled=False)
+        )
+
+        group = first_consensus["groups"][0]
+        self.assertEqual(group["suggestion"], "Guard the lookup.")
+        self.assertEqual(
+            group["evidence_by_reviewer"],
+            {"claude": "first fact; second fact", "codex": "third fact"},
+        )
+        self.assertEqual(group["critique_disputes"], [])
+        self.assertEqual(first_consensus, second_consensus)
+        validate_instance(first_consensus, "consensus.schema.json")
+
     def test_valid_third_party_duplicate_merges_non_matching_findings(self) -> None:
         first = _finding(
             "claude",
@@ -267,6 +300,7 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(
             group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0}
         )
+        self.assertEqual(group["critique_disputes"], [])
         validate_instance(consensus, "consensus.schema.json")
 
     def test_finalized_failed_critique_batch_does_not_affect_counts_or_majority(self) -> None:
@@ -346,6 +380,93 @@ class Phase5ConsensusTests(unittest.TestCase):
         group = consensus["groups"][0]
         self.assertEqual(group["critique_summary"]["duplicate"], 0)
         self.assertEqual(group["critique_summary"]["dispute"], 1)
+        self.assertEqual(
+            group["critique_disputes"],
+            [
+                {
+                    "critic": "codex",
+                    "rationale": "checked against the diff",
+                    "adjusted_severity": None,
+                }
+            ],
+        )
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_disputes_are_attributed_sorted_and_independent_of_downgrade_policy(self) -> None:
+        source_id = "1" * 64
+        critiques = [
+            _critique_batch(
+                "opencode",
+                [
+                    _critique(
+                        "spoofed",
+                        source_id,
+                        "dispute",
+                        rationale="lower confidence",
+                    )
+                ],
+            ),
+            _critique_batch(
+                "codex",
+                [
+                    _critique(
+                        "codex",
+                        source_id,
+                        "dispute",
+                        adjusted_severity="minor",
+                        rationale="edge case is guarded",
+                    )
+                ],
+            ),
+        ]
+
+        disabled = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(allow_severity_downgrade=False),
+            critique_batches=list(reversed(critiques)),
+        )
+        enabled = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(allow_severity_downgrade=True),
+            critique_batches=critiques,
+        )
+
+        expected = [
+            {
+                "critic": "codex",
+                "rationale": "edge case is guarded",
+                "adjusted_severity": "minor",
+            },
+            {
+                "critic": "opencode",
+                "rationale": "lower confidence",
+                "adjusted_severity": None,
+            },
+        ]
+        self.assertEqual(disabled["groups"][0]["critique_disputes"], expected)
+        self.assertEqual(enabled["groups"][0]["critique_disputes"], expected)
+        self.assertEqual(disabled["groups"][0]["final_severity"], "major")
+        self.assertEqual(enabled["groups"][0]["final_severity"], "minor")
+
+    def test_empty_dispute_rationale_is_not_propagated_as_display_data(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [_critique("codex", source_id, "dispute", rationale="   ")],
+                )
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(group["critique_summary"]["dispute"], 1)
+        self.assertEqual(group["critique_disputes"], [])
         validate_instance(consensus, "consensus.schema.json")
 
     def test_severity_downgrade_is_opt_in_and_limited_to_one_level(self) -> None:

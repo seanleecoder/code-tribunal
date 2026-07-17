@@ -42,10 +42,6 @@ class BodyHashTests(unittest.TestCase):
                     "",
                     "The code indexes records before checking emptiness.",
                     "",
-                    "Evidence:",
-                    "- claude: The code indexes records before checking emptiness.",
-                    "- codex: The code indexes records before checking emptiness.",
-                    "",
                     "Consensus:",
                     "- Reviewers: claude, codex",
                     "- Direct votes: 2/3",
@@ -58,8 +54,98 @@ class BodyHashTests(unittest.TestCase):
         )
         self.assertEqual(
             body_hash,
-            "44e05ec4876412b4fd70e6bf110ed84b1faf548e892b2ac8bd135891ed5d2215",
+            "ee269289bd0e4e7e1f99350a6abd73ea5ecc1d2a1996bb8844304066430a401f",
         )
+
+    def test_renders_only_materially_distinct_evidence(self) -> None:
+        group = self._group()
+        group["evidence_by_reviewer"] = {
+            "claude": "The code indexes records before checking emptiness.",
+            "codex": "records[0] executes before the guard",
+        }
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn("Evidence:\n- codex: records[0] executes before the guard", body)
+        self.assertNotIn("- claude:", body)
+
+    def test_aggregates_identical_evidence_across_reviewers(self) -> None:
+        group = self._group()
+        group["evidence_by_reviewer"] = {
+            "claude": "records[0] executes before the guard",
+            "codex": "records[0] executes before the guard",
+        }
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn(
+            "Evidence:\n- claude, codex: records[0] executes before the guard",
+            body,
+        )
+        self.assertEqual(body.count("records[0] executes before the guard"), 1)
+
+    def test_keeps_distinct_evidence_separate(self) -> None:
+        group = self._group()
+        group["evidence_by_reviewer"] = {
+            "claude": "records[0] executes before the guard",
+            "codex": "the empty check occurs on the next line",
+        }
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn("- claude: records[0] executes before the guard", body)
+        self.assertIn("- codex: the empty check occurs on the next line", body)
+
+    def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
+        group = self._group()
+        group["final_severity"] = "blocker"
+        group["block_merge"] = True
+        group["critique_disputes"] = [
+            {
+                "critic": "codex",
+                "rationale": "The caller already checks emptiness.",
+                "adjusted_severity": "minor",
+            },
+            {
+                "critic": "opencode",
+                "rationale": "This path is unreachable.",
+                "adjusted_severity": None,
+            },
+        ]
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn("Dissent:", body)
+        self.assertIn(
+            "- codex disputes: The caller already checks emptiness. "
+            "(suggested severity: minor)",
+            body,
+        )
+        self.assertIn("- opencode disputes: This path is unreachable.", body)
+        self.assertIn("- Blocking: yes", body)
+
+    def test_omits_dissent_that_sanitizes_to_empty(self) -> None:
+        group = self._group()
+        group["critique_disputes"] = [
+            {"critic": "codex", "rationale": "   ", "adjusted_severity": None}
+        ]
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertNotIn("Dissent:", body)
+        self.assertNotIn("codex disputes:", body)
+
+    def test_suggestion_rendering_keeps_validation_gate(self) -> None:
+        valid = self._group()
+        valid["suggestion"] = "```python\nif not records:\n    return\n```"
+        invalid = self._group()
+        invalid["suggestion"] = "```python\nif not records:\n    return"
+
+        valid_body, _valid_hash = render_body(valid, 3, "run")
+        invalid_body, _invalid_hash = render_body(invalid, 3, "run")
+
+        self.assertIn("Suggestion:\n```python", valid_body)
+        self.assertNotIn("Suggestion:", invalid_body)
 
     def test_validate_suggestion_rejects_markers_and_unbalanced_fences(self) -> None:
         self.assertFalse(validate_suggestion("<!-- ai-review:v1 -->"))

@@ -152,6 +152,12 @@ class CritiqueSummary(TypedDict):
     duplicate: int
 
 
+class CritiqueDispute(TypedDict):
+    critic: ReviewerId
+    rationale: str
+    adjusted_severity: NotRequired[Severity | None]
+
+
 class MatchKeys(TypedDict):
     path_keys: list[str]
     category: str
@@ -190,6 +196,7 @@ class FindingGroup(TypedDict, total=False):
     state_match: GroupStateMatch
     suggestion: NotRequired[str | None]
     evidence_by_reviewer: NotRequired[dict[str, str]]
+    critique_disputes: NotRequired[list[CritiqueDispute]]
 
 
 class ConsensusSummary(TypedDict):

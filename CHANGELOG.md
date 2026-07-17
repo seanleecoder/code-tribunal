@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+### Changed
+
+- Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
+  findings surface critique dispute rationales in a Dissent section.
+
+### Migration
+
+- The posted-body format is now `render-body.v2`. Existing bot-authored threads receive
+  a one-time body update on the next review run.
+
 ## [0.4.0] - 2026-07-14
 
 ### Changed

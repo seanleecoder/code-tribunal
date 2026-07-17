@@ -176,6 +176,13 @@ def _validate_subset(
         for key, value in instance.items():
             if key in properties:
                 _validate_subset(value, properties[key], root, f"{path}.{key}")
+            elif isinstance(schema.get("additionalProperties"), dict):
+                _validate_subset(
+                    value,
+                    schema["additionalProperties"],
+                    root,
+                    f"{path}.{key}",
+                )
     if isinstance(instance, list):
         if "minItems" in schema and len(instance) < int(schema["minItems"]):
             raise SchemaValidationError(f"{path}: array shorter than minItems")

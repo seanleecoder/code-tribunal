@@ -255,6 +255,20 @@ def _representative(findings: list[dict[str, Any]]) -> dict[str, Any]:
     )[0]
 
 
+def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
+    evidence: dict[str, list[str]] = {}
+    for finding in sorted(findings, key=lambda item: str(item["source_finding_id"])):
+        reviewer = str(finding["reviewer"])
+        entries = [
+            item.strip()
+            for item in finding.get("evidence", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if entries:
+            evidence.setdefault(reviewer, []).extend(entries)
+    return {reviewer: "; ".join(entries) for reviewer, entries in evidence.items()}
+
+
 def decision_for_group(
     findings: list[dict[str, Any]],
     config: dict[str, Any],
@@ -454,10 +468,13 @@ def _apply_critiques(
             group = groups[group_index]
             if critic in set(group["contributing_reviewers"]):
                 continue
-            selected.setdefault((group_index, critic), critique)
+            key = (group_index, critic)
+            previous = selected.get(key)
+            if previous is None or _critique_sort_key(critique) < _critique_sort_key(previous):
+                selected[key] = critique
 
     downgrades: dict[int, list[str]] = {}
-    for (group_index, _critic), critique in sorted(
+    for (group_index, critic), critique in sorted(
         selected.items(), key=lambda item: (item[0][0], item[0][1], _critique_sort_key(item[1]))
     ):
         group = groups[group_index]
@@ -480,9 +497,28 @@ def _apply_critiques(
         elif verdict == "noise":
             group["critique_noise_count"] += 1
         elif verdict == "dispute":
+            rationale = str(critique.get("rationale", ""))
+            if critic.strip() and rationale.strip():
+                group["critique_disputes"].append(
+                    {
+                        "critic": critic,
+                        "rationale": rationale,
+                        "adjusted_severity": (
+                            str(critique["adjusted_severity"])
+                            if isinstance(critique.get("adjusted_severity"), str)
+                            else None
+                        ),
+                    }
+                )
             adjusted = critique.get("adjusted_severity")
             if isinstance(adjusted, str):
                 downgrades.setdefault(group_index, []).append(adjusted)
+
+    for group in groups:
+        group["critique_disputes"] = sorted(
+            group["critique_disputes"],
+            key=lambda item: (str(item["critic"]), str(item["rationale"])),
+        )
 
     allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
     allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", True))
@@ -578,6 +614,9 @@ def build_consensus(
                 "category": representative["category"],
                 "title": representative["title"],
                 "body": representative["body"],
+                "suggestion": representative.get("suggestion"),
+                "evidence_by_reviewer": _evidence_by_reviewer(findings),
+                "critique_disputes": [],
                 "body_hash": "0" * 64,
                 "vote_count": len(contributing),
                 "critique_support_count": 0,

@@ -494,6 +494,13 @@ class PostTests(unittest.TestCase):
             "claude": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
         }
         group["suggestion"] = "replace glpat-1234567890abcdef1234"
+        group["critique_disputes"] = [
+            {
+                "critic": "codex",
+                "rationale": "dissent glpat-1234567890abcdef1234",
+                "adjusted_severity": None,
+            }
+        ]
 
         body, _body_hash = render_body(group, 1, "run")
 
