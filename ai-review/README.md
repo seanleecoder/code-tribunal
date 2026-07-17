@@ -15,7 +15,7 @@ For high-level system architecture, pipeline execution stages, local harness usa
 - **[ci/build-images.gitlab-ci.yml](ci/build-images.gitlab-ci.yml)**: Internal GitLab image building and preflight pipeline.
 - **[src/ai_review/](src/ai_review/)**: Core Python engine package for input bundle packaging, consensus voting, canonical hashing, line remapping, platform discussion posting, state management, and merge gate evaluation.
 - **[adapters/](adapters/)**: Shell script adapters wrapping CLI reviewer executables (`run_reviewer.sh`, `claude.sh`, `codex.sh`, `opencode.sh`).
-- **[prompts/](prompts/)**: Markdown prompt templates (`review.md`, `critique.md`, `respond.md`).
+- **[prompts/](prompts/)**: Markdown prompt templates (`review.md`, `critique.md`).
 - **[rules/](rules/)**: Custom review rules guidelines ([rules/README.md](rules/README.md)).
 - **[schemas/](schemas/)**: 9 JSON Schemas enforcing strict structured output for reviewer findings, raw CLI outputs, critique batches, consensus results, state notes, state aliases, and status reports.
 

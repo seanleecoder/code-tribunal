@@ -105,6 +105,8 @@ class CritiquePromptRenderTests(unittest.TestCase):
                         "panel:",
                         "  min_successful_reviewers_for_blocking: 1",
                         "  min_successful_reviewers_for_resolution: 1",
+                        "  quorum:",
+                        "    votes_required: 1",
                         "severity_policy:",
                         "  single_reviewer_blocker:",
                         "    categories: [correctness]",

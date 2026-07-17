@@ -39,7 +39,7 @@ Three independent reviewers inspect the same immutable input and must emit schem
 - **Multi-Agent Consensus Panel**: Combines independent model reviewers to reduce single-model hallucination and bias. Shipped defaults are cost-efficient tiers (**Anthropic Claude Haiku 4.5**, **OpenAI GPT-5.4-mini**, **Google Gemini 3.1 Flash Lite**); operators typically override models per deployment via `AI_REVIEW_<REVIEWER>_MODEL` (no image rebuild required).
 - **Blind Cross-Examination (Critique Phase)**: Reviewers evaluate anonymized findings from peers without knowing author identities, emitting auditable agreements (`agree`), disputes (`dispute`), noise classifications (`noise`), or duplicate markers (`duplicate`) before final consensus.
 - **Deterministic Consensus Engine**: Normalizes line anchors, computes canonical context hashes (`anchor_context_hash`, `body_hash`), applies quorum voting logic, and enforces panel degradation rules.
-- **Credential Isolation & Reviewer Sandboxing** *(stable)*: Reviewer containers receive disposable repository snapshots and zero access to GitLab/GitHub API tokens or host environment variables. Claude, Codex, and OpenCode use read-only/no-shell tool policies. Cursor is opt-in and uses the pinned CLI's native read-only `ask` mode plus an explicit `Read(**)` allowlist with relative/absolute writes and all shell commands denied because its kernel sandbox is unavailable inside nested GitHub Actions containers; see the Cursor caveat below. Provider endpoint pinning is enforced where the CLI supports it; **container-level network egress enforcement is a known limitation, planned but not yet implemented** (tracked as H2 in [SECURITY.md](SECURITY.md)).
+- **Credential Isolation & Reviewer Sandboxing** *(stable)*: Reviewer CLI subprocesses receive disposable repository snapshots and a scrubbed allowlist environment containing only runtime controls, provider endpoints, and the selected reviewer credential; GitLab/GitHub posting tokens are not forwarded. The trusted job shell still sees CI-provided variables. Claude, Codex, and OpenCode use read-only/no-shell tool policies. Cursor is opt-in and uses the pinned CLI's native read-only `ask` mode plus an explicit `Read(**)` allowlist with relative/absolute writes and all shell commands denied because its kernel sandbox is unavailable inside nested GitHub Actions containers; see the Cursor caveat below. Provider endpoint pinning is enforced where the CLI supports it; **container-level network egress enforcement is a known limitation, planned but not yet implemented** (tracked as H2 in [SECURITY.md](SECURITY.md)).
 - **Human Override Commands**: Allows developers with sufficient repository permission (GitLab Developer/30+; GitHub Write/Maintain/Admin) to manually resolve or dismiss findings via comments (e.g. `/ai-review wontfix`, `/ai-review reopen`, `/ai-review resolve`). On GitLab, reply in the finding's discussion; on GitHub, reply directly on the bot's inline review comment.
 - **Idempotent Discussion Upserting**: Posts and updates inline diff discussions on GitLab MRs (and GitHub PR reviews) without creating duplicate threads across commits.
 - **State Note Persistence & Anchor Drift Recovery**: Stores machine-owned state payloads as hidden base64url-encoded GitLab MR notes (`ai-review-state:v1`) or GitHub PR comments, mapping historical issues across code revisions using line remapping (`anchors.py`). See [docs/REVISION_LIFECYCLE.md](docs/REVISION_LIFECYCLE.md).
@@ -127,7 +127,7 @@ pipeline.
 
 ### 5. `post` (Idempotent Upsert & State Persistence)
 - Executed by `python -m ai_review.post`.
-- Acquires GitLab resource lock (`ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}`).
+- The shipped GitLab CI template serializes this job per merge request with `resource_group: ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}`; invoking the Python module outside that template takes no lock.
 - Matches consensus findings against prior state records using line remapping (`anchors.py` and `memory.py`).
 - Upserts inline diff discussions via GitLab API (`gitlab_client.py`):
   - Creates new discussions for new findings.
@@ -159,7 +159,7 @@ The shipped [runtime configuration](ai-review/config/review.yaml) contains only 
 | `critique` | `enabled: true`, `rounds: 1` (fixed in v1), `blind_reviewer_identity: true`, `allow_advisory_escalation: true`, `allow_severity_downgrade: false`, `can_add_quorum_votes: false` (must stay false in v1) |
 | `posting` | `mode: gitlab_discussions` or `github_reviews`, `fyi_mode: summary_comment`, `stale_head_guard: true` |
 | `merge_gate` | `enabled: true` (set `false` for advisory mode) |
-| `state` | `backend: gitlab_mr_state_note` or `github_pr_comment`, `checksum_required: true`, `recover_from_discussion_markers: true`, retention caps (fail-closed on overflow) |
+| `state` | `backend: gitlab_mr_state_note` or `github_pr_comment`, `checksum_required: true`, `recover_from_discussion_markers: true`, `fail_closed_on_load_error: false`, retention caps (writes fail closed on overflow) |
 | `limits` | `max_diff_bytes: 250000`, `max_files: 200`, `max_posted_surface_findings: 25`, `max_prompt_bytes: 500000` |
 | `security` | `allow_external_fork_secrets: false` (fail-closed on fork MRs) |
 
@@ -202,11 +202,11 @@ All inter-stage data exchanges are governed by 9 JSON Schemas located in [ai-rev
 
 | Schema File | Schema Version ID | Description |
 |---|---|---|
-| [finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json) | `finding_batch.v1` | Reviewer finding output (category, severity, line numbers, anchor code, title, body, confidence, suggested_fix). |
+| [finding_batch.schema.json](ai-review/schemas/finding_batch.schema.json) | `finding_batch.v1` | Reviewer finding output (category, severity, line numbers, anchor code, title, body, confidence, suggestion). |
 | [raw_finding_batch.schema.json](ai-review/schemas/raw_finding_batch.schema.json) | N/A | Intermediate schema used for CLI structured output validation (e.g. Codex CLI `--output-schema`). |
 | [critique_batch.schema.json](ai-review/schemas/critique_batch.schema.json) | `critique_batch.v1` | Peer cross-examination verdicts (`agree`, `dispute`, `noise`, `duplicate`). |
 | [consensus.schema.json](ai-review/schemas/consensus.schema.json) | `consensus.v1` | Deduplicated findings, vote tallies, surfaced/FYI classification, and `block_merge` decision. |
-| [state.schema.json](ai-review/schemas/state.schema.json) | `state.v1` | Hidden state payload tracking active/resolved/wontfix/superseded issues across MR commits. |
+| [state.schema.json](ai-review/schemas/state.schema.json) | `state.v1` | Hidden state payload tracking active/resolved/wontfix/stale issues across MR commits. |
 | [state_aliases.schema.json](ai-review/schemas/state_aliases.schema.json) | `state_aliases.v1` | State alias records passed to `prepare` for historical issue matching across commits. |
 | [adapter_status.schema.json](ai-review/schemas/adapter_status.schema.json) | `adapter_status.v1` | Execution summary per reviewer (`success`, `model_error`, `schema_error`, `timeout`, `skipped`). |
 | [post_result.schema.json](ai-review/schemas/post_result.schema.json) | `post_result.v1` | Details of created, updated, skipped, or resolved GitLab MR discussion threads and summary note writes. |
@@ -552,8 +552,7 @@ code-tribunal/
     │   └── SUPPLY_CHAIN.md                    # Image pin/refresh process & residual limits
     ├── prompts/                               # Markdown prompt templates
     │   ├── review.md                          # Main review prompt template
-    │   ├── critique.md                        # Blind cross-examination critique prompt template
-    │   └── respond.md                         # Author response evaluation prompt template
+    │   └── critique.md                        # Blind cross-examination critique prompt template
     ├── rules/                                 # Custom review rules
     │   └── README.md                          # Default review rule guidelines
     ├── schemas/                               # JSON Schemas (9 schema files)
@@ -579,14 +578,12 @@ code-tribunal/
             ├── input_bundle.py                # Diff extraction & input bundle packager
             ├── memory.py                      # State note codec, historical matching & record reconciliation
             ├── mock_reviewer.py               # Deterministic mock reviewer for offline testing
-            ├── openrouter_reviewer.py         # OpenRouter direct Chat Completions client
             ├── pipeline_trust.py              # Consumer CI trust validation logic
             ├── post.py                        # Discussion upsert engine & state note writer
-            ├── prompt_render.py               # Prompt renderer for review, critique, & respond
+            ├── prompt_render.py               # Prompt renderer for review & critique
             ├── redact.py                      # Secret & token redaction engine
             ├── render.py                      # Discussion body rendering & markers
             ├── schema.py                      # jsonschema validator wrapper & finding finalization
-            ├── trigger.py                     # Pipeline trigger evaluator helper
             ├── types.py                       # Typed structures shared across stages
             └── platform/                      # Review-platform abstraction
                 ├── base.py                    # ReviewPlatform protocol

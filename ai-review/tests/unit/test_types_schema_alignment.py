@@ -64,6 +64,18 @@ def test_post_result_matches_schema_required_fields() -> None:
     assert set(domain_types.PostResult.__required_keys__) == _schema_required(
         "post_result.schema.json"
     )
+    assert set(get_args(domain_types.PostStatus.__value__)) == _schema_enum(
+        "post_result.schema.json", "properties", "status"
+    )
+
+
+def test_state_status_types_match_schema_enums() -> None:
+    assert set(get_args(domain_types.StateRecordStatus.__value__)) == _schema_enum(
+        "state.schema.json", "properties", "records", "items", "properties", "status"
+    )
+    assert set(get_args(domain_types.RemapStatus.__value__)) == _schema_enum(
+        "state.schema.json", "properties", "records", "items", "properties", "remap_status"
+    )
 
 
 def test_gate_result_matches_schema_required_fields() -> None:

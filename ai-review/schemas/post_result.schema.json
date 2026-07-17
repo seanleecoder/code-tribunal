@@ -26,7 +26,6 @@
         "stale_head",
         "failed",
         "partial_failed",
-        "skipped_advisory",
         "state_overflow"
       ]
     },

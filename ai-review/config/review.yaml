@@ -103,15 +103,14 @@ state:
   backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR); use github_pr_comment with posting.mode=github_reviews
   recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
   checksum_required: true # Require SHA256 integrity check on state note content
+  fail_closed_on_load_error: false # If true, prepare fails instead of starting with empty state when persisted state cannot be loaded
   retention:
     keep_open: true # Preserve state records for open findings
     keep_wontfix: true # Preserve state records marked as won't fix
     keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
-    keep_superseded_runs: 2 # Retention depth for superseded run records
     keep_stale_runs: 2 # Retention depth for stale/stale_unverified records
     max_records: 200 # Max state entry count
     max_state_bytes: 50000 # Max byte size for state payload note
-    overflow_behavior: fail_closed # Documents intent; the write path is unconditionally fail-closed in code (post reports state_overflow and the gate exits non-zero) regardless of this value. Note: the state-load guard reads top-level state.overflow_behavior, not this retention-scoped key.
 
 # Safety limits for diff size, findings, and prompts
 limits:

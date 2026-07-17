@@ -146,30 +146,5 @@ class FindMatchingRecordTests(unittest.TestCase):
         self.assertEqual(result.precedence, "context_hash")
         self.assertEqual(result.records, [first, second])
 
-    def test_superseded_matching_record_is_ignored(self) -> None:
-        record = _record("a" * 64)
-        record["status"] = "superseded"
-
-        result = find_matching_record(_group(), {"records": [record]})
-
-        self.assertEqual(result.status, "new")
-        self.assertIsNone(result.record)
-        self.assertEqual(result.records, [])
-
-    def test_non_superseded_record_at_same_precedence_remains_authoritative(self) -> None:
-        superseded = _record("1" * 64)
-        superseded["status"] = "superseded"
-        superseded["aliases"]["source_finding_ids"] = ["b" * 64]
-        open_record = _record("2" * 64)
-        open_record["status"] = "open"
-        open_record["aliases"]["source_finding_ids"] = ["b" * 64]
-
-        result = find_matching_record(_group(), {"records": [superseded, open_record]})
-
-        self.assertEqual(result.status, "matched")
-        self.assertEqual(result.precedence, "source_finding_id")
-        self.assertEqual(result.record, open_record)
-
-
 if __name__ == "__main__":
     unittest.main()

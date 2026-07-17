@@ -18,7 +18,7 @@
   "properties": {
     "schema_version": { "const": "adapter_status.v1" },
     "reviewer": { "type": "string", "minLength": 1 },
-    "stage": { "enum": ["review", "critique", "respond"] },
+    "stage": { "enum": ["review", "critique"] },
     "status": {
       "enum": [
         "success",

@@ -15,6 +15,8 @@ CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
 GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
+GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
+README = ROOT / "README.md"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
@@ -33,6 +35,12 @@ APPROVED_ACTION_PINS = {
     ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
     ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
 }
+
+IMAGE_PIN_KEYS = (
+    "AI_REVIEW_BASE_IMAGE",
+    "AI_REVIEW_REVIEWER_IMAGE",
+    "AI_REVIEW_TRUSTED_IMAGE_SHA",
+)
 
 
 def error(message: str) -> None:
@@ -162,6 +170,29 @@ def _github_review_container_issues(text: str) -> list[str]:
     return issues
 
 
+def _concrete_image_pins(text: str) -> dict[str, str]:
+    pins: dict[str, str] = {}
+    for key in IMAGE_PIN_KEYS:
+        values = re.findall(rf'^\s*{key}:\s+"([^"<>]+)"\s*$', text, re.M)
+        if len(values) == 1:
+            pins[key] = values[0]
+    return pins
+
+
+def _readme_image_pin_issues(readme: str, template: str) -> list[str]:
+    readme_pins = _concrete_image_pins(readme)
+    template_pins = _concrete_image_pins(template)
+    issues: list[str] = []
+    for key in IMAGE_PIN_KEYS:
+        if key not in readme_pins:
+            issues.append(f"README must contain exactly one concrete {key} value")
+        if key not in template_pins:
+            issues.append(f"GitLab review template must contain exactly one concrete {key} value")
+        if key in readme_pins and key in template_pins and readme_pins[key] != template_pins[key]:
+            issues.append(f"README {key} must match ai-review/ci/review.gitlab-ci.yml")
+    return issues
+
+
 
 def _cursor_agent_pin_issues(text: str) -> list[str]:
     values: dict[str, str] = {}
@@ -226,10 +257,16 @@ def main() -> int:
             error(f"{display_path}: {issue}")
             failures += 1
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
+    gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
+    readme = _read(README)
     constraints = _read(PYTHON_CONSTRAINTS)
     cursor_pin = _read(CURSOR_AGENT_PIN)
     package = json.loads(_read(PACKAGE_JSON))
     lock = json.loads(_read(PACKAGE_LOCK))
+
+    for issue in _readme_image_pin_issues(readme, gitlab_review):
+        error(issue)
+        failures += 1
 
     base_image = _python_base_image(base)
     if base_image is None:

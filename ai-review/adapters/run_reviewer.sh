@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 2 ]; then
-  echo "usage: run_reviewer.sh <reviewer> <review|critique|respond>" >&2
+  echo "usage: run_reviewer.sh <reviewer> <review|critique>" >&2
   exit 2
 fi
 

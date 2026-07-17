@@ -125,7 +125,7 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   RUN_DIR="$CLAUDE_REVIEW_ROOT"
   set -- "$@" --add-dir "$CLAUDE_REVIEW_ROOT" --tools "Read,Grep,Glob"
 else
-  # critique (and respond) reason only over the finding/manifest payload already
+  # critique reasons only over the finding/manifest payload already
   # in the prompt — critique.md says to stay "grounded only in the finding data,
   # rules, and manifest". Disable tools so claude answers in one shot instead of
   # agentically exploring the snapshot (with no turn cap) and blowing the

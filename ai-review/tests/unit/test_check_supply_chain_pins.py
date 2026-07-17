@@ -31,6 +31,18 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.REVIEWER_DOCKERFILE = original
 
+    def test_detects_readme_image_pin_drift(self) -> None:
+        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
+        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
+        replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
+        mutated = readme.replace(base_pin, replacement, 1)
+
+        self.assertIn(
+            "README AI_REVIEW_BASE_IMAGE must match ai-review/ci/review.gitlab-ci.yml",
+            check_supply_chain_pins._readme_image_pin_issues(mutated, template),
+        )
+
     def test_detects_non_exact_python_constraint(self) -> None:
         original = check_supply_chain_pins.PYTHON_CONSTRAINTS
         with tempfile.TemporaryDirectory() as tmp:

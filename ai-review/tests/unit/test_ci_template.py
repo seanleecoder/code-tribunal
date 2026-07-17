@@ -228,6 +228,20 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text,
         )
 
+    def test_web_and_api_rules_require_merge_request_iid(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        for block_name in (".ai_review_rules", "prepare_ai_review", ".critique_template"):
+            match = re.search(rf"(?ms)^{re.escape(block_name)}:\n(.*?)(?=^\S)", text)
+            self.assertIsNotNone(match, f"{block_name} block not found")
+            block = match.group(1)
+            for source in ("web", "api"):
+                self.assertIn(
+                    f'$CI_PIPELINE_SOURCE == "{source}" && $CI_MERGE_REQUEST_IID',
+                    block,
+                    f"{block_name} must not create branch-only {source} jobs",
+                )
+                self.assertEqual(block.count(f'$CI_PIPELINE_SOURCE == "{source}"'), 1)
+
     def test_template_only_declares_artifacts_that_commands_write(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 

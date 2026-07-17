@@ -47,7 +47,6 @@ type PostStatus = Literal[
     "stale_head",
     "failed",
     "partial_failed",
-    "skipped_advisory",
     "state_overflow",
 ]
 type SummaryCommentAction = Literal["none", "created", "updated", "unchanged"]
@@ -65,10 +64,9 @@ type StateRecordStatus = Literal[
     "wontfix",
     "stale",
     "stale_unverified",
-    "superseded",
 ]
 type HumanDisposition = Literal["wontfix", "reopen", "resolve"]
-type RemapStatus = Literal["exact", "remapped", "missing", "ambiguous", "unanchored", "not_checked"]
+type RemapStatus = Literal["exact", "remapped", "missing", "ambiguous", "not_checked"]
 
 
 class LineRef(TypedDict):

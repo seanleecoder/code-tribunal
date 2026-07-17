@@ -104,7 +104,7 @@ class InputBundleLimitTests(unittest.TestCase):
                 return_value={
                     "state": {
                         "backend": "gitlab_mr_state_note",
-                        "overflow_behavior": "fail_closed",
+                        "fail_closed_on_load_error": True,
                     }
                 },
             ),
