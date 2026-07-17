@@ -1652,6 +1652,33 @@ class PostTests(unittest.TestCase):
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertNotIn("A" * 1_000, body)
 
+    def test_composed_mixed_summary_stays_within_exact_platform_limit(self) -> None:
+        fallback = copy.deepcopy(self._consensus()["groups"][0])
+        fallback["body"] = "F" * 30_000
+        fyi_groups = []
+        for index, character in enumerate("ABC"):
+            group = copy.deepcopy(fallback)
+            group["decision"] = "fyi"
+            group["issue_id"] = f"{index + 1:064x}"
+            group["body"] = character * 30_000
+            fyi_groups.append(group)
+
+        body, _body_hash = post_module.render_summary_body(
+            "run",
+            [fallback],
+            fyi_groups,
+            2,
+            posting_mode="github_reviews",
+        )
+
+        self.assertGreater(len(body), 60_000)
+        self.assertLessEqual(len(body), 65_536)
+        self.assertIn("Findings not posted inline (1):", body)
+        self.assertIn("Advisory (FYI) findings (showing 1 of 3):", body)
+        self.assertIn("…and 1 more advisory findings (size limit)", body)
+        self.assertIn("…and 1 more advisory findings (configured count limit)", body)
+        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(body))
+
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()

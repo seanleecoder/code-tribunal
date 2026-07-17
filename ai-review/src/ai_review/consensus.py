@@ -560,6 +560,7 @@ def build_consensus(
     critique_batches: list[dict[str, Any]] | None = None,
 ) -> Consensus:
     posting_mode = str(config.get("posting", {}).get("mode", "gitlab_discussions"))
+    # Fail fast on unsupported modes before performing consensus work.
     platform_comment_limit(posting_mode)
     enabled = sorted(enabled_reviewers(config))
     successful = sorted(

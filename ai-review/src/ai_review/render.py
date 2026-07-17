@@ -48,6 +48,9 @@ def _truncate_at_safe_boundary(text: str, max_length: int) -> str:
         raise ValueError("platform comment limit is too small for truncation notice")
     prefix = prefix_at_boundary(available)
     fence_closure = ""
+    # Conservatively treat an odd number of triple-backtick tokens as an open
+    # fenced block. Inline triple backticks may cause an unnecessary closure,
+    # but keeping trusted footer/marker content out of a fence is safer.
     if prefix.count("```") % 2:
         available -= len(FENCE_CLOSURE)
         if available < 0:

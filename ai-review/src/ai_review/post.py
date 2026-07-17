@@ -701,18 +701,28 @@ def render_summary_body(
 
     fallback_count = len(fallback_entries)
     fyi_count = len(fyi_entries)
-    while rendered_size(fallback_count, fyi_count) > max_comment_size:
+
+    def drop_trailing_entry(fallback_count: int, fyi_count: int) -> tuple[int, int]:
         if fyi_count > 0:
-            fyi_count -= 1
-            continue
+            return fallback_count, fyi_count - 1
         if fallback_count > 0:
-            fallback_count -= 1
-            continue
+            return fallback_count - 1, fyi_count
         raise ValueError("platform comment limit is too small for summary marker")
 
+    while rendered_size(fallback_count, fyi_count) > max_comment_size:
+        fallback_count, fyi_count = drop_trailing_entry(fallback_count, fyi_count)
+
     body_without_marker = compose(fallback_count, fyi_count)
+    # The composed string is the source of truth. If layout and size arithmetic
+    # ever drift, keep dropping whole trailing entries until the real payload fits.
+    while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
+        fallback_count, fyi_count = drop_trailing_entry(fallback_count, fyi_count)
+        body_without_marker = compose(fallback_count, fyi_count)
+
     body_hash = sha256_hex(body_without_marker)
     marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={body_hash} -->"
+    if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
+        raise ValueError("rendered summary exceeds platform comment size limit")
     return body_without_marker + "\n\n" + marker, body_hash
 
 
@@ -1602,6 +1612,7 @@ def post_consensus(
 ) -> PostResult:
     posting = config.get("posting", {})
     posting_mode = str(posting.get("mode", "gitlab_discussions"))
+    # Fail fast on unsupported modes before fetching or mutating platform state.
     platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
         manifest["project_id"],
