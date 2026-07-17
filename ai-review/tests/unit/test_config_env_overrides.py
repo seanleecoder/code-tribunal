@@ -253,6 +253,26 @@ class LoadConfigOverrideTests(unittest.TestCase):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["reviewers"]["claude"]["effort"], "xhigh")
 
+    def test_cursor_effort_override_fails_loudly(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_EFFORT": "high"}),
+            self.assertRaisesRegex(
+                ConfigError,
+                r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
+            ),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_cursor_effort_config_key_fails_loudly(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["reviewers"]["cursor"]["effort"] = "high"
+
+        with self.assertRaisesRegex(
+            ConfigError,
+            r"cursor does not support effort.*reviewers\.cursor\.model",
+        ):
+            validate_config(config)
+
     def test_invalid_effort_fails_loudly(self) -> None:
         # Closed set, case-sensitive (whitespace is stripped like model
         # overrides): anything else must raise, never reach argv.

@@ -29,8 +29,25 @@ env:
   AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_STATE_BACKEND: github_pr_comment
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
-  AI_REVIEW_CRITIQUE_ENABLED: "true"
-  AI_REVIEW_MERGE_GATE_ENABLED: "true"
+  # Actions repository variables live in the `vars` context; they are not
+  # process environment variables until explicitly mapped. Keep overrides at
+  # workflow scope so prepare, review, critique, consensus, post, and gate all
+  # load the same effective configuration.
+  AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
+  AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
+  AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
+  AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
+  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}
+  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}
+  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
+  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
+  AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
+  AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
+  AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
+  AI_REVIEW_CRITIQUE_ENABLED: ${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}
+  AI_REVIEW_MERGE_GATE_ENABLED: ${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}
+  AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED: ${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED || 'false' }}
+  AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD: ${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD || '0.5' }}
 
 jobs:
   prepare:
@@ -125,8 +142,6 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
           CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
-          AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
-          AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
@@ -169,8 +184,6 @@ jobs:
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
           CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
-          AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
-          AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
