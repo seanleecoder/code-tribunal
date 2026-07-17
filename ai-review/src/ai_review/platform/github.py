@@ -50,6 +50,7 @@ class GitHubReviewPlatform:
         self.graphql_url = self._derive_graphql_url(self.api_url)
         self.token = token
         self._resolution_token = resolution_token or token
+        self._uses_dedicated_resolution_token = bool(resolution_token)
         self._bot_login = bot_login
         self._review_thread_node_ids: dict[tuple[str, str, int], dict[str, str]] = {}
         if session is None:
@@ -392,7 +393,19 @@ class GitHubReviewPlatform:
             json={"query": mutation, "variables": {"threadId": target_node_id}},
         )
         action = "resolve" if resolved else "unresolve"
-        data = self._graphql_data(response, operation=f"review thread {action}")
+        try:
+            data = self._graphql_data(response, operation=f"review thread {action}")
+        except GitHubReviewPlatformError as exc:
+            if (
+                not self._uses_dedicated_resolution_token
+                and "Resource not accessible by integration" in str(exc)
+            ):
+                raise GitHubReviewPlatformError(
+                    f"{exc}; configure the AI_REVIEW_GITHUB_RESOLVE_TOKEN Actions "
+                    "secret with a fine-grained token limited to this repository and "
+                    "Pull requests read/write permission"
+                ) from exc
+            raise
         mutation_key = "resolveReviewThread" if resolved else "unresolveReviewThread"
         payload = data.get(mutation_key)
         thread = payload.get("thread") if isinstance(payload, dict) else None

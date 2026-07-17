@@ -708,6 +708,30 @@ class PostTests(unittest.TestCase):
         self.assertEqual(plan.planned_records[0]["status"], "resolved")
         self.assertEqual(plan.planned_records[0]["discussion_id"], "existing-discussion")
 
+    def test_degraded_panel_does_not_recount_absent_stale_unverified_record(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        consensus["groups"] = []
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        previous_record["status"] = "stale_unverified"
+        config = self._state_config()
+        config["panel"]["min_successful_reviewers_for_resolution"] = 2
+
+        plan = plan_state(
+            config,
+            self._manifest("head"),
+            consensus,
+            self._state_with_records([previous_record]),
+            [],
+            [],
+            [],
+            {},
+        )
+
+        self.assertEqual(plan.planned_records[0]["status"], "stale_unverified")
+        self.assertEqual(plan.planned_records[0]["discussion_id"], "existing-discussion")
+        self.assertEqual(plan.outcome.stale_unverified, 0)
+
     def test_plan_state_reports_overflow_without_mutating_post_result(self) -> None:
         consensus = self._consensus()
         group = copy.deepcopy(consensus["groups"][0])

@@ -473,6 +473,46 @@ def test_resolve_thread_normalizes_graphql_mutation_errors() -> None:
         raise AssertionError("GraphQL mutation error was accepted")
 
 
+def test_resolve_thread_hints_when_builtin_token_lacks_permission() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {"resolveReviewThread": None},
+            "errors": [{"message": "Resource not accessible by integration"}],
+        }
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "AI_REVIEW_GITHUB_RESOLVE_TOKEN" in str(exc)
+        assert "Pull requests read/write" in str(exc)
+    else:
+        raise AssertionError("GraphQL permission error was accepted")
+
+
+def test_resolve_thread_does_not_blame_missing_secret_when_dedicated_token_fails() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {"resolveReviewThread": None},
+            "errors": [{"message": "Resource not accessible by integration"}],
+        }
+    )
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        resolution_token="resolve-token",
+        session=session,
+    )
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "AI_REVIEW_GITHUB_RESOLVE_TOKEN" not in str(exc)
+    else:
+        raise AssertionError("GraphQL permission error was accepted")
+
+
 def test_resolve_thread_rejects_unexpected_mutation_state() -> None:
     session = GraphQLSession(
         mutation_response={

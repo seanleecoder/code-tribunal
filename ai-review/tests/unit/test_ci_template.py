@@ -628,6 +628,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):
+    def test_installed_workflow_matches_canonical_template(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        installed = root / ".github" / "workflows" / "ai-review.yml"
+        canonical = root / "ai-review" / "ci" / "review.github-actions.yml"
+
+        self.assertEqual(
+            installed.read_text(encoding="utf-8"),
+            canonical.read_text(encoding="utf-8"),
+        )
+
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")
