@@ -26,13 +26,12 @@ PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "python-gitlab", "requests"}
 # upgrades. Keep this registry offline and reviewable so CI can verify every
 # action pin that the repository currently ships without consulting GitHub.
 APPROVED_ACTION_PINS = {
-    ("actions/checkout", "08eba0b27e820071cde6df949e0beb9ba4906955"): "v4.3.0",
-    ("actions/checkout", "df4cb1c069e1874edd31b4311f1884172cec0e10"): "v6.0.3",
-    ("actions/setup-python", "a26af69be951a213d495a4c3e4e4022e16d87065"): "v5.6.0",
-    ("actions/github-script", "60a0d83039c74a4aee543508d2ffcb1c3799cdea"): "v7.0.1",
-    ("actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"): "v4.6.2",
-    ("actions/download-artifact", "d3f86a106a0bac45b974a628896c90dbdf5c8093"): "v4.3.0",
-    ("actions/attest", "a1948c3f048ba23858d222213b7c278aabede763"): "v4",
+    ("actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"): "v7.0.0",
+    ("actions/setup-python", "ece7cb06caefa5fff74198d8649806c4678c61a1"): "v6.3.0",
+    ("actions/github-script", "3a2844b7e9c422d3c10d287c895573f7108da1b3"): "v9.0.0",
+    ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
+    ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
+    ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
 }
 
 
