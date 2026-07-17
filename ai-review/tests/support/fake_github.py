@@ -7,11 +7,19 @@ from ai_review.platform.github import STATE_MARKER, PullRequestVersion
 
 
 class FakeGitHubClient:
-    def __init__(self, *, head_sha: str, diff_text: str, bot_id: int = 42) -> None:
+    def __init__(
+        self,
+        *,
+        head_sha: str,
+        diff_text: str,
+        bot_id: int = 42,
+        user_permissions: dict[int | str, int] | None = None,
+    ) -> None:
         self.head_sha = head_sha
         self.diff_text = diff_text
         self.bot_id = bot_id
         self.bot_login = "code-tribunal-bot"
+        self.user_permissions = user_permissions or {}
         self._comments: list[dict[str, Any]] = []
         self._issue_comments: list[dict[str, Any]] = []
         self._next_id = 1000
@@ -34,9 +42,60 @@ class FakeGitHubClient:
     def list_threads(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> list[dict[str, Any]]:
-        return [self._thread(comment) for comment in self._comments] + [
-            self._issue_thread(comment) for comment in self._issue_comments
-        ]
+        threads_by_id = {}
+        orphans = []
+
+        # First pass: find roots
+        for comment in self._comments:
+            if not comment.get("in_reply_to_id"):
+                threads_by_id[comment["id"]] = self._thread(comment)
+
+        # Second pass: append replies or fallback to orphans
+        for comment in self._comments:
+            reply_to = comment.get("in_reply_to_id")
+            if reply_to:
+                if reply_to in threads_by_id:
+                    note = self._thread(comment)["notes"][0]
+                    threads_by_id[reply_to]["notes"].append(note)
+                else:
+                    orphans.append(self._thread(comment))
+
+        # Sort replies
+        for thread in threads_by_id.values():
+            root_note = thread["notes"][0]
+            replies = thread["notes"][1:]
+            replies.sort(key=lambda n: (str(n.get("created_at", "")), n.get("id", 0)))
+            thread["notes"] = [root_note] + replies
+
+        return (
+            list(threads_by_id.values())
+            + orphans
+            + [self._issue_thread(comment) for comment in self._issue_comments]
+        )
+
+    def add_reply(
+        self, thread_id: int, body: str, author_id: int = 42, author_login: str = "bot"
+    ) -> int:
+        reply_id = self._id()
+        comment = {
+            "id": reply_id,
+            "body": body,
+            "in_reply_to_id": thread_id,
+            "user": {"id": author_id, "login": author_login},
+            "path": "a.py",
+            "line": 1,
+            "side": "RIGHT",
+            "commit_id": self.head_sha,
+        }
+        for root in self._comments:
+            if root["id"] == thread_id:
+                comment["path"] = root["path"]
+                comment["line"] = root["line"]
+                comment["side"] = root["side"]
+                comment["commit_id"] = root["commit_id"]
+                break
+        self._comments.append(comment)
+        return reply_id
 
     def create_inline_comment(
         self,
@@ -116,6 +175,8 @@ class FakeGitHubClient:
         return self.bot_id
 
     def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int | None:
+        if user_id in self.user_permissions:
+            return self.user_permissions[user_id]
         if user_id == self.bot_id or user_id == self.bot_login:
             return 40
         return None

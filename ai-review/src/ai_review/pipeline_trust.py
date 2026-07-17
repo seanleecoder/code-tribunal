@@ -66,9 +66,7 @@ def _validate_project_entry(
     issues: list[str] = []
     keys = set(entry)
     if keys != PROJECT_INCLUDE_KEYS:
-        issues.append(
-            f"{location} must contain exactly project, ref, and file; got {sorted(keys)}"
-        )
+        issues.append(f"{location} must contain exactly project, ref, and file; got {sorted(keys)}")
     if entry.get("project") != expected_project:
         issues.append(f"{location} must use trusted project {expected_project!r}")
     ref = entry.get("ref")
@@ -106,8 +104,7 @@ def _validate_child_mode(
     includes = _as_list(trigger.get("include"))
     if len(includes) != 2:
         issues.append(
-            "child mode trigger:include must contain exactly two entries; "
-            f"got {len(includes)}"
+            f"child mode trigger:include must contain exactly two entries; got {len(includes)}"
         )
 
     path_counts = {REVIEW_CHILD_PATH: 0, REVIEW_DAG_PATH: 0}
@@ -179,9 +176,11 @@ def _validate_direct_mode(
         file_value = _include_file(entry)
         if file_value == REVIEW_CHILD_PATH:
             issues.append("direct mode must not include the child stage wrapper")
-        if isinstance(file_value, str) and Path(file_value).name in {
-            Path(path).name for path in REVIEW_TEMPLATE_PATHS
-        } and file_value not in REVIEW_TEMPLATE_PATHS:
+        if (
+            isinstance(file_value, str)
+            and Path(file_value).name in {Path(path).name for path in REVIEW_TEMPLATE_PATHS}
+            and file_value not in REVIEW_TEMPLATE_PATHS
+        ):
             issues.append(f"Code Tribunal template path must be exact; got {file_value!r}")
 
     for name in RESERVED_DIRECT_JOB_NAMES:

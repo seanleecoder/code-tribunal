@@ -126,9 +126,7 @@ def test_flags_arbitrary_local_child_include() -> None:
 
 def test_flags_remote_child_include() -> None:
     config = _child_config()
-    config["ai_review"]["trigger"]["include"][1] = {
-        "remote": "https://attacker.example/review.yml"
-    }
+    config["ai_review"]["trigger"]["include"][1] = {"remote": "https://attacker.example/review.yml"}
     issues = _issues(config)
     assert any("forbidden include kind" in issue for issue in issues)
 

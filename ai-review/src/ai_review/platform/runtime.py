@@ -56,9 +56,7 @@ def create_runtime_platform(
         raise PlatformRuntimeError(f"gitlab_discussions requires {token_name}")
     api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
     if not api_url and not allow_dry_run_defaults:
-        raise PlatformRuntimeError(
-            "gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL"
-        )
+        raise PlatformRuntimeError("gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL")
     return create_gitlab_platform(
         api_url or "https://gitlab.example.com/api/v4",
         token or "dry-run-token",

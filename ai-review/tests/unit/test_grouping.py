@@ -196,15 +196,9 @@ class GroupingTests(unittest.TestCase):
 
     def test_grouping_is_deterministic_for_shuffled_input(self) -> None:
         findings = [
-            _finding(
-                "3" * 64, "src/foo.py", "3" * 64, title="SQL query builds raw input", line=14
-            ),
-            _finding(
-                "1" * 64, "src/foo.py", "1" * 64, title="Null config access crashes", line=10
-            ),
-            _finding(
-                "2" * 64, "src/foo.py", "2" * 64, title="Config lookup lacks guard", line=12
-            ),
+            _finding("3" * 64, "src/foo.py", "3" * 64, title="SQL query builds raw input", line=14),
+            _finding("1" * 64, "src/foo.py", "1" * 64, title="Null config access crashes", line=10),
+            _finding("2" * 64, "src/foo.py", "2" * 64, title="Config lookup lacks guard", line=12),
         ]
         grouping_config = {"semantic": {"enabled": True, "threshold": 0.2}}
 
@@ -214,9 +208,7 @@ class GroupingTests(unittest.TestCase):
         ]
         second = [
             [item["source_finding_id"] for item in group]
-            for group in group_findings(
-                list(reversed(findings)), grouping_config=grouping_config
-            )
+            for group in group_findings(list(reversed(findings)), grouping_config=grouping_config)
         ]
 
         self.assertEqual(first, second)

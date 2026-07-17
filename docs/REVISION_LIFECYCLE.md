@@ -96,7 +96,7 @@ If a later revision reintroduces the issue, the record can transition back to
 ### Human overrides
 
 Replying **in the finding's thread** with a command (requires developer access
-level or above):
+level or above on GitLab, or Write/Maintain/Admin on GitHub):
 
 ```
 /ai-review wontfix    # durable dismissal — survives future runs
@@ -104,7 +104,9 @@ level or above):
 /ai-review resolve    # mark resolved manually
 ```
 
-> **Practical note:** manually resolving the GitLab thread (the UI button) is
+On GitHub, reply directly to the bot's inline review comment in the "Files changed" view.
+
+> **Practical note:** manually resolving the GitLab/GitHub thread (the UI button) is
 > *not* the same as `/ai-review wontfix`. A thread-resolve without a command
 > does not record a durable disposition — if the code around the finding is
 > later refactored so heavily that identity matching fails (new anchor, new

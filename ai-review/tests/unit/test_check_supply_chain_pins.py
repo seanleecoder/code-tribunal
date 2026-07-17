@@ -42,7 +42,6 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
-
     def test_detects_malformed_cursor_agent_pin(self) -> None:
         self.assertIn(
             "cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest",
@@ -52,7 +51,6 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 "sha256=not-a-sha\n"
             ),
         )
-
 
     def test_detects_zero_cursor_agent_pin_placeholder(self) -> None:
         self.assertIn(
@@ -119,9 +117,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_detects_mislabeled_action_pin(self) -> None:
         text = (
-            "steps:\n"
-            "  - uses: actions/checkout@"
-            "df4cb1c069e1874edd31b4311f1884172cec0e10 # v4.3.0\n"
+            "steps:\n  - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v4.3.0\n"
         )
 
         self.assertEqual(
@@ -142,11 +138,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         )
 
     def test_allows_local_and_docker_actions(self) -> None:
-        text = (
-            "steps:\n"
-            "  - uses: ./local-action\n"
-            "  - uses: docker://alpine:3.22\n"
-        )
+        text = "steps:\n  - uses: ./local-action\n  - uses: docker://alpine:3.22\n"
 
         self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
 

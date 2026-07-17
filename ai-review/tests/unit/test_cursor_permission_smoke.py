@@ -25,7 +25,7 @@ class CursorPermissionSmokeTests(unittest.TestCase):
             state_dir.mkdir()
             self._write_executable(
                 bin_dir / "timeout",
-                "#!/bin/sh\nshift\nexec \"$@\"\n",
+                '#!/bin/sh\nshift\nexec "$@"\n',
             )
             self._write_executable(
                 bin_dir / "rm",
@@ -245,9 +245,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
             ("0", 0, 4),
             ("9", 1, 5),
         ):
-            with self.subTest(
-                hostile_status=hostile_status, expected_status=expected_status
-            ):
+            with self.subTest(hostile_status=hostile_status, expected_status=expected_status):
                 result = self._run_smoke(
                     FAKE_RM_FAIL_ALWAYS="true",
                     FAKE_DOCKER_CLEANUP_STATUS="8",

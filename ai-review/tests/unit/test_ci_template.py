@@ -616,6 +616,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("critique_batch.schema.json", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
+
 class GitHubActionsTemplateTests(unittest.TestCase):
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -643,7 +644,11 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
-        self.assertIn('AI_REVIEW_MERGE_GATE_ENABLED: "true"', text)
+        self.assertIn(
+            "AI_REVIEW_MERGE_GATE_ENABLED: "
+            "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}",
+            text,
+        )
         self.assertNotIn("AI_REVIEW_BASE_IMAGE:", text)
         self.assertNotIn("AI_REVIEW_REVIEWER_IMAGE:", text)
         self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
@@ -652,6 +657,42 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
             critique,
         )
+
+    def test_github_actions_maps_runtime_overrides_at_workflow_scope(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
+        text = template.read_text(encoding="utf-8")
+        expected_mappings = {
+            "AI_REVIEW_CLAUDE_MODEL": "${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}",
+            "AI_REVIEW_CODEX_MODEL": "${{ vars.AI_REVIEW_CODEX_MODEL || '' }}",
+            "AI_REVIEW_OPENCODE_MODEL": "${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}",
+            "AI_REVIEW_CURSOR_MODEL": "${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}",
+            "AI_REVIEW_CLAUDE_ENABLED": "${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}",
+            "AI_REVIEW_CODEX_ENABLED": "${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}",
+            "AI_REVIEW_OPENCODE_ENABLED": (
+                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+            ),
+            "AI_REVIEW_CURSOR_ENABLED": "${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
+            "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
+            "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
+            "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
+            "AI_REVIEW_CRITIQUE_ENABLED": (
+                "${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"
+            ),
+            "AI_REVIEW_MERGE_GATE_ENABLED": (
+                "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}"
+            ),
+            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
+                "${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED || 'false' }}"
+            ),
+            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": (
+                "${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD || '0.5' }}"
+            ),
+        }
+
+        for name, expression in expected_mappings.items():
+            with self.subTest(name=name):
+                self.assertEqual(text.count(f"  {name}: {expression}"), 1)
+        self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
 
     def test_github_actions_supports_manual_pr_dispatch(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -686,7 +727,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertLess(resolver_position, checkout_position)
         self.assertIn('context.eventName === "workflow_dispatch"', script)
-        self.assertIn('/^[1-9][0-9]{0,9}$/.test(requestedNumber)', script)
+        self.assertIn("/^[1-9][0-9]{0,9}$/.test(requestedNumber)", script)
         self.assertIn("await github.rest.pulls.get", script)
         self.assertIn("let pullRequest = context.payload.pull_request", script)
         self.assertIn("pullRequest.head?.repo?.full_name", script)
@@ -784,9 +825,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         manual = results["manual-same-repository"]
         self.assertEqual(manual["failures"], [])
         self.assertEqual(manual["outputs"], {"ref": head_sha})
-        self.assertEqual(
-            manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}]
-        )
+        self.assertEqual(manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}])
         self.assertIsNone(manual["thrown"])
 
         automatic = results["automatic-same-repository"]
@@ -860,16 +899,17 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
         self.assertEqual(text.count(conditional_cursor_secret), 2)
         self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
-        self.assertIn(
-            "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
-            text,
+        self.assertEqual(
+            text.count(
+                "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}"
+            ),
+            1,
         )
         self.assertEqual(
             text.count(
-                "AI_REVIEW_OPENCODE_ENABLED: "
-                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+                "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
             ),
-            2,
+            1,
         )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:

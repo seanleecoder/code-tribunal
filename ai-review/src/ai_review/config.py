@@ -244,9 +244,11 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     Recognized overrides:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
     - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``
-    - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` (one of
-      ``low|medium|high|xhigh|max``, validated in ``validate_config``; consumed
-      by adapters that expose an effort/reasoning knob)
+    - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` for
+      Claude, Codex, and OpenCode (one of ``low|medium|high|xhigh|max``,
+      validated in ``validate_config``; each adapter forwards only the levels
+      its provider supports). Cursor encodes reasoning depth in its model
+      variant and rejects a separate effort setting.
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
@@ -452,6 +454,11 @@ def validate_config(config: dict[str, Any]) -> None:
         if missing:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
         effort = reviewer.get("effort")
+        if name == "cursor" and effort is not None:
+            raise ConfigError(
+                "reviewer cursor does not support effort; select the desired reasoning "
+                "variant with reviewers.cursor.model or AI_REVIEW_CURSOR_MODEL"
+            )
         if effort is not None and effort not in EFFORT_LEVELS:
             raise ConfigError(
                 f"reviewer {name} effort must be one of {sorted(EFFORT_LEVELS)}, got {effort!r}"

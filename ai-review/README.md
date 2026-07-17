@@ -84,6 +84,11 @@ to change a model at runtime. Reviewer enablement, critique, and the merge gate 
 likewise overridable (`AI_REVIEW_<REVIEWER>_ENABLED`, `AI_REVIEW_CRITIQUE_ENABLED`,
 `AI_REVIEW_MERGE_GATE_ENABLED`). See the full reference and caveats in
 [README → Runtime Environment Overrides](../README.md#runtime-environment-overrides).
+Claude, Codex, and OpenCode also support their documented
+`AI_REVIEW_<REVIEWER>_EFFORT` overrides. Cursor has no separate effort control:
+select an exact model/reasoning variant reported by the pinned CLI's
+`cursor-agent --list-models` through `AI_REVIEW_CURSOR_MODEL`;
+`AI_REVIEW_CURSOR_EFFORT` is rejected.
 On GitHub, disabling critique keeps the matrix jobs present for stable artifact
 dependencies, but the runner writes skipped artifacts without invoking a model. To substitute Cursor for OpenCode, set `AI_REVIEW_CURSOR_ENABLED=true`, `AI_REVIEW_OPENCODE_ENABLED=false`, and provide `CURSOR_API_KEY`; leave cursor disabled to preserve the single-OpenRouter egress boundary.
 

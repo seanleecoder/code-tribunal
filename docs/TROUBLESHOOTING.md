@@ -60,6 +60,26 @@ Reviewer and critique jobs are `allow_failure: true` — one red reviewer does
 If you consistently land in `advisory_only`, one reviewer is chronically
 failing — fix that reviewer rather than lowering the minimum.
 
+## My `/ai-review` command was ignored
+
+Check all three requirements:
+
+1. **Reply in the finding's thread.** On GitLab, reply in the finding's
+   discussion. On GitHub, reply directly to the bot's inline review comment in
+   **Files changed**. A top-level MR/PR comment has no finding marker and is
+   ignored.
+2. **Use an account with enough permission.** Commands require Developer access
+   or above on GitLab, or Write/Maintain/Admin on GitHub.
+3. **Put the command on its own line.** Accepted commands are
+   `/ai-review wontfix`, `/ai-review reopen`, and `/ai-review resolve`. Extra
+   text on the same line does not match the line-anchored command syntax.
+
+Do not delete the bot's root inline comment. GitHub thread resolution maps the
+persisted root review-comment ID to GitHub's GraphQL thread ID. If the root is
+deleted, GitHub no longer returns that ID and Code Tribunal cannot resolve or
+reopen the remaining thread automatically; the post result records a warning
+instead of claiming success.
+
 ## No comments posted
 
 1. `consensus.json → summary`: `surface_count: 0` means the panel genuinely
@@ -81,8 +101,8 @@ indexes existing discussions by marker and edits in place. What you may see:
   fingerprint survives, the old record is closed and a new finding is created.
   See [REVISION_LIFECYCLE.md](REVISION_LIFECYCLE.md).
 - **A dismissed finding came back** — it was dismissed by resolving the thread
-  in the UI instead of replying `/ai-review wontfix`. Only the command records
-  a durable disposition.
+  in the GitLab/GitHub UI instead of replying `/ai-review wontfix`. Only the
+  command records a durable disposition.
 - **Similar findings from different reviewers in two threads** — grouping
   requires the same path *and category*; two models describing one defect
   under different categories produce two groups. Known limitation; the

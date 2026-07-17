@@ -6,6 +6,7 @@ from .types import FindingGroup
 
 RENDER_BODY_VERSION = "render-body.v1"
 
+
 def sanitize_model_text(text: str, *, max_length: int = 4000) -> str:
     sanitized = redact_text(text)
     sanitized = sanitized.replace("<!--", "< !--").replace("-->", "-- >")
@@ -106,4 +107,3 @@ def render_body(
         f"body_hash={body_hash} source={source_hash(group.get('source_finding_ids', []))} -->"
     )
     return body_without_marker + "\n\n" + marker, body_hash
-

@@ -140,9 +140,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             event_path = Path(tmpdir) / "event.json"
             expected = self._pull_request()
             event_path.write_text(json.dumps({"pull_request": expected}), encoding="utf-8")
-            with mock.patch.dict(
-                "os.environ", {"GITHUB_EVENT_PATH": str(event_path)}, clear=True
-            ):
+            with mock.patch.dict("os.environ", {"GITHUB_EVENT_PATH": str(event_path)}, clear=True):
                 actual = _resolve_github_pull_request(client, "octo/repo")
 
         self.assertEqual(actual, expected)
@@ -152,9 +150,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         client = mock.Mock()
         expected = self._pull_request(number=32)
         client.fetch_pull_request.return_value = expected
-        with mock.patch.dict(
-            "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True
-        ):
+        with mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True):
             actual = _resolve_github_pull_request(client, "octo/repo")
 
         self.assertEqual(actual, expected)
@@ -224,9 +220,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             number=32, source_repo="someone/fork"
         )
         with (
-            mock.patch.dict(
-                "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True
-            ),
+            mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True),
             self.assertRaisesRegex(SystemExit, "external fork PR secret-bearing path"),
         ):
             _resolve_github_pull_request(client, "octo/repo")

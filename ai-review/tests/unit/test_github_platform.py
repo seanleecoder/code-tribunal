@@ -149,9 +149,7 @@ def test_fetch_diff_returns_raw_patch_text() -> None:
 
 
 def test_fetch_diff_returns_empty_string_for_empty_response() -> None:
-    platform = GitHubReviewPlatform(
-        "https://api.github.test", "token", session=DiffSession("")
-    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=DiffSession(""))
 
     assert platform.fetch_diff("octo/repo", 7) == ""
 
@@ -208,3 +206,279 @@ def test_missing_configured_bot_has_explicit_error() -> None:
         assert "could not be resolved" in str(exc)
     else:
         raise AssertionError("missing configured bot login did not fail")
+
+
+def test_list_threads_groups_replies() -> None:
+    class GroupingSession:
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            if url.endswith("/pulls/7/comments"):
+                return Response(
+                    200,
+                    [
+                        {"id": 1, "body": "root1", "created_at": "2023-01-01T00:00:00Z"},
+                        {
+                            "id": 2,
+                            "body": "later reply to 1",
+                            "in_reply_to_id": 1,
+                            "created_at": "2023-01-01T00:00:02Z",
+                        },
+                        {"id": 3, "body": "root3", "created_at": "2023-01-01T00:00:00Z"},
+                        {
+                            "id": 5,
+                            "body": "earlier reply to 1",
+                            "in_reply_to_id": 1,
+                            "created_at": "2023-01-01T00:00:01Z",
+                        },
+                        {
+                            "id": 6,
+                            "body": "reply to 3",
+                            "in_reply_to_id": 3,
+                            "created_at": "2023-01-01T00:00:01Z",
+                        },
+                        {
+                            "id": 4,
+                            "body": "orphan reply",
+                            "in_reply_to_id": 999,
+                            "created_at": "2023-01-01T00:00:03Z",
+                        },
+                    ],
+                )
+            if url.endswith("/issues/7/comments"):
+                return Response(200, [])
+            return Response(404, None)
+
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=GroupingSession())
+    threads = platform.list_threads("octo/repo", 7)
+
+    assert len(threads) == 3
+
+    t1 = next(t for t in threads if t["notes"][0]["id"] == 1)
+    assert [note["id"] for note in t1["notes"]] == [1, 5, 2]
+
+    t2 = next(t for t in threads if t["notes"][0]["id"] == 3)
+    assert [note["id"] for note in t2["notes"]] == [3, 6]
+
+    t3 = next(t for t in threads if t["notes"][0]["id"] == 4)
+    assert len(t3["notes"]) == 1
+
+
+class GraphQLSession:
+    def __init__(
+        self,
+        thread_found: bool = True,
+        *,
+        lookup_response: Any | None = None,
+        mutation_response: Any | None = None,
+        thread_node_ids: dict[int, str] | None = None,
+    ) -> None:
+        self.thread_found = thread_found
+        self.lookup_response = lookup_response
+        self.mutation_response = mutation_response
+        self.thread_node_ids = (
+            thread_node_ids
+            if thread_node_ids is not None
+            else ({123: "node-1"} if thread_found else {})
+        )
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        self.calls.append((method, url, kwargs))
+        if url.endswith("/graphql"):
+            query = kwargs.get("json", {}).get("query", "")
+            if "query(" in query:
+                if self.lookup_response is not None:
+                    return Response(200, self.lookup_response)
+                nodes = [
+                    {"id": node_id, "comments": {"nodes": [{"databaseId": database_id}]}}
+                    for database_id, node_id in self.thread_node_ids.items()
+                ]
+                return Response(
+                    200,
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "pageInfo": {"hasNextPage": False},
+                                        "nodes": nodes,
+                                    }
+                                }
+                            }
+                        }
+                    },
+                )
+            elif "mutation(" in query:
+                if self.mutation_response is not None:
+                    return Response(200, self.mutation_response)
+                mutation_key = (
+                    "unresolveReviewThread"
+                    if "unresolveReviewThread" in query
+                    else "resolveReviewThread"
+                )
+                node_id = kwargs["json"]["variables"]["threadId"]
+                return Response(
+                    200,
+                    {
+                        "data": {
+                            mutation_key: {
+                                "thread": {
+                                    "id": node_id,
+                                    "isResolved": mutation_key == "resolveReviewThread",
+                                }
+                            }
+                        }
+                    },
+                )
+        return Response(404, None)
+
+
+def test_resolve_thread_uses_graphql_mutation() -> None:
+    session = GraphQLSession(thread_found=True)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    thread = platform.resolve_thread("octo/repo", 7, "123")
+
+    assert thread["id"] == "123"
+    assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-1"
+
+
+def test_resolve_thread_caches_thread_map_across_mutations() -> None:
+    session = GraphQLSession(thread_node_ids={123: "node-1", 456: "node-2"})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    platform.resolve_thread("octo/repo", 7, "123")
+    platform.resolve_thread("octo/repo", 7, "456")
+
+    lookups = [call for call in session.calls if "query(" in call[2]["json"]["query"]]
+    mutations = [call for call in session.calls if "mutation(" in call[2]["json"]["query"]]
+    assert len(lookups) == 1
+    assert len(mutations) == 2
+
+
+def test_resolve_thread_refreshes_cached_map_once_on_miss() -> None:
+    session = GraphQLSession(thread_node_ids={123: "node-1"})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    platform.resolve_thread("octo/repo", 7, "123")
+    session.thread_node_ids[456] = "node-2"
+
+    platform.resolve_thread("octo/repo", 7, "456")
+
+    lookups = [call for call in session.calls if "query(" in call[2]["json"]["query"]]
+    assert len(lookups) == 2
+
+
+def test_resolve_thread_uses_ghes_graphql_endpoint() -> None:
+    session = GraphQLSession()
+    platform = GitHubReviewPlatform(
+        "https://github.example/api/v3", "token", session=session
+    )
+
+    platform.resolve_thread("octo/repo", 7, "123")
+
+    assert session.calls[0][1] == "https://github.example/api/graphql"
+
+
+def test_resolve_thread_normalizes_invalid_repository_and_pr() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test", "token", session=GraphQLSession()
+    )
+
+    for repository, change_id in (("invalid", 7), ("octo/repo", "not-a-number")):
+        try:
+            platform.resolve_thread(repository, change_id, "123")
+        except GitHubReviewPlatformError:
+            pass
+        else:
+            raise AssertionError("invalid repository or PR escaped platform error handling")
+
+
+def test_resolve_thread_raises_error_if_not_found() -> None:
+    session = GraphQLSession(thread_found=False)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "not found via GraphQL" in str(exc)
+    else:
+        raise AssertionError("missing thread did not raise")
+
+
+def test_resolve_thread_normalizes_graphql_lookup_errors() -> None:
+    session = GraphQLSession(lookup_response={"data": None, "errors": [{"message": "denied"}]})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "review thread lookup failed" in str(exc)
+        assert "denied" in str(exc)
+    else:
+        raise AssertionError("GraphQL lookup error was accepted")
+
+
+def test_resolve_thread_rejects_null_graphql_lookup_data() -> None:
+    session = GraphQLSession(lookup_response={"data": None})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "did not contain data" in str(exc)
+    else:
+        raise AssertionError("null GraphQL lookup data was accepted")
+
+
+def test_resolve_thread_rejects_null_mutation_payload() -> None:
+    session = GraphQLSession(mutation_response={"data": {"resolveReviewThread": None}})
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "returned no thread" in str(exc)
+    else:
+        raise AssertionError("null GraphQL mutation payload was accepted")
+
+
+def test_resolve_thread_normalizes_graphql_mutation_errors() -> None:
+    session = GraphQLSession(
+        mutation_response={"data": {"resolveReviewThread": None}, "errors": [{"message": "denied"}]}
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "review thread resolve failed" in str(exc)
+        assert "denied" in str(exc)
+    else:
+        raise AssertionError("GraphQL mutation error was accepted")
+
+
+def test_resolve_thread_rejects_unexpected_mutation_state() -> None:
+    session = GraphQLSession(
+        mutation_response={
+            "data": {
+                "resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}
+            }
+        }
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "unexpected thread state" in str(exc)
+    else:
+        raise AssertionError("unexpected GraphQL mutation state was accepted")
+
+
+def test_unresolve_thread_validates_successful_mutation() -> None:
+    session = GraphQLSession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    thread = platform.resolve_thread("octo/repo", 7, "123", resolved=False)
+
+    assert thread["resolved"] is False
+    assert "unresolveReviewThread" in session.calls[-1][2]["json"]["query"]

@@ -44,12 +44,8 @@ class PlatformRuntimeTests(unittest.TestCase):
                     "GITLAB_WRITE_TOKEN": "w",
                 },
             )
-        self.assertEqual(
-            factory.call_args_list[0].args, ("https://gitlab.example/api/v4", "r")
-        )
-        self.assertEqual(
-            factory.call_args_list[1].args, ("https://gitlab.example/api/v4", "w")
-        )
+        self.assertEqual(factory.call_args_list[0].args, ("https://gitlab.example/api/v4", "r"))
+        self.assertEqual(factory.call_args_list[1].args, ("https://gitlab.example/api/v4", "w"))
 
     def test_github_mode_passes_configured_bot_login(self) -> None:
         with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
@@ -88,9 +84,7 @@ class PlatformRuntimeTests(unittest.TestCase):
 
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
-            create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}}, access="read", env={}
-            )
+            create_runtime_platform({"posting": {"mode": "github_reviews"}}, access="read", env={})
 
     def test_gitlab_requires_api_url_outside_dry_run(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "CI_API_V4_URL"):
@@ -133,9 +127,7 @@ class PlatformRuntimeTests(unittest.TestCase):
                     any(module.endswith("platform.factory") for module in imported_modules)
                 )
                 self.assertTrue(
-                    {"create_gitlab_platform", "create_github_platform"}.isdisjoint(
-                        imported_names
-                    )
+                    {"create_gitlab_platform", "create_github_platform"}.isdisjoint(imported_names)
                 )
                 self.assertIn("create_runtime_platform", imported_names)
 

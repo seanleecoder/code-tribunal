@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import sys
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ from ai_review.post import (
     _classify_post_groups,
     _desired_discussion_resolved,
     _initial_post_result,
+    collect_human_commands,
     finalize_state,
     index_ai_review_discussions,
     load_persisted_state,
@@ -29,6 +32,9 @@ from ai_review.post import (
     source_hash,
 )
 from ai_review.schema import validate_instance
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.fake_github import FakeGitHubClient
 
 
 class FakePostClient:
@@ -838,6 +844,184 @@ class PostTests(unittest.TestCase):
         )
         state_after = decode_state_note_body(client.mr_notes[-1]["body"])
         self.assertEqual(state_after["records"][0]["status"], "resolved")
+
+    def test_finalize_state_handles_resolve_failure_gracefully(self) -> None:
+        from ai_review.platform.base import ReviewPlatformError
+
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        persisted_state = self._state_with_records([previous_record])
+        client = StatePostClient("head", persisted_state)
+
+        def raising_resolve(*args: Any, **kwargs: Any) -> Any:
+            raise ReviewPlatformError("Simulated GraphQL error")
+
+        client.resolve_thread = raising_resolve  # type: ignore
+
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "resolve"},
+        )
+
+        finalized = finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        self.assertEqual(finalized["resolved_discussions"], 0)
+        self.assertTrue(any("Simulated GraphQL error" in w for w in finalized["warnings"]))
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "open")
+        self.assertIsNone(state_after["records"][0]["human_disposition"])
+
+    def test_finalize_state_defaults_new_record_open_after_resolve_failure(self) -> None:
+        from ai_review.platform.base import ReviewPlatformError
+
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        persisted_state = self._state_with_records([])
+        client = StatePostClient("head", persisted_state)
+
+        def raising_resolve(*args: Any, **kwargs: Any) -> Any:
+            raise ReviewPlatformError("Simulated GraphQL error")
+
+        client.resolve_thread = raising_resolve  # type: ignore
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "resolve"},
+        )
+        state_plan.planned_records[0]["discussion_id"] = "new-discussion"
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+
+        finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "open")
+        self.assertIsNone(state_after["records"][0]["human_disposition"])
+
+    def test_finalize_state_keeps_reopen_blocking_after_unresolve_failure(self) -> None:
+        from ai_review.platform.base import ReviewPlatformError
+
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        previous_record = self._state_record(group, discussion_id="existing-discussion")
+        previous_record["status"] = "resolved"
+        persisted_state = self._state_with_records([previous_record])
+        client = StatePostClient("head", persisted_state)
+
+        def raising_unresolve(*args: Any, **kwargs: Any) -> Any:
+            raise ReviewPlatformError("Simulated GraphQL unresolve error")
+
+        client.resolve_thread = raising_unresolve  # type: ignore
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "reopen"},
+        )
+
+        finalized = finalize_state(
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
+        )
+
+        self.assertTrue(any("unresolve error" in w for w in finalized["warnings"]))
+        state_after = decode_state_note_body(client.mr_notes[-1]["body"])
+        self.assertEqual(state_after["records"][0]["status"], "open")
+        self.assertEqual(state_after["records"][0]["human_disposition"], "reopen")
+
+    def test_collect_human_commands_with_github_threads(self) -> None:
+        client = FakeGitHubClient(
+            head_sha="head_sha", diff_text="", user_permissions={100: 40, 200: 10}
+        )
+        marker = (
+            f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
+            f"body_hash={'a' * 64} source={'b' * 64} -->"
+        )
+        root = client.create_inline_comment(
+            "octo/repo",
+            7,
+            marker,
+            {"path": "a.py", "line": 1, "side": "RIGHT", "commit_id": "head"},
+        )
+        root_id = root["notes"][0]["id"]
+
+        client.add_reply(int(root_id), "/ai-review resolve", author_id=200, author_login="unauth")
+        client.add_reply(int(root_id), "/ai-review wontfix", author_id=100, author_login="auth")
+
+        threads = client.list_threads("octo/repo", 7)
+        commands = collect_human_commands(client, "octo/repo", threads)
+        self.assertEqual(commands, {"1" * 64: "wontfix"})
 
     def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
         base_record = self._state_record(self._consensus()["groups"][0])

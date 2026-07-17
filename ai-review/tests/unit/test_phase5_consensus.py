@@ -214,7 +214,9 @@ class Phase5ConsensusTests(unittest.TestCase):
         critiques = [_critique_batch("codex", [_critique("codex", source_id, "agree")])]
 
         disabled_consensus = build_consensus(
-            _manifest(), batches, _critique_config(allow_advisory_escalation=False),
+            _manifest(),
+            batches,
+            _critique_config(allow_advisory_escalation=False),
             critique_batches=critiques,
         )
         escalated_consensus = build_consensus(
@@ -239,9 +241,7 @@ class Phase5ConsensusTests(unittest.TestCase):
             _manifest(),
             [_batch("claude", _finding("claude", source_id, "major"))],
             config,
-            critique_batches=[
-                _critique_batch("codex", [_critique("codex", source_id, "agree")])
-            ],
+            critique_batches=[_critique_batch("codex", [_critique("codex", source_id, "agree")])],
         )
 
         group = consensus["groups"][0]
