@@ -38,6 +38,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   with a deprecation warning. Remove `state.retention.overflow_behavior` and
   `state.retention.keep_superseded_runs` from custom configurations; they are now
   rejected as unknown keys.
+- Ensure `panel.min_successful_reviewers_for_resolution` and
+  `panel.quorum.votes_required` do not exceed the enabled reviewer count. When reducing
+  the panel to one enabled reviewer, set the blocking, resolution, and voting thresholds
+  to `1`.
 - Consumers of the JSON schemas or Python types must remove the retired `respond`,
   `skipped_advisory`, `unanchored`, and `superseded` values before upgrading.
 

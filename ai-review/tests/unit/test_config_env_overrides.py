@@ -353,6 +353,34 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertTrue(config["state"]["fail_closed_on_load_error"])
         self.assertIn("DEPRECATED: state.overflow_behavior", stderr.getvalue())
 
+    def test_legacy_state_fail_open_behavior_is_migrated_with_warning(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["state"].pop("fail_closed_on_load_error")
+        config["state"]["overflow_behavior"] = "fail_open"
+        stderr = StringIO()
+
+        with redirect_stderr(stderr):
+            validate_config(config)
+
+        self.assertFalse(config["state"]["fail_closed_on_load_error"])
+        self.assertIn("DEPRECATED: state.overflow_behavior", stderr.getvalue())
+
+    def test_invalid_legacy_state_overflow_behavior_fails_loudly(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["state"].pop("fail_closed_on_load_error")
+        config["state"]["overflow_behavior"] = "fail_close"
+
+        with self.assertRaisesRegex(ConfigError, "must be fail_closed or fail_open"):
+            validate_config(config)
+
+    def test_new_state_load_error_policy_type_error_precedes_legacy_conflict(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config["state"]["fail_closed_on_load_error"] = "true"
+        config["state"]["overflow_behavior"] = "fail_closed"
+
+        with self.assertRaisesRegex(ConfigError, "must be a boolean"):
+            validate_config(config)
+
     def test_legacy_state_overflow_behavior_cannot_conflict_with_new_key(self) -> None:
         config = load_config(_REPO_CONFIG)
         config["state"]["fail_closed_on_load_error"] = False

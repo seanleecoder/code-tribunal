@@ -43,6 +43,39 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             check_supply_chain_pins._readme_image_pin_issues(mutated, template),
         )
 
+    def test_readme_image_pin_diagnostics_distinguish_missing_and_duplicate(self) -> None:
+        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
+        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
+        concrete_line = f'     AI_REVIEW_BASE_IMAGE: "{base_pin}"'
+
+        missing = readme.replace(concrete_line, "", 1)
+        duplicate = readme + f'\nAI_REVIEW_BASE_IMAGE: "{base_pin}"\n'
+
+        self.assertIn(
+            "README is missing a concrete AI_REVIEW_BASE_IMAGE value",
+            check_supply_chain_pins._readme_image_pin_issues(missing, template),
+        )
+        self.assertIn(
+            "README contains 2 concrete AI_REVIEW_BASE_IMAGE values; expected one",
+            check_supply_chain_pins._readme_image_pin_issues(duplicate, template),
+        )
+
+    def test_readme_image_pin_parser_accepts_equivalent_yaml_formatting(self) -> None:
+        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
+        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
+        reformatted = readme.replace(
+            f'AI_REVIEW_BASE_IMAGE: "{base_pin}"',
+            f"AI_REVIEW_BASE_IMAGE : {base_pin}  # current base image",
+            1,
+        )
+
+        self.assertEqual(
+            check_supply_chain_pins._readme_image_pin_issues(reformatted, template),
+            [],
+        )
+
     def test_detects_non_exact_python_constraint(self) -> None:
         original = check_supply_chain_pins.PYTHON_CONSTRAINTS
         with tempfile.TemporaryDirectory() as tmp:

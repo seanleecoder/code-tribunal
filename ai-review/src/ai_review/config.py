@@ -424,14 +424,24 @@ def _validate_posting(config: dict[str, Any]) -> None:
     if not isinstance(retention, dict):
         raise ConfigError("state.retention must be a mapping")
     _reject_unknown_keys(retention, STATE_RETENTION_KEYS, "state.retention")
+    if "fail_closed_on_load_error" in state and not isinstance(
+        state["fail_closed_on_load_error"], bool
+    ):
+        raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     legacy_overflow = state.get("overflow_behavior")
     if "overflow_behavior" in state:
+        legacy_values = {"fail_closed": True, "fail_open": False}
+        if not isinstance(legacy_overflow, str) or legacy_overflow not in legacy_values:
+            raise ConfigError(
+                "state.overflow_behavior must be fail_closed or fail_open while using the "
+                "deprecated compatibility key"
+            )
         print(
             "ai-review: DEPRECATED: state.overflow_behavior is deprecated; use "
             "state.fail_closed_on_load_error instead.",
             file=sys.stderr,
         )
-        legacy_fail_closed = legacy_overflow == "fail_closed"
+        legacy_fail_closed = legacy_values[legacy_overflow]
         if (
             "fail_closed_on_load_error" in state
             and state["fail_closed_on_load_error"] != legacy_fail_closed
@@ -441,8 +451,6 @@ def _validate_posting(config: dict[str, Any]) -> None:
             )
         state.setdefault("fail_closed_on_load_error", legacy_fail_closed)
     state.setdefault("fail_closed_on_load_error", False)
-    if not isinstance(state.get("fail_closed_on_load_error"), bool):
-        raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     backend = state.setdefault(
         "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
     )

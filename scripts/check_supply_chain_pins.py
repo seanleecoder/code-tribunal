@@ -170,25 +170,46 @@ def _github_review_container_issues(text: str) -> list[str]:
     return issues
 
 
-def _concrete_image_pins(text: str) -> dict[str, str]:
-    pins: dict[str, str] = {}
+def _concrete_image_pin_values(text: str) -> dict[str, list[str]]:
+    pins: dict[str, list[str]] = {}
     for key in IMAGE_PIN_KEYS:
-        values = re.findall(rf'^\s*{key}:\s+"([^"<>]+)"\s*$', text, re.M)
-        if len(values) == 1:
-            pins[key] = values[0]
+        matches = re.finditer(
+            rf"^\s*{re.escape(key)}\s*:\s*(?P<quote>['\"]?)"
+            rf"(?P<value>[^'\"#\s<>]+)(?P=quote)\s*(?:#.*)?$",
+            text,
+            re.M,
+        )
+        pins[key] = [match.group("value") for match in matches]
     return pins
 
 
+def _concrete_image_pins(text: str) -> dict[str, str]:
+    return {
+        key: values[0]
+        for key, values in _concrete_image_pin_values(text).items()
+        if len(values) == 1
+    }
+
+
 def _readme_image_pin_issues(readme: str, template: str) -> list[str]:
-    readme_pins = _concrete_image_pins(readme)
-    template_pins = _concrete_image_pins(template)
+    readme_values = _concrete_image_pin_values(readme)
+    template_values = _concrete_image_pin_values(template)
     issues: list[str] = []
     for key in IMAGE_PIN_KEYS:
-        if key not in readme_pins:
-            issues.append(f"README must contain exactly one concrete {key} value")
-        if key not in template_pins:
-            issues.append(f"GitLab review template must contain exactly one concrete {key} value")
-        if key in readme_pins and key in template_pins and readme_pins[key] != template_pins[key]:
+        readme_count = len(readme_values[key])
+        template_count = len(template_values[key])
+        if readme_count == 0:
+            issues.append(f"README is missing a concrete {key} value")
+        elif readme_count > 1:
+            issues.append(f"README contains {readme_count} concrete {key} values; expected one")
+        if template_count == 0:
+            issues.append(f"GitLab review template is missing a concrete {key} value")
+        elif template_count > 1:
+            issues.append(
+                f"GitLab review template contains {template_count} concrete {key} values; "
+                "expected one"
+            )
+        if readme_count == 1 and template_count == 1 and readme_values[key] != template_values[key]:
             issues.append(f"README {key} must match ai-review/ci/review.gitlab-ci.yml")
     return issues
 

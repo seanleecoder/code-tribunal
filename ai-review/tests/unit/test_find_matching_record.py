@@ -146,5 +146,6 @@ class FindMatchingRecordTests(unittest.TestCase):
         self.assertEqual(result.precedence, "context_hash")
         self.assertEqual(result.records, [first, second])
 
+
 if __name__ == "__main__":
     unittest.main()
