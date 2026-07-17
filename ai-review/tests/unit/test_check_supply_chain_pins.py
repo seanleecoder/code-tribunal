@@ -116,16 +116,21 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         )
 
     def test_detects_mislabeled_action_pin(self) -> None:
-        text = (
-            "steps:\n  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.3.0\n"
-        )
+        checkout_pins = [
+            (sha, version)
+            for (action, sha), version in check_supply_chain_pins.APPROVED_ACTION_PINS.items()
+            if action == "actions/checkout"
+        ]
+        self.assertEqual(len(checkout_pins), 1)
+        sha, version = checkout_pins[0]
+        wrong_version = "v0.0.0"
+        text = f"steps:\n  - uses: actions/checkout@{sha} # {wrong_version}\n"
 
         self.assertEqual(
             check_supply_chain_pins._workflow_action_issues(text),
             [
-                "line 2: actions/checkout@"
-                "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 is v7.0.0, "
-                "but its version label is v4.3.0"
+                f"line 2: actions/checkout@{sha} is {version}, "
+                f"but its version label is {wrong_version}"
             ],
         )
 
