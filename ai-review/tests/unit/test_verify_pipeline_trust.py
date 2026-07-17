@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
-from ai_review.pipeline_trust import find_trust_issues
+import yaml
+from ai_review.pipeline_trust import RESERVED_DIRECT_JOB_NAMES, find_trust_issues
 
 TRUSTED_PROJECT = "org/code-tribunal-ci"
 TRUSTED_SHA = "a" * 40
 OTHER_SHA = "b" * 40
+REVIEW_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 
 
 def _project_include(file: str, *, project: str = TRUSTED_PROJECT, ref: str = TRUSTED_SHA):
@@ -270,3 +273,21 @@ def test_flags_direct_reserved_job_override() -> None:
     config["ai_review_gate"] = {"script": ["exit 0"]}
     issues = _issues(config, mode="direct")
     assert any("must not redefine reserved" in issue for issue in issues)
+
+
+def test_flags_direct_cursor_job_overrides() -> None:
+    for job_name in ("AI review: [cursor]", "AI critique: [cursor]"):
+        config = _direct_config()
+        config[job_name] = {"script": ["exit 0"]}
+
+        issues = _issues(config, mode="direct")
+
+        assert any(job_name in issue for issue in issues)
+
+
+def test_reserved_direct_jobs_cover_every_shipped_template_job() -> None:
+    template = yaml.safe_load(REVIEW_TEMPLATE.read_text(encoding="utf-8"))
+    assert isinstance(template, dict)
+    shipped_jobs = set(template) - {"variables"}
+
+    assert shipped_jobs <= RESERVED_DIRECT_JOB_NAMES

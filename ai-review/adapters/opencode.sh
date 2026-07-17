@@ -72,7 +72,7 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
     \( -type f -o -type l \) -delete
   find "$OPENCODE_REVIEW_ROOT" -name .opencode -prune -exec rm -rf {} +
 else
-  # critique (and respond) reason only over the pooled findings in the prompt
+  # critique reasons only over the pooled findings in the prompt
   # (critique.md: "grounded only in the finding data, rules, and manifest"), so
   # leave the working root empty — read/glob/grep stay allowed but have nothing to
   # explore, the same net effect as claude's tools-off critique.

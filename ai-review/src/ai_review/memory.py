@@ -331,17 +331,13 @@ def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
 def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None) -> dict[str, Any]:
     retention = retention or {}
     keep_resolved_runs = int(retention.get("keep_resolved_runs", 5))
-    keep_superseded_runs = int(retention.get("keep_superseded_runs", 2))
     keep_stale_runs = int(retention.get("keep_stale_runs", 2))
     records = []
     resolved = []
-    superseded = []
     stale = []
     for record in state.get("records", []):
         status = record.get("status")
-        if status == "superseded":
-            superseded.append(record)
-        elif status == "resolved":
+        if status == "resolved":
             resolved.append(record)
         elif status in {"stale", "stale_unverified"}:
             stale.append(record)
@@ -369,7 +365,6 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
     compacted["records"] = (
         records
         + keep_latest(resolved, keep_resolved_runs)
-        + keep_latest(superseded, keep_superseded_runs)
         + keep_latest(stale, keep_stale_runs)
     )
     return attach_state_hash(
@@ -563,7 +558,6 @@ def find_matching_record(group: FindingGroup, state: State | None) -> StateMatch
         for record in (state or {}).get("records", [])
         if isinstance(record, dict)
         and isinstance(record.get("issue_id"), str)
-        and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:
         matches = [record for record in records if _matches_precedence(record, group, precedence)]

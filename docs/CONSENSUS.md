@@ -27,10 +27,9 @@ shapes. All of that is normalized **before** the consensus engine ever runs, so
 the decision logic only sees clean, schema-valid data. There is deliberately **no
 regex-scraping of prose** for findings — the funnel is:
 
-1. **Prompt contract + JSON mode.** Each reviewer is instructed to emit a single
-   strict-JSON object. The OpenRouter HTTP path
-   ([`openrouter_reviewer.py`](../ai-review/src/ai_review/openrouter_reviewer.py)) additionally
-   sets `response_format: json_object` and `temperature: 0.0`.
+1. **Prompt contract + structured CLI output.** Each reviewer is instructed to emit a
+   single strict-JSON object. Where supported, the CLI adapters also pass the raw
+   finding schema or request JSON output directly.
 
 2. **Tolerant extraction** ([`adapter_runner.py`](../ai-review/src/ai_review/adapter_runner.py)).
    Strips markdown code fences, uses `JSONDecoder().raw_decode()` to find the first

@@ -163,7 +163,7 @@ def _load_platform_state(
             print(f"ai-review prepare: {warning}")
         return loaded if loaded is not None else default_state
     except Exception as exc:
-        if state_config.get("overflow_behavior") == "fail_closed":
+        if state_config.get("fail_closed_on_load_error") is True:
             raise
         print(f"ai-review prepare: state load failed: {exc}")
         return default_state

@@ -84,16 +84,12 @@ def _manifest_run_id(input_dir: Path) -> str:
 def _output_file(stage: str, reviewer: str) -> Path:
     if stage == "review":
         return Path("findings") / f"{reviewer}.json"
-    if stage == "critique":
-        return Path("critiques") / f"{reviewer}.json"
-    return Path("responses") / f"{reviewer}.json"
+    return Path("critiques") / f"{reviewer}.json"
 
 
 def _status_stem(stage: str, reviewer: str) -> str:
     if stage == "critique":
         return f"critique-{reviewer}"
-    if stage == "respond":
-        return f"respond-{reviewer}"
     return reviewer
 
 
@@ -144,11 +140,9 @@ def _write_empty(
             started_at=started_at,
         )
         validate_instance(batch, "finding_batch.schema.json")
-    elif stage == "critique":
+    else:
         batch = empty_critique_batch(reviewer, status, run_id=run_id, started_at=started_at)
         validate_instance(batch, "critique_batch.schema.json")
-    else:
-        batch = {"schema_version": "response_batch.v1", "run_id": run_id, "responses": []}
     write_canonical_json(output_dir / output_file, batch)
 
 
@@ -494,9 +488,6 @@ def _build_adapter_env(
     env["AI_REVIEW_MODEL"] = model
     env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
     env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
-    env["AI_REVIEW_TIMEOUT_SECONDS"] = str(
-        max(1, int(reviewer_config.get("timeout_seconds", 60)) - 10)
-    )
     # Reasoning-effort hint for CLIs that support it (Claude's --effort,
     # Codex's model_reasoning_effort, and OpenCode's reasoningEffort).
     # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
@@ -884,7 +875,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reviewer")
-    parser.add_argument("stage", choices=["review", "critique", "respond"])
+    parser.add_argument("stage", choices=["review", "critique"])
     args = parser.parse_args(argv)
     return run_adapter(args.reviewer, args.stage)
 

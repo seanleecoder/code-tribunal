@@ -77,7 +77,7 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   find "$CODEX_REVIEW_ROOT" -name AGENTS.md \( -type f -o -type l \) -delete
   find "$CODEX_REVIEW_ROOT" -name .codex -prune -exec rm -rf {} +
 else
-  # critique (and respond) reason only over the pooled findings in the prompt
+  # critique reasons only over the pooled findings in the prompt
   # (critique.md: "grounded only in the finding data, rules, and manifest"), so
   # leave the working root empty. codex still runs --sandbox read-only but has
   # nothing to explore — the same net effect as claude's tools-off critique.

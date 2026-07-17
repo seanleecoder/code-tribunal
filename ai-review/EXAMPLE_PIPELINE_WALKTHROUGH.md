@@ -48,7 +48,7 @@ All three reviewers independently caught the real blocker. **None flagged the es
 
 ## Stage 3 — Blind cross-examination (critique)
 
-`critique_claude` (job `2529364`), `critique_codex` (`2529365`), and `critique_opencode` (`2529366`) each received the pooled findings from all three reviewers with identities stripped and relabeled `reviewer_A`/`reviewer_B`/`reviewer_C` (`blind_reviewer_identity: true`), then judged every pooled finding — including their own — as `agree`, `disagree`, `duplicate`, or `noise`.
+`critique_claude` (job `2529364`), `critique_codex` (`2529365`), and `critique_opencode` (`2529366`) each received the pooled findings from all three reviewers with identities stripped and relabeled `reviewer_A`/`reviewer_B`/`reviewer_C` (`blind_reviewer_identity: true`), then judged every pooled finding — including their own — as `agree`, `dispute`, `duplicate`, or `noise`.
 
 Decoding the anonymized labels against `source_finding_id`:
 

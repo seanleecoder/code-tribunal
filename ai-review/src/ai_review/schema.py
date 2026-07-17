@@ -413,9 +413,7 @@ def finalize_finding_batch(
             break
         try:
             normalized = {key: finding[key] for key in finding_keys if key in finding}
-            normalized["run_local_id"] = str(
-                normalized.get("run_local_id") or f"{reviewer}-{index:04d}"
-            )
+            normalized["run_local_id"] = f"{reviewer}-{index:04d}"
             normalized.setdefault("evidence", [])
             normalized.setdefault("suggestion", None)
             anchor = dict(normalized["anchor"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -66,19 +67,17 @@ STATE_KEYS = {
     "recover_from_discussion_markers",
     "checksum_required",
     "retention",
-    # Used by state-load error handling for compatibility with older custom
-    # configs; retention.overflow_behavior governs state-write overflow.
+    "fail_closed_on_load_error",
+    # Accepted for one release and normalized to fail_closed_on_load_error.
     "overflow_behavior",
 }
 STATE_RETENTION_KEYS = {
     "keep_open",
     "keep_wontfix",
     "keep_resolved_runs",
-    "keep_superseded_runs",
     "keep_stale_runs",
     "max_records",
     "max_state_bytes",
-    "overflow_behavior",
 }
 LIMIT_KEYS = {
     "max_diff_bytes",
@@ -425,6 +424,33 @@ def _validate_posting(config: dict[str, Any]) -> None:
     if not isinstance(retention, dict):
         raise ConfigError("state.retention must be a mapping")
     _reject_unknown_keys(retention, STATE_RETENTION_KEYS, "state.retention")
+    if "fail_closed_on_load_error" in state and not isinstance(
+        state["fail_closed_on_load_error"], bool
+    ):
+        raise ConfigError("state.fail_closed_on_load_error must be a boolean")
+    legacy_overflow = state.get("overflow_behavior")
+    if "overflow_behavior" in state:
+        legacy_values = {"fail_closed": True, "fail_open": False}
+        if not isinstance(legacy_overflow, str) or legacy_overflow not in legacy_values:
+            raise ConfigError(
+                "state.overflow_behavior must be fail_closed or fail_open while using the "
+                "deprecated compatibility key"
+            )
+        print(
+            "ai-review: DEPRECATED: state.overflow_behavior is deprecated; use "
+            "state.fail_closed_on_load_error instead.",
+            file=sys.stderr,
+        )
+        legacy_fail_closed = legacy_values[legacy_overflow]
+        if (
+            "fail_closed_on_load_error" in state
+            and state["fail_closed_on_load_error"] != legacy_fail_closed
+        ):
+            raise ConfigError(
+                "state.overflow_behavior conflicts with state.fail_closed_on_load_error"
+            )
+        state.setdefault("fail_closed_on_load_error", legacy_fail_closed)
+    state.setdefault("fail_closed_on_load_error", False)
     backend = state.setdefault(
         "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
     )
@@ -491,17 +517,26 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("panel must be a mapping")
     _reject_unknown_keys(panel, PANEL_KEYS, "panel")
     min_successful = panel.get("min_successful_reviewers_for_blocking")
-    if not isinstance(min_successful, int) or not (1 <= min_successful <= enabled_count):
+    if type(min_successful) is not int or not (1 <= min_successful <= enabled_count):
         raise ConfigError(
             "panel.min_successful_reviewers_for_blocking must be between 1 and enabled reviewers"
+        )
+    min_resolution = panel.get("min_successful_reviewers_for_resolution")
+    if type(min_resolution) is not int or not (1 <= min_resolution <= enabled_count):
+        raise ConfigError(
+            "panel.min_successful_reviewers_for_resolution must be between 1 and enabled reviewers"
         )
     quorum = panel.get("quorum", {})
     if not isinstance(quorum, dict):
         raise ConfigError("panel.quorum must be a mapping")
     _reject_unknown_keys(quorum, PANEL_QUORUM_KEYS, "panel.quorum")
     votes_required = quorum.get("votes_required")
-    if enabled_count > 1 and (not isinstance(votes_required, int) or votes_required < 2):
-        raise ConfigError("panel.quorum.votes_required must be at least 2 with multiple reviewers")
+    minimum_votes = 2 if enabled_count > 1 else 1
+    if type(votes_required) is not int or not (minimum_votes <= votes_required <= enabled_count):
+        raise ConfigError(
+            "panel.quorum.votes_required must be between "
+            f"{minimum_votes} and enabled reviewers"
+        )
     grouping = panel.get("grouping", {})
     if grouping is None:
         grouping = {}

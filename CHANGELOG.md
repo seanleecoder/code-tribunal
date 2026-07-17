@@ -13,16 +13,37 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Posted findings and advisory summaries preserve complete model-authored content up to
   the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
 - Package description now covers GitLab merge requests and GitHub pull requests.
+- GitLab web/API pipelines create AI review jobs only when a merge request IID is
+  present, and the trust auditor now reserves the shipped Cursor jobs.
+- State-load failure policy is now the explicit boolean
+  `state.fail_closed_on_load_error`; state writes remain unconditionally fail-closed
+  on overflow.
 
 ### Removed
 
 - Removed the unused `python-gitlab` runtime dependency from the package and base image
   (the in-tree requests-based GitLab client is the only integration path).
+- Removed the unused `respond` adapter stage, direct OpenRouter reviewer module,
+  trigger helper, and the unproduced `skipped_advisory`, `unanchored`, and
+  `superseded` contract values.
+- Removed the inert `state.retention.overflow_behavior` and
+  `state.retention.keep_superseded_runs` configuration keys.
 
 ### Migration
 
 - The posted-body format is now `render-body.v2`. Existing bot-authored threads receive
   a one-time body update on the next review run.
+- Replace legacy top-level `state.overflow_behavior: fail_closed` with
+  `state.fail_closed_on_load_error: true`. The legacy key is accepted for one release
+  with a deprecation warning. Remove `state.retention.overflow_behavior` and
+  `state.retention.keep_superseded_runs` from custom configurations; they are now
+  rejected as unknown keys.
+- Ensure `panel.min_successful_reviewers_for_resolution` and
+  `panel.quorum.votes_required` do not exceed the enabled reviewer count. When reducing
+  the panel to one enabled reviewer, set the blocking, resolution, and voting thresholds
+  to `1`.
+- Consumers of the JSON schemas or Python types must remove the retired `respond`,
+  `skipped_advisory`, `unanchored`, and `superseded` values before upgrading.
 
 ## [0.4.0] - 2026-07-14
 

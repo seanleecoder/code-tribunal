@@ -96,7 +96,7 @@
           "discussion_id": { "type": ["string", "null"] },
           "root_note_id": { "type": ["integer", "null"], "minimum": 1 },
           "status": {
-            "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified", "superseded"]
+            "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified"]
           },
           "last_seen_sha": { "type": "string" },
           "first_seen_sha": { "type": "string" },
@@ -111,7 +111,7 @@
             "enum": ["wontfix", "reopen", "resolve", null]
           },
           "remap_status": {
-            "enum": ["exact", "remapped", "missing", "ambiguous", "unanchored", "not_checked"]
+            "enum": ["exact", "remapped", "missing", "ambiguous", "not_checked"]
           },
           "last_matched_run_id": { "type": ["string", "null"] }
         }
