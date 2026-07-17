@@ -62,20 +62,28 @@ def render_body(
     summary = sanitize_model_text(str(group.get("body", "")), max_length=1200)
     normalized_title = normalize_text(str(group["title"]))
     normalized_summary = normalize_text(str(group.get("body", "")))
-    evidence_lines: list[str] = []
+    evidence_groups: dict[str, tuple[list[str], str]] = {}
     evidence_by_reviewer = group.get("evidence_by_reviewer", {})
     if isinstance(evidence_by_reviewer, dict):
         for reviewer in reviewers:
             raw_evidence = evidence_by_reviewer.get(reviewer)
             if not isinstance(raw_evidence, str) or not raw_evidence.strip():
                 continue
-            if normalize_text(raw_evidence) in {normalized_summary, normalized_title}:
+            normalized_evidence = normalize_text(raw_evidence)
+            if normalized_evidence in {normalized_summary, normalized_title}:
                 continue
             evidence = sanitize_model_text(
                 raw_evidence,
                 max_length=300,
             )
-            evidence_lines.append(f"- {reviewer}: {evidence}")
+            if normalized_evidence in evidence_groups:
+                evidence_groups[normalized_evidence][0].append(reviewer)
+            else:
+                evidence_groups[normalized_evidence] = ([reviewer], evidence)
+    evidence_lines = [
+        f"- {', '.join(evidence_reviewers)}: {evidence}"
+        for evidence_reviewers, evidence in evidence_groups.values()
+    ]
 
     dissent_lines: list[str] = []
     critique_disputes = group.get("critique_disputes", [])
@@ -85,6 +93,8 @@ def render_body(
                 continue
             critic = sanitize_model_text(str(dispute.get("critic", "")), max_length=240)
             rationale = sanitize_model_text(str(dispute.get("rationale", "")), max_length=1200)
+            if not critic or not rationale:
+                continue
             line = f"- {critic} disputes: {rationale}"
             adjusted = dispute.get("adjusted_severity")
             if isinstance(adjusted, str):

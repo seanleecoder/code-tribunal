@@ -69,6 +69,33 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("Evidence:\n- codex: records[0] executes before the guard", body)
         self.assertNotIn("- claude:", body)
 
+    def test_aggregates_identical_evidence_across_reviewers(self) -> None:
+        group = self._group()
+        group["evidence_by_reviewer"] = {
+            "claude": "records[0] executes before the guard",
+            "codex": "records[0] executes before the guard",
+        }
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn(
+            "Evidence:\n- claude, codex: records[0] executes before the guard",
+            body,
+        )
+        self.assertEqual(body.count("records[0] executes before the guard"), 1)
+
+    def test_keeps_distinct_evidence_separate(self) -> None:
+        group = self._group()
+        group["evidence_by_reviewer"] = {
+            "claude": "records[0] executes before the guard",
+            "codex": "the empty check occurs on the next line",
+        }
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertIn("- claude: records[0] executes before the guard", body)
+        self.assertIn("- codex: the empty check occurs on the next line", body)
+
     def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
         group = self._group()
         group["final_severity"] = "blocker"
@@ -96,6 +123,17 @@ class BodyHashTests(unittest.TestCase):
         )
         self.assertIn("- opencode disputes: This path is unreachable.", body)
         self.assertIn("- Blocking: yes", body)
+
+    def test_omits_dissent_that_sanitizes_to_empty(self) -> None:
+        group = self._group()
+        group["critique_disputes"] = [
+            {"critic": "codex", "rationale": "   ", "adjusted_severity": None}
+        ]
+
+        body, _body_hash = render_body(group, 3, "run")
+
+        self.assertNotIn("Dissent:", body)
+        self.assertNotIn("codex disputes:", body)
 
     def test_suggestion_rendering_keeps_validation_gate(self) -> None:
         valid = self._group()

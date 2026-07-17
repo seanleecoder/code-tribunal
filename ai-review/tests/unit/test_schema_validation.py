@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import stat
 import tempfile
@@ -21,6 +22,46 @@ from ai_review.schema import (
 
 
 class SchemaValidationTests(unittest.TestCase):
+    def test_consensus_rejects_empty_display_fields_and_unknown_adjusted_severity(
+        self,
+    ) -> None:
+        fixture = load_json_file(
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "golden"
+            / "semantic_consensus.json"
+        )
+        invalid_values = [
+            ("empty evidence", {"evidence_by_reviewer": {"claude": ""}}),
+            (
+                "empty critic",
+                {"critique_disputes": [{"critic": "", "rationale": "valid"}]},
+            ),
+            (
+                "empty rationale",
+                {"critique_disputes": [{"critic": "codex", "rationale": ""}]},
+            ),
+            (
+                "unknown adjusted severity",
+                {
+                    "critique_disputes": [
+                        {
+                            "critic": "codex",
+                            "rationale": "valid",
+                            "adjusted_severity": "critical",
+                        }
+                    ]
+                },
+            ),
+        ]
+
+        for label, replacement in invalid_values:
+            with self.subTest(label=label):
+                consensus = copy.deepcopy(fixture)
+                consensus["groups"][0].update(replacement)
+                with self.assertRaises(SchemaValidationError):
+                    validate_instance(consensus, "consensus.schema.json")
+
     def test_empty_raw_finding_batch_validates_only_against_raw_schema(self) -> None:
         raw = {"findings": []}
 

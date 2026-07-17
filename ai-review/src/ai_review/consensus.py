@@ -474,7 +474,7 @@ def _apply_critiques(
                 selected[key] = critique
 
     downgrades: dict[int, list[str]] = {}
-    for (group_index, _critic), critique in sorted(
+    for (group_index, critic), critique in sorted(
         selected.items(), key=lambda item: (item[0][0], item[0][1], _critique_sort_key(item[1]))
     ):
         group = groups[group_index]
@@ -497,17 +497,19 @@ def _apply_critiques(
         elif verdict == "noise":
             group["critique_noise_count"] += 1
         elif verdict == "dispute":
-            group["critique_disputes"].append(
-                {
-                    "critic": _critic,
-                    "rationale": str(critique.get("rationale", "")),
-                    "adjusted_severity": (
-                        str(critique["adjusted_severity"])
-                        if isinstance(critique.get("adjusted_severity"), str)
-                        else None
-                    ),
-                }
-            )
+            rationale = str(critique.get("rationale", ""))
+            if rationale.strip():
+                group["critique_disputes"].append(
+                    {
+                        "critic": critic,
+                        "rationale": rationale,
+                        "adjusted_severity": (
+                            str(critique["adjusted_severity"])
+                            if isinstance(critique.get("adjusted_severity"), str)
+                            else None
+                        ),
+                    }
+                )
             adjusted = critique.get("adjusted_severity")
             if isinstance(adjusted, str):
                 downgrades.setdefault(group_index, []).append(adjusted)

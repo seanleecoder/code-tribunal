@@ -449,6 +449,25 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(disabled["groups"][0]["final_severity"], "major")
         self.assertEqual(enabled["groups"][0]["final_severity"], "minor")
 
+    def test_empty_dispute_rationale_is_not_propagated_as_display_data(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [_critique("codex", source_id, "dispute", rationale="   ")],
+                )
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(group["critique_summary"]["dispute"], 1)
+        self.assertEqual(group["critique_disputes"], [])
+        validate_instance(consensus, "consensus.schema.json")
+
     def test_severity_downgrade_is_opt_in_and_limited_to_one_level(self) -> None:
         source_id = "1" * 64
         batches = [
