@@ -260,7 +260,7 @@ def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
     for finding in sorted(findings, key=lambda item: str(item["source_finding_id"])):
         reviewer = str(finding["reviewer"])
         entries = [
-            item
+            item.strip()
             for item in finding.get("evidence", [])
             if isinstance(item, str) and item.strip()
         ]
