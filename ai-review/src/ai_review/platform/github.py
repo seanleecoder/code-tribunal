@@ -138,10 +138,36 @@ class GitHubReviewPlatform:
         issue_comments = self._get_all_pages(
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments"
         )
+        
+        threads_by_id: dict[int, Thread] = {}
+        orphans: list[Thread] = []
+
+        # First pass: find roots
+        for comment in comments:
+            if not comment.get("in_reply_to_id"):
+                threads_by_id[comment["id"]] = self._thread_from_comment(comment)
+
+        # Second pass: append replies or fallback to orphans
+        for comment in comments:
+            reply_to = comment.get("in_reply_to_id")
+            if reply_to:
+                if reply_to in threads_by_id:
+                    note = self._thread_from_comment(comment)["notes"][0]
+                    threads_by_id[reply_to]["notes"].append(note)
+                else:
+                    orphans.append(self._thread_from_comment(comment))
+
+        # Sort replies by created_at then id within each thread
+        for thread in threads_by_id.values():
+            root_note = thread["notes"][0]
+            replies = thread["notes"][1:]
+            replies.sort(key=lambda n: (str(n.get("created_at", "")), n.get("id", 0)))
+            thread["notes"] = [root_note] + replies
+
         # GitHub summary comments live in PR issue comments rather than PR review
         # comments. Include issue comments as thread-shaped notes so shared summary
         # upsert code can discover and update an existing summary marker.
-        return [self._thread_from_comment(comment) for comment in comments] + [
+        return list(threads_by_id.values()) + orphans + [
             self._thread_from_issue_comment(comment) for comment in issue_comments
         ]
 
@@ -183,8 +209,70 @@ class GitHubReviewPlatform:
         thread_id: str,
         resolved: bool = True,
     ) -> Thread:
-        # REST PR comments do not expose thread resolution. Preserve state while
-        # returning the known thread id so callers can remain platform-neutral.
+        owner, name = str(project_id_or_path).split("/", 1)
+        query = """
+        query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $pr) {
+              reviewThreads(first: 100, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 1) { nodes { databaseId } }
+                }
+              }
+            }
+          }
+        }
+        """
+        cursor = None
+        target_node_id = None
+        
+        while True:
+            variables = {
+                "owner": owner,
+                "name": name,
+                "pr": int(change_id),
+                "cursor": cursor
+            }
+            response = self._request("POST", "/graphql", json={"query": query, "variables": variables})
+            
+            repo = response.get("data", {}).get("repository")
+            if not repo:
+                break
+            pr_data = repo.get("pullRequest")
+            if not pr_data:
+                break
+            threads = pr_data.get("reviewThreads", {})
+            for node in threads.get("nodes", []):
+                comments_nodes = node.get("comments", {}).get("nodes", [])
+                if comments_nodes and str(comments_nodes[0].get("databaseId")) == thread_id:
+                    target_node_id = node.get("id")
+                    break
+                    
+            if target_node_id:
+                break
+                
+            page_info = threads.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            cursor = page_info.get("endCursor")
+
+        if not target_node_id:
+            raise GitHubReviewPlatformError(f"review thread {thread_id} not found via GraphQL")
+
+        mutation = """
+        mutation($threadId: ID!) {
+          resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+        }
+        """ if resolved else """
+        mutation($threadId: ID!) {
+          unresolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+        }
+        """
+        
+        self._request("POST", "/graphql", json={"query": mutation, "variables": {"threadId": target_node_id}})
         return {"id": thread_id, "resolved": resolved, "notes": []}
 
     def list_state_notes(
@@ -350,6 +438,7 @@ class GitHubReviewPlatform:
         note = {
             "id": comment.get("id"),
             "body": comment.get("body", ""),
+            "created_at": comment.get("created_at"),
             "position": {
                 "new_path": comment.get("path"),
                 "old_path": comment.get("path"),

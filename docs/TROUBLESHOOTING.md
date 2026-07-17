@@ -81,8 +81,8 @@ indexes existing discussions by marker and edits in place. What you may see:
   fingerprint survives, the old record is closed and a new finding is created.
   See [REVISION_LIFECYCLE.md](REVISION_LIFECYCLE.md).
 - **A dismissed finding came back** — it was dismissed by resolving the thread
-  in the UI instead of replying `/ai-review wontfix`. Only the command records
-  a durable disposition.
+  in the GitLab/GitHub UI instead of replying `/ai-review wontfix`. Only the
+  command records a durable disposition.
 - **Similar findings from different reviewers in two threads** — grouping
   requires the same path *and category*; two models describing one defect
   under different categories produce two groups. Known limitation; the

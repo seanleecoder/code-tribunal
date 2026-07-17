@@ -208,3 +208,88 @@ def test_missing_configured_bot_has_explicit_error() -> None:
         assert "could not be resolved" in str(exc)
     else:
         raise AssertionError("missing configured bot login did not fail")
+
+
+def test_list_threads_groups_replies() -> None:
+    class GroupingSession:
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            if url.endswith("/pulls/7/comments"):
+                return Response(
+                    200,
+                    [
+                        {"id": 1, "body": "root1", "created_at": "2023-01-01T00:00:00Z"},
+                        {"id": 2, "body": "reply to 1", "in_reply_to_id": 1, "created_at": "2023-01-01T00:00:01Z"},
+                        {"id": 3, "body": "root3", "created_at": "2023-01-01T00:00:00Z"},
+                        {"id": 4, "body": "orphan reply", "in_reply_to_id": 999, "created_at": "2023-01-01T00:00:02Z"},
+                    ],
+                )
+            if url.endswith("/issues/7/comments"):
+                return Response(200, [])
+            return Response(404, None)
+            
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=GroupingSession())
+    threads = platform.list_threads("octo/repo", 7)
+    
+    assert len(threads) == 3
+    
+    t1 = next(t for t in threads if t["notes"][0]["id"] == 1)
+    assert len(t1["notes"]) == 2
+    assert t1["notes"][1]["id"] == 2
+    
+    t2 = next(t for t in threads if t["notes"][0]["id"] == 3)
+    assert len(t2["notes"]) == 1
+    
+    t3 = next(t for t in threads if t["notes"][0]["id"] == 4)
+    assert len(t3["notes"]) == 1
+
+
+class GraphQLSession:
+    def __init__(self, thread_found: bool = True) -> None:
+        self.thread_found = thread_found
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        self.calls.append((method, url, kwargs))
+        if url.endswith("/graphql"):
+            query = kwargs.get("json", {}).get("query", "")
+            if "query(" in query:
+                nodes = []
+                if self.thread_found:
+                    nodes.append({"id": "node-1", "comments": {"nodes": [{"databaseId": 123}]}})
+                return Response(200, {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "pageInfo": {"hasNextPage": False},
+                                    "nodes": nodes
+                                }
+                            }
+                        }
+                    }
+                })
+            elif "mutation(" in query:
+                return Response(200, {"data": {"resolveReviewThread": {"thread": {"id": "node-1", "isResolved": True}}}})
+        return Response(404, None)
+
+
+def test_resolve_thread_uses_graphql_mutation() -> None:
+    session = GraphQLSession(thread_found=True)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    
+    thread = platform.resolve_thread("octo/repo", 7, "123")
+    
+    assert thread["id"] == "123"
+    assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-1"
+
+
+def test_resolve_thread_raises_error_if_not_found() -> None:
+    session = GraphQLSession(thread_found=False)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    
+    try:
+        platform.resolve_thread("octo/repo", 7, "123")
+    except GitHubReviewPlatformError as exc:
+        assert "not found via GraphQL" in str(exc)
+    else:
+        raise AssertionError("missing thread did not raise")

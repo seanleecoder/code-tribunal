@@ -1372,14 +1372,17 @@ def finalize_state(
             desired = _desired_discussion_resolved(record, prior_status)
             if desired is None or dry_run:
                 continue
-            client.resolve_thread(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                str(discussion_id),
-                desired,
-            )
-            if desired:
-                result["resolved_discussions"] += 1
+            try:
+                client.resolve_thread(
+                    manifest["project_id"],
+                    manifest["merge_request_iid"],
+                    str(discussion_id),
+                    desired,
+                )
+                if desired:
+                    result["resolved_discussions"] += 1
+            except ReviewPlatformError as exc:
+                result["warnings"].append(f"failed to resolve thread {discussion_id}: {exc}")
         final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,
