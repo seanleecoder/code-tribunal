@@ -217,6 +217,13 @@ permissions and accepts `write`, `maintain`, or `admin` as command-capable roles
 Before enabling the workflow, create an Actions repository secret named
 `OPENROUTER_API_KEY`; external-fork pull requests are skipped by design because
 GitHub does not expose that secret to them.
+For reliable review-thread resolution, also create a repository secret named
+`AI_REVIEW_GITHUB_RESOLVE_TOKEN` containing a repository-scoped maintainer token
+with Pull requests read/write access. GitHub can reject the built-in
+`GITHUB_TOKEN` for the GraphQL resolve/unresolve mutations even when the workflow
+grants `pull-requests: write`. The dedicated token is exposed only to the trusted
+post job and only used for those mutations; comments and persisted state continue
+to use the short-lived built-in token and remain owned by `github-actions[bot]`.
 By default, in-repository pull requests start the workflow automatically. To
 require an explicit run instead, create an Actions repository variable named
 `AI_REVIEW_MANUAL` with the exact value `true`. Automatic pull-request runs will
