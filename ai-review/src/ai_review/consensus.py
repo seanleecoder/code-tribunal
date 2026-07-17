@@ -10,7 +10,7 @@ from .canonical import canonical_json, sha256_hex
 from .config import effective_config_summary, enabled_reviewers, load_config
 from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
-from .render import render_body
+from .render import platform_comment_limit, render_body
 from .schema import finalize_critique_batch, load_json_file, validate_instance, write_canonical_json
 from .types import Consensus, FindingGroup, PanelStatus, State
 
@@ -559,6 +559,8 @@ def build_consensus(
     state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
 ) -> Consensus:
+    posting_mode = str(config.get("posting", {}).get("mode", "gitlab_discussions"))
+    platform_comment_limit(posting_mode)
     enabled = sorted(enabled_reviewers(config))
     successful = sorted(
         batch["reviewer"] for batch in finding_batches if batch["adapter_status"] == "success"
@@ -679,7 +681,7 @@ def build_consensus(
             cast(FindingGroup, group),
             len(successful),
             manifest["run_id"],
-            posting_mode=str(config.get("posting", {}).get("mode", "gitlab_discussions")),
+            posting_mode=posting_mode,
         )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)

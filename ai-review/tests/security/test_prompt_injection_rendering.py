@@ -27,7 +27,7 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run")
+        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
         body_without_trusted_marker = rendered.rsplit("<!-- ai-review:v1", 1)[0]
 
         self.assertNotIn("<!-- ai-review-state:v1", rendered)
@@ -53,7 +53,7 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run")
+        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
         body_without_trusted_marker = rendered.rsplit("<!-- ai-review:v1", 1)[0]
 
         self.assertNotIn("<!-- ai-review:v1", body_without_trusted_marker)

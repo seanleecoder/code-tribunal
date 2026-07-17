@@ -70,7 +70,7 @@ def render_body(
     successful_reviewer_count: int,
     run_id: str,
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
 ) -> tuple[str, str]:
     return _render_body(
         group,
@@ -617,7 +617,7 @@ def render_summary_body(
     fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
 ) -> tuple[str, str]:
     fallback_sorted = _sort_groups(fallback_groups)
     fyi_sorted = _sort_groups(fyi_groups)
@@ -626,57 +626,91 @@ def render_summary_body(
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
     placeholder_marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={'0' * 64} -->"
+    configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
+
+    def entry_prefix_lengths(entries: list[str]) -> list[int]:
+        lengths = [0]
+        for entry in entries:
+            lengths.append(lengths[-1] + len(entry))
+        return lengths
+
+    fallback_lengths = entry_prefix_lengths(fallback_entries)
+    fyi_lengths = entry_prefix_lengths(fyi_entries)
+
+    def section_header(label: str, shown: int, total: int) -> str:
+        if shown < total:
+            return f"{label} (showing {shown} of {total}):"
+        return f"{label} ({total}):"
+
+    def fallback_trailers(size_omitted: int) -> list[str]:
+        if not size_omitted:
+            return []
+        return [f"…and {size_omitted} more findings not posted inline (size limit)"]
+
+    def fyi_trailers(size_omitted: int) -> list[str]:
+        trailers: list[str] = []
+        if size_omitted:
+            trailers.append(f"…and {size_omitted} more advisory findings (size limit)")
+        if configured_fyi_omitted:
+            trailers.append(
+                f"…and {configured_fyi_omitted} more advisory findings (configured count limit)"
+            )
+        return trailers
+
+    def section_length(header: str, entries_length: int, item_count: int) -> int:
+        if not item_count:
+            return len(header)
+        return len(header) + entries_length + item_count
+
+    def rendered_size(fallback_count: int, fyi_count: int) -> int:
+        total = len("**AI review summary**") + len("\n\n") + len(placeholder_marker)
+        if fallback_sorted:
+            trailers = fallback_trailers(len(fallback_entries) - fallback_count)
+            header = section_header(
+                "Findings not posted inline", fallback_count, len(fallback_sorted)
+            )
+            items_length = fallback_lengths[fallback_count] + sum(map(len, trailers))
+            total += 2 + section_length(header, items_length, fallback_count + len(trailers))
+        if fyi_sorted:
+            trailers = fyi_trailers(len(fyi_entries) - fyi_count)
+            header = section_header("Advisory (FYI) findings", fyi_count, len(fyi_sorted))
+            items_length = fyi_lengths[fyi_count] + sum(map(len, trailers))
+            total += 2 + section_length(header, items_length, fyi_count + len(trailers))
+        return total
 
     def compose(
         fallback_count: int,
         fyi_count: int,
-        *,
-        fallback_size_omitted: int,
-        fyi_size_omitted: int,
     ) -> str:
-        lines = ["**AI review summary**", ""]
+        sections = ["**AI review summary**"]
         if fallback_sorted:
-            lines.append(f"Findings not posted inline ({len(fallback_sorted)}):")
-            lines.extend(fallback_entries[:fallback_count])
-            if fallback_size_omitted:
-                lines.append(
-                    f"…and {fallback_size_omitted} more findings not posted inline (size limit)"
-                )
-            lines.append("")
+            section = [
+                section_header("Findings not posted inline", fallback_count, len(fallback_sorted)),
+                *fallback_entries[:fallback_count],
+                *fallback_trailers(len(fallback_entries) - fallback_count),
+            ]
+            sections.append("\n".join(section))
         if fyi_sorted:
-            lines.append(f"Advisory (FYI) findings ({len(fyi_sorted)}):")
-            lines.extend(fyi_entries[:fyi_count])
-            remaining = len(fyi_sorted) - fyi_count
-            if remaining > 0:
-                suffix = " (size limit)" if fyi_size_omitted else ""
-                lines.append(f"…and {remaining} more advisory findings{suffix}")
-            lines.append("")
-        return "\n".join(lines).rstrip()
+            section = [
+                section_header("Advisory (FYI) findings", fyi_count, len(fyi_sorted)),
+                *fyi_entries[:fyi_count],
+                *fyi_trailers(len(fyi_entries) - fyi_count),
+            ]
+            sections.append("\n".join(section))
+        return "\n\n".join(sections)
 
     fallback_count = len(fallback_entries)
     fyi_count = len(fyi_entries)
-    fallback_size_omitted = 0
-    fyi_size_omitted = 0
-    while True:
-        body_without_marker = compose(
-            fallback_count,
-            fyi_count,
-            fallback_size_omitted=fallback_size_omitted,
-            fyi_size_omitted=fyi_size_omitted,
-        )
-        final_size = len(body_without_marker) + len("\n\n") + len(placeholder_marker)
-        if final_size <= max_comment_size:
-            break
+    while rendered_size(fallback_count, fyi_count) > max_comment_size:
         if fyi_count > 0:
             fyi_count -= 1
-            fyi_size_omitted += 1
             continue
         if fallback_count > 0:
             fallback_count -= 1
-            fallback_size_omitted += 1
             continue
         raise ValueError("platform comment limit is too small for summary marker")
 
+    body_without_marker = compose(fallback_count, fyi_count)
     body_hash = sha256_hex(body_without_marker)
     marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={body_hash} -->"
     return body_without_marker + "\n\n" + marker, body_hash
@@ -718,7 +752,7 @@ def upsert_summary_comment(
     fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary = {
@@ -1250,7 +1284,7 @@ def post_inline(
     summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
     inline_multiline: bool,
     current_diff_text: str | None,
     dry_run: bool,
@@ -1403,7 +1437,7 @@ def finalize_state(
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
     fallback_to_summary: bool,
     fyi_mode: str,
     max_fyi: int,
@@ -1566,6 +1600,9 @@ def post_consensus(
     dry_run: bool = False,
     diff_text: str | None = None,
 ) -> PostResult:
+    posting = config.get("posting", {})
+    posting_mode = str(posting.get("mode", "gitlab_discussions"))
+    platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
         manifest["project_id"],
         manifest["merge_request_iid"],
@@ -1575,7 +1612,6 @@ def post_consensus(
         manifest=manifest,
         current_head_sha=current_head_sha,
     )
-    posting = config.get("posting", {})
     limits = config.get("limits", {})
     if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
         result["status"] = "stale_head"
@@ -1585,7 +1621,6 @@ def post_consensus(
     inline_sides = set(posting.get("v1_inline_sides", ["new"]))
     fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
     fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    posting_mode = str(posting.get("mode", "gitlab_discussions"))
     max_surface = int(limits.get("max_posted_surface_findings", 25))
     max_fyi = int(limits.get("max_fyi_findings", 50))
     context = prepare_post_context(

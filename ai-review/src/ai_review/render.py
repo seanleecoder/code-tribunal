@@ -10,6 +10,7 @@ PLATFORM_COMMENT_LIMITS = {
     "github_reviews": 65_536,
 }
 PLATFORM_TRUNCATION_NOTICE = "…[truncated: platform comment size limit]"
+FENCE_CLOSURE = "\n```\n"
 
 
 def platform_comment_limit(posting_mode: str) -> int:
@@ -29,30 +30,52 @@ def sanitize_model_text(text: str, *, max_length: int | None = None) -> str:
 def _truncate_at_safe_boundary(text: str, max_length: int) -> str:
     if len(text) <= max_length:
         return text
-    content_length = max_length - len(PLATFORM_TRUNCATION_NOTICE)
-    if content_length < 0:
+
+    def prefix_at_boundary(content_length: int) -> str:
+        prefix = text[:content_length]
+        minimum_boundary = content_length // 2
+        boundary = max(
+            prefix.rfind("\n\n"),
+            prefix.rfind("\n"),
+            prefix.rfind(" "),
+        )
+        if boundary >= minimum_boundary:
+            prefix = prefix[:boundary]
+        return prefix.rstrip()
+
+    available = max_length - len(PLATFORM_TRUNCATION_NOTICE)
+    if available < 0:
         raise ValueError("platform comment limit is too small for truncation notice")
-    prefix = text[:content_length]
-    minimum_boundary = content_length // 2
-    boundary = max(
-        prefix.rfind("\n\n"),
-        prefix.rfind("\n"),
-        prefix.rfind(" "),
-    )
-    if boundary >= minimum_boundary:
-        prefix = prefix[:boundary]
-    return prefix.rstrip() + PLATFORM_TRUNCATION_NOTICE
+    prefix = prefix_at_boundary(available)
+    fence_closure = ""
+    if prefix.count("```") % 2:
+        available -= len(FENCE_CLOSURE)
+        if available < 0:
+            raise ValueError("platform comment limit is too small to close code fence")
+        prefix = prefix_at_boundary(available)
+        if prefix.count("```") % 2:
+            fence_closure = FENCE_CLOSURE
+    return prefix + fence_closure + PLATFORM_TRUNCATION_NOTICE
 
 
 def limit_body_before_marker(
-    body_without_marker: str,
+    variable_body: str,
     marker_with_placeholder_hash: str,
     max_comment_size: int,
+    *,
+    reserved_suffix: str,
 ) -> str:
-    body_limit = max_comment_size - len("\n\n") - len(marker_with_placeholder_hash)
+    body_limit = (
+        max_comment_size
+        - len("\n\n")
+        - len(marker_with_placeholder_hash)
+        - len("\n\n")
+        - len(reserved_suffix)
+    )
     if body_limit < 0:
-        raise ValueError("platform comment limit is too small for review marker")
-    return _truncate_at_safe_boundary(body_without_marker, body_limit)
+        raise ValueError("platform comment limit is too small for review footer and marker")
+    limited_body = _truncate_at_safe_boundary(variable_body, body_limit)
+    return limited_body + "\n\n" + reserved_suffix
 
 
 def validate_suggestion(suggestion: str | None) -> bool:
@@ -98,7 +121,7 @@ def render_body(
     successful_reviewer_count: int,
     run_id: str,
     *,
-    posting_mode: str = "gitlab_discussions",
+    posting_mode: str,
 ) -> tuple[str, str]:
     reviewers = sorted(group.get("contributing_reviewers", []))
     title = sanitize_model_text(str(group["title"]), max_length=240)
@@ -146,7 +169,7 @@ def render_body(
     if isinstance(suggestion, str) and validate_suggestion(suggestion):
         suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion)
 
-    sections = [
+    variable_sections = [
         "\n".join(
             [
                 f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
@@ -158,32 +181,33 @@ def render_body(
         )
     ]
     if evidence_lines:
-        sections.append("\n".join(["Evidence:", *evidence_lines]))
+        variable_sections.append("\n".join(["Evidence:", *evidence_lines]))
     if dissent_lines:
-        sections.append("\n".join(["Dissent:", *dissent_lines]))
-    sections.append(
-        "\n".join(
-            [
-                "Consensus:",
-                f"- Reviewers: {', '.join(reviewers)}",
-                f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-                f"- Critique support: {group.get('critique_support_count', 0)}",
-                f"- Decision: {group['decision']}",
-                f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-                "- Human acknowledgment: "
-                + ("recommended" if group.get("human_ack_recommended") else "not required"),
-            ]
-        )
+        variable_sections.append("\n".join(["Dissent:", *dissent_lines]))
+    if suggestion_block:
+        variable_sections.append(suggestion_block.removeprefix("\n\n"))
+    consensus_footer = "\n".join(
+        [
+            "Consensus:",
+            f"- Reviewers: {', '.join(reviewers)}",
+            f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
+            f"- Critique support: {group.get('critique_support_count', 0)}",
+            f"- Decision: {group['decision']}",
+            f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
+            "- Human acknowledgment: "
+            + ("recommended" if group.get("human_ack_recommended") else "not required"),
+        ]
     )
-    body_without_marker = "\n\n".join(sections) + suggestion_block
+    variable_body = "\n\n".join(variable_sections)
     placeholder_marker = (
         f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
         f"body_hash={'0' * 64} source={source_hash(group.get('source_finding_ids', []))} -->"
     )
     body_without_marker = limit_body_before_marker(
-        body_without_marker,
+        variable_body,
         placeholder_marker,
         platform_comment_limit(posting_mode),
+        reserved_suffix=consensus_footer,
     )
     body_hash = compute_body_hash(group, body_without_marker)
     marker = (

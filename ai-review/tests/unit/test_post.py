@@ -298,6 +298,15 @@ class PostTests(unittest.TestCase):
         )
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
+            post_consensus(
+                FakePostClient("head"),
+                self._config(mode="unsupported"),
+                self._manifest("head"),
+                self._consensus(),
+            )
+
     def test_classify_post_groups_routes_surface_fyi_and_fallbacks(self) -> None:
         base = self._consensus()["groups"][0]
         surface = copy.deepcopy(base)
@@ -406,7 +415,7 @@ class PostTests(unittest.TestCase):
 
     def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
         group = self._consensus()["groups"][0]
-        body, _body_hash = render_body(group, 1, "run")
+        body, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
         discussions = index_ai_review_discussions(
             [
                 {
@@ -455,7 +464,12 @@ class PostTests(unittest.TestCase):
         self.assertEqual([record["discussion_id"] for record in recovered["records"]], ["trusted"])
 
     def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
-        body, _body_hash = render_body(self._consensus()["groups"][0], 1, "run")
+        body, _body_hash = render_body(
+            self._consensus()["groups"][0],
+            1,
+            "run",
+            posting_mode="gitlab_discussions",
+        )
         client = FakePostClient("head")
         client.discussions = [
             {
@@ -502,7 +516,7 @@ class PostTests(unittest.TestCase):
             }
         ]
 
-        body, _body_hash = render_body(group, 1, "run")
+        body, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("[REDACTED]", body)
         self.assertNotIn("glpat-1234567890abcdef1234", body)
@@ -614,7 +628,7 @@ class PostTests(unittest.TestCase):
         position: dict[str, Any] | None = None,
         resolved: bool = False,
     ) -> dict[str, Any]:
-        body, _body_hash = render_body(group, 1, "previous-run")
+        body, _body_hash = render_body(group, 1, "previous-run", posting_mode="gitlab_discussions")
         note: dict[str, Any] = {
             "id": note_id,
             "body": body,
@@ -833,6 +847,7 @@ class PostTests(unittest.TestCase):
             [group],
             summary_fallback_groups,
             MergeRequestVersion("base", "start", "head"),
+            posting_mode="gitlab_discussions",
             inline_multiline=False,
             current_diff_text=None,
             dry_run=False,
@@ -881,6 +896,7 @@ class PostTests(unittest.TestCase):
             [],
             [group],
             [],
+            posting_mode="gitlab_discussions",
             fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
@@ -938,6 +954,7 @@ class PostTests(unittest.TestCase):
             [],
             [group],
             [],
+            posting_mode="gitlab_discussions",
             fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
@@ -990,6 +1007,7 @@ class PostTests(unittest.TestCase):
             [],
             [group],
             [],
+            posting_mode="gitlab_discussions",
             fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
@@ -1041,6 +1059,7 @@ class PostTests(unittest.TestCase):
             [],
             [group],
             [],
+            posting_mode="gitlab_discussions",
             fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
@@ -1158,7 +1177,7 @@ class PostTests(unittest.TestCase):
         client = FakePostClient("head")
         consensus = self._consensus()
         group = consensus["groups"][0]
-        _body, body_hash = render_body(group, 1, "run")
+        _body, body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
         client.discussions = [
             {
                 "id": "discussion",
@@ -1528,7 +1547,9 @@ class PostTests(unittest.TestCase):
         group["decision"] = "fyi"
         group["body"] = "First line\n\nSecond line"
 
-        body, _body_hash = post_module.render_summary_body("run", [], [group], 50)
+        body, _body_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
 
         self.assertIn("- **MAJOR** correctness", body)
         self.assertIn("  > First line\n  > \n  > Second line", body)
@@ -1592,6 +1613,44 @@ class PostTests(unittest.TestCase):
         self.assertIn("A" * 40_000, body)
         self.assertNotIn("B" * 40_000, body)
         self.assertIn("…and 1 more findings not posted inline (size limit)", body)
+
+    def test_summary_reports_count_and_size_omissions_separately(self) -> None:
+        groups = []
+        for index, character in enumerate("ABCDE"):
+            group = copy.deepcopy(self._consensus()["groups"][0])
+            group["decision"] = "fyi"
+            group["issue_id"] = f"{index:064x}"
+            group["body"] = character * 40_000
+            groups.append(group)
+
+        body, _body_hash = post_module.render_summary_body(
+            "run",
+            [],
+            groups,
+            4,
+            posting_mode="github_reviews",
+        )
+
+        self.assertIn("Advisory (FYI) findings (showing 1 of 5):", body)
+        self.assertIn("…and 3 more advisory findings (size limit)", body)
+        self.assertIn("…and 1 more advisory findings (configured count limit)", body)
+
+    def test_single_oversized_summary_entry_is_omitted_whole(self) -> None:
+        group = copy.deepcopy(self._consensus()["groups"][0])
+        group["decision"] = "fyi"
+        group["body"] = "A" * 70_000
+
+        body, _body_hash = post_module.render_summary_body(
+            "run",
+            [],
+            [group],
+            50,
+            posting_mode="github_reviews",
+        )
+
+        self.assertIn("Advisory (FYI) findings (showing 0 of 1):", body)
+        self.assertIn("…and 1 more advisory findings (size limit)", body)
+        self.assertNotIn("A" * 1_000, body)
 
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
         client = FakePostClient("head")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from ai_review.post import parse_marker, render_body, validate_suggestion
+from ai_review.render import platform_comment_limit
 
 
 class BodyHashTests(unittest.TestCase):
@@ -24,13 +25,15 @@ class BodyHashTests(unittest.TestCase):
         }
 
     def test_body_hash_is_stable_for_same_group(self) -> None:
-        first, first_hash = render_body(self._group(), 3, "run")
-        second, second_hash = render_body(self._group(), 3, "run")
+        first, first_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
+        second, second_hash = render_body(
+            self._group(), 3, "run", posting_mode="gitlab_discussions"
+        )
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
 
     def test_rendered_markdown_snapshot_is_unchanged_by_render_extraction(self) -> None:
-        body, body_hash = render_body(self._group(), 3, "run")
+        body, body_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
         body_without_marker = body.rsplit("\n\n<!-- ai-review:v1", 1)[0]
         self.assertEqual(
             body_without_marker,
@@ -64,7 +67,7 @@ class BodyHashTests(unittest.TestCase):
             "codex": "records[0] executes before the guard",
         }
 
-        body, _body_hash = render_body(group, 3, "run")
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Evidence:\n- codex: records[0] executes before the guard", body)
         self.assertNotIn("- claude:", body)
@@ -76,7 +79,7 @@ class BodyHashTests(unittest.TestCase):
             "codex": "records[0] executes before the guard",
         }
 
-        body, _body_hash = render_body(group, 3, "run")
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
             "Evidence:\n- claude, codex: records[0] executes before the guard",
@@ -91,7 +94,7 @@ class BodyHashTests(unittest.TestCase):
             "codex": "the empty check occurs on the next line",
         }
 
-        body, _body_hash = render_body(group, 3, "run")
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("- claude: records[0] executes before the guard", body)
         self.assertIn("- codex: the empty check occurs on the next line", body)
@@ -113,7 +116,7 @@ class BodyHashTests(unittest.TestCase):
             },
         ]
 
-        body, _body_hash = render_body(group, 3, "run")
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Dissent:", body)
         self.assertIn(
@@ -129,7 +132,7 @@ class BodyHashTests(unittest.TestCase):
             {"critic": "codex", "rationale": "   ", "adjusted_severity": None}
         ]
 
-        body, _body_hash = render_body(group, 3, "run")
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertNotIn("Dissent:", body)
         self.assertNotIn("codex disputes:", body)
@@ -140,8 +143,10 @@ class BodyHashTests(unittest.TestCase):
         invalid = self._group()
         invalid["suggestion"] = "```python\nif not records:\n    return"
 
-        valid_body, _valid_hash = render_body(valid, 3, "run")
-        invalid_body, _invalid_hash = render_body(invalid, 3, "run")
+        valid_body, _valid_hash = render_body(valid, 3, "run", posting_mode="gitlab_discussions")
+        invalid_body, _invalid_hash = render_body(
+            invalid, 3, "run", posting_mode="gitlab_discussions"
+        )
 
         self.assertIn("Suggestion:\n```python", valid_body)
         self.assertNotIn("Suggestion:", invalid_body)
@@ -200,10 +205,34 @@ class BodyHashTests(unittest.TestCase):
 
         self.assertEqual(len(first), 65_536)
         self.assertIn("…[truncated: platform comment size limit]", first)
+        self.assertIn("Consensus:", first)
+        self.assertIn("- Decision: surface", first)
+        self.assertIn("- Blocking: no", first)
         self.assertIsNotNone(parse_marker(first))
         self.assertTrue(first.endswith("-->"))
         self.assertEqual(first, second)
         self.assertEqual(first_hash, second_hash)
+
+    def test_platform_truncation_closes_open_code_fence_before_footer(self) -> None:
+        group = self._group()
+        group["body"] = "```python\n" + ("x" * 70_000)
+
+        body, _body_hash = render_body(
+            group,
+            3,
+            "run",
+            posting_mode="github_reviews",
+        )
+
+        self.assertEqual(len(body), 65_536)
+        self.assertIn("\n```\n…[truncated: platform comment size limit]", body)
+        self.assertLess(body.index("…[truncated"), body.index("Consensus:"))
+        self.assertLess(body.index("Consensus:"), body.index("<!-- ai-review:v1"))
+        self.assertEqual(body.count("```") % 2, 0)
+
+    def test_unknown_posting_mode_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
+            platform_comment_limit("unsupported")
 
 
 if __name__ == "__main__":
