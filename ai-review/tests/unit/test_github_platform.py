@@ -340,23 +340,6 @@ def test_resolve_thread_uses_graphql_mutation() -> None:
 
     assert thread["id"] == "123"
     assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-1"
-    assert session.calls[-1][2]["headers"]["Authorization"] == "Bearer token"
-
-
-def test_resolve_thread_uses_dedicated_token_only_for_mutation() -> None:
-    session = GraphQLSession(thread_found=True)
-    platform = GitHubReviewPlatform(
-        "https://api.github.test",
-        "primary-token",
-        resolution_token="resolution-token",
-        session=session,
-    )
-
-    platform.resolve_thread("octo/repo", 7, "123")
-
-    lookup, mutation = session.calls
-    assert lookup[2]["headers"]["Authorization"] == "Bearer primary-token"
-    assert mutation[2]["headers"]["Authorization"] == "Bearer resolution-token"
 
 
 def test_resolve_thread_caches_thread_map_across_mutations() -> None:

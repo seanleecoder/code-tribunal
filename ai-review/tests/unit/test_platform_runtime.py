@@ -25,11 +25,7 @@ class PlatformRuntimeTests(unittest.TestCase):
                 ),
                 platform,
             )
-        factory.assert_called_once_with(
-            "https://github.example/api",
-            "x",
-            resolution_token=None,
-        )
+        factory.assert_called_once_with("https://github.example/api", "x")
 
     def test_gitlab_mode_uses_gitlab_token_for_both_accesses(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
@@ -92,26 +88,6 @@ class PlatformRuntimeTests(unittest.TestCase):
             "https://api.github.com",
             "x",
             bot_login="github-actions[bot]",
-            resolution_token=None,
-        )
-
-    def test_github_mode_passes_dedicated_resolution_token(self) -> None:
-        with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
-            create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}},
-                access="write",
-                env={
-                    "GITHUB_TOKEN": "primary",
-                    "AI_REVIEW_GITHUB_RESOLVE_TOKEN": "resolution",
-                    "AI_REVIEW_GITHUB_BOT_LOGIN": "github-actions[bot]",
-                },
-            )
-
-        factory.assert_called_once_with(
-            "https://api.github.com",
-            "primary",
-            bot_login="github-actions[bot]",
-            resolution_token="resolution",
         )
 
     def test_github_actions_requires_explicit_bot_login(self) -> None:

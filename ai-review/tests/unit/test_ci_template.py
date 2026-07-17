@@ -668,19 +668,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             critique,
         )
 
-    def test_github_post_uses_dedicated_resolution_secret(self) -> None:
-        template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
-        text = template.read_text(encoding="utf-8")
-        post = _workflow_job(text, "post")
-
-        self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", post)
-        self.assertIn(
-            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: "
-            "${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
-            post,
-        )
-        self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
-
     def test_github_actions_maps_runtime_overrides_at_workflow_scope(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")

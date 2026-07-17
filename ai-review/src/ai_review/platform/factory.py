@@ -22,13 +22,6 @@ def create_github_platform(
     token: str,
     *,
     bot_login: str | None = None,
-    resolution_token: str | None = None,
     session: Any | None = None,
 ) -> ReviewPlatform:
-    return GitHubReviewPlatform(
-        api_url,
-        token,
-        bot_login=bot_login,
-        resolution_token=resolution_token,
-        session=session,
-    )
+    return GitHubReviewPlatform(api_url, token, bot_login=bot_login, session=session)

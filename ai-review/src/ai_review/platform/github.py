@@ -43,13 +43,11 @@ class GitHubReviewPlatform:
         token: str,
         *,
         bot_login: str | None = None,
-        resolution_token: str | None = None,
         session: Any | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.graphql_url = self._derive_graphql_url(self.api_url)
         self.token = token
-        self._resolution_token = resolution_token or token
         self._bot_login = bot_login
         self._review_thread_node_ids: dict[tuple[str, str, int], dict[str, str]] = {}
         if session is None:
@@ -68,14 +66,9 @@ class GitHubReviewPlatform:
             return f"{base[:-len('/api/v3')]}/api/graphql"
         return f"{base}/graphql"
 
-    def _headers(
-        self,
-        extra: dict[str, str] | None = None,
-        *,
-        token: str | None = None,
-    ) -> dict[str, str]:
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {
-            "Authorization": f"Bearer {token or self.token}",
+            "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
@@ -85,8 +78,7 @@ class GitHubReviewPlatform:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         raw_text = bool(kwargs.pop("raw_text", False))
-        auth_token = kwargs.pop("auth_token", None)
-        headers = self._headers(kwargs.pop("headers", None), token=auth_token)
+        headers = self._headers(kwargs.pop("headers", None))
         response = self.session.request(method, self._url(path), headers=headers, **kwargs)
         if response.status_code >= 400:
             raise GitHubReviewPlatformError(
@@ -388,7 +380,6 @@ class GitHubReviewPlatform:
         response = self._request(
             "POST",
             self.graphql_url,
-            auth_token=self._resolution_token,
             json={"query": mutation, "variables": {"threadId": target_node_id}},
         )
         action = "resolve" if resolved else "unresolve"

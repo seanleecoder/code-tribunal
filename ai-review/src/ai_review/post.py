@@ -855,7 +855,7 @@ def _plan_stale_records(
             elif command == "resolve":
                 updated["status"] = "resolved"
                 updated["human_disposition"] = "resolve"
-            elif record.get("status") in {"open", "stale_unverified"}:
+            elif record.get("status") == "open":
                 updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
                 if not resolution_quorum:
                     outcome.stale_unverified += 1

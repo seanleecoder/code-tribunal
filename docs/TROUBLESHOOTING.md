@@ -115,17 +115,6 @@ On GitLab, each project access token is its own bot user.
 - **Token rotation consequences**: Rotating `GITLAB_TOKEN` creates a new bot user. By design, the pipeline distrusts state notes and discussions authored by the old bot user. This causes a one-time re-post of active findings under the new identity.
 - **Two-token identity split (legacy)**: Using `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` as two separate tokens creates an identity split where the read step rejects the write step's notes on every run. Use a single `GITLAB_TOKEN` to fix this pitfall.
 
-## GitHub review threads remain open after a clean rerun
-
-Inspect the `ai-review-post` artifact. If it contains `Resource not accessible by
-integration` for `resolveReviewThread`, the built-in Actions `GITHUB_TOKEN` cannot
-resolve threads in that repository context. Create an Actions repository secret
-named `AI_REVIEW_GITHUB_RESOLVE_TOKEN` containing a repository-scoped maintainer
-token with Pull requests read/write access, then rerun AI Review. Do not replace
-`GITHUB_TOKEN`: the dedicated token is intentionally used only for resolve and
-unresolve mutations so existing `github-actions[bot]` state ownership remains
-stable.
-
 ## Wrong line anchor
 
 Decode the state note (base64url payload after `ai-review-state:v1` in the

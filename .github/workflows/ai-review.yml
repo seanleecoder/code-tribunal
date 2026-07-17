@@ -248,7 +248,6 @@ jobs:
       - name: Post GitHub review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
         run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
