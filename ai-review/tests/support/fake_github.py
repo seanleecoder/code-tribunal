@@ -59,9 +59,11 @@ class FakeGitHubClient:
             replies.sort(key=lambda n: (str(n.get("created_at", "")), n.get("id", 0)))
             thread["notes"] = [root_note] + replies
 
-        return list(threads_by_id.values()) + orphans + [
-            self._issue_thread(comment) for comment in self._issue_comments
-        ]
+        return (
+            list(threads_by_id.values())
+            + orphans
+            + [self._issue_thread(comment) for comment in self._issue_comments]
+        )
 
     def add_reply(
         self, thread_id: int, body: str, author_id: int = 42, author_login: str = "bot"

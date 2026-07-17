@@ -554,11 +554,7 @@ def find_matching_record(group: FindingGroup, state: State | None) -> StateMatch
         and record.get("status") != "superseded"
     ]
     for precedence in MATCH_PRECEDENCE:
-        matches = [
-            record
-            for record in records
-            if _matches_precedence(record, group, precedence)
-        ]
+        matches = [record for record in records if _matches_precedence(record, group, precedence)]
         if len(matches) == 1:
             return StateMatchResult(
                 status="matched",

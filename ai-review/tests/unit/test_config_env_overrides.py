@@ -138,7 +138,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
 
-
     def test_cursor_enabled_override_round_trips_to_summary(self) -> None:
         from ai_review.config import effective_config_summary
 

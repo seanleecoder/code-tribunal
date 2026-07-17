@@ -120,8 +120,7 @@ def same_issue(
         return False
     if (
         a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
-        or a["fingerprints"]["evidence_fingerprint"]
-        == b["fingerprints"]["evidence_fingerprint"]
+        or a["fingerprints"]["evidence_fingerprint"] == b["fingerprints"]["evidence_fingerprint"]
         or (
             a_anchor.get("symbol")
             and b_anchor.get("symbol")
@@ -129,10 +128,9 @@ def same_issue(
         )
     ):
         return True
-    return (
-        _semantic_grouping_enabled(grouping_config)
-        and _issue_text_similarity(a, b) >= _semantic_threshold(grouping_config)
-    )
+    return _semantic_grouping_enabled(grouping_config) and _issue_text_similarity(
+        a, b
+    ) >= _semantic_threshold(grouping_config)
 
 
 class UnionFind:
@@ -208,8 +206,7 @@ def _split_transitive_component(
     for finding in sorted(component, key=lambda item: item["source_finding_id"]):
         for group in groups:
             if all(
-                same_issue(member, finding, duplicate_links, grouping_config)
-                for member in group
+                same_issue(member, finding, duplicate_links, grouping_config) for member in group
             ):
                 group.append(finding)
                 break

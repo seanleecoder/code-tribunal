@@ -57,7 +57,6 @@ _CONFIG_TAIL = [
 
 
 class AdapterEndpointValidationTests(unittest.TestCase):
-
     def test_cursor_adapter_env_excludes_provider_endpoint_envs(self) -> None:
         with mock.patch.dict(
             os.environ,
@@ -256,8 +255,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                             "name": "UnknownError",
                             "data": {
                                 "message": (
-                                    '{"code":429,"metadata":'
-                                    '{"error_type":"rate_limit_exceeded"}}'
+                                    '{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}'
                                 )
                             },
                         },
@@ -275,10 +273,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "error": {
                     "name": "UnknownError",
                     "data": {
-                        "message": (
-                            '{"code":429,"metadata":'
-                            '{"error_type":"rate_limit_exceeded"}}'
-                        )
+                        "message": ('{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}')
                     },
                 },
             }
@@ -756,8 +751,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                     "error": {
                         "data": {
                             "message": (
-                                '{"code":429,"metadata":'
-                                '{"error_type":"rate_limit_exceeded"}}'
+                                '{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}'
                             )
                         }
                     },
@@ -1052,4 +1046,3 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -138,7 +138,7 @@ class GitHubReviewPlatform:
         issue_comments = self._get_all_pages(
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments"
         )
-        
+
         threads_by_id: dict[int, Thread] = {}
         orphans: list[Thread] = []
 
@@ -167,9 +167,11 @@ class GitHubReviewPlatform:
         # GitHub summary comments live in PR issue comments rather than PR review
         # comments. Include issue comments as thread-shaped notes so shared summary
         # upsert code can discover and update an existing summary marker.
-        return list(threads_by_id.values()) + orphans + [
-            self._thread_from_issue_comment(comment) for comment in issue_comments
-        ]
+        return (
+            list(threads_by_id.values())
+            + orphans
+            + [self._thread_from_issue_comment(comment) for comment in issue_comments]
+        )
 
     def create_inline_comment(
         self, project_id_or_path: str | int, change_id: str | int, body: str, position: Position
@@ -228,16 +230,13 @@ class GitHubReviewPlatform:
         """
         cursor = None
         target_node_id = None
-        
+
         while True:
-            variables = {
-                "owner": owner,
-                "name": name,
-                "pr": int(change_id),
-                "cursor": cursor
-            }
-            response = self._request("POST", "/graphql", json={"query": query, "variables": variables})
-            
+            variables = {"owner": owner, "name": name, "pr": int(change_id), "cursor": cursor}
+            response = self._request(
+                "POST", "/graphql", json={"query": query, "variables": variables}
+            )
+
             repo = response.get("data", {}).get("repository")
             if not repo:
                 break
@@ -250,10 +249,10 @@ class GitHubReviewPlatform:
                 if comments_nodes and str(comments_nodes[0].get("databaseId")) == thread_id:
                     target_node_id = node.get("id")
                     break
-                    
+
             if target_node_id:
                 break
-                
+
             page_info = threads.get("pageInfo", {})
             if not page_info.get("hasNextPage"):
                 break
@@ -262,17 +261,23 @@ class GitHubReviewPlatform:
         if not target_node_id:
             raise GitHubReviewPlatformError(f"review thread {thread_id} not found via GraphQL")
 
-        mutation = """
+        mutation = (
+            """
         mutation($threadId: ID!) {
           resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
         }
-        """ if resolved else """
+        """
+            if resolved
+            else """
         mutation($threadId: ID!) {
           unresolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
         }
         """
-        
-        self._request("POST", "/graphql", json={"query": mutation, "variables": {"threadId": target_node_id}})
+        )
+
+        self._request(
+            "POST", "/graphql", json={"query": mutation, "variables": {"threadId": target_node_id}}
+        )
         return {"id": thread_id, "resolved": resolved, "notes": []}
 
     def list_state_notes(
@@ -309,11 +314,7 @@ class GitHubReviewPlatform:
         return self._verified_state_write(note, action="update")
 
     def current_user(self) -> dict[str, Any]:
-        path = (
-            f"/users/{quote(self._bot_login, safe='')}"
-            if self._bot_login
-            else "/user"
-        )
+        path = f"/users/{quote(self._bot_login, safe='')}" if self._bot_login else "/user"
         try:
             user = self._request("GET", path)
         except GitHubReviewPlatformError as exc:

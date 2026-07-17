@@ -616,6 +616,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("critique_batch.schema.json", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
+
 class GitHubActionsTemplateTests(unittest.TestCase):
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -686,7 +687,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertLess(resolver_position, checkout_position)
         self.assertIn('context.eventName === "workflow_dispatch"', script)
-        self.assertIn('/^[1-9][0-9]{0,9}$/.test(requestedNumber)', script)
+        self.assertIn("/^[1-9][0-9]{0,9}$/.test(requestedNumber)", script)
         self.assertIn("await github.rest.pulls.get", script)
         self.assertIn("let pullRequest = context.payload.pull_request", script)
         self.assertIn("pullRequest.head?.repo?.full_name", script)
@@ -784,9 +785,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         manual = results["manual-same-repository"]
         self.assertEqual(manual["failures"], [])
         self.assertEqual(manual["outputs"], {"ref": head_sha})
-        self.assertEqual(
-            manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}]
-        )
+        self.assertEqual(manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}])
         self.assertIsNone(manual["thrown"])
 
         automatic = results["automatic-same-repository"]
@@ -866,8 +865,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
         self.assertEqual(
             text.count(
-                "AI_REVIEW_OPENCODE_ENABLED: "
-                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+                "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
             ),
             2,
         )

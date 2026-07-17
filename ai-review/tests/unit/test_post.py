@@ -841,6 +841,7 @@ class PostTests(unittest.TestCase):
 
     def test_finalize_state_handles_resolve_failure_gracefully(self) -> None:
         from ai_review.platform.base import ReviewPlatformError
+
         consensus = self._consensus()
         manifest = self._manifest("head")
         group = consensus["groups"][0]
@@ -850,21 +851,39 @@ class PostTests(unittest.TestCase):
 
         def raising_resolve(*args: Any, **kwargs: Any) -> Any:
             raise ReviewPlatformError("Simulated GraphQL error")
-            
+
         client.resolve_thread = raising_resolve  # type: ignore
 
         result = _initial_post_result(
-            consensus=consensus, manifest=manifest, current_head_sha="head",
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
         )
         state_plan = plan_state(
-            self._state_config(), manifest, consensus, persisted_state,
-            [], [group], [], {group["issue_id"]: "resolve"},
+            self._state_config(),
+            manifest,
+            consensus,
+            persisted_state,
+            [],
+            [group],
+            [],
+            {group["issue_id"]: "resolve"},
         )
 
         finalized = finalize_state(
-            client, self._state_config(), manifest, consensus, result, state_plan,
-            [], [group], [], fallback_to_summary=True, fyi_mode="summary_comment",
-            max_fyi=50, dry_run=False,
+            client,
+            self._state_config(),
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [],
+            [group],
+            [],
+            fallback_to_summary=True,
+            fyi_mode="summary_comment",
+            max_fyi=50,
+            dry_run=False,
         )
 
         self.assertEqual(finalized["resolved_discussions"], 0)
@@ -873,20 +892,29 @@ class PostTests(unittest.TestCase):
     def test_collect_human_commands_with_github_threads(self) -> None:
         import sys
         from pathlib import Path
+
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from support.fake_github import FakeGitHubClient
         from ai_review.post import collect_human_commands
-        
+        from support.fake_github import FakeGitHubClient
+
         client = FakeGitHubClient(head_sha="head_sha", diff_text="")
-        marker = f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 body_hash={'a' * 64} source={'b' * 64} -->"
-        root = client.create_inline_comment("octo/repo", 7, marker, {"path": "a.py", "line": 1, "side": "RIGHT", "commit_id": "head"})
+        marker = (
+            f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
+            f"body_hash={'a' * 64} source={'b' * 64} -->"
+        )
+        root = client.create_inline_comment(
+            "octo/repo",
+            7,
+            marker,
+            {"path": "a.py", "line": 1, "side": "RIGHT", "commit_id": "head"},
+        )
         root_id = root["notes"][0]["id"]
-        
+
         client.add_reply(int(root_id), "/ai-review wontfix", author_id=42, author_login="human")
-        
+
         threads = client.list_threads("octo/repo", 7)
         commands = collect_human_commands(client, "octo/repo", threads)
-        self.assertEqual(commands, {'1' * 64: "wontfix"})
+        self.assertEqual(commands, {"1" * 64: "wontfix"})
 
     def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
         base_record = self._state_record(self._consensus()["groups"][0])

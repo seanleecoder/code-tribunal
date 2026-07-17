@@ -327,9 +327,8 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         # schema-conforming payload in `structured_output`. Best-effort: the
         # field is sometimes absent even with the flag set, so every text-based
         # fallback below must stay.
-        if (
-            isinstance(event.get("structured_output"), (dict, list))
-            and not _is_adapter_error_event(event)
+        if isinstance(event.get("structured_output"), (dict, list)) and not _is_adapter_error_event(
+            event
         ):
             structured_result = event["structured_output"]
         if _is_adapter_error_event(event):
@@ -411,11 +410,7 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     ):
         return _load_stream_json(stdout, stage=stage)
 
-    if (
-        "findings" not in raw
-        and "critiques" not in raw
-        and _is_adapter_error_event(raw)
-    ):
+    if "findings" not in raw and "critiques" not in raw and _is_adapter_error_event(raw):
         error_detail = _json_preview(_terminal_error_detail(raw))
         raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
 

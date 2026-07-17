@@ -242,7 +242,7 @@ PY
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
             '  if [ -n "${OPENCODE_CONFIG_CONTENT:-}" ]; then\n'
             '    printf \'%s\' "$OPENCODE_CONFIG_CONTENT" > "$trace_dir/opencode_config.json"\n'
-            '  fi\n'
+            "  fi\n"
             "fi\n"
             "out=''\n"
             'while [ "$#" -gt 0 ]; do\n'

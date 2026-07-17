@@ -308,9 +308,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
-        raise SystemExit(
-            "prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID"
-        )
+        raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
     config_dict = load_config(config)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:

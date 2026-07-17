@@ -50,7 +50,6 @@ ADAPTER_STATUSES = {
 }
 
 
-
 def schema_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "schemas"
 

@@ -114,7 +114,6 @@ class FindMatchingRecordTests(unittest.TestCase):
         self.assertIsNone(result.record)
         self.assertEqual(result.records, [])
 
-
     def test_title_text_alone_is_not_state_matching_fallback(self) -> None:
         group = _group()
         group["title"] = "same user-visible title"
