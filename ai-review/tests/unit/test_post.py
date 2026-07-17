@@ -1523,6 +1523,76 @@ class PostTests(unittest.TestCase):
         self.assertIn("Advisory (FYI) findings", client.mr_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
+    def test_summary_renders_full_multiline_body_as_blockquote(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["decision"] = "fyi"
+        group["body"] = "First line\n\nSecond line"
+
+        body, _body_hash = post_module.render_summary_body("run", [], [group], 50)
+
+        self.assertIn("- **MAJOR** correctness", body)
+        self.assertIn("  > First line\n  > \n  > Second line", body)
+
+    def test_summary_drops_whole_advisory_entries_at_github_limit(self) -> None:
+        first = copy.deepcopy(self._consensus()["groups"][0])
+        first["decision"] = "fyi"
+        first["body"] = "A" * 40_000
+        second = copy.deepcopy(first)
+        second["issue_id"] = "c" * 64
+        second["body"] = "B" * 40_000
+
+        github_body, github_hash = post_module.render_summary_body(
+            "run",
+            [],
+            [first, second],
+            50,
+            posting_mode="github_reviews",
+        )
+        github_repeat, github_repeat_hash = post_module.render_summary_body(
+            "run",
+            [],
+            [first, second],
+            50,
+            posting_mode="github_reviews",
+        )
+        gitlab_body, _gitlab_hash = post_module.render_summary_body(
+            "run",
+            [],
+            [first, second],
+            50,
+            posting_mode="gitlab_discussions",
+        )
+
+        self.assertLessEqual(len(github_body), 65_536)
+        self.assertIn("A" * 40_000, github_body)
+        self.assertNotIn("B" * 40_000, github_body)
+        self.assertIn("…and 1 more advisory findings (size limit)", github_body)
+        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(github_body))
+        self.assertEqual(github_body, github_repeat)
+        self.assertEqual(github_hash, github_repeat_hash)
+        self.assertIn("A" * 40_000, gitlab_body)
+        self.assertIn("B" * 40_000, gitlab_body)
+
+    def test_summary_fallback_entries_remain_atomic_at_platform_limit(self) -> None:
+        first = copy.deepcopy(self._consensus()["groups"][0])
+        first["body"] = "A" * 40_000
+        second = copy.deepcopy(first)
+        second["issue_id"] = "c" * 64
+        second["body"] = "B" * 40_000
+
+        body, _body_hash = post_module.render_summary_body(
+            "run",
+            [first, second],
+            [],
+            50,
+            posting_mode="github_reviews",
+        )
+
+        self.assertLessEqual(len(body), 65_536)
+        self.assertIn("A" * 40_000, body)
+        self.assertNotIn("B" * 40_000, body)
+        self.assertIn("…and 1 more findings not posted inline (size limit)", body)
+
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()

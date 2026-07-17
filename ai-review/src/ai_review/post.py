@@ -28,10 +28,11 @@ from .render import (
     compute_body_hash as _compute_body_hash,
 )
 from .render import (
-    render_body as _render_body,
+    platform_comment_limit,
+    sanitize_model_text,
 )
 from .render import (
-    sanitize_model_text,
+    render_body as _render_body,
 )
 from .render import (
     source_hash as _source_hash,
@@ -68,8 +69,15 @@ def render_body(
     group: FindingGroup,
     successful_reviewer_count: int,
     run_id: str,
+    *,
+    posting_mode: str = "gitlab_discussions",
 ) -> tuple[str, str]:
-    return _render_body(group, successful_reviewer_count, run_id)
+    return _render_body(
+        group,
+        successful_reviewer_count,
+        run_id,
+        posting_mode=posting_mode,
+    )
 
 
 MARKER_RE = re.compile(
@@ -564,11 +572,8 @@ def _anchor_location(anchor: dict[str, Any]) -> str:
     return f"{path}:{line}" if isinstance(line, int) else path
 
 
-def _one_line(text: str, *, max_length: int) -> str:
-    collapsed = " ".join(sanitize_model_text(text, max_length=max_length * 2).split())
-    if len(collapsed) > max_length:
-        collapsed = collapsed[: max_length - 1].rstrip() + "…"
-    return collapsed
+def _one_line(text: str) -> str:
+    return " ".join(sanitize_model_text(text).split())
 
 
 def _summary_line(group: Mapping[str, Any]) -> str:
@@ -576,14 +581,16 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     location = _anchor_location(anchor)
     severity = str(group.get("final_severity") or "").upper()
     category = str(group.get("category") or "")
-    title = _one_line(str(group.get("title") or ""), max_length=160)
+    title = _one_line(str(group.get("title") or ""))
     category_part = f" {category}" if category else ""
     header = f"- **{severity}**{category_part} — `{location}`: {title}"
-    detail = _one_line(str(group.get("body") or ""), max_length=240)
-    if detail and detail != title:
-        # Continuation line indented two spaces so it renders under the bullet.
-        return f"{header}\n  {detail}"
-    return header
+    detail = sanitize_model_text(str(group.get("body") or ""))
+    if not detail:
+        return header
+    # Keep every line in the blockquote, including blank lines, so multiline
+    # model output remains visually attached to its finding header.
+    quoted_detail = "\n".join(f"  > {line}" for line in detail.split("\n"))
+    return f"{header}\n{quoted_detail}"
 
 
 @overload
@@ -609,23 +616,67 @@ def render_summary_body(
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     max_fyi: int,
+    *,
+    posting_mode: str = "gitlab_discussions",
 ) -> tuple[str, str]:
-    lines = ["**AI review summary**", ""]
     fallback_sorted = _sort_groups(fallback_groups)
-    if fallback_sorted:
-        lines.append(f"Findings not posted inline ({len(fallback_sorted)}):")
-        lines.extend(_summary_line(group) for group in fallback_sorted)
-        lines.append("")
     fyi_sorted = _sort_groups(fyi_groups)
-    if fyi_sorted:
-        shown = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
-        lines.append(f"Advisory (FYI) findings ({len(fyi_sorted)}):")
-        lines.extend(_summary_line(group) for group in shown)
-        remaining = len(fyi_sorted) - len(shown)
-        if remaining > 0:
-            lines.append(f"…and {remaining} more advisory findings")
-        lines.append("")
-    body_without_marker = "\n".join(lines).rstrip()
+    capped_fyi = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
+    fallback_entries = [_summary_line(group) for group in fallback_sorted]
+    fyi_entries = [_summary_line(group) for group in capped_fyi]
+    max_comment_size = platform_comment_limit(posting_mode)
+    placeholder_marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={'0' * 64} -->"
+
+    def compose(
+        fallback_count: int,
+        fyi_count: int,
+        *,
+        fallback_size_omitted: int,
+        fyi_size_omitted: int,
+    ) -> str:
+        lines = ["**AI review summary**", ""]
+        if fallback_sorted:
+            lines.append(f"Findings not posted inline ({len(fallback_sorted)}):")
+            lines.extend(fallback_entries[:fallback_count])
+            if fallback_size_omitted:
+                lines.append(
+                    f"…and {fallback_size_omitted} more findings not posted inline (size limit)"
+                )
+            lines.append("")
+        if fyi_sorted:
+            lines.append(f"Advisory (FYI) findings ({len(fyi_sorted)}):")
+            lines.extend(fyi_entries[:fyi_count])
+            remaining = len(fyi_sorted) - fyi_count
+            if remaining > 0:
+                suffix = " (size limit)" if fyi_size_omitted else ""
+                lines.append(f"…and {remaining} more advisory findings{suffix}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    fallback_count = len(fallback_entries)
+    fyi_count = len(fyi_entries)
+    fallback_size_omitted = 0
+    fyi_size_omitted = 0
+    while True:
+        body_without_marker = compose(
+            fallback_count,
+            fyi_count,
+            fallback_size_omitted=fallback_size_omitted,
+            fyi_size_omitted=fyi_size_omitted,
+        )
+        final_size = len(body_without_marker) + len("\n\n") + len(placeholder_marker)
+        if final_size <= max_comment_size:
+            break
+        if fyi_count > 0:
+            fyi_count -= 1
+            fyi_size_omitted += 1
+            continue
+        if fallback_count > 0:
+            fallback_count -= 1
+            fallback_size_omitted += 1
+            continue
+        raise ValueError("platform comment limit is too small for summary marker")
+
     body_hash = sha256_hex(body_without_marker)
     marker = f"<!-- ai-review-summary:v1 run_id={run_id} body_hash={body_hash} -->"
     return body_without_marker + "\n\n" + marker, body_hash
@@ -667,6 +718,7 @@ def upsert_summary_comment(
     fyi_groups: list[FindingGroup],
     max_fyi: int,
     *,
+    posting_mode: str = "gitlab_discussions",
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary = {
@@ -677,7 +729,13 @@ def upsert_summary_comment(
     }
     if not fallback_groups and not fyi_groups:
         return summary
-    body, body_hash = render_summary_body(run_id, fallback_groups, fyi_groups, max_fyi)
+    body, body_hash = render_summary_body(
+        run_id,
+        fallback_groups,
+        fyi_groups,
+        max_fyi,
+        posting_mode=posting_mode,
+    )
     if dry_run:
         summary["action"] = "created"
         return summary
@@ -1192,6 +1250,7 @@ def post_inline(
     summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
+    posting_mode: str = "gitlab_discussions",
     inline_multiline: bool,
     current_diff_text: str | None,
     dry_run: bool,
@@ -1276,6 +1335,7 @@ def post_inline(
             cast(FindingGroup, post_group),
             len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
+            posting_mode=posting_mode,
         )
         if (
             existing is not None
@@ -1343,6 +1403,7 @@ def finalize_state(
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     *,
+    posting_mode: str = "gitlab_discussions",
     fallback_to_summary: bool,
     fyi_mode: str,
     max_fyi: int,
@@ -1360,6 +1421,7 @@ def finalize_state(
             fallback_to_post,
             fyi_to_post,
             max_fyi,
+            posting_mode=posting_mode,
             dry_run=dry_run,
         ),
     )
@@ -1523,6 +1585,7 @@ def post_consensus(
     inline_sides = set(posting.get("v1_inline_sides", ["new"]))
     fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
     fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    posting_mode = str(posting.get("mode", "gitlab_discussions"))
     max_surface = int(limits.get("max_posted_surface_findings", 25))
     max_fyi = int(limits.get("max_fyi_findings", 50))
     context = prepare_post_context(
@@ -1572,6 +1635,7 @@ def post_consensus(
         inline_candidates,
         summary_fallback_groups,
         context.version,
+        posting_mode=posting_mode,
         inline_multiline=inline_multiline,
         current_diff_text=context.current_diff_text,
         dry_run=dry_run,
@@ -1587,6 +1651,7 @@ def post_consensus(
         context.raw_discussions,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
+        posting_mode=posting_mode,
         fallback_to_summary=fallback_to_summary,
         fyi_mode=fyi_mode,
         max_fyi=max_fyi,

@@ -676,7 +676,10 @@ def build_consensus(
     _apply_critiques(groups, critique_batches, config, status, valid_duplicate_links)
     for group in groups:
         _body, body_hash = render_body(
-            cast(FindingGroup, group), len(successful), manifest["run_id"]
+            cast(FindingGroup, group),
+            len(successful),
+            manifest["run_id"],
+            posting_mode=str(config.get("posting", {}).get("mode", "gitlab_discussions")),
         )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)

@@ -117,8 +117,7 @@ class BodyHashTests(unittest.TestCase):
 
         self.assertIn("Dissent:", body)
         self.assertIn(
-            "- codex disputes: The caller already checks emptiness. "
-            "(suggested severity: minor)",
+            "- codex disputes: The caller already checks emptiness. (suggested severity: minor)",
             body,
         )
         self.assertIn("- opencode disputes: This path is unreachable.", body)
@@ -151,6 +150,60 @@ class BodyHashTests(unittest.TestCase):
         self.assertFalse(validate_suggestion("<!-- ai-review:v1 -->"))
         self.assertFalse(validate_suggestion("```python\nx = 1"))
         self.assertTrue(validate_suggestion("```python\nx = 1\n```"))
+
+    def test_long_model_content_survives_below_platform_limit(self) -> None:
+        group = self._group()
+        long_body = "body " * 1_000
+        long_evidence = "evidence " * 500
+        long_dissent = "dissent " * 500
+        long_suggestion = "suggestion " * 500
+        group["body"] = long_body
+        group["evidence_by_reviewer"] = {"claude": long_evidence}
+        group["critique_disputes"] = [
+            {
+                "critic": "codex",
+                "rationale": long_dissent,
+                "adjusted_severity": None,
+            }
+        ]
+        group["suggestion"] = long_suggestion
+
+        body, _body_hash = render_body(
+            group,
+            3,
+            "run",
+            posting_mode="github_reviews",
+        )
+
+        self.assertIn(long_body.strip(), body)
+        self.assertIn(long_evidence.strip(), body)
+        self.assertIn(long_dissent.strip(), body)
+        self.assertIn(long_suggestion.strip(), body)
+        self.assertNotIn("platform comment size limit", body)
+
+    def test_platform_limit_preserves_marker_and_stable_hash(self) -> None:
+        group = self._group()
+        group["body"] = "x" * 70_000
+
+        first, first_hash = render_body(
+            group,
+            3,
+            "run",
+            posting_mode="github_reviews",
+        )
+        second, second_hash = render_body(
+            group,
+            3,
+            "run",
+            posting_mode="github_reviews",
+        )
+
+        self.assertEqual(len(first), 65_536)
+        self.assertIn("…[truncated: platform comment size limit]", first)
+        self.assertIsNotNone(parse_marker(first))
+        self.assertTrue(first.endswith("-->"))
+        self.assertEqual(first, second)
+        self.assertEqual(first_hash, second_hash)
 
 
 if __name__ == "__main__":
