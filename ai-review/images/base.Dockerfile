@@ -15,7 +15,7 @@ COPY ai-review/images/python-constraints.txt /opt/ai-review/images/python-constr
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
       --constraint /opt/ai-review/images/python-constraints.txt \
-      jsonschema PyYAML python-gitlab requests
+      jsonschema PyYAML requests
 
 COPY ai-review/adapters /opt/ai-review/adapters
 COPY ai-review/ci /opt/ai-review/ci

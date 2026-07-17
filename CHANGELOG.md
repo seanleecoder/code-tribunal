@@ -12,6 +12,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
   the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
+- Package description now covers GitLab merge requests and GitHub pull requests.
+
+### Removed
+
+- Removed the unused `python-gitlab` runtime dependency from the package and base image
+  (the in-tree requests-based GitLab client is the only integration path).
 
 ### Migration
 
