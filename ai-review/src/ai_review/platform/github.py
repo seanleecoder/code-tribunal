@@ -386,13 +386,22 @@ class GitHubReviewPlatform:
         """
         )
 
-        response = self._request(
-            "POST",
-            self.graphql_url,
-            auth_token=self._resolution_token,
-            json={"query": mutation, "variables": {"threadId": target_node_id}},
-        )
         action = "resolve" if resolved else "unresolve"
+        try:
+            response = self._request(
+                "POST",
+                self.graphql_url,
+                auth_token=self._resolution_token,
+                json={"query": mutation, "variables": {"threadId": target_node_id}},
+            )
+        except GitHubReviewPlatformError as exc:
+            if not self._uses_dedicated_resolution_token and "failed: 403" in str(exc):
+                raise GitHubReviewPlatformError(
+                    f"{exc}; the built-in GITHUB_TOKEN may lack review-thread mutation "
+                    "permission—if so, configure the optional "
+                    "AI_REVIEW_GITHUB_RESOLVE_TOKEN Actions secret"
+                ) from exc
+            raise
         try:
             data = self._graphql_data(response, operation=f"review thread {action}")
         except GitHubReviewPlatformError as exc:
