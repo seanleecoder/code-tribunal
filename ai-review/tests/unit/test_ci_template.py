@@ -401,7 +401,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden_publish_command, publish)
 
-        for forbidden_secret in ("OPENROUTER_API_KEY", "GITLAB_TOKEN", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
+        for forbidden_secret in (
+            "OPENROUTER_API_KEY",
+            "GITLAB_TOKEN",
+            "GITLAB_READ_TOKEN",
+            "GITLAB_WRITE_TOKEN",
+        ):
             self.assertNotIn(forbidden_secret, text)
 
         # The Cursor permission smoke is the Cursor-enablement gate. It runs as
@@ -540,7 +545,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_template_does_not_self_assign_masked_secrets(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 
-        for secret in ("OPENROUTER_API_KEY", "GITLAB_TOKEN", "GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
+        for secret in (
+            "OPENROUTER_API_KEY",
+            "GITLAB_TOKEN",
+            "GITLAB_READ_TOKEN",
+            "GITLAB_WRITE_TOKEN",
+        ):
             self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
 
     def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:

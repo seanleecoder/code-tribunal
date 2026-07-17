@@ -292,7 +292,8 @@ def newest_valid_state_from_notes(
         if author_mismatches > 0:
             warnings.append(
                 "all state notes were rejected for author mismatch — this usually means "
-                "the GitLab token was rotated or read/write tokens belong to different bot users; see TROUBLESHOOTING"
+                "the GitLab token was rotated or read/write tokens belong to "
+                "different bot users; see TROUBLESHOOTING"
             )
         return None, warnings
     valid.sort(key=lambda item: (item[0], item[1]), reverse=True)
