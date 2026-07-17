@@ -7,11 +7,19 @@ from ai_review.platform.github import STATE_MARKER, PullRequestVersion
 
 
 class FakeGitHubClient:
-    def __init__(self, *, head_sha: str, diff_text: str, bot_id: int = 42) -> None:
+    def __init__(
+        self,
+        *,
+        head_sha: str,
+        diff_text: str,
+        bot_id: int = 42,
+        user_permissions: dict[int | str, int] | None = None,
+    ) -> None:
         self.head_sha = head_sha
         self.diff_text = diff_text
         self.bot_id = bot_id
         self.bot_login = "code-tribunal-bot"
+        self.user_permissions = user_permissions or {}
         self._comments: list[dict[str, Any]] = []
         self._issue_comments: list[dict[str, Any]] = []
         self._next_id = 1000
@@ -167,6 +175,8 @@ class FakeGitHubClient:
         return self.bot_id
 
     def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int | None:
+        if user_id in self.user_permissions:
+            return self.user_permissions[user_id]
         if user_id == self.bot_id or user_id == self.bot_login:
             return 40
         return None

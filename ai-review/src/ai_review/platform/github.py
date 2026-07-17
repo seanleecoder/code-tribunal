@@ -275,9 +275,12 @@ class GitHubReviewPlatform:
         """
         )
 
-        self._request(
+        response = self._request(
             "POST", "/graphql", json={"query": mutation, "variables": {"threadId": target_node_id}}
         )
+        if "errors" in response:
+            action = "resolve" if resolved else "unresolve"
+            raise ReviewPlatformError(f"GraphQL error during {action}: {response['errors']}")
         return {"id": thread_id, "resolved": resolved, "notes": []}
 
     def list_state_notes(

@@ -897,7 +897,9 @@ class PostTests(unittest.TestCase):
         from ai_review.post import collect_human_commands
         from support.fake_github import FakeGitHubClient
 
-        client = FakeGitHubClient(head_sha="head_sha", diff_text="")
+        client = FakeGitHubClient(
+            head_sha="head_sha", diff_text="", user_permissions={100: 40, 200: 10}
+        )
         marker = (
             f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
             f"body_hash={'a' * 64} source={'b' * 64} -->"
@@ -910,7 +912,8 @@ class PostTests(unittest.TestCase):
         )
         root_id = root["notes"][0]["id"]
 
-        client.add_reply(int(root_id), "/ai-review wontfix", author_id=42, author_login="human")
+        client.add_reply(int(root_id), "/ai-review resolve", author_id=200, author_login="unauth")
+        client.add_reply(int(root_id), "/ai-review wontfix", author_id=100, author_login="auth")
 
         threads = client.list_threads("octo/repo", 7)
         commands = collect_human_commands(client, "octo/repo", threads)

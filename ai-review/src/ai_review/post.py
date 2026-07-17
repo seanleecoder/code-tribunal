@@ -1383,6 +1383,9 @@ def finalize_state(
                     result["resolved_discussions"] += 1
             except ReviewPlatformError as exc:
                 result["warnings"].append(f"failed to resolve thread {discussion_id}: {exc}")
+                old_status = prior_status.get(record["issue_id"])
+                if old_status is not None:
+                    record["status"] = old_status
         final_state, overflow = _process_state_for_persistence(
             {
                 **state_plan.planned_state,
