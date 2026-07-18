@@ -955,7 +955,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
         except Exception:
             try:
                 digest = _resolve_config_digest(input_dir, None)
-            except ConfigError:
+            except Exception:
+                _write_parse_debug(
+                    output_dir,
+                    reviewer,
+                    stage,
+                    exc.output or "",
+                    exc.stderr or "",
+                    kind="timeout",
+                )
                 _write_status(
                     output_dir,
                     reviewer,

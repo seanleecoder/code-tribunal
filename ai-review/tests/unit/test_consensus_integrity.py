@@ -8,8 +8,13 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 from ai_review.config import effective_config_digest, load_config
-from ai_review.consensus import ConsensusIntegrityError, cli, validate_consensus_inputs
-from ai_review.schema import empty_finding_batch, write_canonical_json
+from ai_review.consensus import (
+    ConsensusIntegrityError,
+    cli,
+    require_critique_provenance,
+    validate_consensus_inputs,
+)
+from ai_review.schema import empty_critique_batch, empty_finding_batch, write_canonical_json
 
 from .test_consensus_cli import _manifest_for_config
 from .test_consensus_state_matching import _batch, _finding
@@ -130,13 +135,13 @@ class ConsensusIntegrityTests(unittest.TestCase):
             critique = {
                 "schema_version": "critique_batch.v1",
                 "run_id": "run-1",
-                "critic": "codex",
+                "critic": "claude",
                 "adapter_status": "success",
                 "effective_config_sha256": digest,
                 "critiques": [
                     {
                         "target_source_finding_id": "9" * 64,
-                        "critic": "codex",
+                        "critic": "claude",
                         "verdict": "agree",
                         "duplicate_of_source_finding_id": None,
                         "rationale": "valid",
@@ -257,17 +262,17 @@ class ConsensusIntegrityTests(unittest.TestCase):
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
             write_canonical_json(
-                critiques_dir / "codex.json",
+                critiques_dir / "claude.json",
                 {
                     "schema_version": "critique_batch.v1",
                     "run_id": "wrong-run",
-                    "critic": "spoofed",
+                    "critic": "claude",
                     "adapter_status": "success",
                     "effective_config_sha256": digest,
                     "critiques": [
                         {
                             "target_source_finding_id": "1" * 64,
-                            "critic": "spoofed",
+                            "critic": "claude",
                             "verdict": "agree",
                             "duplicate_of_source_finding_id": None,
                             "rationale": "valid",
@@ -393,6 +398,370 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 )
                 self.assertEqual(code, 0)
             self.assertEqual(out_a.read_text(encoding="utf-8"), out_b.read_text(encoding="utf-8"))
+
+    def test_effective_config_digest_changes_when_max_findings_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_config(self._mini_config(root))
+            modified = copy.deepcopy(config)
+            modified["reviewers"]["claude"]["max_findings"] = 1
+            self.assertNotEqual(
+                effective_config_digest(config),
+                effective_config_digest(modified),
+            )
+
+    def test_effective_config_digest_changes_when_blind_identity_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_config(self._mini_config(root))
+            modified = copy.deepcopy(config)
+            modified["critique"]["blind_reviewer_identity"] = not bool(
+                modified["critique"].get("blind_reviewer_identity", True)
+            )
+            self.assertNotEqual(
+                effective_config_digest(config),
+                effective_config_digest(modified),
+            )
+
+    def test_manifest_missing_or_empty_run_id_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_config(self._mini_config(root))
+            base = _manifest_for_config(config, run_id="run-1")
+            for run_id in (None, "", "   "):
+                with self.subTest(run_id=run_id):
+                    manifest = dict(base)
+                    if run_id is None:
+                        del manifest["run_id"]
+                    else:
+                        manifest["run_id"] = run_id
+                    with self.assertRaises(ConsensusIntegrityError) as ctx:
+                        validate_consensus_inputs(
+                            config=config,
+                            manifest=manifest,
+                            finding_batches=[],
+                            critique_batches=[],
+                        )
+                    self.assertIn("manifest missing run_id", str(ctx.exception))
+
+    def test_duplicate_and_empty_critic_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = load_config(self._mini_config(root))
+            digest = effective_config_digest(config)
+            manifest = _manifest_for_config(config, run_id="run-1")
+            batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+            batch["model"] = "model-a"
+            batch["effective_config_sha256"] = digest
+            batch["run_id"] = "run-1"
+            critique = {
+                "schema_version": "critique_batch.v1",
+                "run_id": "run-1",
+                "critic": "claude",
+                "adapter_status": "success",
+                "effective_config_sha256": digest,
+                "critiques": [],
+            }
+            with self.assertRaises(ConsensusIntegrityError) as ctx:
+                validate_consensus_inputs(
+                    config=config,
+                    manifest=manifest,
+                    finding_batches=[batch],
+                    critique_batches=[critique, copy.deepcopy(critique)],
+                )
+            self.assertIn("duplicate critique batch", str(ctx.exception))
+
+            # Empty/missing payload critic is allowed (filename binds identity).
+            require_critique_provenance(
+                {
+                    "run_id": "run-1",
+                    "critic": "",
+                    "adapter_status": "success",
+                    "effective_config_sha256": digest,
+                },
+                critic="claude",
+                run_id="run-1",
+                config_digest=digest,
+            )
+            with self.assertRaises(ConsensusIntegrityError) as ctx:
+                require_critique_provenance(
+                    {
+                        "run_id": "run-1",
+                        "critic": "codex",
+                        "adapter_status": "success",
+                        "effective_config_sha256": digest,
+                    },
+                    critic="claude",
+                    run_id="run-1",
+                    config_digest=digest,
+                )
+            self.assertIn("mismatches filename", str(ctx.exception))
+
+    def test_cli_rejects_success_critique_from_disabled_critic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = self._mini_config(root, critique_enabled=True)
+            config = load_config(config_path)
+            digest = effective_config_digest(config)
+            input_dir = root / "inputs"
+            findings_dir = root / "findings"
+            critiques_dir = root / "critiques"
+            for path in (input_dir, findings_dir, critiques_dir):
+                path.mkdir()
+            write_canonical_json(
+                input_dir / "manifest.json",
+                _manifest_for_config(config, run_id="run-1"),
+            )
+            batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+            batch["model"] = "model-a"
+            batch["effective_config_sha256"] = digest
+            batch["run_id"] = "run-1"
+            write_canonical_json(findings_dir / "claude.json", batch)
+            write_canonical_json(
+                critiques_dir / "codex.json",
+                {
+                    "schema_version": "critique_batch.v1",
+                    "run_id": "run-1",
+                    "critic": "codex",
+                    "adapter_status": "success",
+                    "effective_config_sha256": digest,
+                    "critiques": [],
+                },
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                code = cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(findings_dir),
+                        "--critiques-dir",
+                        str(critiques_dir),
+                        "--out",
+                        str(root / "out.json"),
+                    ]
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("disabled critic", stderr.getvalue())
+
+    def test_cli_allows_skipped_critique_from_disabled_critic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = self._mini_config(root, critique_enabled=True)
+            config = load_config(config_path)
+            digest = effective_config_digest(config)
+            input_dir = root / "inputs"
+            findings_dir = root / "findings"
+            critiques_dir = root / "critiques"
+            for path in (input_dir, findings_dir, critiques_dir):
+                path.mkdir()
+            write_canonical_json(
+                input_dir / "manifest.json",
+                _manifest_for_config(config, run_id="run-1"),
+            )
+            batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+            batch["model"] = "model-a"
+            batch["effective_config_sha256"] = digest
+            batch["run_id"] = "run-1"
+            write_canonical_json(findings_dir / "claude.json", batch)
+            write_canonical_json(
+                critiques_dir / "codex.json",
+                empty_critique_batch(
+                    "codex",
+                    "skipped",
+                    run_id="run-1",
+                    started_at="2026-06-29T00:00:00Z",
+                    effective_config_sha256=digest,
+                ),
+            )
+            code = cli(
+                [
+                    "--config",
+                    str(config_path),
+                    "--inputs",
+                    str(input_dir),
+                    "--findings-dir",
+                    str(findings_dir),
+                    "--critiques-dir",
+                    str(critiques_dir),
+                    "--out",
+                    str(root / "out.json"),
+                ]
+            )
+            self.assertEqual(code, 0)
+
+    def test_cli_rejects_critique_raw_critic_filename_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = self._mini_config(root, critique_enabled=True)
+            config = load_config(config_path)
+            digest = effective_config_digest(config)
+            input_dir = root / "inputs"
+            findings_dir = root / "findings"
+            critiques_dir = root / "critiques"
+            for path in (input_dir, findings_dir, critiques_dir):
+                path.mkdir()
+            write_canonical_json(
+                input_dir / "manifest.json",
+                _manifest_for_config(config, run_id="run-1"),
+            )
+            batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+            batch["model"] = "model-a"
+            batch["effective_config_sha256"] = digest
+            batch["run_id"] = "run-1"
+            write_canonical_json(findings_dir / "claude.json", batch)
+            write_canonical_json(
+                critiques_dir / "claude.json",
+                {
+                    "schema_version": "critique_batch.v1",
+                    "run_id": "run-1",
+                    "critic": "spoofed",
+                    "adapter_status": "success",
+                    "effective_config_sha256": digest,
+                    "critiques": [],
+                },
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                code = cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(findings_dir),
+                        "--critiques-dir",
+                        str(critiques_dir),
+                        "--out",
+                        str(root / "out.json"),
+                    ]
+                )
+            self.assertEqual(code, 3)
+            self.assertIn("mismatches filename", stderr.getvalue())
+
+    def test_cli_rejects_critique_missing_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = self._mini_config(root, critique_enabled=True)
+            config = load_config(config_path)
+            digest = effective_config_digest(config)
+            input_dir = root / "inputs"
+            findings_dir = root / "findings"
+            critiques_dir = root / "critiques"
+            for path in (input_dir, findings_dir, critiques_dir):
+                path.mkdir()
+            write_canonical_json(
+                input_dir / "manifest.json",
+                _manifest_for_config(config, run_id="run-1"),
+            )
+            batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+            batch["model"] = "model-a"
+            batch["effective_config_sha256"] = digest
+            batch["run_id"] = "run-1"
+            write_canonical_json(findings_dir / "claude.json", batch)
+            write_canonical_json(
+                critiques_dir / "claude.json",
+                {
+                    "schema_version": "critique_batch.v1",
+                    "run_id": "run-1",
+                    "critic": "claude",
+                    "adapter_status": "success",
+                    "effective_config_sha256": digest,
+                    "critiques": [
+                        {
+                            "target_source_finding_id": "1" * 64,
+                            "critic": "claude",
+                            "duplicate_of_source_finding_id": None,
+                            "rationale": "valid",
+                            "adjusted_severity": None,
+                            "confidence": 0.8,
+                        }
+                    ],
+                },
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                code = cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(findings_dir),
+                        "--critiques-dir",
+                        str(critiques_dir),
+                        "--out",
+                        str(root / "out.json"),
+                    ]
+                )
+            self.assertEqual(code, 3)
+            self.assertTrue(
+                "schema" in stderr.getvalue().lower()
+                or "required" in stderr.getvalue().lower()
+                or "verdict" in stderr.getvalue().lower()
+            )
+
+    def test_cli_rejects_garbage_json_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = self._mini_config(root, critique_enabled=True)
+            config = load_config(config_path)
+            digest = effective_config_digest(config)
+            for label in ("manifest", "findings", "critiques"):
+                with self.subTest(label=label):
+                    input_dir = root / label / "inputs"
+                    findings_dir = root / label / "findings"
+                    critiques_dir = root / label / "critiques"
+                    for path in (input_dir, findings_dir, critiques_dir):
+                        path.mkdir(parents=True)
+                    write_canonical_json(
+                        input_dir / "manifest.json",
+                        _manifest_for_config(config, run_id="run-1"),
+                    )
+                    batch = _batch("claude", _finding("claude", "1" * 64, "major"))
+                    batch["model"] = "model-a"
+                    batch["effective_config_sha256"] = digest
+                    batch["run_id"] = "run-1"
+                    write_canonical_json(findings_dir / "claude.json", batch)
+                    write_canonical_json(
+                        critiques_dir / "claude.json",
+                        {
+                            "schema_version": "critique_batch.v1",
+                            "run_id": "run-1",
+                            "critic": "claude",
+                            "adapter_status": "success",
+                            "effective_config_sha256": digest,
+                            "critiques": [],
+                        },
+                    )
+                    target = {
+                        "manifest": input_dir / "manifest.json",
+                        "findings": findings_dir / "claude.json",
+                        "critiques": critiques_dir / "claude.json",
+                    }[label]
+                    target.write_text("{not-json", encoding="utf-8")
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        code = cli(
+                            [
+                                "--config",
+                                str(config_path),
+                                "--inputs",
+                                str(input_dir),
+                                "--findings-dir",
+                                str(findings_dir),
+                                "--critiques-dir",
+                                str(critiques_dir),
+                                "--out",
+                                str(root / label / "out.json"),
+                            ]
+                        )
+                    self.assertEqual(code, 3)
 
 
 if __name__ == "__main__":

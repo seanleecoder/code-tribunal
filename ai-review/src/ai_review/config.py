@@ -252,12 +252,18 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
                 "model": reviewer.get("model"),
                 "enabled": bool(reviewer.get("enabled")),
                 "effort": reviewer.get("effort"),
+                "max_findings": (
+                    int(reviewer["max_findings"])
+                    if reviewer.get("max_findings") is not None
+                    else None
+                ),
             }
             for name, reviewer in sorted(reviewers.items())
             if isinstance(reviewer, dict)
         },
         "critique_enabled": bool(critique.get("enabled")),
         "critique_rounds": int(critique.get("rounds", 0) or 0),
+        "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
         "critique_can_add_quorum_votes": bool(critique.get("can_add_quorum_votes")),
         "critique_allow_advisory_escalation": bool(critique.get("allow_advisory_escalation")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
@@ -272,7 +278,7 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         ),
         "panel_quorum_votes_required": int(quorum.get("votes_required", 0) or 0),
         "severity_single_reviewer_blocker_categories": sorted(
-            str(item) for item in categories if isinstance(item, str)
+            str(item) for item in categories
         ),
         "severity_quorum_blocker_block_merge": bool(
             isinstance(quorum_blocker, dict) and quorum_blocker.get("block_merge") is True

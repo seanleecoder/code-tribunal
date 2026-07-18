@@ -173,13 +173,13 @@ class ConsensusCliTests(unittest.TestCase):
                 {
                     "schema_version": "critique_batch.v1",
                     "run_id": "run",
-                    "critic": "claude",
+                    "critic": "codex",
                     "adapter_status": "success",
                     "effective_config_sha256": digest,
                     "critiques": [
                         {
                             "target_source_finding_id": "1" * 64,
-                            "critic": "claude",
+                            "critic": "codex",
                             "verdict": "agree",
                             "rationale": "valid",
                             "adjusted_severity": None,

@@ -11,7 +11,7 @@ are your friends: every stage writes JSON you can download from the job
 |---|---|---|
 | A reviewer job is red | `out/status/<reviewer>.json` | `model_error`, `schema_error`, `timeout`, or `config_error` (see below) |
 | Pipeline green but no comments | `out/consensus/consensus.json`, `out/post/post_result.json` | Nothing surfaced; or posting hit `stale_head`; or panel `advisory_only` |
-| Consensus job exits 3 | job log / `panel_status` | All usable reviewers failed, or artifact/config integrity failure (including `effective_config_sha256` drift — a misconfiguration detector for job-scoped `AI_REVIEW_*` / policy mismatches, not tamper-proofing) |
+| Consensus job exits 3 | job log / `panel_status` | All usable reviewers failed, or artifact/config integrity failure (including `effective_config_sha256` drift — a misconfiguration detector for job-scoped `AI_REVIEW_*` / policy mismatches, not tamper-proofing; success-only digest/model checks; critique critic≠filename; garbage JSON/schema errors) |
 | Gate exits 7 | `out/gate/gate_result.json` | Blocking finding, or post/state failure (fails closed, including advisory mode) |
 | Gate doesn't block when you expect it to | gate_result + consensus summary | See "Gate does not block" |
 | Same comment appears twice | discussion markers | See "Duplicate-looking comments" |

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 from .anchors import anchor_path_key, candidate_issue_signature_hash, is_sha256
-from .canonical import canonical_json, sha256_hex
+from .canonical import CanonicalError, canonical_json, sha256_hex
 from .config import (
     effective_config_digest,
     effective_config_summary,
@@ -833,15 +834,25 @@ def require_critique_provenance(
     run_id: str,
     config_digest: str,
 ) -> None:
-    """Validate critique artifact provenance before finalize overwrites it."""
+    """Validate critique artifact provenance before finalize overwrites it.
+
+    Digest matching is intentionally success-only (same policy as finding batches):
+    non-success critique seats may carry a degraded stamp and only degrade the
+    panel. Filename ``critic`` is authoritative; a present payload critic that
+    disagrees is rejected rather than silently rewritten.
+    """
     if not isinstance(raw, dict):
         raise ConsensusIntegrityError(f"critique batch is not an object for critic={critic}")
     if raw.get("run_id") != run_id:
         raise ConsensusIntegrityError(
             f"critique batch run_id mismatch for critic={critic}"
         )
+    raw_critic = raw.get("critic")
+    if raw_critic is not None and str(raw_critic).strip() and str(raw_critic).strip() != critic:
+        raise ConsensusIntegrityError(
+            f"critique batch critic mismatches filename for critic={critic}"
+        )
     status = str(raw.get("adapter_status") or "success")
-    # Non-success seats may carry a degraded stamp; success must match prepare.
     if status == "success" and raw.get("effective_config_sha256") != config_digest:
         raise ConsensusIntegrityError(
             f"critique batch effective_config_sha256 mismatch for critic={critic}"
@@ -858,7 +869,7 @@ def validate_consensus_inputs(
     """Validate finding/critique batches against prepare run and effective config."""
     try:
         config_digest = _require_effective_config_integrity(config, manifest)
-        run_id = str(manifest.get("run_id") or "")
+        run_id = str(manifest.get("run_id") or "").strip()
         if not run_id:
             raise ConsensusIntegrityError("manifest missing run_id")
 
@@ -882,7 +893,8 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(
                     f"finding batch run_id mismatch for reviewer={reviewer}"
                 )
-            status = str(batch.get("adapter_status") or "")
+            # Missing status defaults to success (fail-closed for digest/model checks).
+            status = str(batch.get("adapter_status") or "success")
             # Digest binding is required for success evidence; non-success batches
             # degrade the panel instead of hard-failing the whole run.
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
@@ -922,7 +934,16 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(
                     f"critique batch run_id mismatch for critic={critic}"
                 )
-            status = str(batch.get("adapter_status") or "")
+            status = str(batch.get("adapter_status") or "success")
+            critic_cfg = reviewers_cfg.get(critic)
+            if not isinstance(critic_cfg, dict):
+                raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
+            if critic not in enabled:
+                if status != "skipped":
+                    raise ConsensusIntegrityError(
+                        f"critique batch for disabled critic={critic}"
+                    )
+                continue
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(
                     f"critique batch effective_config_sha256 mismatch for critic={critic}"
@@ -957,40 +978,48 @@ def cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = load_config(args.config)
     inputs = Path(args.inputs)
-    manifest = load_json_file(inputs / "manifest.json")
-    batches = []
-    for path in sorted(Path(args.findings_dir).glob("*.json")):
-        batches.append(load_json_file(path))
-    state = cast(State | None, load_json_file(args.state)) if args.state else None
-    if state is None:
-        aliases_path = inputs / "state_aliases.json"
-        if aliases_path.exists():
-            state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
-    critique_batches = []
     config_digest = effective_config_digest(config)
-    run_id = str(manifest.get("run_id") or "")
-    if _critique_enabled(config):
-        for path in sorted(Path(args.critiques_dir).glob("*.json")):
-            raw = load_json_file(path)
-            try:
+
+    try:
+        manifest = load_json_file(inputs / "manifest.json")
+        if not isinstance(manifest, dict):
+            raise ConsensusIntegrityError("manifest root must be an object")
+        run_id = str(manifest.get("run_id") or "").strip()
+        if not run_id:
+            raise ConsensusIntegrityError("manifest missing run_id")
+
+        batches = []
+        for path in sorted(Path(args.findings_dir).glob("*.json")):
+            batches.append(load_json_file(path))
+        state = cast(State | None, load_json_file(args.state)) if args.state else None
+        if state is None:
+            aliases_path = inputs / "state_aliases.json"
+            if aliases_path.exists():
+                state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
+
+        critique_batches = []
+        if _critique_enabled(config):
+            for path in sorted(Path(args.critiques_dir).glob("*.json")):
+                raw = load_json_file(path)
+                if not isinstance(raw, dict):
+                    raise ConsensusIntegrityError(
+                        f"critique batch is not an object for critic={path.stem}"
+                    )
                 require_critique_provenance(
-                    raw if isinstance(raw, dict) else {},
+                    raw,
                     critic=path.stem,
                     run_id=run_id,
                     config_digest=config_digest,
                 )
-            except ConsensusIntegrityError as exc:
-                print(f"ai-review consensus: {exc}", file=sys.stderr)
-                return 3
-            critique_batches.append(
-                finalize_critique_batch(
-                    raw,
-                    critic=path.stem,
-                    run_id=run_id,
-                    effective_config_sha256=config_digest,
+                critique_batches.append(
+                    finalize_critique_batch(
+                        raw,
+                        critic=path.stem,
+                        run_id=run_id,
+                        effective_config_sha256=config_digest,
+                    )
                 )
-            )
-    try:
+
         validate_consensus_inputs(
             config=config,
             manifest=manifest,
@@ -1001,9 +1030,17 @@ def cli(argv: list[str] | None = None) -> int:
             manifest, batches, config, state=state, critique_batches=critique_batches
         )
         validate_instance(consensus, "consensus.schema.json")
-    except (ConsensusIntegrityError, SchemaValidationError) as exc:
+    except (
+        ConsensusIntegrityError,
+        SchemaValidationError,
+        CanonicalError,
+        json.JSONDecodeError,
+        OSError,
+        TypeError,
+    ) as exc:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
+
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":
         return 3

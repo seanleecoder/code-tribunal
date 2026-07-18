@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +21,17 @@ from ai_review.schema import (
     validate_instance,
     write_canonical_json,
 )
+
+
+def _load_validate_output():
+    """Load adapters/validate_output.py (not an importable package module)."""
+    path = Path(__file__).resolve().parents[2] / "adapters" / "validate_output.py"
+    spec = importlib.util.spec_from_file_location("validate_output_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 class SchemaValidationTests(unittest.TestCase):
@@ -77,7 +90,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
         batch["critiques"] = [
             {
@@ -125,7 +138,7 @@ class SchemaValidationTests(unittest.TestCase):
             model="local",
             started_at=started,
             completed_at=started,
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
         validate_instance(batch, "finding_batch.schema.json")
 
@@ -135,7 +148,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
 
         validate_instance(batch, "critique_batch.schema.json")
@@ -146,7 +159,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
         batch["critiques"] = [
             {
@@ -179,7 +192,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="codex",
             run_id="local",
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["schema_version"], "critique_batch.v1")
@@ -211,7 +224,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="claude",
             run_id="local",
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["adapter_status"], "model_error")
@@ -237,7 +250,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="claude",
             run_id="local",
-        effective_config_sha256="0" * 64,
+            effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["adapter_status"], "schema_error")
@@ -436,7 +449,7 @@ class SchemaValidationTests(unittest.TestCase):
                 run_id="local",
                 started_at="2026-06-29T00:00:00Z",
                 input_dir=input_dir,
-            effective_config_sha256="0" * 64,
+                effective_config_sha256="0" * 64,
             )
             signature = finalized["findings"][0]["candidate_issue_signature"]
             self.assertEqual(signature["path_key"], "src/foo.py")
@@ -445,6 +458,55 @@ class SchemaValidationTests(unittest.TestCase):
             self.assertEqual(signature["symbol"], "f")
             self.assertNotIn("extra_model_note", finalized["findings"][0])
             validate_instance(finalized, "finding_batch.schema.json")
+
+    def test_validate_output_critique_stage_stamps_digest(self) -> None:
+        validate_output = _load_validate_output()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_path = root / "raw.json"
+            out_path = root / "out.json"
+            write_canonical_json(
+                raw_path,
+                {
+                    "critic": "spoofed",
+                    "critiques": [
+                        {
+                            "target_source_finding_id": "1" * 64,
+                            "critic": "spoofed",
+                            "verdict": "agree",
+                            "rationale": "ok",
+                            "adjusted_severity": None,
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+            )
+            digest = "a" * 64
+            code = validate_output.main(
+                [
+                    "--stage",
+                    "critique",
+                    "--reviewer",
+                    "claude",
+                    "--model",
+                    "model-a",
+                    "--run-id",
+                    "run-1",
+                    "--started-at",
+                    "2026-06-29T00:00:00Z",
+                    "--input",
+                    str(raw_path),
+                    "--output",
+                    str(out_path),
+                    "--effective-config-sha256",
+                    digest,
+                ]
+            )
+            self.assertEqual(code, 0)
+            finalized = load_json_file(out_path)
+            self.assertEqual(finalized["critic"], "claude")
+            self.assertEqual(finalized["effective_config_sha256"], digest)
+            self.assertEqual(finalized["critiques"][0]["critic"], "claude")
 
 
 if __name__ == "__main__":
