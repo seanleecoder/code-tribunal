@@ -26,7 +26,8 @@ distribution and have no public API or typing compatibility guarantee.
 
 `pyproject.toml` is retained only for pytest, Ruff, and mypy configuration.
 Runtime and contributor dependencies are installed explicitly from the
-container constraints and `requirements-dev.txt`, respectively. The public
+container constraints and exactly pinned `requirements-dev.txt`, respectively;
+the supply-chain checker audits both inputs. The public
 image release line in `.github/workflows/publish-ai-review-images.yml` is the
 only version namespace until SPEC-37 establishes the final `1.0.0` release
 manifest and tag.

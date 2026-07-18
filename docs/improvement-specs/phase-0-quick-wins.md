@@ -1,6 +1,8 @@
 # Phase 0 — Quick Wins (Week 1)
 
-> Status: complete. Retained as implementation and decision history.
+> Status: complete. Retained as implementation and decision history. Historical
+> editable-install instructions below are superseded by the current source-based
+> setup in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 All specs here are XS/S, independent, and low-risk. **Do SPEC-03 first** so the
 rest land behind a real CI gate. None require touching the consensus engine.

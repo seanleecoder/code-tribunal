@@ -87,6 +87,27 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
+    def test_current_dev_requirements_are_exactly_pinned(self) -> None:
+        if not check_supply_chain_pins.DEV_REQUIREMENTS.exists():
+            self.skipTest("contributor requirements are intentionally absent from runtime images")
+        requirements = check_supply_chain_pins.DEV_REQUIREMENTS.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            check_supply_chain_pins._exact_requirement_issues(
+                requirements, "requirements-dev.txt"
+            ),
+            [],
+        )
+
+    def test_detects_floating_dev_tool_requirement(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._exact_requirement_issues(
+                "-c ai-review/images/python-constraints.txt\npytest>=9\n",
+                "requirements-dev.txt",
+            ),
+            ["requirements-dev.txt must use exact == pins only, got 'pytest>=9'"],
+        )
+
     def test_detects_malformed_cursor_agent_pin(self) -> None:
         self.assertIn(
             "cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest",

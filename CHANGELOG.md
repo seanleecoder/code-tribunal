@@ -23,6 +23,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Code Tribunal now declares container images and CI templates as its only
   supported distribution artifacts. Python modules remain internal container
   implementation details loaded from `/opt/ai-review/src`.
+- Contributor tools are exactly pinned in `requirements-dev.txt` and covered by
+  the repository supply-chain check.
 - State retention controls are named for their actual units:
   `keep_resolved_records` and `keep_stale_records` retain bounded counts of
   records rather than run windows.
@@ -62,7 +64,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
   the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
-- Package description now covers GitLab merge requests and GitHub pull requests.
+- Project description now covers GitLab merge requests and GitHub pull requests.
 - GitLab web/API pipelines create AI review jobs only when a merge request IID is
   present, and the trust auditor now reserves the shipped Cursor jobs.
 - State-load failure policy is now the explicit boolean
@@ -81,7 +83,7 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   are hard runtime dependencies and missing imports now fail fast.
 - Removed the deprecated `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` fallback; only
   `GITLAB_TOKEN` is accepted for GitLab prepare and post.
-- Removed the unused `python-gitlab` runtime dependency from the package and base image
+- Removed the unused `python-gitlab` runtime dependency from the internal runtime set and base image
   (the in-tree requests-based GitLab client is the only integration path).
 - Removed the unused `respond` adapter stage, direct OpenRouter reviewer module,
   trigger helper, and the unproduced `skipped_advisory`, `unanchored`, and

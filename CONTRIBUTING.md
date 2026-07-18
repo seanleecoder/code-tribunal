@@ -5,8 +5,9 @@ Thanks for helping improve Code Tribunal.
 ## Development Setup
 
 ```bash
+# From the repository root:
 python -m pip install -r requirements-dev.txt
-export PYTHONPATH=ai-review/src
+export PYTHONPATH="$PWD/ai-review/src"
 ```
 
 The Python source under `ai-review/src` is an internal implementation used by
