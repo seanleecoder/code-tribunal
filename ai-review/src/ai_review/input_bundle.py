@@ -182,6 +182,15 @@ def _scan_directory(
         return sorted(scanner, key=lambda item: item.name)
 
 
+def _require_dir_fd_containment() -> None:
+    """Refuse path-based traversal — it cannot close directory→symlink races."""
+    if not _DIR_FD_SUPPORTED:
+        raise BundleError(
+            "repository snapshot containment requires platform support for "
+            "dir_fd-relative O_NOFOLLOW|O_DIRECTORY opens"
+        )
+
+
 def _copy_snapshot_tree(
     source_root: Path,
     dest_root: Path,
@@ -190,31 +199,27 @@ def _copy_snapshot_tree(
 ) -> None:
     """Copy ``source_root`` into ``dest_root`` without following links.
 
-    On platforms with ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY``, traversal
-    pins each parent directory inode and opens children relative to that fd so a
+    Requires ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY``. Traversal pins each
+    parent directory inode and opens children relative to that fd so a
     directory→symlink swap between validation and descent cannot escape the
-    checkout. Elsewhere, the path-based fallback re-``lstat``s before each open.
-    Depth is bounded with an explicit stack (not Python recursion).
+    checkout. There is no path-based directory fallback: platforms without
+    these primitives fail closed. Depth is bounded with an explicit stack.
     """
-    use_dir_fd = _DIR_FD_SUPPORTED
-    root_fd: int | None = None
-    if use_dir_fd:
-        root_flags = os.O_RDONLY | _O_DIRECTORY
-        try:
-            root_fd = os.open(source_root, root_flags)
-        except OSError as exc:
-            raise BundleError(
-                f"repository snapshot failed to open source root: {exc}"
-            ) from exc
+    _require_dir_fd_containment()
+    root_flags = os.O_RDONLY | _O_DIRECTORY
+    try:
+        root_fd = os.open(source_root, root_flags)
+    except OSError as exc:
+        raise BundleError(
+            f"repository snapshot failed to open source root: {exc}"
+        ) from exc
 
-    # (dir_fd|None, source_dir Path, rel_parts)
-    stack: list[tuple[int | None, Path, tuple[str, ...]]] = [
-        (root_fd, source_root, ())
-    ]
+    # (dir_fd, source_dir Path, rel_parts)
+    stack: list[tuple[int, Path, tuple[str, ...]]] = [(root_fd, source_root, ())]
     try:
         while stack:
             dir_fd, source_dir, rel_parts = stack.pop()
-            child_dirs: list[tuple[int | None, Path, tuple[str, ...]]] = []
+            child_dirs: list[tuple[int, Path, tuple[str, ...]]] = []
             try:
                 if len(rel_parts) > _MAX_SNAPSHOT_DEPTH:
                     raise BundleError(
@@ -244,37 +249,13 @@ def _copy_snapshot_tree(
                     if stat.S_ISDIR(mode):
                         dest_dir = dest_root.joinpath(*child_parts)
                         dest_dir.mkdir(parents=True, exist_ok=True)
-                        child_path = source_dir / name
-                        child_fd: int | None = None
-                        if use_dir_fd and dir_fd is not None:
-                            child_fd = _open_nofollow(
-                                name,
-                                flags=os.O_RDONLY | _O_DIRECTORY,
-                                dir_fd=dir_fd,
-                                rel_parts=child_parts,
-                            )
-                        else:
-                            # Path fallback: re-lstat before descending so a
-                            # directory→symlink swap fails closed.
-                            try:
-                                again = os.lstat(child_path)
-                            except OSError as exc:
-                                raise BundleError(
-                                    "repository snapshot failed to re-stat "
-                                    f"{_snapshot_rel_display(child_parts)}: {exc}"
-                                ) from exc
-                            if stat.S_ISLNK(again.st_mode):
-                                _raise_snapshot_rejected("symlink", child_parts)
-                            if not stat.S_ISDIR(again.st_mode):
-                                _raise_snapshot_rejected("non-directory", child_parts)
-                            if (again.st_dev, again.st_ino) != (
-                                entry_stat.st_dev,
-                                entry_stat.st_ino,
-                            ):
-                                _raise_snapshot_rejected(
-                                    "directory replaced during copy", child_parts
-                                )
-                        child_dirs.append((child_fd, child_path, child_parts))
+                        child_fd = _open_nofollow(
+                            name,
+                            flags=os.O_RDONLY | _O_DIRECTORY,
+                            dir_fd=dir_fd,
+                            rel_parts=child_parts,
+                        )
+                        child_dirs.append((child_fd, source_dir / name, child_parts))
                         continue
                     if stat.S_ISREG(mode):
                         _copy_regular_file_nofollow(
@@ -282,8 +263,8 @@ def _copy_snapshot_tree(
                             dest_root.joinpath(*child_parts),
                             entry_stat,
                             child_parts,
-                            dir_fd=dir_fd if use_dir_fd else None,
-                            name=name if use_dir_fd else None,
+                            dir_fd=dir_fd,
+                            name=name,
                         )
                         continue
                     _raise_snapshot_rejected("special file", child_parts)
@@ -292,17 +273,15 @@ def _copy_snapshot_tree(
                 child_dirs = []
             finally:
                 for leaked_fd, _, _ in child_dirs:
-                    if leaked_fd is not None:
-                        os.close(leaked_fd)
-                if dir_fd is not None and dir_fd != root_fd:
+                    os.close(leaked_fd)
+                if dir_fd != root_fd:
                     os.close(dir_fd)
     finally:
         while stack:
             leftover_fd, _, _ = stack.pop()
-            if leftover_fd is not None and leftover_fd != root_fd:
+            if leftover_fd != root_fd:
                 os.close(leftover_fd)
-        if root_fd is not None:
-            os.close(root_fd)
+        os.close(root_fd)
 
 
 def copy_repo_snapshot(
@@ -318,8 +297,10 @@ def copy_repo_snapshot(
     (typically the prepare output directory basename) applies only at the
     repository root. The destination is built in a temporary sibling directory
     and published only on success so a rejected tree never leaves a usable
-    ``repo_snapshot`` artifact.
+    ``repo_snapshot`` artifact. Directory depth is capped at
+    ``_MAX_SNAPSHOT_DEPTH``; published snapshot directories use mode ``0o755``.
     """
+    _require_dir_fd_containment()
     source_root = Path(source).resolve(strict=True)
     dest_root = Path(dest)
     if not source_root.is_dir():
@@ -344,6 +325,9 @@ def copy_repo_snapshot(
         _copy_snapshot_tree(
             source_root, tmp_dest, top_level_ignore=top_level_ignore
         )
+        # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
+        # that are not the preparing uid (same-user CI jobs are unaffected either way).
+        os.chmod(tmp_dest, 0o755)
         if dest_root.exists():
             if dest_root.is_symlink() or dest_root.is_file():
                 dest_root.unlink()

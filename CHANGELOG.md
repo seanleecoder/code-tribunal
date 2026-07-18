@@ -9,10 +9,13 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 ### Security
 
 - Prepare now builds `repo_snapshot` with a shared contained copier that never
-  follows symlinks and rejects FIFO/socket/device nodes. Hostile checkout links
-  (including `/proc/self/environ`) cannot materialize prepare-job environment
-  data into uploaded input artifacts. Repositories that intentionally track
-  symlinks fail closed until a non-followed link representation exists.
+  follows symlinks and rejects FIFO/socket/device nodes. Traversal requires
+  `dir_fd`-relative `O_NOFOLLOW|O_DIRECTORY` opens (no path-based directory
+  fallback). Hostile checkout links (including `/proc/self/environ`) cannot
+  materialize prepare-job environment data into uploaded input artifacts.
+  Repositories that intentionally track symlinks fail closed until a
+  non-followed link representation exists. Snapshot directory depth is capped
+  at 512; published `repo_snapshot` directories use mode `0755`.
 
 ### Changed
 

@@ -337,6 +337,14 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(mode), 0o755)
             self.assertFalse(mode & stat.S_ISUID)
 
+    def test_published_snapshot_directory_mode_is_0755(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            copy_repo_snapshot(source, dest)
+            self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o755)
+
     def test_snapshot_is_deterministic_across_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
@@ -525,7 +533,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
 
             with (
                 mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
-                mock.patch("ai_review.input_bundle._DIR_FD_SUPPORTED", False),
                 self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
             ):
                 _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
@@ -545,10 +552,39 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
 
             with (
                 mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
-                mock.patch("ai_review.input_bundle._DIR_FD_SUPPORTED", False),
                 self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
             ):
                 _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
+
+    def test_missing_dir_fd_support_fails_closed_without_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            (outside / "TOP-SECRET").write_text("classified\n", encoding="utf-8")
+            self._write_nested_repo(source)
+            nested = source / "nested"
+            nested.mkdir()
+            (nested / "inner.txt").write_text("inner\n", encoding="utf-8")
+            # Simulate a hostile swap that the removed path fallback could follow.
+            shutil.rmtree(nested)
+            nested.symlink_to(outside)
+
+            with (
+                mock.patch("ai_review.input_bundle._DIR_FD_SUPPORTED", False),
+                self.assertRaisesRegex(
+                    BundleError, r"requires platform support for dir_fd-relative"
+                ),
+            ):
+                copy_repo_snapshot(source, dest)
+            self.assertFalse(dest.exists())
+            leaked = [
+                path
+                for path in Path(tmpdir).rglob("TOP-SECRET")
+                if "outside" not in path.parts
+            ]
+            self.assertEqual(leaked, [])
 
     def test_destination_inside_source_requires_ignore(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
