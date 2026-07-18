@@ -620,3 +620,24 @@ def test_request_does_not_retry_post() -> None:
         else:
             raise AssertionError("POST should fail without retrying")
     assert session.calls == 1
+
+
+def test_request_normalizes_exhausted_connection_errors() -> None:
+    class BoomSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            self.calls += 1
+            raise ConnectionError("network down")
+
+    session = BoomSession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch("ai_review.http_retry.sleep"):
+        try:
+            platform._request("PATCH", "/repos/octo/repo/pulls/comments/1", json={"body": "x"})
+        except GitHubReviewPlatformError as exc:
+            assert "connection error" in str(exc)
+        else:
+            raise AssertionError("exhausted connection retries should raise platform error")
+    assert session.calls == 3

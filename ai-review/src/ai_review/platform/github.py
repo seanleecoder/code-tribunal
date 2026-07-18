@@ -90,12 +90,17 @@ class GitHubReviewPlatform:
         auth_token = kwargs.pop("auth_token", None)
         headers = self._headers(kwargs.pop("headers", None), token=auth_token)
         url = self._url(path)
+        # kwargs are captured once for every attempt. Callers must not pass
+        # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
         response = send_with_retries(
             method=method,
             do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
             get_status=lambda item: int(item.status_code),
             make_http_error=lambda status: GitHubReviewPlatformError(
                 f"GitHub API {method} {path} failed: {status}"
+            ),
+            make_connection_error=lambda exc: GitHubReviewPlatformError(
+                f"GitHub API {method} {path} failed: connection error: {exc}"
             ),
         )
         if response.status_code == 204 or not getattr(response, "text", ""):

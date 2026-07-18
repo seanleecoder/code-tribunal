@@ -52,18 +52,20 @@ class PlatformRuntimeTests(unittest.TestCase):
             ("read", "GITLAB_READ_TOKEN"),
             ("write", "GITLAB_WRITE_TOKEN"),
         ):
-            with (
-                self.subTest(access=access),
-                self.assertRaisesRegex(PlatformRuntimeError, "GITLAB_TOKEN"),
-            ):
-                create_runtime_platform(
-                    config,
-                    access=access,
-                    env={
-                        "CI_API_V4_URL": "https://gitlab.example/api/v4",
-                        legacy_name: "legacy",
-                    },
-                )
+            with self.subTest(access=access):
+                with self.assertRaisesRegex(
+                    PlatformRuntimeError,
+                    r"GITLAB_TOKEN.*GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN",
+                ) as ctx:
+                    create_runtime_platform(
+                        config,
+                        access=access,
+                        env={
+                            "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                            legacy_name: "legacy",
+                        },
+                    )
+                self.assertIn("no longer accepted", str(ctx.exception))
 
     def test_github_mode_passes_configured_bot_login(self) -> None:
         with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:

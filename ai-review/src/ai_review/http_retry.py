@@ -7,6 +7,8 @@ from collections.abc import Callable
 
 IDEMPOTENT_METHODS = frozenset({"GET", "PUT", "PATCH"})
 MAX_ATTEMPTS = 3
+# TODO(SPEC-30 follow-up): honor Retry-After on 429 so fixed backoff cannot
+# immediately re-enter the same rate-limit window.
 BACKOFF_SECONDS = (1.0, 2.0, 4.0)
 
 # Tests patch this symbol to avoid real delays.
@@ -22,6 +24,9 @@ def is_connection_error(exc: BaseException) -> bool:
         return True
     module = type(exc).__module__ or ""
     name = type(exc).__name__
+    # Enumerate transient transport failures only. Do not treat the requests
+    # base RequestException as retryable — it also covers permanent errors
+    # such as InvalidURL, MissingSchema, and TooManyRedirects.
     if module.startswith(("requests", "urllib3")):
         return name in {
             "ConnectionError",
@@ -32,7 +37,6 @@ def is_connection_error(exc: BaseException) -> bool:
             "ProtocolError",
             "NewConnectionError",
             "MaxRetryError",
-            "RequestException",
         }
     return False
 
@@ -43,6 +47,7 @@ def send_with_retries[T](
     do_request: Callable[[], T],
     get_status: Callable[[T], int],
     make_http_error: Callable[[int], Exception],
+    make_connection_error: Callable[[BaseException], Exception] | None = None,
     max_attempts: int = MAX_ATTEMPTS,
     backoff_seconds: tuple[float, ...] = BACKOFF_SECONDS,
 ) -> T:
@@ -50,6 +55,10 @@ def send_with_retries[T](
 
     POST (and other non-idempotent verbs) are never retried: a timeout after
     server-side success would duplicate create-side effects such as review threads.
+
+    When ``make_connection_error`` is provided, exhausted (or non-retryable)
+    connection failures are normalized through that factory so callers can
+    surface platform-specific errors instead of raw transport exceptions.
     """
     method_upper = method.upper()
     retryable = method_upper in IDEMPOTENT_METHODS
@@ -60,13 +69,15 @@ def send_with_retries[T](
             response = do_request()
         except Exception as exc:
             if (
-                not retryable
-                or not is_connection_error(exc)
-                or attempt_index >= attempts - 1
+                retryable
+                and is_connection_error(exc)
+                and attempt_index < attempts - 1
             ):
-                raise
-            sleep(backoff_seconds[min(attempt_index, len(backoff_seconds) - 1)])
-            continue
+                sleep(backoff_seconds[min(attempt_index, len(backoff_seconds) - 1)])
+                continue
+            if is_connection_error(exc) and make_connection_error is not None:
+                raise make_connection_error(exc) from exc
+            raise
 
         status = get_status(response)
         if status < 400:

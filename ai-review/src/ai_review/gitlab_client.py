@@ -123,12 +123,17 @@ class GitLabClient:
         headers = dict(kwargs.pop("headers", {}))
         headers[self.token_header] = self.token
         url = self._url(path)
+        # kwargs are captured once for every attempt. Callers must not pass
+        # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
         return send_with_retries(
             method=method,
             do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
             get_status=lambda response: int(response.status_code),
             make_http_error=lambda status: GitLabApiError(
                 f"GitLab API {method} {path} failed: {status}"
+            ),
+            make_connection_error=lambda exc: GitLabApiError(
+                f"GitLab API {method} {path} failed: connection error: {exc}"
             ),
         )
 
@@ -228,11 +233,9 @@ class GitLabClient:
         )
         chunks: list[str] = []
         for change in change_list:
-            if (
-                change.get("collapsed")
-                or change.get("too_large")
-                or change.get("overflow")
-            ):
+            # /diffs exposes per-file collapsed/too_large; the old /changes
+            # top-level overflow flag is not present on these items.
+            if change.get("collapsed") or change.get("too_large"):
                 path_name = change.get("new_path") or change.get("old_path") or "<unknown>"
                 raise GitLabApiError(
                     f"merge request diff is truncated or collapsed for {path_name}; "

@@ -1274,9 +1274,11 @@ def _update_existing_inline_discussion(
     except ReviewPlatformError as exc:
         # Mirror create-path degradation: keep posting the rest of the run and
         # write a structured post_result instead of aborting before the artifact.
+        # Intentionally leave used_discussion_ids untouched — planning-time dedup
+        # already prevents double-matching the same discussion in this pass.
         result["status"] = "partial_failed"
         result["warnings"].append(
-            f"update_discussion for {post_group['issue_id']} failed: {exc}"
+            f"update_comment for {post_group['issue_id']} failed: {exc}"
         )
         summary_fallback_groups.append(group)
         return

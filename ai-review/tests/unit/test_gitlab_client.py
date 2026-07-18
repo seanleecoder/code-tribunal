@@ -323,6 +323,24 @@ class GitLabClientTests(unittest.TestCase):
             client._request("POST", "/projects/1/notes", json={"body": "x"})
         self.assertEqual(session.calls, 1)
 
+    def test_send_normalizes_exhausted_connection_errors(self) -> None:
+        class BoomSession:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls += 1
+                raise ConnectionError("network down")
+
+        session = BoomSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        with (
+            mock.patch("ai_review.http_retry.sleep"),
+            self.assertRaisesRegex(GitLabApiError, "connection error"),
+        ):
+            client._request("PUT", "/projects/1/notes/1", json={"body": "x"})
+        self.assertEqual(session.calls, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
