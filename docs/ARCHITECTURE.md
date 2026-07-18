@@ -88,6 +88,14 @@ flowchart TB
   `GITLAB_TOKEN` provides platform access to trusted jobs but is never passed to reviewer jobs. Reviewer jobs receive a single provider credential; their environment
   is rebuilt from allowlists ([adapter_runner.py](../ai-review/src/ai_review/adapter_runner.py)),
   and the codex/opencode adapters additionally run under `env -i`.
+- **Snapshot containment** ([input_bundle.py](../ai-review/src/ai_review/input_bundle.py)):
+  prepare copies the reviewed checkout into `repo_snapshot` without following
+  symlinks. Every symlink and special file (FIFO/socket/device) fails closed
+  with a stable `BundleError` naming the repository-relative path. This keeps
+  prepare-job environment material (including platform tokens) out of uploaded
+  input artifacts even when a change request plants links such as
+  `/proc/self/environ`. Benign tracked symlinks are rejected for 1.0 until an
+  explicit non-followed link representation exists.
 - **Read-only reviewers**: Claude Code runs with `--tools "Read,Grep,Glob"`,
   Codex with `--sandbox read-only`, and OpenCode with a deny-all permission
   config allowing only read/glob/grep. Opt-in Cursor runs with
