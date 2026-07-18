@@ -173,6 +173,22 @@ was scoped to only some jobs. **Set overrides as project-level (or
 pipeline-level) variables so every ai-review job inherits the identical
 value.** The manifest side reflects what reviewers actually ran with.
 
+## GitHub prepare reports stale or oversized input
+
+GitHub prepare binds the selected workflow revision, checkout, raw diff, and
+manifest to one verified PR base/head pair. Messages such as `checkout HEAD
+differs from the workflow-selected head`, `pull-request base/head changed during
+prepare`, or `stale GitHub input at manifest finalization` mean the PR changed at
+a preparation boundary or the checkout was modified. Rerun the workflow against
+the current PR revision; do not replace the SHA checkout with a branch ref or
+disable the stale-input checks.
+
+`GitHub rejected the raw pull-request diff as oversized (HTTP 406/too_large)`
+means GitHub did not return a complete raw diff. Prepare intentionally emits no
+review bundle in this case. Reduce or split the PR before rerunning. This is
+separate from the configured `limits.max_diff_bytes` and `limits.max_files`
+checks, which run only after GitHub has returned a complete diff.
+
 ## Child-pipeline trust validation failure
 
 `verify_pipeline_trust.py` (and the runtime guards) reject consumer configs

@@ -100,16 +100,23 @@ jobs:
               core.setFailed("pull request head SHA was missing or invalid");
               return;
             }
-            core.setOutput("ref", headSha);
+            const pullNumber = String(pullRequest.number || "");
+            if (!/^[1-9][0-9]{0,9}$/.test(pullNumber)) {
+              core.setFailed("pull request number was missing or invalid");
+              return;
+            }
+            core.setOutput("head_sha", headSha);
+            core.setOutput("pr_number", pullNumber);
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ steps.pull-request.outputs.ref }}
+          ref: ${{ steps.pull-request.outputs.head_sha }}
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}
+          AI_REVIEW_GITHUB_PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
+          AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
         run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

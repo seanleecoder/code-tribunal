@@ -90,15 +90,49 @@ class GitHubReviewPlatform:
         auth_token = kwargs.pop("auth_token", None)
         headers = self._headers(kwargs.pop("headers", None), token=auth_token)
         url = self._url(path)
+        last_response: Any | None = None
+
+        def do_request() -> Any:
+            nonlocal last_response
+            last_response = self.session.request(method, url, headers=headers, **kwargs)
+            return last_response
+
+        def make_http_error(status: int) -> GitHubReviewPlatformError:
+            if status == 406 and raw_text:
+                code = ""
+                message = ""
+                try:
+                    payload = last_response.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    message = str(payload.get("message") or "")
+                    errors = payload.get("errors")
+                    if isinstance(errors, list):
+                        for item in errors:
+                            if isinstance(item, dict) and item.get("code"):
+                                code = str(item["code"])
+                                break
+                    elif isinstance(errors, dict):
+                        code = str(errors.get("code") or "")
+                    code = code or str(payload.get("code") or "")
+                detail = "/".join(part for part in ("HTTP 406", code) if part)
+                suffix = f": {message}" if message else ""
+                return GitHubReviewPlatformError(
+                    "GitHub rejected the raw pull-request diff as oversized "
+                    f"({detail}); no review bundle was produced{suffix}"
+                )
+            return GitHubReviewPlatformError(
+                f"GitHub API {method} {path} failed: {status}"
+            )
+
         # kwargs are captured once for every attempt. Callers must not pass
         # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
         response = send_with_retries(
             method=method,
-            do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
+            do_request=do_request,
             get_status=lambda item: int(item.status_code),
-            make_http_error=lambda status: GitHubReviewPlatformError(
-                f"GitHub API {method} {path} failed: {status}"
-            ),
+            make_http_error=make_http_error,
             make_connection_error=lambda exc: GitHubReviewPlatformError(
                 f"GitHub API {method} {path} failed: connection error: {exc}"
             ),

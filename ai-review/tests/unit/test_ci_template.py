@@ -791,9 +791,16 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
         self.assertIn("PR_NUMBER: ${{ inputs.pr_number }}", prepare)
         self.assertIn("await github.rest.pulls.get", prepare)
-        self.assertIn("ref: ${{ steps.pull-request.outputs.ref }}", prepare)
+        self.assertIn("ref: ${{ steps.pull-request.outputs.head_sha }}", prepare)
         self.assertNotIn("refs/pull/", prepare)
-        self.assertIn("AI_REVIEW_GITHUB_PR_NUMBER: ${{ inputs.pr_number }}", prepare)
+        self.assertIn(
+            "AI_REVIEW_GITHUB_PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}",
+            prepare,
+        )
+        self.assertIn(
+            "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}",
+            prepare,
+        )
 
     def test_github_actions_groups_manual_and_automatic_runs_by_pr(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -819,7 +826,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("pullRequest.head?.repo?.full_name", script)
         self.assertIn("sourceRepository !== repository", script)
         self.assertIn("pullRequest.head?.sha", script)
-        self.assertIn('core.setOutput("ref", headSha)', script)
+        self.assertIn('core.setOutput("head_sha", headSha)', script)
+        self.assertIn('core.setOutput("pr_number", pullNumber)', script)
         self.assertNotIn("${{ inputs.pr_number }}", script)
         self.assertIn(
             "uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
@@ -857,7 +865,10 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                 "name": "manual-maximum-length-number",
                 "eventName": "workflow_dispatch",
                 "prNumber": "9999999999",
-                "apiPullRequest": same_repository_pr,
+                "apiPullRequest": {
+                    **same_repository_pr,
+                    "number": 9_999_999_999,
+                },
             },
             {
                 "name": "manual-external-fork",
@@ -910,19 +921,22 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         results = {item["name"]: item for item in json.loads(completed.stdout)}
         manual = results["manual-same-repository"]
         self.assertEqual(manual["failures"], [])
-        self.assertEqual(manual["outputs"], {"ref": head_sha})
+        self.assertEqual(manual["outputs"], {"head_sha": head_sha, "pr_number": "32"})
         self.assertEqual(manual["apiCalls"], [{"owner": "octo", "repo": "repo", "pull_number": 32}])
         self.assertIsNone(manual["thrown"])
 
         automatic = results["automatic-same-repository"]
         self.assertEqual(automatic["failures"], [])
-        self.assertEqual(automatic["outputs"], {"ref": head_sha})
+        self.assertEqual(automatic["outputs"], {"head_sha": head_sha, "pr_number": "32"})
         self.assertEqual(automatic["apiCalls"], [])
         self.assertIsNone(automatic["thrown"])
 
         maximum = results["manual-maximum-length-number"]
         self.assertEqual(maximum["failures"], [])
-        self.assertEqual(maximum["outputs"], {"ref": head_sha})
+        self.assertEqual(
+            maximum["outputs"],
+            {"head_sha": head_sha, "pr_number": "9999999999"},
+        )
         self.assertEqual(maximum["apiCalls"][0]["pull_number"], 9_999_999_999)
         self.assertIsNone(maximum["thrown"])
 
