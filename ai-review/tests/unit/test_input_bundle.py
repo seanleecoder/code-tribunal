@@ -324,19 +324,21 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
 
     def test_checkout_outside_output_paths_skip_exclusion_pathspec(self) -> None:
         selected = "1" * 40
-        repo = Path.cwd()
-        outside_paths = [Path("../relative-out"), Path("/private/tmp/absolute-out")]
-        for out_path in outside_paths:
-            with self.subTest(out_path=out_path):
-                with mock.patch(
-                    "ai_review.input_bundle._git_command",
-                    side_effect=[selected, "", ""],
-                ) as git_command:
-                    _github_checkout_head(repo, out_path, expected_head_sha=selected)
-                status_args = git_command.call_args_list[1].args[1:]
-                self.assertFalse(
-                    any(arg.startswith(":(exclude)") for arg in status_args)
-                )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            outside_paths = [Path("../relative-out"), Path(tmpdir) / "absolute-out"]
+            for out_path in outside_paths:
+                with self.subTest(out_path=out_path):
+                    with mock.patch(
+                        "ai_review.input_bundle._git_command",
+                        side_effect=[selected, "", ""],
+                    ) as git_command:
+                        _github_checkout_head(repo, out_path, expected_head_sha=selected)
+                    status_args = git_command.call_args_list[1].args[1:]
+                    self.assertFalse(
+                        any(arg.startswith(":(exclude)") for arg in status_args)
+                    )
 
     @staticmethod
     def _init_git_repo(root: Path) -> str:
