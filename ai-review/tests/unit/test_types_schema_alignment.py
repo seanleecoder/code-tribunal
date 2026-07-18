@@ -153,6 +153,63 @@ def _schema_json_types(node: dict[str, object]) -> set[str] | None:
     return None
 
 
+def _assert_annotation_matches_schema(
+    annotation: object,
+    schema_node: dict[str, object],
+    schema_root: dict[str, object],
+    label: str,
+) -> None:
+    schema_node = _resolve_ref(schema_node, schema_root)
+    assert _is_nullable(annotation) == _schema_is_nullable(schema_node), label
+    expected_json_types = _schema_json_types(schema_node)
+    if expected_json_types is not None:
+        assert _annotation_json_types(annotation) == expected_json_types, label
+
+    expected_values: set[object] | None = None
+    if "enum" in schema_node:
+        enum = schema_node["enum"]
+        assert isinstance(enum, list)
+        expected_values = set(enum)
+    elif "const" in schema_node:
+        expected_values = {schema_node["const"]}
+    if expected_values is not None:
+        assert _literal_values(annotation) == expected_values, label
+
+    unwrapped = _unwrap_alias(annotation)
+    members = (
+        get_args(unwrapped)
+        if get_origin(unwrapped) in (types.UnionType, Union)
+        else (unwrapped,)
+    )
+    for member in members:
+        member = _unwrap_alias(member)
+        if member is type(None):
+            continue
+        if is_typeddict(member):
+            _assert_typed_dict_matches_schema(member, schema_node, schema_root)
+            continue
+        origin = get_origin(member)
+        if origin is list:
+            items = schema_node.get("items")
+            assert isinstance(items, dict), label
+            _assert_annotation_matches_schema(
+                get_args(member)[0], items, schema_root, f"{label}[]"
+            )
+            continue
+        if origin is dict:
+            key_type, value_type = get_args(member)
+            assert _unwrap_alias(key_type) is str, f"{label} key"
+            additional_properties = schema_node.get("additionalProperties")
+            assert additional_properties is not False, label
+            if isinstance(additional_properties, dict):
+                _assert_annotation_matches_schema(
+                    value_type,
+                    additional_properties,
+                    schema_root,
+                    f"{label} value",
+                )
+
+
 def _assert_typed_dict_matches_schema(
     artifact_type: type[object],
     schema_node: dict[str, object],
@@ -176,32 +233,7 @@ def _assert_typed_dict_matches_schema(
     for field, annotation in hints.items():
         raw_field_schema = properties[field]
         assert isinstance(raw_field_schema, dict)
-        field_schema = _resolve_ref(raw_field_schema, schema_root)
-        assert _is_nullable(annotation) == _schema_is_nullable(field_schema), field
-        expected_json_types = _schema_json_types(field_schema)
-        if expected_json_types is not None:
-            assert _annotation_json_types(annotation) == expected_json_types, field
-
-        expected_values: set[object] | None = None
-        if "enum" in field_schema:
-            enum = field_schema["enum"]
-            assert isinstance(enum, list)
-            expected_values = set(enum)
-        elif "const" in field_schema:
-            expected_values = {field_schema["const"]}
-        if expected_values is not None:
-            assert _literal_values(annotation) == expected_values, field
-
-        unwrapped = _unwrap_alias(annotation)
-        if is_typeddict(unwrapped):
-            _assert_typed_dict_matches_schema(unwrapped, field_schema, schema_root)
-            continue
-        if get_origin(unwrapped) is list:
-            item_type = _unwrap_alias(get_args(unwrapped)[0])
-            items = field_schema.get("items")
-            if is_typeddict(item_type):
-                assert isinstance(items, dict)
-                _assert_typed_dict_matches_schema(item_type, items, schema_root)
+        _assert_annotation_matches_schema(annotation, raw_field_schema, schema_root, field)
 
 
 class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
@@ -221,6 +253,34 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
         schema = load_schema("gate_result.schema.json")
         with self.assertRaises(AssertionError):
             _assert_typed_dict_matches_schema(_WrongScalarGateResult, schema, schema)
+
+    def test_wrong_array_item_scalar_fails_alignment(self) -> None:
+        schema: dict[str, object] = {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+        with self.assertRaises(AssertionError):
+            _assert_annotation_matches_schema(list[int], schema, schema, "values")
+
+    def test_wrong_dictionary_value_scalar_fails_alignment(self) -> None:
+        schema: dict[str, object] = {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+        }
+        with self.assertRaises(AssertionError):
+            _assert_annotation_matches_schema(dict[str, int], schema, schema, "values")
+
+    def test_nested_array_and_dictionary_scalars_align(self) -> None:
+        schema: dict[str, object] = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+            },
+        }
+        _assert_annotation_matches_schema(
+            list[dict[str, str]], schema, schema, "values"
+        )
 
 
 if __name__ == "__main__":
