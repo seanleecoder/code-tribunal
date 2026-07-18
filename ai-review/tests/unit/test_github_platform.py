@@ -84,6 +84,14 @@ class DiffSession:
         return response
 
 
+class RejectedDiffSession:
+    def __init__(self, payload: Any) -> None:
+        self.payload = payload
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        return Response(406, self.payload)
+
+
 class StateWriteSession:
     def __init__(self, author_login: str) -> None:
         self.author_login = author_login
@@ -153,6 +161,70 @@ def test_fetch_diff_returns_empty_string_for_empty_response() -> None:
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=DiffSession(""))
 
     assert platform.fetch_diff("octo/repo", 7) == ""
+
+
+def test_fetch_comparison_diff_uses_immutable_base_and_head_shas() -> None:
+    diff = "diff --git a/a.py b/a.py\n+print('ok')\n"
+    session = DiffSession(diff)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    assert platform.fetch_comparison_diff("octo/repo", "0" * 40, "1" * 40) == diff
+    _, url, kwargs = session.calls[0]
+    assert url.endswith(f"/repos/octo/repo/compare/{'0' * 40}...{'1' * 40}")
+    assert kwargs["headers"]["Accept"] == "application/vnd.github.v3.diff"
+
+
+def test_fetch_diff_explains_oversized_406_response() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        session=RejectedDiffSession(
+            {
+                "message": "Diff is too large to display",
+                "errors": [{"resource": "PullRequest", "code": "too_large"}],
+            }
+        ),
+    )
+
+    try:
+        platform.fetch_diff("octo/repo", 7)
+    except GitHubReviewPlatformError as exc:
+        message = str(exc)
+        assert "oversized" in message
+        assert "HTTP 406/too_large" in message
+        assert "no review bundle was produced" in message
+    else:
+        raise AssertionError("oversized raw diff was accepted")
+
+
+def test_fetch_diff_keeps_minimal_406_response_generic() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test", "token", session=RejectedDiffSession(None)
+    )
+
+    try:
+        platform.fetch_diff("octo/repo", 7)
+    except GitHubReviewPlatformError as exc:
+        message = str(exc)
+        assert "raw diff request (HTTP 406)" in message
+        assert "oversized" not in message
+    else:
+        raise AssertionError("HTTP 406 raw diff was accepted")
+
+
+def test_fetch_comparison_diff_406_fails_closed() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        session=RejectedDiffSession({"message": "Diff is too large to display"}),
+    )
+
+    try:
+        platform.fetch_comparison_diff("octo/repo", "0" * 40, "1" * 40)
+    except GitHubReviewPlatformError as exc:
+        assert "oversized" in str(exc)
+    else:
+        raise AssertionError("oversized immutable comparison diff was accepted")
 
 
 def test_fetch_pull_request_returns_metadata() -> None:

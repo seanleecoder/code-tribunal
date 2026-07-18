@@ -90,15 +90,58 @@ class GitHubReviewPlatform:
         auth_token = kwargs.pop("auth_token", None)
         headers = self._headers(kwargs.pop("headers", None), token=auth_token)
         url = self._url(path)
+        last_response: Any | None = None
+
+        def do_request() -> Any:
+            nonlocal last_response
+            last_response = self.session.request(method, url, headers=headers, **kwargs)
+            return last_response
+
+        def make_http_error(status: int) -> GitHubReviewPlatformError:
+            if status == 406 and raw_text:
+                code = ""
+                message = ""
+                try:
+                    payload = last_response.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    message = str(payload.get("message") or "")
+                    errors = payload.get("errors")
+                    if isinstance(errors, list):
+                        for item in errors:
+                            if isinstance(item, dict) and item.get("code"):
+                                code = str(item["code"])
+                                break
+                    elif isinstance(errors, dict):
+                        code = str(errors.get("code") or "")
+                    code = code or str(payload.get("code") or "")
+                # send_with_retries calls this factory for the terminal response.
+                # HTTP 406 is a non-retryable 4xx today, so last_response is the
+                # exact response whose status is being reported here.
+                detail = "/".join(part for part in ("HTTP 406", code) if part)
+                suffix = f": {message}" if message else ""
+                oversized = code == "too_large" or "too large" in message.lower()
+                if oversized:
+                    return GitHubReviewPlatformError(
+                        "GitHub rejected the raw diff as oversized "
+                        f"({detail}); no review bundle was produced{suffix}"
+                    )
+                return GitHubReviewPlatformError(
+                    f"GitHub rejected the raw diff request ({detail}); "
+                    f"no review bundle was produced{suffix}"
+                )
+            return GitHubReviewPlatformError(
+                f"GitHub API {method} {path} failed: {status}"
+            )
+
         # kwargs are captured once for every attempt. Callers must not pass
         # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
         response = send_with_retries(
             method=method,
-            do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
+            do_request=do_request,
             get_status=lambda item: int(item.status_code),
-            make_http_error=lambda status: GitHubReviewPlatformError(
-                f"GitHub API {method} {path} failed: {status}"
-            ),
+            make_http_error=make_http_error,
             make_connection_error=lambda exc: GitHubReviewPlatformError(
                 f"GitHub API {method} {path} failed: connection error: {exc}"
             ),
@@ -183,6 +226,25 @@ class GitHubReviewPlatform:
             return ""
         if not isinstance(diff, str):
             raise GitHubReviewPlatformError("pull request diff response was not text")
+        return diff
+
+    def fetch_comparison_diff(
+        self,
+        project_id_or_path: str | int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str:
+        diff = self._request(
+            "GET",
+            f"/repos/{self._repo(project_id_or_path)}/compare/"
+            f"{quote(base_sha, safe='')}...{quote(head_sha, safe='')}",
+            headers={"Accept": "application/vnd.github.v3.diff"},
+            raw_text=True,
+        )
+        if diff is None:
+            return ""
+        if not isinstance(diff, str):
+            raise GitHubReviewPlatformError("comparison diff response was not text")
         return diff
 
     def fetch_current_head_sha(self, project_id_or_path: str | int, change_id: str | int) -> str:

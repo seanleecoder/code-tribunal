@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import errno
-import json
 import os
+import re
 import shutil
 import stat
+import subprocess
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -41,6 +42,7 @@ _DIR_FD_SUPPORTED = (
     and hasattr(os, "supports_dir_fd")
     and os.open in os.supports_dir_fd
 )
+_GIT_OBJECT_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
@@ -448,30 +450,22 @@ def _load_platform_state(
         return default_state
 
 
-def _github_event_pull_request() -> dict[str, Any] | None:
-    event_path = os.environ.get("GITHUB_EVENT_PATH")
-    if not event_path:
-        return None
-    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    pull_request = event.get("pull_request")
-    return pull_request if isinstance(pull_request, dict) else None
-
-
 def _resolve_github_pull_request(client: Any, repo: str) -> dict[str, Any]:
-    pull_request = _github_event_pull_request()
-    if pull_request is None:
-        pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
-        if not pr_number.isdigit():
-            raise SystemExit(
-                "prepare requires a pull_request GitHub event payload or a numeric "
-                "AI_REVIEW_GITHUB_PR_NUMBER"
-            )
-        fetch_pull_request = getattr(client, "fetch_pull_request", None)
-        if not callable(fetch_pull_request):
-            raise SystemExit("configured GitHub platform cannot fetch pull request metadata")
-        pull_request = fetch_pull_request(repo, pr_number)
-        if not isinstance(pull_request, dict):
-            raise SystemExit("GitHub pull request response was not an object")
+    pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pr_number):
+        raise SystemExit("prepare requires a valid numeric AI_REVIEW_GITHUB_PR_NUMBER")
+    fetch_pull_request = getattr(client, "fetch_pull_request", None)
+    if not callable(fetch_pull_request):
+        raise SystemExit("configured GitHub platform cannot fetch pull request metadata")
+    pull_request = fetch_pull_request(repo, pr_number)
+    if not isinstance(pull_request, dict):
+        raise BundleError("GitHub pull request response was not an object")
+    if str(pull_request.get("number") or "") != pr_number:
+        raise BundleError(
+            "stale GitHub input: fetched pull request number does not match the "
+            f"workflow-selected number (selected={pr_number}, "
+            f"fetched={pull_request.get('number') or 'missing'})"
+        )
 
     raw_head = pull_request.get("head")
     head = raw_head if isinstance(raw_head, dict) else {}
@@ -496,17 +490,127 @@ def _github_pull_request_version(pull_request: dict[str, Any]) -> PullRequestVer
     head = raw_head if isinstance(raw_head, dict) else {}
     base_sha = str(base.get("sha") or "")
     head_sha = str(head.get("sha") or "")
-    if not base_sha or not head_sha:
-        raise SystemExit("prepare requires base.sha and head.sha in GitHub pull request metadata")
+    if not _GIT_OBJECT_SHA_RE.fullmatch(base_sha) or not _GIT_OBJECT_SHA_RE.fullmatch(head_sha):
+        raise BundleError(
+            "prepare requires valid base.sha and head.sha in GitHub pull request metadata"
+        )
     return PullRequestVersion(base_sha=base_sha, head_sha=head_sha)
+
+
+def _git_command(repo_path: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
+        raise BundleError(f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}")
+    return completed.stdout.strip()
+
+
+def _github_checkout_head(
+    repo_path: Path, out_path: Path, *, expected_head_sha: str
+) -> str:
+    """Resolve and validate the exact, clean commit used for the repository snapshot."""
+    if not _GIT_OBJECT_SHA_RE.fullmatch(expected_head_sha):
+        raise BundleError(
+            "prepare requires AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA to be a full object SHA"
+        )
+    checkout_head = _git_command(repo_path, "rev-parse", "--verify", "HEAD^{commit}")
+    if not _GIT_OBJECT_SHA_RE.fullmatch(checkout_head):
+        raise BundleError(
+            "GitHub checkout HEAD did not resolve to a full commit SHA: "
+            f"{checkout_head}"
+        )
+    if checkout_head != expected_head_sha:
+        raise BundleError(
+            "stale GitHub input: checkout HEAD differs from the workflow-selected head "
+            f"(selected={expected_head_sha}, checkout={checkout_head})"
+        )
+
+    status_args = [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        ".",
+    ]
+    candidate_out = out_path if out_path.is_absolute() else repo_path / out_path
+    try:
+        relative_out = candidate_out.resolve(strict=False).relative_to(
+            repo_path.resolve(strict=True)
+        )
+    except ValueError:
+        relative_out = None
+    if relative_out is not None and relative_out.parts:
+        status_args.append(f":(exclude){relative_out.as_posix()}")
+    dirty = _git_command(repo_path, *status_args)
+    if not dirty:
+        ignored_output = _git_command(
+            repo_path,
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        )
+        ignored_paths = [Path(item) for item in ignored_output.split("\0") if item]
+        for ignored_path in ignored_paths:
+            if relative_out is not None and (
+                ignored_path == relative_out or relative_out in ignored_path.parents
+            ):
+                continue
+            dirty = f"!! {ignored_path.as_posix()}"
+            break
+    if dirty:
+        first_entry = dirty.splitlines()[0]
+        raise BundleError(
+            "GitHub checkout contains uncommitted or ignored input outside the bundle "
+            "output directory; "
+            f"refusing a snapshot that is not revision-bound ({first_entry})"
+        )
+    return checkout_head
+
+
+def _require_github_revision(
+    pull_request: dict[str, Any],
+    *,
+    selected_head_sha: str,
+    checkout_head_sha: str,
+    expected_version: PullRequestVersion | None,
+    boundary: str,
+) -> PullRequestVersion:
+    version = _github_pull_request_version(pull_request)
+    if version.head_sha != selected_head_sha or version.head_sha != checkout_head_sha:
+        raise BundleError(
+            f"stale GitHub input at {boundary}: selected, checkout, and pull-request heads "
+            "must match "
+            f"(selected={selected_head_sha}, checkout={checkout_head_sha}, "
+            f"pull_request={version.head_sha})"
+        )
+    if expected_version is not None and version != expected_version:
+        raise BundleError(
+            f"stale GitHub input at {boundary}: pull-request base/head changed during prepare "
+            f"(expected={expected_version.base_sha}/{expected_version.head_sha}, "
+            f"current={version.base_sha}/{version.head_sha})"
+        )
+    return version
 
 
 def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     out_path = Path(out)
-    out_path.mkdir(parents=True, exist_ok=True)
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
+    selected_head_sha = os.environ.get("AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA", "")
+    checkout_root = Path.cwd()
+    checkout_head_sha = _github_checkout_head(
+        checkout_root, out_path, expected_head_sha=selected_head_sha
+    )
+    out_path.mkdir(parents=True, exist_ok=True)
     config_dict = load_config(config)
     try:
         client = create_runtime_platform(config_dict)
@@ -514,10 +618,27 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     pull_request = _resolve_github_pull_request(client, repo)
     pr_number = str(pull_request.get("number") or "")
-    if not pr_number.isdigit():
-        raise SystemExit("prepare requires pull_request.number in GitHub pull request metadata")
-    version = _github_pull_request_version(pull_request)
-    diff_text = client.fetch_diff(repo, pr_number)
+    version = _require_github_revision(
+        pull_request,
+        selected_head_sha=selected_head_sha,
+        checkout_head_sha=checkout_head_sha,
+        expected_version=None,
+        boundary="before diff collection",
+    )
+    try:
+        diff_text = client.fetch_comparison_diff(
+            repo, version.base_sha, version.head_sha
+        )
+    except ReviewPlatformError as exc:
+        raise BundleError(f"failed to fetch GitHub pull request diff: {exc}") from exc
+    after_diff = _resolve_github_pull_request(client, repo)
+    _require_github_revision(
+        after_diff,
+        selected_head_sha=selected_head_sha,
+        checkout_head_sha=checkout_head_sha,
+        expected_version=version,
+        boundary="after diff collection",
+    )
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
@@ -552,6 +673,8 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         "base_sha": version.base_sha,
         "start_sha": version.base_sha,
         "head_sha": version.head_sha,
+        "selected_head_sha": selected_head_sha,
+        "checkout_head_sha": checkout_head_sha,
         "diff_sha256": diff_sha,
         "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
         "config_sha256": _file_sha256(config_path),
@@ -576,6 +699,17 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     )
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
     write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
+    # Revalidation only: the manifest already records the identical selected and
+    # checkout SHA proven above, and this call fails if the checkout has changed.
+    _github_checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
+    final_pull_request = _resolve_github_pull_request(client, repo)
+    _require_github_revision(
+        final_pull_request,
+        selected_head_sha=selected_head_sha,
+        checkout_head_sha=checkout_head_sha,
+        expected_version=version,
+        boundary="manifest finalization",
+    )
     write_canonical_json(out_path / "manifest.json", manifest)
     return out_path
 

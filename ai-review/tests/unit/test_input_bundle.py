@@ -4,18 +4,22 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
+from ai_review.canonical import sha256_hex
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
+    _github_checkout_head,
     _github_pull_request_version,
     _resolve_github_pull_request,
     copy_repo_snapshot,
@@ -180,17 +184,17 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             "base": {"ref": "main", "sha": "0" * 40},
         }
 
-    def test_resolves_pull_request_event_without_api_metadata_fetch(self) -> None:
+    def test_automatic_handoff_fetches_current_api_metadata(self) -> None:
         client = mock.Mock()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            event_path = Path(tmpdir) / "event.json"
-            expected = self._pull_request()
-            event_path.write_text(json.dumps({"pull_request": expected}), encoding="utf-8")
-            with mock.patch.dict("os.environ", {"GITHUB_EVENT_PATH": str(event_path)}, clear=True):
-                actual = _resolve_github_pull_request(client, "octo/repo")
+        expected = self._pull_request()
+        client.fetch_pull_request.return_value = expected
+        with mock.patch.dict(
+            "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "7"}, clear=True
+        ):
+            actual = _resolve_github_pull_request(client, "octo/repo")
 
         self.assertEqual(actual, expected)
-        client.fetch_pull_request.assert_not_called()
+        client.fetch_pull_request.assert_called_once_with("octo/repo", "7")
 
     def test_manual_dispatch_fetches_requested_pull_request(self) -> None:
         client = mock.Mock()
@@ -212,13 +216,13 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         pull_request = self._pull_request()
         pull_request["head"] = {"repo": {"full_name": "octo/repo"}}
 
-        with self.assertRaisesRegex(SystemExit, "base.sha and head.sha"):
+        with self.assertRaisesRegex(BundleError, "base.sha and head.sha"):
             _github_pull_request_version(pull_request)
 
-    def test_manual_prepare_fetches_pull_request_metadata_once(self) -> None:
+    def test_manual_prepare_uses_immutable_diff_and_records_revision_fields(self) -> None:
         client = mock.Mock()
         client.fetch_pull_request.return_value = self._pull_request(number=32)
-        client.fetch_diff.return_value = "diff --git a/f.py b/f.py\n"
+        client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
@@ -226,6 +230,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 {
                     "GITHUB_REPOSITORY": "octo/repo",
                     "AI_REVIEW_GITHUB_PR_NUMBER": "32",
+                    "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
                     "GITHUB_RUN_ID": "100",
                     "GITHUB_RUN_ATTEMPT": "1",
                 },
@@ -233,6 +238,9 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.load_config", return_value={}),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+            mock.patch(
+                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
+            ),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
                 side_effect=lambda _client, _config, state, **_kwargs: state,
@@ -247,10 +255,22 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
-        client.fetch_pull_request.assert_called_once_with("octo/repo", "32")
+        self.assertEqual(client.fetch_pull_request.call_count, 3)
+        client.fetch_pull_request.assert_has_calls(
+            [mock.call("octo/repo", "32")] * 3
+        )
         client.fetch_version.assert_not_called()
+        client.fetch_diff.assert_not_called()
+        client.fetch_comparison_diff.assert_called_once_with(
+            "octo/repo", "0" * 40, "1" * 40
+        )
         self.assertEqual(manifest["base_sha"], "0" * 40)
         self.assertEqual(manifest["head_sha"], "1" * 40)
+        self.assertEqual(manifest["selected_head_sha"], "1" * 40)
+        self.assertEqual(manifest["checkout_head_sha"], "1" * 40)
+        self.assertEqual(
+            manifest["diff_sha256"], sha256_hex("diff --git a/f.py b/f.py\n")
+        )
 
     def test_manual_dispatch_requires_numeric_pull_request(self) -> None:
         with (
@@ -271,6 +291,296 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "external fork PR secret-bearing path"),
         ):
             _resolve_github_pull_request(client, "octo/repo")
+
+    def test_checkout_head_must_match_selected_sha(self) -> None:
+        selected = "1" * 40
+        with (
+            mock.patch("ai_review.input_bundle._git_command", return_value="2" * 40),
+            self.assertRaisesRegex(BundleError, "checkout HEAD differs"),
+        ):
+            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+
+    def test_checkout_rejects_uncommitted_snapshot_input(self) -> None:
+        selected = "1" * 40
+        with (
+            mock.patch(
+                "ai_review.input_bundle._git_command",
+                side_effect=[selected, "?? unexpected.txt"],
+            ),
+            self.assertRaisesRegex(BundleError, "uncommitted or ignored input"),
+        ):
+            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+
+    def test_checkout_rejects_gitignored_snapshot_input(self) -> None:
+        selected = "1" * 40
+        with (
+            mock.patch(
+                "ai_review.input_bundle._git_command",
+                side_effect=[selected, "", "generated.cache\0"],
+            ),
+            self.assertRaisesRegex(BundleError, "ignored input"),
+        ):
+            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+
+    def test_checkout_outside_output_paths_skip_exclusion_pathspec(self) -> None:
+        selected = "1" * 40
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            outside_paths = [Path("../relative-out"), Path(tmpdir) / "absolute-out"]
+            for out_path in outside_paths:
+                with self.subTest(out_path=out_path):
+                    with mock.patch(
+                        "ai_review.input_bundle._git_command",
+                        side_effect=[selected, "", ""],
+                    ) as git_command:
+                        _github_checkout_head(repo, out_path, expected_head_sha=selected)
+                    status_args = git_command.call_args_list[1].args[1:]
+                    self.assertFalse(
+                        any(arg.startswith(":(exclude)") for arg in status_args)
+                    )
+
+    @staticmethod
+    def _init_git_repo(root: Path) -> str:
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / ".gitignore").write_text("*.cache\ninputs/\n", encoding="utf-8")
+        (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "initial",
+            ],
+            cwd=root,
+            check=True,
+        )
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def test_real_checkout_allows_only_the_inside_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            out = repo / "inputs"
+            out.mkdir()
+            (out / "partial-artifact.json").write_text("{}\n", encoding="utf-8")
+
+            self.assertEqual(
+                _github_checkout_head(repo, out, expected_head_sha=selected), selected
+            )
+
+    def test_real_checkout_rejects_ignored_file_before_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            (repo / "generated.cache").write_text("hidden\n", encoding="utf-8")
+            out = Path(tmpdir) / "outside-inputs"
+
+            with self.assertRaisesRegex(BundleError, r"ignored input.*generated\.cache"):
+                _github_checkout_head(repo, out, expected_head_sha=selected)
+
+    def _prepare_with_versions(
+        self,
+        tmpdir: str,
+        versions: list[dict[str, object]],
+        *,
+        diff_error: Exception | None = None,
+    ) -> tuple[mock.Mock, Path]:
+        client = mock.Mock()
+        client.fetch_pull_request.side_effect = versions
+        if diff_error is None:
+            client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
+        else:
+            client.fetch_comparison_diff.side_effect = diff_error
+        out = Path(tmpdir) / "inputs"
+        patches = (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "GITHUB_REPOSITORY": "octo/repo",
+                    "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                    "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
+                    "GITHUB_RUN_ID": "100",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                },
+                clear=True,
+            ),
+            mock.patch("ai_review.input_bundle.load_config", return_value={}),
+            mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+            mock.patch(
+                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
+            ),
+            mock.patch(
+                "ai_review.input_bundle._load_platform_state",
+                side_effect=lambda _client, _config, state, **_kwargs: state,
+            ),
+            mock.patch("ai_review.input_bundle.shutil.copy2"),
+            mock.patch("ai_review.input_bundle.shutil.copytree"),
+            mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
+            mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
+            mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
+        )
+        with ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+        return client, out
+
+    def test_prepare_uses_real_checkout_and_immutable_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            pull_request = {
+                "number": 7,
+                "head": {
+                    "ref": "feature",
+                    "sha": selected,
+                    "repo": {"full_name": "octo/repo"},
+                },
+                "base": {"ref": "main", "sha": "0" * 40},
+            }
+            client = mock.Mock()
+            client.fetch_pull_request.return_value = pull_request
+            client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
+            out = Path(tmpdir) / "outside-inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": selected,
+                    },
+                    clear=True,
+                ),
+                mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
+                mock.patch("ai_review.input_bundle.load_config", return_value={}),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform", return_value=client
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                ),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
+                mock.patch(
+                    "ai_review.input_bundle._directory_sha256", return_value="3" * 64
+                ),
+            ):
+                prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["selected_head_sha"], selected)
+            self.assertEqual(manifest["checkout_head_sha"], selected)
+            client.fetch_comparison_diff.assert_called_once_with(
+                "octo/repo", "0" * 40, selected
+            )
+
+    def test_prepare_rejects_real_ignored_file_before_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            (repo / "generated.cache").write_text("hidden\n", encoding="utf-8")
+            out = Path(tmpdir) / "outside-inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": selected,
+                    },
+                    clear=True,
+                ),
+                mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
+                mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snapshot,
+                self.assertRaisesRegex(BundleError, "ignored input"),
+            ):
+                prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+
+            snapshot.assert_not_called()
+            self.assertFalse((out / "repo_snapshot").exists())
+
+    def test_head_change_before_diff_fails_as_stale_input(self) -> None:
+        changed = self._pull_request()
+        changed["head"] = {
+            "ref": "feature",
+            "sha": "2" * 40,
+            "repo": {"full_name": "octo/repo"},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaisesRegex(
+            BundleError, "before diff collection"
+        ):
+            self._prepare_with_versions(tmpdir, [changed])
+
+    def test_base_change_during_diff_collection_fails_before_diff_write(self) -> None:
+        initial = self._pull_request()
+        changed = self._pull_request()
+        changed["base"] = {"ref": "main", "sha": "a" * 40}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with self.assertRaisesRegex(BundleError, "after diff collection"):
+                self._prepare_with_versions(tmpdir, [initial, changed])
+            self.assertFalse((out / "mr.diff").exists())
+            self.assertFalse((out / "manifest.json").exists())
+
+    def test_head_change_during_diff_collection_fails_before_diff_write(self) -> None:
+        initial = self._pull_request()
+        changed = self._pull_request()
+        changed["head"] = {
+            "ref": "feature",
+            "sha": "2" * 40,
+            "repo": {"full_name": "octo/repo"},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with self.assertRaisesRegex(BundleError, "after diff collection"):
+                self._prepare_with_versions(tmpdir, [initial, changed])
+            self.assertFalse((out / "mr.diff").exists())
+            self.assertFalse((out / "manifest.json").exists())
+
+    def test_head_change_at_manifest_finalization_fails(self) -> None:
+        initial = self._pull_request()
+        changed = self._pull_request()
+        changed["head"] = {
+            "ref": "feature",
+            "sha": "2" * 40,
+            "repo": {"full_name": "octo/repo"},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with self.assertRaisesRegex(BundleError, "manifest finalization"):
+                self._prepare_with_versions(tmpdir, [initial, initial, changed])
+            self.assertFalse((out / "manifest.json").exists())
+
+    def test_oversized_raw_diff_error_fails_closed(self) -> None:
+        initial = self._pull_request()
+        error = ReviewPlatformError(
+            "GitHub rejected the raw diff as oversized "
+            "(HTTP 406/too_large); no review bundle was produced"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with self.assertRaisesRegex(BundleError, "oversized"):
+                self._prepare_with_versions(tmpdir, [initial], diff_error=error)
+            self.assertFalse((out / "mr.diff").exists())
+            self.assertFalse((out / "manifest.json").exists())
 
 
 class RepoSnapshotContainmentTests(unittest.TestCase):
@@ -589,7 +899,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             },
             "base": {"ref": "main", "sha": "0" * 40},
         }
-        github_client.fetch_diff.return_value = "diff --git a/f.py b/f.py\n"
+        github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
@@ -599,6 +909,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     {
                         "GITHUB_REPOSITORY": "octo/repo",
                         "AI_REVIEW_GITHUB_PR_NUMBER": "9",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
                         "GITHUB_RUN_ID": "1",
                         "GITHUB_RUN_ATTEMPT": "1",
                     },
@@ -608,6 +919,9 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=github_client,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
                 ),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
