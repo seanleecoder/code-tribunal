@@ -62,6 +62,13 @@ def batch_quality_fields(
     A valid empty success batch (raw=0, accepted=0, dropped=0) is usable for
     resolution. A non-empty success batch with every finding dropped is not.
     Non-success adapter statuses are never usable for resolution.
+
+    Count invariants (enforced at consensus validation):
+    ``accepted_finding_count == len(findings)`` and
+    ``accepted_finding_count + dropped_finding_count <= raw_finding_count``.
+    Equality holds when no ``max_findings`` cap eviction occurred; under a cap,
+    raw may exceed accepted+dropped because unprocessed candidates are neither
+    accepted nor counted as malformed drops.
     """
     usable = adapter_status == "success" and (
         raw_finding_count == 0 or accepted_finding_count > 0

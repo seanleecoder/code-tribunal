@@ -5,6 +5,7 @@ import argparse
 import sys
 
 from ai_review.schema import (
+    finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
     validate_instance,
@@ -43,7 +44,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         validate_instance(finalized, "finding_batch.schema.json")
     else:
-        finalized = raw
+        finalized = finalize_critique_batch(
+            raw if isinstance(raw, dict) else {},
+            critic=args.reviewer,
+            run_id=args.run_id,
+            effective_config_sha256=args.effective_config_sha256,
+        )
         validate_instance(finalized, "critique_batch.schema.json")
     write_canonical_json(args.output, finalized)
     return 0

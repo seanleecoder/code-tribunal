@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .anchors import is_sha256
 from .canonical import json_loads_no_duplicates
 from .config import ConfigError, effective_config_digest, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -88,9 +89,22 @@ def _manifest_effective_config_sha256(input_dir: Path) -> str | None:
     manifest = load_json_file(manifest_path)
     if isinstance(manifest, dict):
         digest = manifest.get("effective_config_sha256")
-        if isinstance(digest, str) and len(digest) == 64:
-            return digest
+        if is_sha256(digest):
+            return str(digest)
     return None
+
+
+def _resolve_config_digest(input_dir: Path, config: dict[str, Any] | None = None) -> str:
+    """Prefer the live effective digest; fall back to the prepare manifest stamp."""
+    if config is not None:
+        return effective_config_digest(config)
+    digest = _manifest_effective_config_sha256(input_dir)
+    if digest is None:
+        raise ConfigError(
+            "effective_config_sha256 unavailable: load config or re-run prepare "
+            "so the manifest records the digest"
+        )
+    return digest
 
 
 def _output_file(stage: str, reviewer: str) -> Path:
@@ -672,11 +686,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
     started_at = now_iso()
     started_monotonic = time.monotonic()
     run_id = _manifest_run_id(input_dir)
-    config_digest = _manifest_effective_config_sha256(input_dir) or ("0" * 64)
+    config_digest = _manifest_effective_config_sha256(input_dir)
 
     try:
         config = load_config(config_path)
-        config_digest = effective_config_digest(config)
+        config_digest = _resolve_config_digest(input_dir, config)
         reviewer_config = config["reviewers"].get(reviewer)
         if not isinstance(reviewer_config, dict):
             raise ConfigError(f"unknown reviewer: {reviewer}")
@@ -937,9 +951,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             config = load_config(config_path)
             model = str(config.get("reviewers", {}).get(reviewer, {}).get("model", model))
-            config_digest = effective_config_digest(config)
+            digest = _resolve_config_digest(input_dir, config)
         except Exception:
-            pass
+            try:
+                digest = _resolve_config_digest(input_dir, None)
+            except ConfigError:
+                _write_status(
+                    output_dir,
+                    reviewer,
+                    stage,
+                    "timeout",
+                    started_at,
+                    started_monotonic,
+                    output_file,
+                    error_class="TimeoutExpired",
+                    error_message=str(exc),
+                    run_id=run_id,
+                )
+                return _EXIT_ERROR
         # Archive whatever the reviewer emitted before the kill so a timeout is
         # debuggable even when live mirroring was off (the default) — otherwise a
         # stuck reviewer leaves no trace of what it was doing.
@@ -960,7 +989,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             run_id,
             model,
             started_at,
-            effective_config_sha256=config_digest,
+            effective_config_sha256=digest,
         )
         _write_status(
             output_dir,
@@ -973,7 +1002,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_class="TimeoutExpired",
             error_message=str(exc),
             run_id=run_id,
-            effective_config_sha256=config_digest,
+            effective_config_sha256=digest,
             raw_finding_count=0,
             accepted_finding_count=0,
             dropped_finding_count=0,
@@ -981,6 +1010,26 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return _EXIT_ERROR
     except Exception as exc:
+        try:
+            digest = config_digest if config_digest is not None else _resolve_config_digest(
+                input_dir, None
+            )
+        except ConfigError:
+            # Last resort: cannot stamp a digest; still emit a config_error status
+            # without a finding batch so consensus does not consume a placeholder.
+            _write_status(
+                output_dir,
+                reviewer,
+                stage,
+                "config_error" if isinstance(exc, ConfigError) else "internal_error",
+                started_at,
+                started_monotonic,
+                output_file,
+                error_class=exc.__class__.__name__,
+                error_message=str(exc),
+                run_id=run_id,
+            )
+            return _EXIT_ERROR
         _write_empty(
             output_dir,
             output_file,
@@ -990,7 +1039,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             run_id,
             "unknown-model",
             started_at,
-            effective_config_sha256=config_digest,
+            effective_config_sha256=digest,
         )
         _write_status(
             output_dir,
@@ -1003,7 +1052,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_class=exc.__class__.__name__,
             error_message=str(exc),
             run_id=run_id,
-            effective_config_sha256=config_digest,
+            effective_config_sha256=digest,
             raw_finding_count=0,
             accepted_finding_count=0,
             dropped_finding_count=0,

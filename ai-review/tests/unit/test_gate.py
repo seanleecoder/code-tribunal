@@ -154,6 +154,15 @@ class GateTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "passed_stale_head")
 
+    def test_stale_head_precedes_advisory_mode(self) -> None:
+        result, exit_code = evaluate_gate(
+            self._config(False),
+            self._consensus(True),
+            {"status": "stale_head"},
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed_stale_head")
+
 
 if __name__ == "__main__":
     unittest.main()

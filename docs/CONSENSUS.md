@@ -82,11 +82,14 @@ Same inputs → identical `consensus.json`, every time.
 ## 3. The algorithm (`build_consensus()`)
 
 1. **Panel status.** Counts only reviewers with usable evidence
-   (`adapter_status=success` and `usable_for_resolution=true`). All-dropped
-   “success” batches do not count. `failed` (0 usable) → `advisory_only`
+   (`adapter_status=success` and `usable_for_resolution=true`, after count
+   invariants are checked). All-dropped “success” batches do not count and appear
+   in `failed_reviewers`. `failed` (0 usable) → `advisory_only`
    (< `panel.min_successful_reviewers_for_blocking`) → `degraded` (< enabled) →
    `full`. A `failed` panel short-circuits and the CLI exits `3`. Consensus also
-   records `resolution_eligible_reviewers` for absence-based resolution quorum.
+   records `resolution_eligible_reviewers` (same predicate) for absence-based
+   resolution quorum. Prepare’s `effective_config_sha256` is a misconfiguration
+   detector for cross-job policy/env drift, not a tamper-proof seal.
 
 2. **Deduplication via union-find.** `same_issue(a, b)` is a symmetric predicate:
    same `source_finding_id` / validated critique duplicate-link; OR same

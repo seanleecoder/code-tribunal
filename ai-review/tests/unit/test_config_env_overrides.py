@@ -435,6 +435,12 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
         self.assertEqual(summary["posting_mode"], "gitlab_discussions")
         self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
+        self.assertEqual(summary["panel_min_successful_reviewers_for_blocking"], 2)
+        self.assertEqual(summary["panel_quorum_votes_required"], 2)
+        self.assertIn("security", summary["severity_single_reviewer_blocker_categories"])
+        self.assertTrue(summary["severity_quorum_blocker_block_merge"])
+        self.assertFalse(summary["critique_can_add_quorum_votes"])
+        self.assertTrue(summary["critique_allow_advisory_escalation"])
 
 
 class PostingModeConfigTests(unittest.TestCase):

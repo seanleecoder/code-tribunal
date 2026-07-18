@@ -26,12 +26,18 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   resolution use only reviewers with trustworthy empty-or-valid evidence;
   all-dropped malformed output cannot resolve open findings or manufacture
   panel success. Consensus artifacts expose `resolution_eligible_reviewers`.
+  `failed_reviewers` now includes all-dropped-but-`success` adapters (they are
+  not operational panel seats), which can weaken blocking and trip alerting that
+  keys off failed-seat counts.
 - Gate evaluation fails closed on post/state failures before consulting
   `merge_gate.enabled`. Advisory mode disables finding-based blocking only.
-- Prepare records `effective_config_sha256`; consensus fails (exit 3) on
-  consequential config divergence, wrong run IDs, duplicate/disabled reviewer
-  batches, model/digest mismatches, unknown critique targets, or malformed
-  consumed artifacts.
+- Prepare records `effective_config_sha256` (misconfiguration detector for
+  cross-job policy/env drift, not tamper-proofing). The digest covers reviewer
+  models/toggles plus consequential panel, severity, and critique policy fields.
+  Consensus fails (exit 3) on consequential divergence, wrong run IDs,
+  duplicate/disabled reviewer evidence, success-batch model/digest mismatches,
+  unknown critique targets, or malformed consumed artifacts. Non-success batches
+  with a mismatched digest degrade the panel instead of hard-failing the run.
 - Posting now degrades update-path platform failures to summary fallback with a
   structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
   idempotent GET/PUT/PATCH calls on 429/5xx/connection errors (including
@@ -70,10 +76,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - Finding-batch and critique-batch consumers must accept the new required
   quality/digest fields (`usable_for_resolution`, `effective_config_sha256`,
   and finding counts). Older finding batches without those fields are rejected
-  at the consensus CLI boundary rather than treated as resolution-eligible.
+  at the consensus CLI boundary (exit 3) rather than treated as resolution-eligible.
 - Ensure `AI_REVIEW_*` overrides are scoped identically across prepare, review,
   critique, consensus, post, and gate jobs (project/group variables or workflow
-  env). Job-scoped mismatches that used to warn now fail consensus.
+  env). Job-scoped mismatches that used to warn now fail consensus. Changing
+  panel quorum, severity policy, or critique allow-* flags also changes the
+  effective-config digest and requires a fresh prepare.
 - Prepare rejects every symlink in the reviewed checkout when building
   `repo_snapshot`. Repositories that intentionally track symlinks must remove or
   replace them before review, or wait for a future non-followed link
