@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -12,6 +13,7 @@ from unittest import mock
 from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.input_bundle import (
     BundleError,
+    _copy_regular_file_nofollow,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
     _github_pull_request_version,
@@ -286,7 +288,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             source = Path(tmpdir) / "repo"
             dest = Path(tmpdir) / "out" / "repo_snapshot"
             self._write_nested_repo(source)
-            copy_repo_snapshot(source, dest, ignore_names={"out"})
+            copy_repo_snapshot(source, dest, ignore_top_level_names={"out"})
 
             self.assertEqual(
                 (dest / "src" / "pkg" / "mod.py").read_text(encoding="utf-8"),
@@ -295,6 +297,45 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             self.assertEqual((dest / "README.md").read_text(encoding="utf-8"), "# demo\n")
             self.assertFalse((dest / ".git").exists())
             self.assertFalse((dest / ".ai-review-local").exists())
+
+    def test_nested_dir_sharing_output_basename_is_not_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "inputs" / "repo_snapshot"
+            self._write_nested_repo(source)
+            nested = source / "pkg" / "inputs"
+            nested.mkdir(parents=True)
+            (nested / "kept.py").write_text("kept = True\n", encoding="utf-8")
+            copy_repo_snapshot(source, dest, ignore_top_level_names={"inputs"})
+            self.assertTrue((dest / "pkg" / "inputs" / "kept.py").is_file())
+            self.assertEqual(
+                (dest / "pkg" / "inputs" / "kept.py").read_text(encoding="utf-8"),
+                "kept = True\n",
+            )
+
+    def test_top_level_output_dir_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            out_dir = source / "inputs"
+            out_dir.mkdir()
+            (out_dir / "secret.bin").write_text("nope\n", encoding="utf-8")
+            dest = out_dir / "repo_snapshot"
+            copy_repo_snapshot(source, dest, ignore_top_level_names={"inputs"})
+            self.assertFalse((dest / "inputs").exists())
+            self.assertTrue((dest / "README.md").is_file())
+
+    def test_mode_bits_strip_setuid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            target = source / "src" / "pkg" / "mod.py"
+            target.chmod(0o4755)
+            copy_repo_snapshot(source, dest)
+            mode = (dest / "src" / "pkg" / "mod.py").stat().st_mode
+            self.assertEqual(stat.S_IMODE(mode), 0o755)
+            self.assertFalse(mode & stat.S_ISUID)
 
     def test_snapshot_is_deterministic_across_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -393,21 +434,25 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             source = Path(tmpdir) / "repo"
             dest = Path(tmpdir) / "repo_snapshot"
             self._write_nested_repo(source)
-            victim = source / "src" / "pkg" / "mod.py"
+            victim = (source / "src" / "pkg" / "mod.py").resolve()
             outside = Path(tmpdir) / "outside.txt"
             outside.write_text("outside\n", encoding="utf-8")
-            original = copy_repo_snapshot.__globals__["_copy_regular_file_nofollow"]
 
             def race_then_copy(
                 src: Path,
                 dst: Path,
                 expected: os.stat_result,
                 rel_parts: tuple[str, ...],
+                *,
+                dir_fd: int | None = None,
+                name: str | None = None,
             ) -> None:
-                if src == victim:
+                if src.resolve() == victim:
                     src.unlink()
                     src.symlink_to(outside)
-                original(src, dst, expected, rel_parts)
+                _copy_regular_file_nofollow(
+                    src, dst, expected, rel_parts, dir_fd=dir_fd, name=name
+                )
 
             with (
                 mock.patch(
@@ -423,6 +468,87 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 for path in Path(tmpdir).rglob("*")
                 if path.is_file() and not path.is_symlink() and path != outside
             ))
+
+    def test_directory_symlink_swap_during_descent_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            (outside / "TOP-SECRET").write_text("classified\n", encoding="utf-8")
+            self._write_nested_repo(source)
+            nested = source / "nested"
+            nested.mkdir()
+            (nested / "inner.txt").write_text("inner\n", encoding="utf-8")
+            original_open = os.open
+
+            def racing_open(
+                path: str | bytes | os.PathLike[str],
+                flags: int,
+                *args: object,
+                **kwargs: object,
+            ) -> int:
+                # After the directory was validated, swap it for an escaping symlink
+                # before the O_NOFOLLOW|O_DIRECTORY open (dir_fd path) runs.
+                if (
+                    kwargs.get("dir_fd") is not None
+                    and path == "nested"
+                    and nested.exists()
+                    and not nested.is_symlink()
+                ):
+                    shutil.rmtree(nested)
+                    nested.symlink_to(outside)
+                return original_open(path, flags, *args, **kwargs)
+
+            with (
+                mock.patch("ai_review.input_bundle.os.open", side_effect=racing_open),
+                # Linux may surface ELOOP ("symlink") or ENOTDIR when O_DIRECTORY|
+                # O_NOFOLLOW hits a swapped symlink; both are fail-closed.
+                self.assertRaisesRegex(
+                    BundleError, r"rejects (symlink|non-directory): nested"
+                ),
+            ):
+                copy_repo_snapshot(source, dest)
+            self.assertFalse(dest.exists())
+
+    def test_nofollow_fallback_rejects_symlink_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            victim = (source / "src" / "pkg" / "mod.py").resolve()
+            outside = Path(tmpdir) / "outside.txt"
+            outside.write_text("outside\n", encoding="utf-8")
+            expected = os.lstat(victim)
+            victim.unlink()
+            victim.symlink_to(outside)
+
+            with (
+                mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
+                mock.patch("ai_review.input_bundle._DIR_FD_SUPPORTED", False),
+                self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
+            ):
+                _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
+
+    def test_nofollow_fallback_rejects_type_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            victim = (source / "src" / "pkg" / "mod.py").resolve()
+            expected = os.lstat(victim)
+            # Replace the regular file with a directory. Inode recycling can make
+            # file→file identity checks flaky on some filesystems; a type change
+            # is a stable signal for the path-based fallback.
+            victim.unlink()
+            victim.mkdir()
+
+            with (
+                mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
+                mock.patch("ai_review.input_bundle._DIR_FD_SUPPORTED", False),
+                self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
+            ):
+                _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
 
     def test_destination_inside_source_requires_ignore(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -32,17 +32,20 @@ Out of scope:
 Prepare builds `inputs/repo_snapshot` with a shared contained copier used by the
 local harness and the GitHub/GitLab prepare paths. The copier walks with
 `lstat` / `DirEntry` metadata, never follows links, and fails closed on every
-symlink and on FIFO/socket/device nodes. Regular files are opened with
-`O_NOFOLLOW` where the platform provides it (with an immediate re-`lstat`
-identity check as the fallback). A hostile change request therefore cannot
-materialize readable paths outside the checkout — including
-`/proc/self/environ` — into an uploaded input artifact.
+symlink and on FIFO/socket/device nodes. On platforms with `dir_fd` support,
+directories are opened with `O_DIRECTORY | O_NOFOLLOW` and children are opened
+relative to the pinned parent fd so a directory→symlink swap cannot escape the
+checkout. Regular files use `O_NOFOLLOW` the same way (with an immediate
+re-`lstat` identity/type check as the path-based fallback). A hostile change
+request therefore cannot materialize readable paths outside the checkout —
+including `/proc/self/environ` — into an uploaded input artifact.
 
 **1.0 limitation:** repositories that intentionally track symlinks are rejected
 until the product has an explicit link representation that snapshotting and
 reviewer tools cannot follow. The error names the offending
 repository-relative path and does not include link-target contents or
-environment values.
+environment values. Hard links to same-filesystem paths outside the checkout
+are not checked; ordinary git checkouts cannot create them.
 
 ## Known Tracked Issues
 
