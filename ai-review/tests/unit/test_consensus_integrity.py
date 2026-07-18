@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import io
-import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -835,29 +834,24 @@ class ConsensusIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config_path = self._mini_config(root)
-            config = load_config(config_path)
             input_dir = root / "inputs"
             input_dir.mkdir()
-            manifest = input_dir / "manifest.json"
-            write_canonical_json(manifest, _manifest_for_config(config, run_id="run-1"))
-            os.chmod(manifest, 0)
+            # Missing manifest → FileNotFoundError (OSError). Avoid chmod: root in
+            # the image build can still read mode-0 files.
             stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    code = cli(
-                        [
-                            "--config",
-                            str(config_path),
-                            "--inputs",
-                            str(input_dir),
-                            "--findings-dir",
-                            str(root / "findings"),
-                            "--out",
-                            str(root / "out.json"),
-                        ]
-                    )
-            finally:
-                os.chmod(manifest, 0o644)
+            with redirect_stderr(stderr):
+                code = cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(root / "findings"),
+                        "--out",
+                        str(root / "out.json"),
+                    ]
+                )
             self.assertEqual(code, 3)
             self.assertIn("cannot read artifact", stderr.getvalue())
 
@@ -880,23 +874,25 @@ class ConsensusIntegrityTests(unittest.TestCase):
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
-            with patch(
-                "ai_review.consensus.build_consensus",
-                side_effect=TypeError("simulated regression"),
+            with (
+                patch(
+                    "ai_review.consensus.build_consensus",
+                    side_effect=TypeError("simulated regression"),
+                ),
+                self.assertRaises(TypeError),
             ):
-                with self.assertRaises(TypeError):
-                    cli(
-                        [
-                            "--config",
-                            str(config_path),
-                            "--inputs",
-                            str(input_dir),
-                            "--findings-dir",
-                            str(findings_dir),
-                            "--out",
-                            str(root / "out.json"),
-                        ]
-                    )
+                cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(findings_dir),
+                        "--out",
+                        str(root / "out.json"),
+                    ]
+                )
 
 
 if __name__ == "__main__":
