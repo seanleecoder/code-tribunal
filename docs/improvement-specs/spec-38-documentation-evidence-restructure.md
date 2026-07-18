@@ -65,7 +65,7 @@ guidance; maintainers need history without presenting it as current product docs
 - GitLab current-image run covering create/update/resolve/reopen/state/gate.
 - GitHub current-image run covering inline create/update, summary fallback, commands,
   state persistence, stale head, and a genuinely blocking required check.
-- Large/multipage GitHub diff smoke from SPEC-34.
+- GitHub revision-race and oversized-raw-diff failure smoke from SPEC-34.
 - Record pipeline/run IDs, source/image digests, expected/actual results, and known
   unexercised paths. Never store credentials or sensitive model content.
 
