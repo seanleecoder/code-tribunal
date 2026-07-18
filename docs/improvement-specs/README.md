@@ -104,7 +104,7 @@ implementable work. The recommended sequence is:
 | [SPEC-31](spec-31-snapshot-symlink-containment.md) | Contain repository snapshots and reject symlink escapes | M | none | blocker |
 | [SPEC-32](spec-32-reviewer-validity-resolution-quorum.md) | Separate usable reviewer evidence from syntactic adapter success | M | none | must land |
 | [SPEC-33](spec-33-gate-config-artifact-integrity.md) | Gate failures and cross-stage configuration integrity | M | SPEC-32 | must land |
-| [SPEC-34](spec-34-github-complete-diff.md) | Prove GitHub input-diff completeness and revision consistency | M | none | must land |
+| [SPEC-34](spec-34-github-revision-bound-input.md) | Bind GitHub diff, snapshot, and manifest to one revision | S–M | none | must land |
 | [SPEC-35](spec-35-distribution-contract.md) | Define and test the Python/container distribution contract | M | none | must land |
 | [SPEC-36](spec-36-types-quality-gates.md) | Align typed contracts and make quality gates fail honestly | M | SPEC-32, SPEC-33 | must land |
 | [SPEC-37](spec-37-final-release-artifacts.md) | Cut reproducible 1.0 artifacts from one exact release commit | M | SPEC-31…36, SPEC-38, SPEC-39 A | final release gate |
@@ -116,7 +116,7 @@ implementable work. The recommended sequence is:
 ```text
 SPEC-31 snapshot containment ───────────────┐
 SPEC-32 reviewer validity ──► SPEC-33 ──┐   │
-SPEC-34 complete GitHub diff ────────────┼───┤
+SPEC-34 revision-bound GitHub input ─────┼───┤
 SPEC-35 distribution ──► SPEC-39 A ─────┤   ├─► SPEC-37 final artifacts
 SPEC-32 + SPEC-33 ──► SPEC-36 ──────────┤   │
 SPEC-31…36 ──► SPEC-38 docs/evidence ────┘   │
