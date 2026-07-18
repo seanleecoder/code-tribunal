@@ -18,6 +18,16 @@ ARTIFACT_TYPES = {
     "post_result.schema.json": domain_types.PostResult,
     "gate_result.schema.json": domain_types.GateResult,
 }
+ALL_JSON_TYPES = {
+    "array",
+    "boolean",
+    "integer",
+    "null",
+    "number",
+    "object",
+    "string",
+}
+UNSUPPORTED_STRUCTURAL_KEYWORDS = ("anyOf", "oneOf", "prefixItems")
 
 
 class _ObsoleteCritique(TypedDict, total=False):
@@ -160,6 +170,12 @@ def _assert_annotation_matches_schema(
     label: str,
 ) -> None:
     schema_node = _resolve_ref(schema_node, schema_root)
+    unsupported = [
+        keyword for keyword in UNSUPPORTED_STRUCTURAL_KEYWORDS if keyword in schema_node
+    ]
+    assert not unsupported, (
+        f"{label}: unsupported schema composition: {', '.join(unsupported)}"
+    )
     assert _is_nullable(annotation) == _schema_is_nullable(schema_node), label
     expected_json_types = _schema_json_types(schema_node)
     if expected_json_types is not None:
@@ -191,7 +207,9 @@ def _assert_annotation_matches_schema(
         origin = get_origin(member)
         if origin is list:
             items = schema_node.get("items")
-            assert isinstance(items, dict), label
+            assert isinstance(items, dict), (
+                f"{label}: array schema must declare object-valued items"
+            )
             _assert_annotation_matches_schema(
                 get_args(member)[0], items, schema_root, f"{label}[]"
             )
@@ -200,13 +218,22 @@ def _assert_annotation_matches_schema(
             key_type, value_type = get_args(member)
             assert _unwrap_alias(key_type) is str, f"{label} key"
             additional_properties = schema_node.get("additionalProperties")
-            assert additional_properties is not False, label
+            assert additional_properties is not False, (
+                f"{label}: dict annotation cannot match a closed object schema"
+            )
             if isinstance(additional_properties, dict):
                 _assert_annotation_matches_schema(
                     value_type,
                     additional_properties,
                     schema_root,
                     f"{label} value",
+                )
+            else:
+                assert additional_properties in (None, True), (
+                    f"{label}: additionalProperties must be a schema or boolean"
+                )
+                assert _annotation_json_types(value_type) == ALL_JSON_TYPES, (
+                    f"{label}: open object values must cover the full JsonValue domain"
                 )
 
 
@@ -281,6 +308,35 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
         _assert_annotation_matches_schema(
             list[dict[str, str]], schema, schema, "values"
         )
+
+    def test_array_without_items_has_clear_failure(self) -> None:
+        schema: dict[str, object] = {"type": "array"}
+        with self.assertRaisesRegex(
+            AssertionError, "values: array schema must declare object-valued items"
+        ):
+            _assert_annotation_matches_schema(list[str], schema, schema, "values")
+
+    def test_open_object_rejects_narrow_dictionary_values(self) -> None:
+        schema: dict[str, object] = {"type": "object"}
+        with self.assertRaisesRegex(
+            AssertionError, "open object values must cover the full JsonValue domain"
+        ):
+            _assert_annotation_matches_schema(dict[str, str], schema, schema, "values")
+
+    def test_open_object_accepts_json_value_dictionary(self) -> None:
+        schema: dict[str, object] = {"type": "object", "additionalProperties": True}
+        _assert_annotation_matches_schema(
+            domain_types.JsonObject, schema, schema, "values"
+        )
+
+    def test_unsupported_schema_composition_has_clear_failure(self) -> None:
+        schema: dict[str, object] = {
+            "anyOf": [{"type": "string"}, {"type": "integer"}]
+        }
+        with self.assertRaisesRegex(
+            AssertionError, "values: unsupported schema composition: anyOf"
+        ):
+            _assert_annotation_matches_schema(str | int, schema, schema, "values")
 
 
 if __name__ == "__main__":
