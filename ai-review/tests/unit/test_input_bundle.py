@@ -28,8 +28,13 @@ from ai_review.input_bundle import (
     prepare_local_bundle,
 )
 from ai_review.platform import ReviewPlatformError
+from ai_review.platform.github import GitHubReviewPlatform
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+
+
+def _github_platform_mock() -> mock.Mock:
+    return mock.Mock(spec=GitHubReviewPlatform)
 
 
 def _diff_with_files(count: int) -> str:
@@ -220,7 +225,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             _github_pull_request_version(pull_request)
 
     def test_manual_prepare_uses_immutable_diff_and_records_revision_fields(self) -> None:
-        client = mock.Mock()
+        client = _github_platform_mock()
         client.fetch_pull_request.return_value = self._pull_request(number=32)
         client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
         with (
@@ -282,7 +287,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             _resolve_github_pull_request(mock.Mock(), "octo/repo")
 
     def test_external_fork_pull_request_is_rejected(self) -> None:
-        client = mock.Mock()
+        client = _github_platform_mock()
         client.fetch_pull_request.return_value = self._pull_request(
             number=32, source_repo="someone/fork"
         )
@@ -399,7 +404,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         *,
         diff_error: Exception | None = None,
     ) -> tuple[mock.Mock, Path]:
-        client = mock.Mock()
+        client = _github_platform_mock()
         client.fetch_pull_request.side_effect = versions
         if diff_error is None:
             client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
@@ -439,6 +444,31 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
         return client, out
 
+    def test_prepare_rejects_platform_without_comparison_diff_support(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "GITHUB_REPOSITORY": "octo/repo",
+                    "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
+                },
+                clear=True,
+            ),
+            mock.patch("ai_review.input_bundle.load_config", return_value={}),
+            mock.patch(
+                "ai_review.input_bundle.create_runtime_platform",
+                return_value=mock.Mock(spec=[]),
+            ),
+            mock.patch(
+                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
+            ),
+            self.assertRaisesRegex(SystemExit, "comparison diff support"),
+        ):
+            prepare_github_bundle(
+                Path("ai-review/config/review.yaml"), Path(tmpdir) / "inputs"
+            )
+
     def test_prepare_uses_real_checkout_and_immutable_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -452,7 +482,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 },
                 "base": {"ref": "main", "sha": "0" * 40},
             }
-            client = mock.Mock()
+            client = _github_platform_mock()
             client.fetch_pull_request.return_value = pull_request
             client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
             out = Path(tmpdir) / "outside-inputs"
@@ -889,7 +919,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             def fetch_diff(self, project_id: str, change_id: str) -> str:
                 return "diff --git a/f.py b/f.py\n"
 
-        github_client = mock.Mock()
+        github_client = _github_platform_mock()
         github_client.fetch_pull_request.return_value = {
             "number": 9,
             "head": {

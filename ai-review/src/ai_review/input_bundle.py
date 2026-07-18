@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from .canonical import sha256_hex
 from .config import effective_config_digest, effective_config_summary, load_config
@@ -613,9 +613,11 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     out_path.mkdir(parents=True, exist_ok=True)
     config_dict = load_config(config)
     try:
-        client = cast(ComparisonDiffPlatform, create_runtime_platform(config_dict))
+        client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
+    if not isinstance(client, ComparisonDiffPlatform):
+        raise SystemExit("prepare requires a platform with comparison diff support")
     pull_request = _resolve_github_pull_request(client, repo)
     pr_number = str(pull_request.get("number") or "")
     version = _require_github_revision(

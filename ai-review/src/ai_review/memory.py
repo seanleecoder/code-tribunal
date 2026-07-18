@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
@@ -553,7 +553,14 @@ def _matches_precedence(record: StateRecord, group: FindingGroup, precedence: st
 
 def find_matching_record(group: FindingGroup, state: State | None) -> StateMatchResult:
     """Match a consensus group to persisted state using the documented deterministic strategy."""
-    records: list[StateRecord] = state["records"] if state is not None else []
+    raw_records: object = state.get("records", []) if state is not None else []
+    if not isinstance(raw_records, list):
+        raw_records = []
+    records = [
+        cast(StateRecord, record)
+        for record in raw_records
+        if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
+    ]
     for precedence in MATCH_PRECEDENCE:
         matches = [record for record in records if _matches_precedence(record, group, precedence)]
         if len(matches) == 1:

@@ -114,6 +114,25 @@ class FindMatchingRecordTests(unittest.TestCase):
         self.assertIsNone(result.record)
         self.assertEqual(result.records, [])
 
+    def test_missing_or_non_list_records_are_treated_as_empty(self) -> None:
+        for state in ({}, {"records": None}, {"records": "invalid"}):
+            with self.subTest(state=state):
+                result = find_matching_record(_group(), state)
+
+                self.assertEqual(result.status, "new")
+                self.assertEqual(result.records, [])
+
+    def test_malformed_records_are_ignored_before_matching(self) -> None:
+        exact = _record("a" * 64)
+
+        result = find_matching_record(
+            _group(),
+            {"records": [None, "invalid", {}, {"issue_id": 42}, exact]},
+        )
+
+        self.assertEqual(result.status, "matched")
+        self.assertEqual(result.record, exact)
+
     def test_title_text_alone_is_not_state_matching_fallback(self) -> None:
         group = _group()
         group["title"] = "same user-visible title"

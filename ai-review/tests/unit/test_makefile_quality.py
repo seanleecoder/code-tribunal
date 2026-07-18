@@ -98,11 +98,18 @@ exit 0
         self.assertTrue(any(call.startswith("-m pytest") for call in self._calls()))
         self.assertFalse(any(call.startswith("-m unittest") for call in self._calls()))
 
-    def test_ruff_failure_propagates(self) -> None:
-        result = self._make("lint", STUB_RUFF_STATUS=9)
+    def test_serial_quality_stops_after_ruff_failure(self) -> None:
+        # The documented `make quality` invocation is serial. `make -j` may start
+        # independent prerequisites concurrently and has different stop behavior.
+        result = self._make("quality", STUB_RUFF_STATUS=9)
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(call.startswith("-m compileall") for call in self._calls()))
+        calls = self._calls()
+        self.assertTrue(any(call.startswith("-m ruff") for call in calls))
+        self.assertFalse(any(call.startswith("-m pytest") for call in calls))
+        self.assertFalse(any(call == "-m mypy" for call in calls))
+        self.assertFalse(any(call.startswith("-m compileall") for call in calls))
+        self.assertFalse(any(call == "scripts/check_supply_chain_pins.py" for call in calls))
 
     def test_quality_runs_every_gate_when_they_pass(self) -> None:
         result = self._make("quality")

@@ -29,6 +29,14 @@ class _ObsoleteCritique(TypedDict, total=False):
     severity_adjustment: domain_types.Severity | None
 
 
+class _WrongScalarGateResult(TypedDict):
+    schema_version: Literal["gate_result.v1"]
+    run_id: int
+    status: domain_types.GateStatus
+    block_merge: str
+    reason: str
+
+
 def _unwrap_alias(annotation: object) -> object:
     while hasattr(annotation, "__value__"):
         annotation = annotation.__value__
@@ -90,13 +98,71 @@ def _schema_is_nullable(node: dict[str, object]) -> bool:
     )
 
 
+def _json_type_for_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "boolean"
+    if type(value) is int:
+        return "integer"
+    if type(value) is float:
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    raise AssertionError(f"unsupported JSON literal value: {value!r}")
+
+
+def _annotation_json_types(annotation: object) -> set[str] | None:
+    annotation = _unwrap_alias(annotation)
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, Union):
+        member_types: set[str] = set()
+        for member in get_args(annotation):
+            resolved = _annotation_json_types(member)
+            if resolved is None:
+                return None
+            member_types.update(resolved)
+        return member_types
+    if origin is Literal:
+        return {_json_type_for_value(value) for value in get_args(annotation)}
+    if is_typeddict(annotation) or origin is dict:
+        return {"object"}
+    if origin is list:
+        return {"array"}
+    return {
+        str: {"string"},
+        int: {"integer"},
+        float: {"number"},
+        bool: {"boolean"},
+        type(None): {"null"},
+    }.get(annotation)
+
+
+def _schema_json_types(node: dict[str, object]) -> set[str] | None:
+    schema_type = node.get("type")
+    if isinstance(schema_type, str):
+        return {schema_type}
+    if isinstance(schema_type, list):
+        assert all(isinstance(item, str) for item in schema_type)
+        return set(schema_type)
+    if "const" in node:
+        return {_json_type_for_value(node["const"])}
+    enum = node.get("enum")
+    if isinstance(enum, list):
+        return {_json_type_for_value(value) for value in enum}
+    return None
+
+
 def _assert_typed_dict_matches_schema(
     artifact_type: type[object],
     schema_node: dict[str, object],
     schema_root: dict[str, object],
 ) -> None:
+    # TypedDicts describe structural JSON types. Patterns, numeric bounds, and
+    # other value constraints remain the responsibility of schema validation.
     schema_node = _resolve_ref(schema_node, schema_root)
     assert is_typeddict(artifact_type)
+    assert schema_node.get("additionalProperties") is False
     properties = schema_node.get("properties")
     assert isinstance(properties, dict)
     required = schema_node.get("required", [])
@@ -112,6 +178,9 @@ def _assert_typed_dict_matches_schema(
         assert isinstance(raw_field_schema, dict)
         field_schema = _resolve_ref(raw_field_schema, schema_root)
         assert _is_nullable(annotation) == _schema_is_nullable(field_schema), field
+        expected_json_types = _schema_json_types(field_schema)
+        if expected_json_types is not None:
+            assert _annotation_json_types(annotation) == expected_json_types, field
 
         expected_values: set[object] | None = None
         if "enum" in field_schema:
@@ -147,6 +216,11 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
         critique_schema = schema["properties"]["critiques"]["items"]
         with self.assertRaises(AssertionError):
             _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)
+
+    def test_wrong_scalar_types_fail_alignment(self) -> None:
+        schema = load_schema("gate_result.schema.json")
+        with self.assertRaises(AssertionError):
+            _assert_typed_dict_matches_schema(_WrongScalarGateResult, schema, schema)
 
 
 if __name__ == "__main__":
