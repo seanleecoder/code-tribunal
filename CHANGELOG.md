@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ## [Unreleased]
 
+### Security
+
+- Prepare now builds `repo_snapshot` with a shared contained copier that never
+  follows symlinks and rejects FIFO/socket/device nodes. Hostile checkout links
+  (including `/proc/self/environ`) cannot materialize prepare-job environment
+  data into uploaded input artifacts. Repositories that intentionally track
+  symlinks fail closed until a non-followed link representation exists.
+
 ### Changed
 
 - Posting now degrades update-path platform failures to summary fallback with a
@@ -43,6 +51,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Migration
 
+- Prepare rejects every symlink in the reviewed checkout when building
+  `repo_snapshot`. Repositories that intentionally track symlinks must remove or
+  replace them before review, or wait for a future non-followed link
+  representation.
 - Replace any remaining `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` CI variables with a
   single `GITLAB_TOKEN` project access token (`api` scope) used by prepare and post.
 - The posted-body format is now `render-body.v2`. Existing bot-authored threads receive

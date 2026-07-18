@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import shutil
+import stat
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,192 @@ from .schema import now_iso, write_canonical_json
 
 class BundleError(RuntimeError):
     pass
+
+
+_SNAPSHOT_IGNORE_ALWAYS = frozenset({".git", ".ai-review-local"})
+_COPY_BUFFER_SIZE = 1024 * 1024
+
+
+def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
+    return Path(*parts).as_posix() if parts else "."
+
+
+def _raise_snapshot_rejected(kind: str, rel_parts: tuple[str, ...]) -> None:
+    raise BundleError(
+        f"repository snapshot rejects {kind}: {_snapshot_rel_display(rel_parts)}"
+    )
+
+
+def _ensure_snapshot_destination_safe(
+    source_root: Path, dest_root: Path, ignore_names: frozenset[str]
+) -> None:
+    """Reject destinations that alias back into the source without an ignore entry."""
+    try:
+        rel = dest_root.relative_to(source_root)
+    except ValueError:
+        return
+    if not rel.parts:
+        raise BundleError("repository snapshot destination cannot be the source root")
+    if rel.parts[0] not in ignore_names:
+        raise BundleError(
+            "repository snapshot destination is inside the source tree but not ignored: "
+            f"{rel.parts[0]}"
+        )
+
+
+def _copy_regular_file_nofollow(
+    source: Path, dest: Path, expected: os.stat_result, rel_parts: tuple[str, ...]
+) -> None:
+    """Open ``source`` without following links and copy bytes to ``dest``.
+
+    Prefer ``O_NOFOLLOW`` when available. On platforms without it, re-``lstat``
+    immediately before a path-based open and fail if the inode identity or file
+    type changed between validation and open.
+    """
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+    else:
+        try:
+            current = os.lstat(source)
+        except OSError as exc:
+            raise BundleError(
+                f"repository snapshot failed to re-stat {_snapshot_rel_display(rel_parts)}: {exc}"
+            ) from exc
+        if not stat.S_ISREG(current.st_mode):
+            _raise_snapshot_rejected("non-regular file", rel_parts)
+        if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino):
+            _raise_snapshot_rejected("file replaced during copy", rel_parts)
+
+    try:
+        fd = os.open(source, flags)
+    except OSError as exc:
+        # ELOOP/EPERM cover symlink replacement races under O_NOFOLLOW.
+        if exc.errno in {errno.ELOOP, errno.EPERM}:
+            _raise_snapshot_rejected("symlink", rel_parts)
+        raise BundleError(
+            f"repository snapshot failed to open {_snapshot_rel_display(rel_parts)}: {exc}"
+        ) from exc
+
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            _raise_snapshot_rejected("non-regular file", rel_parts)
+        if (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino):
+            _raise_snapshot_rejected("file replaced during copy", rel_parts)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "wb") as out_fh:
+            while True:
+                chunk = os.read(fd, _COPY_BUFFER_SIZE)
+                if not chunk:
+                    break
+                out_fh.write(chunk)
+        os.chmod(dest, stat.S_IMODE(opened.st_mode))
+    finally:
+        os.close(fd)
+
+
+def _copy_snapshot_tree(
+    source_root: Path,
+    dest_root: Path,
+    *,
+    ignore_names: frozenset[str],
+    rel_parts: tuple[str, ...] = (),
+) -> None:
+    source_dir = source_root.joinpath(*rel_parts) if rel_parts else source_root
+    try:
+        entries: Iterable[os.DirEntry[str]] = os.scandir(source_dir)
+    except OSError as exc:
+        raise BundleError(
+            f"repository snapshot failed to scan {_snapshot_rel_display(rel_parts)}: {exc}"
+        ) from exc
+
+    with entries:
+        for entry in sorted(entries, key=lambda item: item.name):
+            name = entry.name
+            if name in ignore_names:
+                continue
+            child_parts = (*rel_parts, name)
+            if entry.is_symlink():
+                _raise_snapshot_rejected("symlink", child_parts)
+            try:
+                # DirEntry.stat(follow_symlinks=False) is an lstat; never resolve
+                # the untrusted path before this type check.
+                entry_stat = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise BundleError(
+                    "repository snapshot failed to lstat "
+                    f"{_snapshot_rel_display(child_parts)}: {exc}"
+                ) from exc
+            mode = entry_stat.st_mode
+            if stat.S_ISLNK(mode):
+                _raise_snapshot_rejected("symlink", child_parts)
+            if stat.S_ISDIR(mode):
+                dest_dir = dest_root.joinpath(*child_parts)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                _copy_snapshot_tree(
+                    source_root,
+                    dest_root,
+                    ignore_names=ignore_names,
+                    rel_parts=child_parts,
+                )
+                continue
+            if stat.S_ISREG(mode):
+                _copy_regular_file_nofollow(
+                    Path(entry.path),
+                    dest_root.joinpath(*child_parts),
+                    entry_stat,
+                    child_parts,
+                )
+                continue
+            _raise_snapshot_rejected("special file", child_parts)
+
+
+def copy_repo_snapshot(
+    source: str | Path,
+    dest: str | Path,
+    *,
+    ignore_names: Iterable[str] | None = None,
+) -> Path:
+    """Copy a repository tree into ``dest`` without following any symlinks.
+
+    Fail closed on every symlink and on FIFO/socket/device nodes. Ignores are
+    applied by basename before descending. The destination is built in a
+    temporary sibling directory and published only on success so a rejected
+    tree never leaves a usable ``repo_snapshot`` artifact.
+    """
+    source_root = Path(source).resolve(strict=True)
+    dest_root = Path(dest)
+    if not source_root.is_dir():
+        raise BundleError(f"repository snapshot source is not a directory: {source_root}")
+
+    merged_ignore = frozenset(ignore_names or ()) | _SNAPSHOT_IGNORE_ALWAYS
+    dest_parent = dest_root.parent
+    dest_parent.mkdir(parents=True, exist_ok=True)
+    # Resolve after ensuring the parent exists so containment checks see the
+    # real destination location (including when dest itself does not exist yet).
+    dest_resolved_parent = dest_parent.resolve(strict=True)
+    planned_dest = dest_resolved_parent / dest_root.name
+    _ensure_snapshot_destination_safe(source_root, planned_dest, merged_ignore)
+
+    tmp_dest = dest_resolved_parent / f".{dest_root.name}.partial-{os.getpid()}"
+    if tmp_dest.exists():
+        shutil.rmtree(tmp_dest)
+    tmp_dest.mkdir(parents=True, exist_ok=False)
+    try:
+        _copy_snapshot_tree(source_root, tmp_dest, ignore_names=merged_ignore)
+        if dest_root.exists():
+            if dest_root.is_symlink() or dest_root.is_file():
+                dest_root.unlink()
+            else:
+                shutil.rmtree(dest_root)
+        os.replace(tmp_dest, dest_root)
+    except Exception:
+        if tmp_dest.exists():
+            shutil.rmtree(tmp_dest, ignore_errors=True)
+        raise
+    return Path(dest_root)
 
 
 def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
@@ -79,8 +268,11 @@ def prepare_local_bundle(
     shutil.copy2(config_path, out_path / "config.review.yaml")
 
     snapshot_dir = out_path / "repo_snapshot"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(repo_path, snapshot_dir, dirs_exist_ok=True)
+    copy_repo_snapshot(
+        repo_path,
+        snapshot_dir,
+        ignore_names={*_SNAPSHOT_IGNORE_ALWAYS, out_path.name},
+    )
 
     source_rules = config_path.parent.parent / "rules"
     source_prompts = config_path.parent.parent / "prompts"
@@ -251,13 +443,11 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
 
     snapshot_dir = out_path / "repo_snapshot"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    ignore_names = {".git", ".ai-review-local", out_path.name}
-
-    def ignore(_directory: str, names: list[str]) -> set[str]:
-        return set(names) & ignore_names
-
-    shutil.copytree(Path.cwd(), snapshot_dir, dirs_exist_ok=True, ignore=ignore)
+    copy_repo_snapshot(
+        Path.cwd(),
+        snapshot_dir,
+        ignore_names={*_SNAPSHOT_IGNORE_ALWAYS, out_path.name},
+    )
     diff_sha = sha256_hex(diff_text)
     raw_head = pull_request.get("head")
     head = raw_head if isinstance(raw_head, dict) else {}
@@ -334,13 +524,11 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
 
     snapshot_dir = out_path / "repo_snapshot"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    ignore_names = {".git", ".ai-review-local", out_path.name}
-
-    def ignore(_directory: str, names: list[str]) -> set[str]:
-        return set(names) & ignore_names
-
-    shutil.copytree(Path.cwd(), snapshot_dir, dirs_exist_ok=True, ignore=ignore)
+    copy_repo_snapshot(
+        Path.cwd(),
+        snapshot_dir,
+        ignore_names={*_SNAPSHOT_IGNORE_ALWAYS, out_path.name},
+    )
     diff_sha = sha256_hex(diff_text)
     manifest = {
         "schema_version": "input_manifest.v1",

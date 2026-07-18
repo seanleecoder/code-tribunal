@@ -19,12 +19,30 @@ In scope:
 
 - The `ai-review` pipeline, reviewer adapters, consensus engine, posting logic, schemas, and CI templates in this repository.
 - Token handling, prompt-injection boundaries, state authenticity, merge-gate behavior, and model-output sanitization.
+- Repository snapshot containment during prepare (symlink and special-file rejection).
 
 Out of scope:
 
 - Vulnerabilities in third-party hosted LLM providers, GitLab, or reviewer CLI tools unless this project amplifies them.
 - Denial-of-service reports that only require excessive traffic against public services.
 - Reports that require access to credentials you do not own.
+
+## Repository snapshot containment
+
+Prepare builds `inputs/repo_snapshot` with a shared contained copier used by the
+local harness and the GitHub/GitLab prepare paths. The copier walks with
+`lstat` / `DirEntry` metadata, never follows links, and fails closed on every
+symlink and on FIFO/socket/device nodes. Regular files are opened with
+`O_NOFOLLOW` where the platform provides it (with an immediate re-`lstat`
+identity check as the fallback). A hostile change request therefore cannot
+materialize readable paths outside the checkout — including
+`/proc/self/environ` — into an uploaded input artifact.
+
+**1.0 limitation:** repositories that intentionally track symlinks are rejected
+until the product has an explicit link representation that snapshotting and
+reviewer tools cannot follow. The error names the offending
+repository-relative path and does not include link-target contents or
+environment values.
 
 ## Known Tracked Issues
 
