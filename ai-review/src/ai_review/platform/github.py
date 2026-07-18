@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from ai_review.http_retry import send_with_retries
 from ai_review.memory import STATE_NOTE_SPEC_RE
 from ai_review.types import Anchor
 
@@ -88,11 +89,20 @@ class GitHubReviewPlatform:
         raw_text = bool(kwargs.pop("raw_text", False))
         auth_token = kwargs.pop("auth_token", None)
         headers = self._headers(kwargs.pop("headers", None), token=auth_token)
-        response = self.session.request(method, self._url(path), headers=headers, **kwargs)
-        if response.status_code >= 400:
-            raise GitHubReviewPlatformError(
-                f"GitHub API {method} {path} failed: {response.status_code}"
-            )
+        url = self._url(path)
+        # kwargs are captured once for every attempt. Callers must not pass
+        # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
+        response = send_with_retries(
+            method=method,
+            do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
+            get_status=lambda item: int(item.status_code),
+            make_http_error=lambda status: GitHubReviewPlatformError(
+                f"GitHub API {method} {path} failed: {status}"
+            ),
+            make_connection_error=lambda exc: GitHubReviewPlatformError(
+                f"GitHub API {method} {path} failed: connection error: {exc}"
+            ),
+        )
         if response.status_code == 204 or not getattr(response, "text", ""):
             return None
         if raw_text:

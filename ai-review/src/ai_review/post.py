@@ -1251,23 +1251,37 @@ def _update_existing_inline_discussion(
     result: PostResult,
     existing: StateRecord,
     planned_record: StateRecord | None,
+    group: FindingGroup,
     post_group: Mapping[str, Any],
     body: str,
     body_hash: str,
     used_discussion_ids: set[Any],
+    summary_fallback_groups: list[FindingGroup],
 ) -> None:
     existing_discussion_id = str(existing["discussion_id"])
     existing_root_note_id = cast(int, existing["root_note_id"])
     if existing.get("last_posted_body_hash") == body_hash:
         result["skipped_unchanged"] += 1
         return
-    client.update_comment(
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-        existing_discussion_id,
-        existing_root_note_id,
-        body,
-    )
+    try:
+        client.update_comment(
+            manifest["project_id"],
+            manifest["merge_request_iid"],
+            existing_discussion_id,
+            existing_root_note_id,
+            body,
+        )
+    except ReviewPlatformError as exc:
+        # Mirror create-path degradation: keep posting the rest of the run and
+        # write a structured post_result instead of aborting before the artifact.
+        # Intentionally leave used_discussion_ids untouched — planning-time dedup
+        # already prevents double-matching the same discussion in this pass.
+        result["status"] = "partial_failed"
+        result["warnings"].append(
+            f"update_comment for {post_group['issue_id']} failed: {exc}"
+        )
+        summary_fallback_groups.append(group)
+        return
     used_discussion_ids.add(existing["discussion_id"])
     if planned_record is not None:
         planned_record["discussion_id"] = existing_discussion_id
@@ -1393,10 +1407,12 @@ def post_inline(
                 result,
                 existing,
                 planned_record,
+                group,
                 post_group,
                 body,
                 body_hash,
                 used_discussion_ids,
+                summary_fallback_groups,
             )
             continue
         if dry_run:

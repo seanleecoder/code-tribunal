@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -25,6 +24,9 @@ def create_runtime_platform(
     allow_dry_run_defaults: bool = False,
 ) -> ReviewPlatform:
     """Construct the configured adapter from trusted runtime environment values."""
+    # ``access`` remains part of the public API for callers that distinguish
+    # prepare/post; both GitLab paths now use the same GITLAB_TOKEN.
+    _ = access
     runtime_env = os.environ if env is None else env
     posting = config.get("posting", {})
     mode = posting.get("mode", "gitlab_discussions") if isinstance(posting, Mapping) else None
@@ -57,19 +59,11 @@ def create_runtime_platform(
     if mode != "gitlab_discussions":
         raise PlatformRuntimeError(f"unsupported posting.mode: {mode!r}")
 
-    legacy_name = "GITLAB_READ_TOKEN" if access == "read" else "GITLAB_WRITE_TOKEN"
     token = runtime_env.get("GITLAB_TOKEN")
-    if not token:
-        token = runtime_env.get(legacy_name)
-        if token:
-            print(
-                f"ai-review: DEPRECATED: {legacy_name} is deprecated; use GITLAB_TOKEN instead.",
-                file=sys.stderr,
-            )
-
     if not token and not allow_dry_run_defaults:
         raise PlatformRuntimeError(
-            f"gitlab_discussions requires GITLAB_TOKEN (or legacy {legacy_name})"
+            "gitlab_discussions requires GITLAB_TOKEN "
+            "(GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN are no longer accepted)"
         )
     gitlab_api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
     if not gitlab_api_url and not allow_dry_run_defaults:

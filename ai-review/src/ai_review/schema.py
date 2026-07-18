@@ -77,120 +77,13 @@ def load_schema(schema_name: str) -> dict[str, Any]:
 
 
 def validate_instance(instance: Any, schema_name: str) -> None:
+    import jsonschema  # type: ignore[import-untyped]
+
     schema = load_schema(schema_name)
-    try:
-        import jsonschema  # type: ignore[import-untyped]
-    except ModuleNotFoundError:
-        _validate_subset(instance, schema, schema, "$")
-        return
     try:
         jsonschema.Draft202012Validator(schema).validate(instance)
     except jsonschema.ValidationError as exc:
         raise SchemaValidationError(exc.message) from exc
-
-
-def _resolve_ref(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
-    ref = schema.get("$ref")
-    if not isinstance(ref, str) or not ref.startswith("#/"):
-        raise SchemaValidationError(f"unsupported schema ref: {ref}")
-    node: Any = root
-    for part in ref[2:].split("/"):
-        node = node[part]
-    if not isinstance(node, dict):
-        raise SchemaValidationError(f"schema ref does not point to an object: {ref}")
-    return node
-
-
-def _type_matches(instance: Any, expected: str) -> bool:
-    if expected == "object":
-        return isinstance(instance, dict)
-    if expected == "array":
-        return isinstance(instance, list)
-    if expected == "string":
-        return isinstance(instance, str)
-    if expected == "integer":
-        return isinstance(instance, int) and not isinstance(instance, bool)
-    if expected == "number":
-        return (isinstance(instance, int | float)) and not isinstance(instance, bool)
-    if expected == "boolean":
-        return isinstance(instance, bool)
-    if expected == "null":
-        return instance is None
-    raise SchemaValidationError(f"unsupported schema type: {expected}")
-
-
-def _validate_subset(
-    instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str
-) -> None:
-    if "$ref" in schema:
-        _validate_subset(instance, _resolve_ref(schema, root), root, path)
-        return
-    for subschema in schema.get("allOf", []):
-        if not isinstance(subschema, dict):
-            raise SchemaValidationError(f"{path}: allOf entry is not an object")
-        _validate_subset(instance, subschema, root, path)
-    if_schema = schema.get("if")
-    if isinstance(if_schema, dict):
-        try:
-            _validate_subset(instance, if_schema, root, path)
-        except SchemaValidationError:
-            else_schema = schema.get("else")
-            if isinstance(else_schema, dict):
-                _validate_subset(instance, else_schema, root, path)
-        else:
-            then_schema = schema.get("then")
-            if isinstance(then_schema, dict):
-                _validate_subset(instance, then_schema, root, path)
-    if "const" in schema and instance != schema["const"]:
-        raise SchemaValidationError(f"{path}: expected const {schema['const']!r}")
-    if "enum" in schema and instance not in schema["enum"]:
-        raise SchemaValidationError(f"{path}: value {instance!r} not in enum")
-    if "type" in schema:
-        expected_type = schema["type"]
-        expected_types = expected_type if isinstance(expected_type, list) else [expected_type]
-        if not any(_type_matches(instance, item) for item in expected_types):
-            raise SchemaValidationError(f"{path}: expected type {expected_type!r}")
-    if isinstance(instance, str):
-        if "minLength" in schema and len(instance) < int(schema["minLength"]):
-            raise SchemaValidationError(f"{path}: string shorter than minLength")
-        if "pattern" in schema:
-            import re
-
-            if not re.fullmatch(str(schema["pattern"]), instance):
-                raise SchemaValidationError(f"{path}: string does not match pattern")
-    if isinstance(instance, int | float) and not isinstance(instance, bool):
-        if "minimum" in schema and instance < schema["minimum"]:
-            raise SchemaValidationError(f"{path}: number below minimum")
-        if "maximum" in schema and instance > schema["maximum"]:
-            raise SchemaValidationError(f"{path}: number above maximum")
-    if isinstance(instance, dict):
-        required = schema.get("required", [])
-        for key in required:
-            if key not in instance:
-                raise SchemaValidationError(f"{path}: missing required key {key}")
-        properties = schema.get("properties", {})
-        if schema.get("additionalProperties") is False:
-            extra = set(instance) - set(properties)
-            if extra:
-                raise SchemaValidationError(f"{path}: additional properties {sorted(extra)}")
-        for key, value in instance.items():
-            if key in properties:
-                _validate_subset(value, properties[key], root, f"{path}.{key}")
-            elif isinstance(schema.get("additionalProperties"), dict):
-                _validate_subset(
-                    value,
-                    schema["additionalProperties"],
-                    root,
-                    f"{path}.{key}",
-                )
-    if isinstance(instance, list):
-        if "minItems" in schema and len(instance) < int(schema["minItems"]):
-            raise SchemaValidationError(f"{path}: array shorter than minItems")
-        if "maxItems" in schema and len(instance) > int(schema["maxItems"]):
-            raise SchemaValidationError(f"{path}: array longer than maxItems")
-        if "items" in schema:
-            for index, value in enumerate(instance):
-                _validate_subset(value, schema["items"], root, f"{path}[{index}]")
 
 
 def empty_finding_batch(

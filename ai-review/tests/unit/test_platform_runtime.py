@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import ast
-import io
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -34,49 +32,40 @@ class PlatformRuntimeTests(unittest.TestCase):
     def test_gitlab_mode_uses_gitlab_token_for_both_accesses(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
         with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
-            for access, legacy_name in (
-                ("read", "GITLAB_READ_TOKEN"),
-                ("write", "GITLAB_WRITE_TOKEN"),
-            ):
+            for access in ("read", "write"):
                 with self.subTest(access=access):
-                    stderr = io.StringIO()
-                    with redirect_stderr(stderr):
-                        create_runtime_platform(
-                            config,
-                            access=access,
-                            env={
-                                "CI_API_V4_URL": "https://gitlab.example/api/v4",
-                                "GITLAB_TOKEN": "preferred",
-                                legacy_name: "legacy",
-                            },
-                        )
-                    self.assertEqual(factory.call_args.args[1], "preferred")
-                    self.assertEqual(stderr.getvalue(), "")
-
-    def test_gitlab_mode_falls_back_to_legacy_tokens_with_deprecation(self) -> None:
-        config = {"posting": {"mode": "gitlab_discussions"}}
-        with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
-            for access, legacy_name in (
-                ("read", "GITLAB_READ_TOKEN"),
-                ("write", "GITLAB_WRITE_TOKEN"),
-            ):
-                with self.subTest(access=access):
-                    stderr = io.StringIO()
-                    with redirect_stderr(stderr):
-                        create_runtime_platform(
-                            config,
-                            access=access,
-                            env={
-                                "CI_API_V4_URL": "https://gitlab.example/api/v4",
-                                legacy_name: "legacy",
-                            },
-                        )
-                    self.assertEqual(factory.call_args.args[1], "legacy")
-                    self.assertEqual(
-                        stderr.getvalue(),
-                        f"ai-review: DEPRECATED: {legacy_name} is deprecated; "
-                        "use GITLAB_TOKEN instead.\n",
+                    create_runtime_platform(
+                        config,
+                        access=access,
+                        env={
+                            "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                            "GITLAB_TOKEN": "preferred",
+                            "GITLAB_READ_TOKEN": "legacy-read",
+                            "GITLAB_WRITE_TOKEN": "legacy-write",
+                        },
                     )
+                    self.assertEqual(factory.call_args.args[1], "preferred")
+
+    def test_gitlab_mode_ignores_legacy_split_tokens(self) -> None:
+        config = {"posting": {"mode": "gitlab_discussions"}}
+        for access, legacy_name in (
+            ("read", "GITLAB_READ_TOKEN"),
+            ("write", "GITLAB_WRITE_TOKEN"),
+        ):
+            with self.subTest(access=access):
+                with self.assertRaisesRegex(
+                    PlatformRuntimeError,
+                    r"GITLAB_TOKEN.*GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN",
+                ) as ctx:
+                    create_runtime_platform(
+                        config,
+                        access=access,
+                        env={
+                            "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                            legacy_name: "legacy",
+                        },
+                    )
+                self.assertIn("no longer accepted", str(ctx.exception))
 
     def test_github_mode_passes_configured_bot_login(self) -> None:
         with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:

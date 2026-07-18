@@ -15,6 +15,7 @@ from ai_review.gitlab_client import (
     root_note_id_from_discussion,
 )
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
+from ai_review.platform import ReviewPlatformError
 from ai_review.post import (
     _classify_post_groups,
     _desired_discussion_resolved,
@@ -1753,6 +1754,120 @@ class PostTests(unittest.TestCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["posted_discussions"], [])
         self.assertTrue(any("no response body" in warning for warning in result["warnings"]))
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_update_failure_degrades_to_summary_fallback(self) -> None:
+        # SPEC-30: update_comment failures must not abort before post_result.json;
+        # degrade like create — warning + summary fallback + partial_failed.
+        class UpdateFailClient(FakePostClient):
+            def update_discussion_note(
+                self,
+                project_id: str,
+                mr_iid: str,
+                discussion_id: str,
+                note_id: int,
+                body: str,
+            ) -> dict[str, Any]:
+                raise ReviewPlatformError("transient 502")
+
+        client = UpdateFailClient("head")
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        client.discussions = [
+            {
+                "id": "existing-discussion",
+                "notes": [
+                    {
+                        "id": 123,
+                        "author": {"id": 10},
+                        "body": (
+                            "stale body\n\n"
+                            f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
+                            f"body_hash={'0' * 64} "
+                            f"source={source_hash(group['source_finding_ids'])} -->"
+                        ),
+                    }
+                ],
+            }
+        ]
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._manifest("head"),
+            consensus,
+        )
+        self.assertEqual(result["status"], "partial_failed")
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(result["posted_discussions"], [])
+        self.assertTrue(any("update_comment" in warning for warning in result["warnings"]))
+        self.assertEqual(result["summary_comment"]["action"], "created")
+        self.assertGreaterEqual(result["summary_comment"]["surface_findings"], 1)
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_update_connection_error_degrades_to_summary_fallback(self) -> None:
+        # Exhausted transport retries must normalize to ReviewPlatformError so
+        # posting still writes a structured partial_failed result.
+        from ai_review.platform.gitlab import GitLabReviewPlatform
+
+        class BoomSession:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> Any:
+                self.calls += 1
+                raise ConnectionError("network down")
+
+        session = BoomSession()
+        platform = GitLabReviewPlatform(
+            "https://gitlab.example.com/api/v4", "token", session=session
+        )
+
+        class ConnectionFailClient(FakePostClient):
+            def update_comment(
+                self,
+                project_id: str,
+                change_id: str,
+                thread_id: str,
+                comment_id: int,
+                body: str,
+            ) -> dict[str, Any]:
+                with patch("ai_review.http_retry.sleep"):
+                    return platform.update_comment(
+                        project_id, change_id, thread_id, comment_id, body
+                    )
+
+        client = ConnectionFailClient("head")
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        client.discussions = [
+            {
+                "id": "existing-discussion",
+                "notes": [
+                    {
+                        "id": 123,
+                        "author": {"id": 10},
+                        "body": (
+                            "stale body\n\n"
+                            f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
+                            f"body_hash={'0' * 64} "
+                            f"source={source_hash(group['source_finding_ids'])} -->"
+                        ),
+                    }
+                ],
+            }
+        ]
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._manifest("head"),
+            consensus,
+        )
+        self.assertEqual(result["status"], "partial_failed")
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(session.calls, 3)
+        self.assertTrue(any("update_comment" in warning for warning in result["warnings"]))
+        self.assertTrue(any("connection error" in warning for warning in result["warnings"]))
+        self.assertEqual(result["summary_comment"]["action"], "created")
         validate_instance(result, "post_result.schema.json")
 
     def test_post_fallback_ignores_resolved_discussion(self) -> None:

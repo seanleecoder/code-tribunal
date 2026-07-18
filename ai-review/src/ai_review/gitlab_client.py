@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .anchors import gitlab_line_code
+from .http_retry import send_with_retries
 
 
 class GitLabApiError(RuntimeError):
@@ -121,10 +122,20 @@ class GitLabClient:
     def _send(self, method: str, path: str, **kwargs: Any) -> Any:
         headers = dict(kwargs.pop("headers", {}))
         headers[self.token_header] = self.token
-        response = self.session.request(method, self._url(path), headers=headers, **kwargs)
-        if response.status_code >= 400:
-            raise GitLabApiError(f"GitLab API {method} {path} failed: {response.status_code}")
-        return response
+        url = self._url(path)
+        # kwargs are captured once for every attempt. Callers must not pass
+        # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
+        return send_with_retries(
+            method=method,
+            do_request=lambda: self.session.request(method, url, headers=headers, **kwargs),
+            get_status=lambda response: int(response.status_code),
+            make_http_error=lambda status: GitLabApiError(
+                f"GitLab API {method} {path} failed: {status}"
+            ),
+            make_connection_error=lambda exc: GitLabApiError(
+                f"GitLab API {method} {path} failed: connection error: {exc}"
+            ),
+        )
 
     @staticmethod
     def _parse(response: Any) -> Any:
@@ -214,13 +225,22 @@ class GitLabClient:
         )
 
     def fetch_mr_diff(self, project_id_or_path: str | int, merge_request_iid: str | int) -> str:
-        changes = self._request(
-            "GET",
-            f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/changes",
+        # Prefer the paginated /diffs endpoint over deprecated /changes. Fail loudly
+        # when GitLab marks any file as collapsed/truncated so prepare cannot review
+        # a silently incomplete diff (mirrors the max_diff_bytes fail-fast policy).
+        change_list = self._get_all_pages(
+            f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/diffs"
         )
-        change_list = changes.get("changes", []) if isinstance(changes, dict) else []
         chunks: list[str] = []
         for change in change_list:
+            # /diffs exposes per-file collapsed/too_large; the old /changes
+            # top-level overflow flag is not present on these items.
+            if change.get("collapsed") or change.get("too_large"):
+                path_name = change.get("new_path") or change.get("old_path") or "<unknown>"
+                raise GitLabApiError(
+                    f"merge request diff is truncated or collapsed for {path_name}; "
+                    "refusing to review an incomplete diff"
+                )
             old_path = change.get("old_path") or change.get("new_path")
             new_path = change.get("new_path") or change.get("old_path")
             chunks.append(f"diff --git a/{old_path} b/{new_path}")

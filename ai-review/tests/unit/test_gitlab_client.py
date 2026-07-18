@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest import mock
 
 from ai_review.gitlab_client import (
     GitLabApiError,
@@ -213,18 +214,161 @@ class GitLabClientTests(unittest.TestCase):
             client.list_mr_discussions("group/project", 1)
 
     def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
-        # Bug #8: a 204/empty /changes response makes _request return None; fetch_mr_diff
-        # must degrade to an empty diff instead of raising AttributeError.
-        class EmptyChangesSession:
+        # Empty /diffs pages must degrade to an empty unified diff.
+        class EmptyDiffsSession:
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
-                response = FakeResponse(None, status_code=204)
-                response.text = ""
+                response = FakeResponse([], status_code=200, headers={"X-Next-Page": ""})
+                response.text = "[]"
                 return response
 
         client = GitLabClient(
-            "https://gitlab.example.com/api/v4", "token", session=EmptyChangesSession()
+            "https://gitlab.example.com/api/v4", "token", session=EmptyDiffsSession()
         )
         self.assertEqual(client.fetch_mr_diff("group/project", 1), "\n")
+
+    def test_fetch_mr_diff_follows_pagination(self) -> None:
+        class PagedDiffSession:
+            def __init__(self) -> None:
+                self.requested_pages: list[int] = []
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                if "/diffs" not in url:
+                    raise AssertionError(f"expected /diffs URL, got {url}")
+                page = int(kwargs["params"]["page"])
+                self.requested_pages.append(page)
+                if page == 1:
+                    return FakeResponse(
+                        [
+                            {
+                                "old_path": "a.py",
+                                "new_path": "a.py",
+                                "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                            }
+                        ],
+                        headers={"X-Next-Page": "2"},
+                    )
+                return FakeResponse(
+                    [
+                        {
+                            "old_path": "b.py",
+                            "new_path": "b.py",
+                            "diff": "@@ -0,0 +1 @@\n+x\n",
+                        }
+                    ],
+                    headers={"X-Next-Page": ""},
+                )
+
+        session = PagedDiffSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        diff = client.fetch_mr_diff("group/project", 1)
+        self.assertEqual(session.requested_pages, [1, 2])
+        self.assertIn("diff --git a/a.py b/a.py", diff)
+        self.assertIn("diff --git a/b.py b/b.py", diff)
+        self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
+
+    def test_fetch_mr_diff_fails_loudly_on_collapsed_file(self) -> None:
+        class CollapsedDiffSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                return FakeResponse(
+                    [
+                        {
+                            "old_path": "big.py",
+                            "new_path": "big.py",
+                            "diff": "",
+                            "collapsed": True,
+                        }
+                    ],
+                    headers={"X-Next-Page": ""},
+                )
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=CollapsedDiffSession()
+        )
+        with self.assertRaisesRegex(GitLabApiError, "truncated or collapsed"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_send_retries_idempotent_verbs_on_502(self) -> None:
+        class FlakySession:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls += 1
+                if self.calls < 3:
+                    return FakeResponse({"error": "bad gateway"}, status_code=502)
+                return FakeResponse({"id": 1}, status_code=200)
+
+        session = FlakySession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        with mock.patch("ai_review.http_retry.sleep"):
+            parsed = client._request("GET", "/projects/1")
+        self.assertEqual(parsed, {"id": 1})
+        self.assertEqual(session.calls, 3)
+
+    def test_send_does_not_retry_post(self) -> None:
+        class Always502Session:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls += 1
+                return FakeResponse({"error": "bad gateway"}, status_code=502)
+
+        session = Always502Session()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        with (
+            mock.patch("ai_review.http_retry.sleep"),
+            self.assertRaisesRegex(GitLabApiError, "502"),
+        ):
+            client._request("POST", "/projects/1/notes", json={"body": "x"})
+        self.assertEqual(session.calls, 1)
+
+    def test_send_normalizes_exhausted_connection_errors(self) -> None:
+        class BoomSession:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls += 1
+                raise ConnectionError("network down")
+
+        session = BoomSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        with (
+            mock.patch("ai_review.http_retry.sleep"),
+            self.assertRaisesRegex(GitLabApiError, "connection error"),
+        ):
+            client._request("PUT", "/projects/1/notes/1", json={"body": "x"})
+        self.assertEqual(session.calls, 3)
+
+    def test_send_retries_and_normalizes_exhausted_proxy_errors(self) -> None:
+        requests_connection_error = type(
+            "ConnectionError",
+            (Exception,),
+            {"__module__": "requests.exceptions"},
+        )
+        proxy_error = type(
+            "ProxyError",
+            (requests_connection_error,),
+            {"__module__": "requests.exceptions"},
+        )
+
+        class ProxyBoomSession:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls += 1
+                raise proxy_error("proxy down")
+
+        session = ProxyBoomSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        with (
+            mock.patch("ai_review.http_retry.sleep"),
+            self.assertRaisesRegex(GitLabApiError, "connection error"),
+        ):
+            client._request("GET", "/projects/1")
+        self.assertEqual(session.calls, 3)
 
 
 if __name__ == "__main__":
