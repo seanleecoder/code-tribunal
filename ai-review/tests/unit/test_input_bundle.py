@@ -452,8 +452,8 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 expected: os.stat_result,
                 rel_parts: tuple[str, ...],
                 *,
-                dir_fd: int | None = None,
-                name: str | None = None,
+                dir_fd: int,
+                name: str,
             ) -> None:
                 if src.resolve() == victim:
                     src.unlink()
@@ -518,43 +518,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             ):
                 copy_repo_snapshot(source, dest)
             self.assertFalse(dest.exists())
-
-    def test_nofollow_fallback_rejects_symlink_replacement(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source = Path(tmpdir) / "repo"
-            dest = Path(tmpdir) / "repo_snapshot"
-            self._write_nested_repo(source)
-            victim = (source / "src" / "pkg" / "mod.py").resolve()
-            outside = Path(tmpdir) / "outside.txt"
-            outside.write_text("outside\n", encoding="utf-8")
-            expected = os.lstat(victim)
-            victim.unlink()
-            victim.symlink_to(outside)
-
-            with (
-                mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
-                self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
-            ):
-                _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
-
-    def test_nofollow_fallback_rejects_type_replacement(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source = Path(tmpdir) / "repo"
-            dest = Path(tmpdir) / "repo_snapshot"
-            self._write_nested_repo(source)
-            victim = (source / "src" / "pkg" / "mod.py").resolve()
-            expected = os.lstat(victim)
-            # Replace the regular file with a directory. Inode recycling can make
-            # file→file identity checks flaky on some filesystems; a type change
-            # is a stable signal for the path-based fallback.
-            victim.unlink()
-            victim.mkdir()
-
-            with (
-                mock.patch("ai_review.input_bundle._O_NOFOLLOW", 0),
-                self.assertRaisesRegex(BundleError, r"rejects non-regular file: mod.py"),
-            ):
-                _copy_regular_file_nofollow(victim, dest / "mod.py", expected, ("mod.py",))
 
     def test_missing_dir_fd_support_fails_closed_without_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

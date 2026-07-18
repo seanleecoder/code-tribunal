@@ -33,10 +33,12 @@ Prepare builds `inputs/repo_snapshot` with a shared contained copier used by the
 local harness and the GitHub/GitLab prepare paths. The copier walks with
 `lstat` / `DirEntry` metadata, never follows links, and fails closed on every
 symlink and on FIFO/socket/device nodes. Contained snapshots **require** Unix
-`dir_fd` support with `O_DIRECTORY | O_NOFOLLOW`: directories are pinned by fd and
-children are opened relative to that fd so a directory→symlink swap cannot
-escape the checkout. Platforms without those primitives fail closed rather
-than falling back to path-based descent. Regular files use `O_NOFOLLOW` the
+`dir_fd` support with `O_DIRECTORY | O_NOFOLLOW` (Linux and macOS; not Windows):
+directories are pinned by fd and children are opened relative to that fd so a
+directory→symlink swap cannot escape the checkout. Platforms without those
+primitives fail closed rather than falling back to path-based descent. GitHub
+and GitLab CI runners are unaffected; only a local Windows prepare harness
+would hit the failure. Regular files use `O_NOFOLLOW` the
 same way. Directory depth is capped at 512 (clean `BundleError` beyond that).
 Published `repo_snapshot` directories use mode `0755`. A hostile change request
 therefore cannot materialize readable paths outside the checkout — including

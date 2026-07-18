@@ -15,7 +15,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   materialize prepare-job environment data into uploaded input artifacts.
   Repositories that intentionally track symlinks fail closed until a
   non-followed link representation exists. Snapshot directory depth is capped
-  at 512; published `repo_snapshot` directories use mode `0755`.
+  at 512; published `repo_snapshot` directories use mode `0755`. Contained prepare
+  requires Linux/macOS `dir_fd` primitives (Windows local prepare fails closed).
 
 ### Changed
 

@@ -100,19 +100,15 @@ def _write_regular_file_from_fd(
 
 
 def _open_nofollow(
-    name_or_path: str | Path,
+    name: str,
     *,
     flags: int,
-    dir_fd: int | None,
+    dir_fd: int,
     rel_parts: tuple[str, ...],
 ) -> int:
-    open_flags = flags
-    if _O_NOFOLLOW:
-        open_flags |= _O_NOFOLLOW
+    """Open ``name`` relative to ``dir_fd`` without following symlinks."""
     try:
-        if dir_fd is None:
-            return os.open(name_or_path, open_flags)
-        return os.open(name_or_path, open_flags, dir_fd=dir_fd)
+        return os.open(name, flags | _O_NOFOLLOW, dir_fd=dir_fd)
     except OSError as exc:
         if exc.errno in {errno.ELOOP, errno.EPERM}:
             _raise_snapshot_rejected("symlink", rel_parts)
@@ -124,56 +120,30 @@ def _open_nofollow(
 
 
 def _copy_regular_file_nofollow(
-    source: Path,
+    _source: Path,
     dest: Path,
     expected: os.stat_result,
     rel_parts: tuple[str, ...],
     *,
-    dir_fd: int | None = None,
-    name: str | None = None,
+    dir_fd: int,
+    name: str,
 ) -> None:
-    """Open ``source`` without following links and copy bytes to ``dest``.
+    """Open ``name`` relative to ``dir_fd`` with ``O_NOFOLLOW`` and copy to ``dest``.
 
-    Prefer ``dir_fd``-relative ``O_NOFOLLOW`` opens. When ``O_NOFOLLOW`` is
-    unavailable, re-``lstat`` immediately before a path-based open and fail if
-    the inode identity or file type changed between validation and open.
+    ``_source`` is the reconstructed path for callers/tests; I/O is always
+    dir_fd-relative. Path-based opens were removed because production requires
+    ``_DIR_FD_SUPPORTED`` (which implies ``O_NOFOLLOW``).
     """
-    if dir_fd is not None and name is not None and _O_NOFOLLOW:
-        fd = _open_nofollow(name, flags=os.O_RDONLY, dir_fd=dir_fd, rel_parts=rel_parts)
-    elif _O_NOFOLLOW:
-        fd = _open_nofollow(source, flags=os.O_RDONLY, dir_fd=None, rel_parts=rel_parts)
-    else:
-        try:
-            current = os.lstat(source)
-        except OSError as exc:
-            raise BundleError(
-                f"repository snapshot failed to re-stat {_snapshot_rel_display(rel_parts)}: {exc}"
-            ) from exc
-        if not stat.S_ISREG(current.st_mode):
-            _raise_snapshot_rejected("non-regular file", rel_parts)
-        if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino):
-            _raise_snapshot_rejected("file replaced during copy", rel_parts)
-        try:
-            fd = os.open(source, os.O_RDONLY)
-        except OSError as exc:
-            raise BundleError(
-                f"repository snapshot failed to open {_snapshot_rel_display(rel_parts)}: {exc}"
-            ) from exc
-
+    fd = _open_nofollow(name, flags=os.O_RDONLY, dir_fd=dir_fd, rel_parts=rel_parts)
     try:
         _write_regular_file_from_fd(fd, dest, expected, rel_parts)
     finally:
         os.close(fd)
 
 
-def _scan_directory(
-    *,
-    dir_fd: int | None,
-    source_dir: Path,
-    rel_parts: tuple[str, ...],
-) -> list[os.DirEntry[str]]:
+def _scan_directory(*, dir_fd: int, rel_parts: tuple[str, ...]) -> list[os.DirEntry[str]]:
     try:
-        scanner = os.scandir(source_dir) if dir_fd is None else os.scandir(dir_fd)
+        scanner = os.scandir(dir_fd)
     except OSError as exc:
         raise BundleError(
             f"repository snapshot failed to scan {_snapshot_rel_display(rel_parts)}: {exc}"
@@ -199,13 +169,11 @@ def _copy_snapshot_tree(
 ) -> None:
     """Copy ``source_root`` into ``dest_root`` without following links.
 
-    Requires ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY``. Traversal pins each
-    parent directory inode and opens children relative to that fd so a
-    directory→symlink swap between validation and descent cannot escape the
-    checkout. There is no path-based directory fallback: platforms without
-    these primitives fail closed. Depth is bounded with an explicit stack.
+    Requires ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY`` (enforced by the
+    caller). Traversal pins each parent directory inode and opens children
+    relative to that fd so a directory→symlink swap between validation and
+    descent cannot escape the checkout. Depth is bounded with an explicit stack.
     """
-    _require_dir_fd_containment()
     root_flags = os.O_RDONLY | _O_DIRECTORY
     try:
         root_fd = os.open(source_root, root_flags)
@@ -214,7 +182,7 @@ def _copy_snapshot_tree(
             f"repository snapshot failed to open source root: {exc}"
         ) from exc
 
-    # (dir_fd, source_dir Path, rel_parts)
+    # (dir_fd, source_dir Path, rel_parts) — Path is for relative joins only.
     stack: list[tuple[int, Path, tuple[str, ...]]] = [(root_fd, source_root, ())]
     try:
         while stack:
@@ -226,9 +194,7 @@ def _copy_snapshot_tree(
                         "repository snapshot exceeds max directory depth "
                         f"({_MAX_SNAPSHOT_DEPTH}): {_snapshot_rel_display(rel_parts)}"
                     )
-                entries = _scan_directory(
-                    dir_fd=dir_fd, source_dir=source_dir, rel_parts=rel_parts
-                )
+                entries = _scan_directory(dir_fd=dir_fd, rel_parts=rel_parts)
                 for entry in entries:
                     name = entry.name
                     if _should_ignore_entry(
