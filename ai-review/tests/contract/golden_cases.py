@@ -87,6 +87,7 @@ def _finding(
 
 
 def _batch(reviewer: str, finding: dict) -> dict:
+    findings = [finding]
     return {
         "schema_version": "finding_batch.v1",
         "run_id": "run",
@@ -95,7 +96,12 @@ def _batch(reviewer: str, finding: dict) -> dict:
         "model": "model",
         "started_at": "2026-06-29T00:00:00Z",
         "completed_at": "2026-06-29T00:00:01Z",
-        "findings": [finding],
+        "raw_finding_count": len(findings),
+        "accepted_finding_count": len(findings),
+        "dropped_finding_count": 0,
+        "usable_for_resolution": True,
+        "effective_config_sha256": "0" * 64,
+        "findings": findings,
     }
 
 

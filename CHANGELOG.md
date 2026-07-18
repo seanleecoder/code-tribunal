@@ -20,6 +20,30 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Changed
 
+- Finding batches now record batch-quality fields (`raw_finding_count`,
+  `accepted_finding_count`, `dropped_finding_count`, `usable_for_resolution`)
+  and bind `effective_config_sha256`. Consensus panel seats and absence-based
+  resolution use only reviewers with trustworthy empty-or-valid evidence;
+  all-dropped malformed output cannot resolve open findings or manufacture
+  panel success. Consensus artifacts expose `resolution_eligible_reviewers`.
+  `failed_reviewers` now includes all-dropped-but-`success` adapters (they are
+  not operational panel seats), which can weaken blocking and trip alerting that
+  keys off failed-seat counts.
+- Gate evaluation fails closed on post/state failures before consulting
+  `merge_gate.enabled`. Advisory mode disables finding-based blocking only.
+- Prepare records `effective_config_sha256` (misconfiguration detector for
+  cross-job policy/env drift, not tamper-proofing). The digest covers reviewer
+  models/toggles/`max_findings`, consequential panel/severity fields, and
+  critique policy including `blind_reviewer_identity`. Consensus fails (exit 3)
+  on consequential divergence, wrong run IDs, duplicate/disabled
+  reviewer/critic evidence, success-batch model/digest mismatches, critique
+  critic≠filename spoofing, unknown critique targets, or malformed consumed
+  artifacts (including garbage JSON / schema errors). Digest checks are
+  success-only; non-success batches with a mismatched digest degrade the panel
+  instead of hard-failing the run. Consensus does not repair critique identity
+  fields — missing/blank critics fail schema validation before accept.
+  Unreadable/malformed JSON surfaces as `cannot read artifact`; programming
+  errors in the reducer are not mapped to integrity exit 3.
 - Posting now degrades update-path platform failures to summary fallback with a
   structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
   idempotent GET/PUT/PATCH calls on 429/5xx/connection errors (including
@@ -55,6 +79,19 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Migration
 
+- Finding-batch and critique-batch consumers must accept the new required
+  quality/digest fields (`usable_for_resolution`, `effective_config_sha256`,
+  and finding counts). Older finding batches without those fields are rejected
+  at the consensus CLI boundary (exit 3) rather than treated as resolution-eligible.
+- **All prior prepare `effective_config_sha256` digests are invalidated** by the
+  expanded effective-config summary (`max_findings`,
+  `critique_blind_reviewer_identity`, and related panel/severity/critique keys).
+  Re-run prepare (do not reuse stale input artifacts) before consensus.
+- Ensure `AI_REVIEW_*` overrides are scoped identically across prepare, review,
+  critique, consensus, post, and gate jobs (project/group variables or workflow
+  env). Job-scoped mismatches that used to warn now fail consensus. Changing
+  panel quorum, severity policy, `max_findings`, or critique policy flags also
+  changes the effective-config digest and requires a fresh prepare.
 - Prepare rejects every symlink in the reviewed checkout when building
   `repo_snapshot`. Repositories that intentionally track symlinks must remove or
   replace them before review, or wait for a future non-followed link

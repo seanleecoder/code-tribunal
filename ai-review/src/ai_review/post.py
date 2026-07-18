@@ -383,7 +383,11 @@ def _record_for_group(
 def _has_resolution_quorum(config: dict[str, Any], consensus: Consensus) -> bool:
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     required = int(panel.get("min_successful_reviewers_for_resolution", 2))
-    return len(consensus.get("successful_reviewers", [])) >= required
+    eligible = consensus.get("resolution_eligible_reviewers")
+    if not isinstance(eligible, list):
+        # Older consensus artifacts without the field must not resolve by guess.
+        return False
+    return len(eligible) >= required
 
 
 def _author_access_level(

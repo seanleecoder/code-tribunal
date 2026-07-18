@@ -35,6 +35,15 @@
     "duration_ms": { "type": "integer", "minimum": 0 },
     "error_class": { "type": ["string", "null"] },
     "error_message_redacted": { "type": ["string", "null"] },
-    "output_file": { "type": "string", "minLength": 1 }
+    "output_file": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "raw_finding_count": { "type": "integer", "minimum": 0 },
+    "accepted_finding_count": { "type": "integer", "minimum": 0 },
+    "dropped_finding_count": { "type": "integer", "minimum": 0 },
+    "usable_for_resolution": { "type": "boolean" },
+    "effective_config_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
   }
 }

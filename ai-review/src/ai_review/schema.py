@@ -50,6 +50,37 @@ ADAPTER_STATUSES = {
 }
 
 
+def batch_quality_fields(
+    *,
+    adapter_status: str,
+    raw_finding_count: int,
+    accepted_finding_count: int,
+    dropped_finding_count: int,
+) -> dict[str, Any]:
+    """Return schema-backed batch quality accounting.
+
+    A valid empty success batch (raw=0, accepted=0, dropped=0) is usable for
+    resolution. A non-empty success batch with every finding dropped is not.
+    Non-success adapter statuses are never usable for resolution.
+
+    Count invariants (enforced at consensus validation):
+    ``accepted_finding_count == len(findings)`` and
+    ``accepted_finding_count + dropped_finding_count <= raw_finding_count``.
+    Equality holds when no ``max_findings`` cap eviction occurred; under a cap,
+    raw may exceed accepted+dropped because unprocessed candidates are neither
+    accepted nor counted as malformed drops.
+    """
+    usable = adapter_status == "success" and (
+        raw_finding_count == 0 or accepted_finding_count > 0
+    )
+    return {
+        "raw_finding_count": raw_finding_count,
+        "accepted_finding_count": accepted_finding_count,
+        "dropped_finding_count": dropped_finding_count,
+        "usable_for_resolution": usable,
+    }
+
+
 def schema_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "schemas"
 
@@ -94,9 +125,19 @@ def empty_finding_batch(
     model: str,
     started_at: str,
     completed_at: str | None = None,
+    effective_config_sha256: str,
+    raw_finding_count: int = 0,
+    accepted_finding_count: int = 0,
+    dropped_finding_count: int = 0,
 ) -> dict[str, Any]:
     if adapter_status not in ADAPTER_STATUSES:
         raise ValueError(f"unknown adapter status: {adapter_status}")
+    quality = batch_quality_fields(
+        adapter_status=adapter_status,
+        raw_finding_count=raw_finding_count,
+        accepted_finding_count=accepted_finding_count,
+        dropped_finding_count=dropped_finding_count,
+    )
     return {
         "schema_version": "finding_batch.v1",
         "run_id": run_id,
@@ -105,6 +146,8 @@ def empty_finding_batch(
         "model": model,
         "started_at": started_at,
         "completed_at": completed_at or now_iso(),
+        **quality,
+        "effective_config_sha256": effective_config_sha256,
         "findings": [],
     }
 
@@ -115,12 +158,14 @@ def empty_critique_batch(
     *,
     run_id: str,
     started_at: str,
+    effective_config_sha256: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": "critique_batch.v1",
         "run_id": run_id,
         "critic": critic,
         "adapter_status": adapter_status,
+        "effective_config_sha256": effective_config_sha256,
         "critiques": [],
     }
 
@@ -130,6 +175,7 @@ def finalize_critique_batch(
     *,
     critic: str,
     run_id: str,
+    effective_config_sha256: str,
 ) -> dict[str, Any]:
     status = str(batch.get("adapter_status", "success"))
     if status != "success":
@@ -138,6 +184,7 @@ def finalize_critique_batch(
             status if status in ADAPTER_STATUSES else "schema_error",
             run_id=run_id,
             started_at=now_iso(),
+            effective_config_sha256=effective_config_sha256,
         )
         validate_instance(finalized, "critique_batch.schema.json")
         return finalized
@@ -158,6 +205,7 @@ def finalize_critique_batch(
         "run_id": run_id,
         "critic": critic,
         "adapter_status": "success",
+        "effective_config_sha256": effective_config_sha256,
         "critiques": critiques,
     }
     validate_instance(finalized, "critique_batch.schema.json")
@@ -175,8 +223,14 @@ def adapter_status_artifact(
     *,
     error_class: str | None = None,
     error_message_redacted: str | None = None,
+    run_id: str | None = None,
+    raw_finding_count: int | None = None,
+    accepted_finding_count: int | None = None,
+    dropped_finding_count: int | None = None,
+    usable_for_resolution: bool | None = None,
+    effective_config_sha256: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    artifact: dict[str, Any] = {
         "schema_version": "adapter_status.v1",
         "reviewer": reviewer,
         "stage": stage,
@@ -188,6 +242,19 @@ def adapter_status_artifact(
         "error_message_redacted": error_message_redacted,
         "output_file": output_file,
     }
+    if run_id is not None:
+        artifact["run_id"] = run_id
+    if raw_finding_count is not None:
+        artifact["raw_finding_count"] = raw_finding_count
+    if accepted_finding_count is not None:
+        artifact["accepted_finding_count"] = accepted_finding_count
+    if dropped_finding_count is not None:
+        artifact["dropped_finding_count"] = dropped_finding_count
+    if usable_for_resolution is not None:
+        artifact["usable_for_resolution"] = usable_for_resolution
+    if effective_config_sha256 is not None:
+        artifact["effective_config_sha256"] = effective_config_sha256
+    return artifact
 
 
 def _load_diff(input_dir: str | Path | None) -> str | None:
@@ -244,10 +311,17 @@ def _validate_finalized_finding(
     model: str,
     run_id: str,
     started_at: str,
+    effective_config_sha256: str,
 ) -> None:
     confidence = finding.get("confidence")
     if isinstance(confidence, float) and not math.isfinite(confidence):
         raise SchemaValidationError("confidence must be finite")
+    quality = batch_quality_fields(
+        adapter_status="success",
+        raw_finding_count=1,
+        accepted_finding_count=1,
+        dropped_finding_count=0,
+    )
     validate_instance(
         {
             "schema_version": "finding_batch.v1",
@@ -257,6 +331,8 @@ def _validate_finalized_finding(
             "model": model,
             "started_at": str(batch.get("started_at") or started_at),
             "completed_at": str(batch.get("completed_at") or now_iso()),
+            **quality,
+            "effective_config_sha256": effective_config_sha256,
             "findings": [finding],
         },
         "finding_batch.schema.json",
@@ -270,6 +346,7 @@ def finalize_finding_batch(
     model: str,
     run_id: str,
     started_at: str,
+    effective_config_sha256: str,
     input_dir: str | Path | None = None,
     max_findings: int | None = None,
 ) -> dict[str, Any]:
@@ -282,12 +359,16 @@ def finalize_finding_batch(
             model=model,
             started_at=started_at,
             completed_at=str(batch.get("completed_at") or now_iso()),
+            effective_config_sha256=effective_config_sha256,
         )
         validate_instance(finalized, "finding_batch.schema.json")
         return finalized
 
     diff_text = _load_diff(input_dir)
     raw_findings = batch.get("findings", [])
+    if not isinstance(raw_findings, list):
+        raise SchemaValidationError("adapter output findings must be an array")
+    raw_count = len(raw_findings)
     ranked_findings = _rank_findings_for_cap(raw_findings, max_findings)
     findings: list[dict[str, Any]] = []
     finding_keys = {
@@ -344,6 +425,7 @@ def finalize_finding_batch(
                 model=model,
                 run_id=run_id,
                 started_at=started_at,
+                effective_config_sha256=effective_config_sha256,
             )
         except (SchemaValidationError, ValueError, KeyError, TypeError) as exc:
             # A single finding with an unresolvable/malformed anchor must not discard the
@@ -352,22 +434,31 @@ def finalize_finding_batch(
             sys.stderr.write(redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n"))
             continue
         findings.append(normalized)
+    quality = batch_quality_fields(
+        adapter_status="success",
+        raw_finding_count=raw_count,
+        accepted_finding_count=len(findings),
+        dropped_finding_count=dropped,
+    )
     if dropped:
         sys.stderr.write(
             redact_text(
                 f"ai-review: {reviewer} kept {len(findings)} finding(s), "
-                f"dropped {dropped} malformed/unresolvable finding(s)\n"
+                f"dropped {dropped} malformed/unresolvable finding(s); "
+                f"usable_for_resolution={quality['usable_for_resolution']}\n"
             )
         )
 
     finalized = {
         "schema_version": "finding_batch.v1",
-        "run_id": str(batch.get("run_id") or run_id),
+        "run_id": run_id,
         "reviewer": reviewer,
         "adapter_status": "success",
         "model": model,
         "started_at": str(batch.get("started_at") or started_at),
         "completed_at": str(batch.get("completed_at") or now_iso()),
+        **quality,
+        "effective_config_sha256": effective_config_sha256,
         "findings": findings,
     }
     validate_instance(finalized, "finding_batch.schema.json")

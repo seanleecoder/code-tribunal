@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import sha256_hex
-from .config import effective_config_summary, load_config
+from .config import effective_config_digest, effective_config_summary, load_config
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
@@ -391,6 +391,7 @@ def prepare_local_bundle(
         "config_sha256": _file_sha256(config_path),
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
+        "effective_config_sha256": effective_config_digest(config_dict),
         "created_at": now_iso(),
     }
     write_canonical_json(out_path / "manifest.json", manifest)
@@ -556,6 +557,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         "config_sha256": _file_sha256(config_path),
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
+        "effective_config_sha256": effective_config_digest(config_dict),
         "created_at": now_iso(),
     }
     state = empty_state(
@@ -631,6 +633,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         "config_sha256": _file_sha256(config_path),
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
+        "effective_config_sha256": effective_config_digest(config_dict),
         "created_at": now_iso(),
     }
     state = empty_state(

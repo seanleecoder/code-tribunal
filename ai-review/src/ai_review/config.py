@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .canonical import stable_json_hash
+
 
 class ConfigError(ValueError):
     pass
@@ -133,7 +135,7 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     Applied at load time so every stage (reviewer fan-out, panel sizing, and the
     deterministic consensus engine) sees a consistent view. This requires the
     override vars to be set as project-wide CI/CD variables (visible to all jobs);
-    the consensus stage additionally warns if its view disagrees with the manifest.
+    the consensus stage fails if its view disagrees with the prepare manifest.
 
     Recognized overrides:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
@@ -223,34 +225,64 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
 
 
 def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
-    """Summarize the config actually in effect for this run (after env overrides),
-    so each run has one auditable record of which models/toggles were used — even
-    when they were changed at runtime via ``AI_REVIEW_*`` env vars. Recorded in the
-    input manifest by the prepare stage and re-derived by consensus for a
-    cross-stage consistency check."""
+    """Summarize consequential config in effect after env overrides.
+
+    Recorded in the prepare manifest and re-derived by consensus as a
+    misconfiguration detector for cross-job ``AI_REVIEW_*`` / policy drift — not
+    a tamper-proofing mechanism (artifact writers already choose the digest they
+    stamp). Includes reviewer models/toggles and decision-critical panel,
+    severity, and critique policy fields.
+    """
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
     merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
     posting = config.get("posting", {}) if isinstance(config, dict) else {}
     state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
+    quorum = panel.get("quorum", {}) if isinstance(panel, dict) else {}
     grouping = panel.get("grouping", {}) if isinstance(panel, dict) else {}
     semantic = grouping.get("semantic", {}) if isinstance(grouping, dict) else {}
+    severity = config.get("severity_policy", {}) if isinstance(config, dict) else {}
+    single = severity.get("single_reviewer_blocker", {}) if isinstance(severity, dict) else {}
+    quorum_blocker = severity.get("quorum_blocker", {}) if isinstance(severity, dict) else {}
+    categories = single.get("categories", []) if isinstance(single, dict) else []
     return {
         "reviewers": {
             name: {
                 "model": reviewer.get("model"),
                 "enabled": bool(reviewer.get("enabled")),
                 "effort": reviewer.get("effort"),
+                "max_findings": (
+                    int(reviewer["max_findings"])
+                    if reviewer.get("max_findings") is not None
+                    else None
+                ),
             }
-            for name, reviewer in reviewers.items()
+            for name, reviewer in sorted(reviewers.items())
             if isinstance(reviewer, dict)
         },
         "critique_enabled": bool(critique.get("enabled")),
         "critique_rounds": int(critique.get("rounds", 0) or 0),
+        "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
+        "critique_can_add_quorum_votes": bool(critique.get("can_add_quorum_votes")),
+        "critique_allow_advisory_escalation": bool(critique.get("allow_advisory_escalation")),
+        "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
         "state_backend": state.get("backend") if isinstance(state, dict) else None,
+        "panel_min_successful_reviewers_for_blocking": int(
+            panel.get("min_successful_reviewers_for_blocking", 0) or 0
+        ),
+        "panel_min_successful_reviewers_for_resolution": int(
+            panel.get("min_successful_reviewers_for_resolution", 0) or 0
+        ),
+        "panel_quorum_votes_required": int(quorum.get("votes_required", 0) or 0),
+        "severity_single_reviewer_blocker_categories": sorted(
+            str(item) for item in categories
+        ),
+        "severity_quorum_blocker_block_merge": bool(
+            isinstance(quorum_blocker, dict) and quorum_blocker.get("block_merge") is True
+        ),
         "panel_grouping_semantic_enabled": bool(
             isinstance(semantic, dict) and semantic.get("enabled") is True
         ),
@@ -258,6 +290,11 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
             float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
         ),
     }
+
+
+def effective_config_digest(config: dict[str, Any]) -> str:
+    """Canonical SHA-256 of ``effective_config_summary`` for cross-stage binding."""
+    return stable_json_hash(effective_config_summary(config))
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

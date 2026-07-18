@@ -225,6 +225,7 @@ class PostTests(unittest.TestCase):
         return {
             "run_id": "run",
             "successful_reviewers": ["claude"],
+            "resolution_eligible_reviewers": ["claude"],
             "groups": [
                 {
                     "issue_id": "a" * 64,

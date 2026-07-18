@@ -123,6 +123,11 @@ class FindingBatch(TypedDict):
     model: str
     started_at: str
     completed_at: str
+    raw_finding_count: int
+    accepted_finding_count: int
+    dropped_finding_count: int
+    usable_for_resolution: bool
+    effective_config_sha256: str
     findings: list[Finding]
 
 
@@ -213,6 +218,7 @@ class Consensus(TypedDict):
     head_sha: str
     input_manifest_sha256: str
     successful_reviewers: list[ReviewerId]
+    resolution_eligible_reviewers: list[ReviewerId]
     failed_reviewers: list[ReviewerId]
     panel_status: PanelStatus
     groups: list[FindingGroup]

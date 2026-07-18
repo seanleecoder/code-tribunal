@@ -16,6 +16,17 @@ variables:
   # apply_env_overrides). Default matches review.yaml; set "false" to disable.
   # Must be exactly "true"/"false" — any other value fails the pipeline loudly.
   AI_REVIEW_CRITIQUE_ENABLED: "true"
+  # Environment-consistency contract: set AI_REVIEW_* policy overrides as
+  # project/group/pipeline variables (inherited by every job). Prepare records
+  # effective_config_sha256; consensus fails closed if a later job sees a
+  # different effective config. Supported override names:
+  # AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL AI_REVIEW_OPENCODE_MODEL
+  # AI_REVIEW_CURSOR_MODEL AI_REVIEW_CLAUDE_ENABLED AI_REVIEW_CODEX_ENABLED
+  # AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED AI_REVIEW_CLAUDE_EFFORT
+  # AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT AI_REVIEW_CRITIQUE_ENABLED
+  # AI_REVIEW_MERGE_GATE_ENABLED AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED
+  # AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD AI_REVIEW_POSTING_MODE
+  # AI_REVIEW_STATE_BACKEND
 
 .ai_review_rules:
   rules:
