@@ -2,11 +2,11 @@
 
 These documents began as agent-ready work units derived from the Staff+ and
 security review. Phases 0–3 are retained as implementation and decision history.
-The active follow-on work is SPEC-19–21 below (spec IDs continue after the
-archived SPEC-17/18); SPEC-22 is a further, independent proposal (see
-[Proposed](#proposed)); SPEC-23–30 are the maintainer-triaged outcomes of the
-2026-07 1.0.0 release-readiness review (see
-[Phase 5](#phase-5--10-release-readiness)). Paused ideas are stored under
+The active follow-on work is SPEC-19–22 below (spec IDs continue after the
+archived SPEC-17/18). SPEC-23–30 are retained as implemented planning history.
+SPEC-31–39 are the actionable outcomes of the final 2026-07 1.0.0 critical
+release audit (see [Phase 6](#phase-6--final-10-release-gate)). Paused ideas are
+stored under
 [`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
 
 Each spec follows the same template so an agent can execute it without extra
@@ -38,7 +38,8 @@ reasoning and security invariants are not lost.
 | **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
 | **4** | Reviewer cost + panel flexibility | SPEC-19…21 | SPEC-19 implemented in this branch; SPEC-20/21 proposed. |
 | — | Project rules, learning loop, rule tracing | SPEC-22 | Proposed design; phases A0–E not started. |
-| **5** | 1.0 release readiness | SPEC-23…30 | Specified; not started. SPEC-23…29 gate the 1.0.0 release; SPEC-30 may follow in 1.0.x. |
+| **5** | Initial 1.0 release readiness | SPEC-23…30 | Implemented on `main`; retained as planning history pending release notes/archive. |
+| **6** | Final 1.0 release gate | SPEC-31…39 | Active. SPEC-31…38 and SPEC-39 milestone A gate 1.0; SPEC-39 milestone B may follow in 1.0.x. |
 
 ## Phase 4 — Reviewer cost + panel flexibility
 
@@ -81,6 +82,46 @@ tag + image publish; SPEC-30 may ship in 1.0.x.
 | [SPEC-28](spec-28-packaging-metadata.md) | Drop unused python-gitlab; correct package description | XS | none |
 | [SPEC-29](spec-29-pre-1.0-fix-batch.md) | Pre-1.0 fix batch: pin drift, CI rules, dead surface, trust auditor, config validation, doc claims | M | none |
 | [SPEC-30](spec-30-post-1.0-robustness.md) | Post-1.0 robustness: posting resilience, diff endpoint, fallback-parser removal | M | SPEC-23, SPEC-24 |
+
+The implementation commits for SPEC-23–30 are present on `main`. Their individual
+files remain useful requirement history, but their old “pre/post-1.0” sequencing is
+superseded by the Phase 6 audit below.
+
+## Phase 6 — Final 1.0 release gate
+
+These specs convert the final critical release review into independently
+implementable work. The recommended sequence is:
+
+1. Land SPEC-31, SPEC-32, SPEC-34, and SPEC-35 in parallel.
+2. Land SPEC-33 after SPEC-32 fixes the reviewer-quality artifact contract.
+3. Land SPEC-36 after SPEC-32/33 schemas stabilize.
+4. Land SPEC-39 milestone A and reconcile documentation/evidence under SPEC-38.
+5. Execute SPEC-37 last to publish and pin artifacts from the exact release source.
+6. Defer only SPEC-39 milestone B until 1.0.x.
+
+| Spec | Title | Effort | Depends on | 1.0 timing |
+|---|---|---|---|---|
+| [SPEC-31](spec-31-snapshot-symlink-containment.md) | Contain repository snapshots and reject symlink escapes | M | none | blocker |
+| [SPEC-32](spec-32-reviewer-validity-resolution-quorum.md) | Separate usable reviewer evidence from syntactic adapter success | M | none | must land |
+| [SPEC-33](spec-33-gate-config-artifact-integrity.md) | Gate failures and cross-stage configuration integrity | M | SPEC-32 | must land |
+| [SPEC-34](spec-34-github-complete-diff.md) | Prove GitHub input-diff completeness and revision consistency | M | none | must land |
+| [SPEC-35](spec-35-distribution-contract.md) | Define and test the Python/container distribution contract | M | none | must land |
+| [SPEC-36](spec-36-types-quality-gates.md) | Align typed contracts and make quality gates fail honestly | M | SPEC-32, SPEC-33 | must land |
+| [SPEC-37](spec-37-final-release-artifacts.md) | Cut reproducible 1.0 artifacts from one exact release commit | M | SPEC-31…36, SPEC-38, SPEC-39 A | final release gate |
+| [SPEC-38](spec-38-documentation-evidence-restructure.md) | Task-oriented documentation and live acceptance evidence | L | SPEC-31…36 | must land |
+| [SPEC-39](spec-39-simplification-deletion.md) | Simplify the 1.0 surface and decompose posting internals | L, split | SPEC-35, SPEC-36 | A before 1.0; B after |
+
+### Phase 6 dependency graph
+
+```text
+SPEC-31 snapshot containment ───────────────┐
+SPEC-32 reviewer validity ──► SPEC-33 ──┐   │
+SPEC-34 complete GitHub diff ────────────┼───┤
+SPEC-35 distribution ──► SPEC-39 A ─────┤   ├─► SPEC-37 final artifacts
+SPEC-32 + SPEC-33 ──► SPEC-36 ──────────┤   │
+SPEC-31…36 ──► SPEC-38 docs/evidence ────┘   │
+SPEC-35 + SPEC-36 ──► SPEC-39 B (post-1.0)   │
+```
 
 ## Downstream validation
 
