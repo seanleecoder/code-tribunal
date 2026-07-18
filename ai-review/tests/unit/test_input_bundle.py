@@ -23,6 +23,8 @@ from ai_review.input_bundle import (
 )
 from ai_review.platform import ReviewPlatformError
 
+_REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+
 
 def _diff_with_files(count: int) -> str:
     chunks = []
@@ -435,14 +437,13 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             self._write_nested_repo(repo)
             out = Path(tmpdir) / "bundle"
-            config = Path("ai-review/config/review.yaml")
             diff = Path(tmpdir) / "mr.diff"
             diff.write_text("diff --git a/a.py b/a.py\n", encoding="utf-8")
             with mock.patch(
                 "ai_review.input_bundle.copy_repo_snapshot",
                 wraps=copy_repo_snapshot,
             ) as mocked:
-                prepare_local_bundle(config, diff, repo, out)
+                prepare_local_bundle(_REPO_CONFIG, diff, repo, out)
             mocked.assert_called_once()
             self.assertTrue((out / "repo_snapshot" / "README.md").is_file())
 
