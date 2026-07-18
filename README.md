@@ -239,11 +239,8 @@ Code Tribunal includes a comprehensive local harness for offline testing, schema
 ### Makefile Commands
 
 ```bash
-# Run unit & integration test suite across ai-review/tests
-make test
-
-# Run ruff linter & python compileall verification
-make lint
+# Run the same blocking quality gates used by CI
+make quality
 
 # Run local mock reviewer fan-out using test fixtures (AI_REVIEW_LOCAL_MOCK=1)
 make review-local
@@ -254,6 +251,11 @@ make consensus-local
 # Validate output artifacts against JSON schemas
 make validate-local
 ```
+
+`make quality` runs Ruff over `ai-review/src`, `ai-review/tests`, and `scripts`,
+pytest with coverage, whole-package mypy, supply-chain pin validation, and
+Python compilation. `make test` remains available for minimal local
+environments and falls back to unittest only when pytest is not installed.
 
 ### Local Execution Examples
 
@@ -535,7 +537,7 @@ code-tribunal/
 ├── .github/
 │   └── workflows/
 │       ├── ai-review.yml                      # Installed GitHub PR review workflow (mirrors the canonical template)
-│       ├── ci.yml                             # Repo quality gate (ruff, pytest, mypy)
+│       ├── ci.yml                             # Canonical repository quality gate
 │       └── publish-ai-review-images.yml       # GHCR image build, preflight, & attestation workflow
 ├── docs/
 │   ├── ARCHITECTURE.md                        # Architecture & trust-boundary overview

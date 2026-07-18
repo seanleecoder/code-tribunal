@@ -1491,7 +1491,7 @@ def finalize_state(
     )
     if _state_enabled(config):
         prior_records = {record["issue_id"]: record for record in state_plan.base_records}
-        prior_status = {
+        prior_status: dict[str, StateRecordStatus | None] = {
             issue_id: record.get("status") for issue_id, record in prior_records.items()
         }
         for record in state_plan.planned_records:

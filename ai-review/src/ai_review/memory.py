@@ -553,12 +553,7 @@ def _matches_precedence(record: StateRecord, group: FindingGroup, precedence: st
 
 def find_matching_record(group: FindingGroup, state: State | None) -> StateMatchResult:
     """Match a consensus group to persisted state using the documented deterministic strategy."""
-    records = [
-        record
-        for record in (state or {}).get("records", [])
-        if isinstance(record, dict)
-        and isinstance(record.get("issue_id"), str)
-    ]
+    records: list[StateRecord] = state["records"] if state is not None else []
     for precedence in MATCH_PRECEDENCE:
         matches = [record for record in records if _matches_precedence(record, group, precedence)]
         if len(matches) == 1:

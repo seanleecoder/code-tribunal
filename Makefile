@@ -5,14 +5,39 @@ REVIEWER ?= claude
 DIFF ?= $(AI_REVIEW_ROOT)/tests/fixtures/diffs/simple.diff
 REPO ?= $(AI_REVIEW_ROOT)/tests/fixtures/repos/simple
 LOCAL_OUT ?= .ai-review-local
+RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
+PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
-.PHONY: test lint update-golden review-local consensus-local validate-local
+.PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain \
+	update-golden review-local consensus-local validate-local
+
+quality: lint test-strict typecheck supply-chain compile
 
 test:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1 && PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(AI_REVIEW_ROOT)/tests || PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m unittest discover -s $(AI_REVIEW_ROOT)/tests -p 'test_*.py'
+	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory test-strict; \
+	else \
+		echo "pytest is unavailable; running the documented local unittest fallback"; \
+		$(MAKE) --no-print-directory test-fallback; \
+	fi
+
+test-strict:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(PYTEST_ARGS)
+
+test-fallback:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m unittest discover -s $(AI_REVIEW_ROOT)/tests -p 'test_*.py'
 
 lint:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import ruff" >/dev/null 2>&1 && PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests || PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m compileall -q $(AI_REVIEW_ROOT)/src
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(RUFF_PATHS)
+
+typecheck:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m mypy
+
+compile:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m compileall -q $(AI_REVIEW_ROOT)/src scripts
+
+supply-chain:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_supply_chain_pins.py
 
 update-golden:
 	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests $(PYTHON) $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py

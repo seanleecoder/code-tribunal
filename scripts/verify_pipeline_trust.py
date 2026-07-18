@@ -3,6 +3,5 @@ from __future__ import annotations
 
 from ai_review.pipeline_trust import main
 
-
 if __name__ == "__main__":
     raise SystemExit(main())

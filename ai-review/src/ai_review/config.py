@@ -99,7 +99,7 @@ def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) 
 
 
 def load_yaml_subset(text: str) -> dict[str, Any]:
-    import yaml  # type: ignore[import-untyped]
+    import yaml
 
     loaded = yaml.safe_load(text)
     if not isinstance(loaded, dict):

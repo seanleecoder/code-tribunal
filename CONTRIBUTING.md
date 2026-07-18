@@ -6,7 +6,7 @@ Thanks for helping improve Code Tribunal.
 
 ```bash
 # From the repository root:
-python -m pip install -r requirements-dev.txt
+python3 -m pip install -r requirements-dev.txt
 export PYTHONPATH="$PWD/ai-review/src"
 ```
 
@@ -17,17 +17,21 @@ development and is not an installable or supported Python distribution.
 Run the local quality checks before opening a pull request:
 
 ```bash
-make test
-ruff check ai-review/src ai-review/tests
-mypy ai-review/src/ai_review/consensus.py ai-review/src/ai_review/memory.py ai-review/src/ai_review/render.py ai-review/src/ai_review/schema.py ai-review/src/ai_review/anchors.py ai-review/src/ai_review/gitlab_client.py ai-review/src/ai_review/gate.py ai-review/src/ai_review/post.py
-mypy  # non-blocking whole-package debt signal; remaining known debt is outside the SPEC-13/14 strict slice
+make quality
 ```
+
+This is the same blocking command used by CI. It runs Ruff over the package,
+tests, and shipped scripts; pytest with coverage; whole-package mypy; the
+supply-chain pin audit; and Python compilation checks. For a minimal local
+environment, `make test` uses unittest only when pytest is not installed. An
+installed pytest failure is never retried through the fallback, and
+`make quality` never uses it.
 
 ## Pull Request Checklist
 
 - Summarize the change and link the finding/spec ID when applicable.
 - Add or update tests for behavior changes.
-- Keep `ruff` and `pytest` green; the scoped SPEC-13/14 `mypy` command is blocking, and the whole-package `mypy` command remains a visible non-blocking CI signal while remaining package-wide typing debt is closed incrementally.
+- Keep the canonical `make quality` gate green.
 - Document new configuration and mark reserved/inert options honestly.
 - Avoid exposing GitLab, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
 

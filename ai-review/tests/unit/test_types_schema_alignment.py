@@ -1,88 +1,150 @@
 from __future__ import annotations
 
-from typing import get_args, get_type_hints
+import types
+from typing import Literal, TypedDict, Union, get_args, get_origin, get_type_hints, is_typeddict
 
+import pytest
 from ai_review import types as domain_types
 from ai_review.schema import load_schema
 
-
-def _schema_required(schema_name: str, *path: str) -> set[str]:
-    node = load_schema(schema_name)
-    for part in path:
-        node = node[part]
-    return set(node["required"])
-
-
-def _schema_enum(schema_name: str, *path: str) -> set[str]:
-    node = load_schema(schema_name)
-    for part in path:
-        node = node[part]
-    return set(node["enum"])
+ARTIFACT_TYPES = {
+    "raw_finding_batch.schema.json": domain_types.RawFindingBatch,
+    "finding_batch.schema.json": domain_types.FindingBatch,
+    "critique_batch.schema.json": domain_types.CritiqueBatch,
+    "adapter_status.schema.json": domain_types.AdapterStatusArtifact,
+    "consensus.schema.json": domain_types.Consensus,
+    "state.schema.json": domain_types.State,
+    "state_aliases.schema.json": domain_types.StateAliasesArtifact,
+    "post_result.schema.json": domain_types.PostResult,
+    "gate_result.schema.json": domain_types.GateResult,
+}
 
 
-def test_line_ref_matches_finding_schema_required_fields() -> None:
-    assert set(domain_types.LineRef.__required_keys__) == _schema_required(
-        "finding_batch.schema.json", "$defs", "line"
+class _ObsoleteCritique(TypedDict, total=False):
+    target_source_finding_id: str
+    reviewer: str
+    verdict: Literal["agree", "dispute", "noise", "duplicate"]
+    rationale: str
+    duplicate_of: str | None
+    severity_adjustment: domain_types.Severity | None
+
+
+def _unwrap_alias(annotation: object) -> object:
+    while hasattr(annotation, "__value__"):
+        annotation = annotation.__value__
+    return annotation
+
+
+def _resolve_ref(node: dict[str, object], root: dict[str, object]) -> dict[str, object]:
+    while "$ref" in node:
+        ref = node["$ref"]
+        assert isinstance(ref, str) and ref.startswith("#/")
+        target: object = root
+        for part in ref[2:].split("/"):
+            assert isinstance(target, dict)
+            target = target[part]
+        assert isinstance(target, dict)
+        node = target
+    return node
+
+
+def _literal_values(annotation: object) -> set[object] | None:
+    annotation = _unwrap_alias(annotation)
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return set(get_args(annotation))
+    if origin in (types.UnionType, Union):
+        values: set[object] = set()
+        for member in get_args(annotation):
+            if member is type(None):
+                values.add(None)
+                continue
+            member_values = _literal_values(member)
+            if member_values is None:
+                return None
+            values.update(member_values)
+        return values
+    return None
+
+
+def _is_nullable(annotation: object) -> bool:
+    annotation = _unwrap_alias(annotation)
+    if annotation is type(None):
+        return True
+    if get_origin(annotation) is Literal:
+        return None in get_args(annotation)
+    if get_origin(annotation) in (types.UnionType, Union):
+        return any(_is_nullable(member) for member in get_args(annotation))
+    return False
+
+
+def _schema_is_nullable(node: dict[str, object]) -> bool:
+    schema_type = node.get("type")
+    return (
+        schema_type == "null"
+        or isinstance(schema_type, list)
+        and "null" in schema_type
+        or isinstance(node.get("enum"), list)
+        and None in node["enum"]
+        or node.get("const", object()) is None
     )
 
 
-def test_anchor_matches_finding_schema_required_fields_and_side_enum() -> None:
-    assert set(domain_types.Anchor.__required_keys__) == _schema_required(
-        "finding_batch.schema.json", "$defs", "anchor"
-    )
-    assert set(get_args(domain_types.AnchorSide.__value__)) == _schema_enum(
-        "finding_batch.schema.json", "$defs", "anchor", "properties", "side"
-    )
+def _assert_typed_dict_matches_schema(
+    artifact_type: type[object],
+    schema_node: dict[str, object],
+    schema_root: dict[str, object],
+) -> None:
+    schema_node = _resolve_ref(schema_node, schema_root)
+    assert is_typeddict(artifact_type)
+    properties = schema_node.get("properties")
+    assert isinstance(properties, dict)
+    required = schema_node.get("required", [])
+    assert isinstance(required, list)
+
+    hints = get_type_hints(artifact_type)
+    assert set(hints) == set(properties)
+    assert set(artifact_type.__required_keys__) == set(required)
+    assert set(artifact_type.__optional_keys__) == set(properties) - set(required)
+
+    for field, annotation in hints.items():
+        raw_field_schema = properties[field]
+        assert isinstance(raw_field_schema, dict)
+        field_schema = _resolve_ref(raw_field_schema, schema_root)
+        assert _is_nullable(annotation) == _schema_is_nullable(field_schema), field
+
+        expected_values: set[object] | None = None
+        if "enum" in field_schema:
+            enum = field_schema["enum"]
+            assert isinstance(enum, list)
+            expected_values = set(enum)
+        elif "const" in field_schema:
+            expected_values = {field_schema["const"]}
+        if expected_values is not None:
+            assert _literal_values(annotation) == expected_values, field
+
+        unwrapped = _unwrap_alias(annotation)
+        if is_typeddict(unwrapped):
+            _assert_typed_dict_matches_schema(unwrapped, field_schema, schema_root)
+            continue
+        if get_origin(unwrapped) is list:
+            item_type = _unwrap_alias(get_args(unwrapped)[0])
+            items = field_schema.get("items")
+            if is_typeddict(item_type):
+                assert isinstance(items, dict)
+                _assert_typed_dict_matches_schema(item_type, items, schema_root)
 
 
-def test_finding_matches_finding_schema_required_fields_and_evidence_type() -> None:
-    assert set(domain_types.Finding.__required_keys__) == _schema_required(
-        "finding_batch.schema.json", "$defs", "finding"
-    )
-    hints = get_type_hints(domain_types.Finding)
-    assert hints["evidence"] == list[str]
-    assert "candidate_issue_signature" in hints
+@pytest.mark.parametrize(("schema_name", "artifact_type"), ARTIFACT_TYPES.items())
+def test_artifact_type_recursively_matches_schema(
+    schema_name: str, artifact_type: type[object]
+) -> None:
+    schema = load_schema(schema_name)
+    _assert_typed_dict_matches_schema(artifact_type, schema, schema)
 
 
-def test_finding_group_optional_content_matches_consensus_schema() -> None:
-    schema = load_schema("consensus.schema.json")["$defs"]["group"]
-    hints = get_type_hints(domain_types.FindingGroup)
-    optional_content = {"suggestion", "evidence_by_reviewer", "critique_disputes"}
-    assert optional_content <= set(schema["properties"])
-    assert optional_content <= set(hints)
-    assert optional_content.isdisjoint(schema["required"])
-    assert set(domain_types.CritiqueDispute.__required_keys__) == {
-        "critic",
-        "rationale",
-    }
-    assert set(
-        schema["properties"]["critique_disputes"]["items"]["required"]
-    ) == {"critic", "rationale"}
-
-
-def test_post_result_matches_schema_required_fields() -> None:
-    assert set(domain_types.PostResult.__required_keys__) == _schema_required(
-        "post_result.schema.json"
-    )
-    assert set(get_args(domain_types.PostStatus.__value__)) == _schema_enum(
-        "post_result.schema.json", "properties", "status"
-    )
-
-
-def test_state_status_types_match_schema_enums() -> None:
-    assert set(get_args(domain_types.StateRecordStatus.__value__)) == _schema_enum(
-        "state.schema.json", "properties", "records", "items", "properties", "status"
-    )
-    assert set(get_args(domain_types.RemapStatus.__value__)) == _schema_enum(
-        "state.schema.json", "properties", "records", "items", "properties", "remap_status"
-    )
-
-
-def test_gate_result_matches_schema_required_fields() -> None:
-    assert set(domain_types.GateResult.__required_keys__) == _schema_required(
-        "gate_result.schema.json"
-    )
-    hints = get_type_hints(domain_types.GateResult)
-    assert "reason" in hints
-    assert "reasons" not in hints
-    assert "exit_code" not in hints
+def test_obsolete_critique_keys_fail_alignment() -> None:
+    schema = load_schema("critique_batch.schema.json")
+    critique_schema = schema["properties"]["critiques"]["items"]
+    with pytest.raises(AssertionError):
+        _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)

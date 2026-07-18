@@ -1,6 +1,7 @@
 """Platform-neutral review posting port."""
 
 from .base import (
+    ComparisonDiffPlatform,
     InlineComment,
     Position,
     ReviewPlatform,
@@ -11,6 +12,7 @@ from .base import (
 from .github import GitHubReviewPlatform, GitHubReviewPlatformError, PullRequestVersion
 
 __all__ = [
+    "ComparisonDiffPlatform",
     "InlineComment",
     "Position",
     "ReviewPlatform",

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .canonical import sha256_hex
 from .config import effective_config_digest, effective_config_summary, load_config
@@ -20,7 +20,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
-from .platform import ReviewPlatformError
+from .platform import ComparisonDiffPlatform, ReviewPlatformError
 from .platform.github import PullRequestVersion
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
@@ -613,7 +613,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     out_path.mkdir(parents=True, exist_ok=True)
     config_dict = load_config(config)
     try:
-        client = create_runtime_platform(config_dict)
+        client = cast(ComparisonDiffPlatform, create_runtime_platform(config_dict))
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     pull_request = _resolve_github_pull_request(client, repo)

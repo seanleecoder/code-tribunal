@@ -472,8 +472,18 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
 
 
 def _write_parse_debug(
-    output_dir: Path, reviewer: str, stage: str, stdout: str, stderr: str, *, kind: str = "parse"
+    output_dir: Path,
+    reviewer: str,
+    stage: str,
+    stdout: str | bytes,
+    stderr: str | bytes,
+    *,
+    kind: str = "parse",
 ) -> None:
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
     debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(
