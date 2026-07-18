@@ -1,0 +1,14 @@
+-c ai-review/images/python-constraints.txt
+
+# Container runtime dependencies
+jsonschema
+PyYAML
+requests
+
+# Contributor quality tooling
+mypy>=1.10
+pytest>=8.2
+pytest-cov>=5.0
+ruff>=0.5
+types-PyYAML
+types-requests>=2.32

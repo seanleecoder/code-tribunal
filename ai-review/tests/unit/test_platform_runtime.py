@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,6 +10,9 @@ from ai_review.platform.runtime import PlatformRuntimeError, create_runtime_plat
 
 
 class PlatformRuntimeTests(unittest.TestCase):
+    def test_factory_has_no_ignored_access_parameter(self) -> None:
+        self.assertNotIn("access", inspect.signature(create_runtime_platform).parameters)
+
     def test_github_mode_uses_github_factory(self) -> None:
         config = {"posting": {"mode": "github_reviews"}}
         platform = object()
@@ -18,7 +22,6 @@ class PlatformRuntimeTests(unittest.TestCase):
             self.assertIs(
                 create_runtime_platform(
                     config,
-                    access="write",
                     env={"GITHUB_API_URL": "https://github.example/api", "GITHUB_TOKEN": "x"},
                 ),
                 platform,
@@ -29,37 +32,30 @@ class PlatformRuntimeTests(unittest.TestCase):
             resolution_token=None,
         )
 
-    def test_gitlab_mode_uses_gitlab_token_for_both_accesses(self) -> None:
+    def test_gitlab_mode_uses_gitlab_token(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
         with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
-            for access in ("read", "write"):
-                with self.subTest(access=access):
-                    create_runtime_platform(
-                        config,
-                        access=access,
-                        env={
-                            "CI_API_V4_URL": "https://gitlab.example/api/v4",
-                            "GITLAB_TOKEN": "preferred",
-                            "GITLAB_READ_TOKEN": "legacy-read",
-                            "GITLAB_WRITE_TOKEN": "legacy-write",
-                        },
-                    )
-                    self.assertEqual(factory.call_args.args[1], "preferred")
+            create_runtime_platform(
+                config,
+                env={
+                    "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                    "GITLAB_TOKEN": "preferred",
+                    "GITLAB_READ_TOKEN": "legacy-read",
+                    "GITLAB_WRITE_TOKEN": "legacy-write",
+                },
+            )
+            self.assertEqual(factory.call_args.args[1], "preferred")
 
     def test_gitlab_mode_ignores_legacy_split_tokens(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
-        for access, legacy_name in (
-            ("read", "GITLAB_READ_TOKEN"),
-            ("write", "GITLAB_WRITE_TOKEN"),
-        ):
-            with self.subTest(access=access):
+        for legacy_name in ("GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
+            with self.subTest(legacy_name=legacy_name):
                 with self.assertRaisesRegex(
                     PlatformRuntimeError,
                     r"GITLAB_TOKEN.*GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN",
                 ) as ctx:
                     create_runtime_platform(
                         config,
-                        access=access,
                         env={
                             "CI_API_V4_URL": "https://gitlab.example/api/v4",
                             legacy_name: "legacy",
@@ -71,7 +67,6 @@ class PlatformRuntimeTests(unittest.TestCase):
         with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
-                access="write",
                 env={
                     "GITHUB_TOKEN": "x",
                     "AI_REVIEW_GITHUB_BOT_LOGIN": "github-actions[bot]",
@@ -88,7 +83,6 @@ class PlatformRuntimeTests(unittest.TestCase):
         with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
-                access="write",
                 env={
                     "GITHUB_TOKEN": "primary",
                     "AI_REVIEW_GITHUB_RESOLVE_TOKEN": "resolution",
@@ -107,7 +101,6 @@ class PlatformRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
-                access="write",
                 env={"GITHUB_TOKEN": "x", "GITHUB_ACTIONS": "true"},
             )
 
@@ -117,32 +110,25 @@ class PlatformRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
-                access="write",
                 env={"GITHUB_ACTIONS": "true"},
                 allow_dry_run_defaults=True,
             )
 
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
-            create_runtime_platform({"posting": {"mode": "github_reviews"}}, access="read", env={})
+            create_runtime_platform({"posting": {"mode": "github_reviews"}}, env={})
 
     def test_gitlab_missing_token_error_names_gitlab_token(self) -> None:
-        for access in ("read", "write"):
-            with (
-                self.subTest(access=access),
-                self.assertRaisesRegex(PlatformRuntimeError, "GITLAB_TOKEN"),
-            ):
-                create_runtime_platform(
-                    {"posting": {"mode": "gitlab_discussions"}},
-                    access=access,
-                    env={},
-                )
+        with self.assertRaisesRegex(PlatformRuntimeError, "GITLAB_TOKEN"):
+            create_runtime_platform(
+                {"posting": {"mode": "gitlab_discussions"}},
+                env={},
+            )
 
     def test_gitlab_requires_api_url_outside_dry_run(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "CI_API_V4_URL"):
             create_runtime_platform(
                 {"posting": {"mode": "gitlab_discussions"}},
-                access="read",
                 env={"GITLAB_TOKEN": "t"},
             )
 
@@ -150,7 +136,6 @@ class PlatformRuntimeTests(unittest.TestCase):
         with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "gitlab_discussions"}},
-                access="write",
                 env={},
                 allow_dry_run_defaults=True,
             )

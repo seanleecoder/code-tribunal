@@ -78,16 +78,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm "$AI_REVIEW_BASE_TAG" \
+          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
-          docker run --rm "$AI_REVIEW_BASE_TAG" \
+          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
+          for module in input_bundle consensus post gate schema; do
+            docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
+              python -m "ai_review.$module" --help >/dev/null
+          done
 
       - name: Preflight reviewer image
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm "$AI_REVIEW_REVIEWER_TAG" sh -euxc '
+          docker run --rm --workdir /tmp --read-only --tmpfs /tmp \
+            "$AI_REVIEW_REVIEWER_TAG" sh -euxc '
             claude --version
             codex --version
             opencode --version

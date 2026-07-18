@@ -148,6 +148,8 @@ stateDiagram-v2
 The state note cannot grow unboundedly: retention policy
 (`state.retention.*` in [review.yaml](../ai-review/config/review.yaml)) keeps
 open/wontfix records plus a bounded history of resolved/stale
-records, capped by `max_records` and `max_state_bytes`. If the payload would
+records. `keep_resolved_records` and `keep_stale_records` are record counts,
+not run windows. The result is also capped by `max_records` and
+`max_state_bytes`. If the payload would
 still overflow, the post step reports `state_overflow` and the **gate fails
 closed** — a review whose memory cannot be persisted does not pass silently.

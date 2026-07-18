@@ -15,7 +15,6 @@ def _full_config() -> dict:
     config["critique"] = {
         "enabled": True,
         "rounds": 1,
-        "max_rounds": 1,
         "blind_reviewer_identity": True,
         "can_add_quorum_votes": False,
         "allow_advisory_escalation": False,
@@ -115,7 +114,6 @@ class CritiquePromptRenderTests(unittest.TestCase):
                         "critique:",
                         "  enabled: true",
                         "  rounds: 1",
-                        "  max_rounds: 1",
                         "  blind_reviewer_identity: true",
                         "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",

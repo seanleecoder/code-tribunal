@@ -5,8 +5,13 @@ Thanks for helping improve Code Tribunal.
 ## Development Setup
 
 ```bash
-python -m pip install -e '.[dev]'
+python -m pip install -r requirements-dev.txt
+export PYTHONPATH=ai-review/src
 ```
+
+The Python source under `ai-review/src` is an internal implementation used by
+the shipped container images. It is loaded directly from the checkout during
+development and is not an installable or supported Python distribution.
 
 Run the local quality checks before opening a pull request:
 

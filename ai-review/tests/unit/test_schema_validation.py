@@ -342,7 +342,6 @@ class SchemaValidationTests(unittest.TestCase):
                         "critique:",
                         "  enabled: false",
                         "  rounds: 0",
-                        "  max_rounds: 1",
                         "  blind_reviewer_identity: true",
                         "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",

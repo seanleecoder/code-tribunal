@@ -20,6 +20,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Changed
 
+- Code Tribunal now declares container images and CI templates as its only
+  supported distribution artifacts. Python modules remain internal container
+  implementation details loaded from `/opt/ai-review/src`.
+- State retention controls are named for their actual units:
+  `keep_resolved_records` and `keep_stale_records` retain bounded counts of
+  records rather than run windows.
 - Finding batches now record batch-quality fields (`raw_finding_count`,
   `accepted_finding_count`, `dropped_finding_count`, `usable_for_resolution`)
   and bind `effective_config_sha256`. Consensus panel seats and absence-based
@@ -65,6 +71,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Removed
 
+- Removed the incomplete Python distribution metadata, `py.typed` marker,
+  package version export, and editable-install contributor workflow. The
+  repository `pyproject.toml` now contains tool configuration only.
+- Removed inert `critique.max_rounds`, deprecated top-level
+  `state.overflow_behavior` compatibility, the ignored `access` argument from
+  `create_runtime_platform`, and unused platform protocol shadow shapes.
 - Removed hand-rolled YAML and JSON Schema fallback parsers; PyYAML and jsonschema
   are hard runtime dependencies and missing imports now fail fast.
 - Removed the deprecated `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` fallback; only
@@ -101,10 +113,15 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - The posted-body format is now `render-body.v2`. Existing bot-authored threads receive
   a one-time body update on the next review run.
 - Replace legacy top-level `state.overflow_behavior: fail_closed` with
-  `state.fail_closed_on_load_error: true`. The legacy key is accepted for one release
-  with a deprecation warning. Remove `state.retention.overflow_behavior` and
+  `state.fail_closed_on_load_error: true`; the legacy key is now rejected.
+  Remove `critique.max_rounds`. Rename `state.retention.keep_resolved_runs` and
+  `state.retention.keep_stale_runs` to `keep_resolved_records` and
+  `keep_stale_records`. Remove `state.retention.overflow_behavior` and
   `state.retention.keep_superseded_runs` from custom configurations; they are now
   rejected as unknown keys.
+- Python consumers must switch to the supported digest-pinned containers and CI
+  templates. Direct source imports remain available only as an unsupported
+  contributor/testing mechanism.
 - Ensure `panel.min_successful_reviewers_for_resolution` and
   `panel.quorum.votes_required` do not exceed the enabled reviewer count. When reducing
   the panel to one enabled reviewer, set the blocking, resolution, and voting thresholds

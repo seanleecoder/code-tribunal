@@ -11,6 +11,8 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ai-review/src
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -18,7 +20,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Install dev dependencies
-        run: python -m pip install -e '.[dev]'
+        run: python -m pip install -r requirements-dev.txt
       - name: Ruff
         run: ruff check ai-review/src ai-review/tests
       - name: Tests with coverage
