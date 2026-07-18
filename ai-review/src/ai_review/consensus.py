@@ -21,7 +21,6 @@ from .render import platform_comment_limit, render_body
 from .schema import (
     SchemaValidationError,
     batch_quality_fields,
-    finalize_critique_batch,
     load_json_file,
     validate_instance,
     write_canonical_json,
@@ -834,12 +833,16 @@ def require_critique_provenance(
     run_id: str,
     config_digest: str,
 ) -> None:
-    """Validate critique artifact provenance before finalize overwrites it.
+    """Validate critique artifact provenance for a finalized critique batch.
+
+    Consensus consumes adapter-finalized artifacts only (no identity repair here).
+    Filename stem must equal the batch ``critic`` exactly. Blank or
+    whitespace-only payload critics are rejected the same as a wrong name
+    (a space-only critic is not treated as absent for silent repair).
 
     Digest matching is intentionally success-only (same policy as finding batches):
     non-success critique seats may carry a degraded stamp and only degrade the
-    panel. Filename ``critic`` is authoritative; a present payload critic that
-    disagrees is rejected rather than silently rewritten.
+    panel.
     """
     if not isinstance(raw, dict):
         raise ConsensusIntegrityError(f"critique batch is not an object for critic={critic}")
@@ -847,8 +850,7 @@ def require_critique_provenance(
         raise ConsensusIntegrityError(
             f"critique batch run_id mismatch for critic={critic}"
         )
-    raw_critic = raw.get("critic")
-    if raw_critic is not None and str(raw_critic).strip() and str(raw_critic).strip() != critic:
+    if raw.get("critic") != critic:
         raise ConsensusIntegrityError(
             f"critique batch critic mismatches filename for critic={critic}"
         )
@@ -1005,20 +1007,15 @@ def cli(argv: list[str] | None = None) -> int:
                     raise ConsensusIntegrityError(
                         f"critique batch is not an object for critic={path.stem}"
                     )
+                # Finalized-only: schema before provenance; no finalize/repair.
+                validate_instance(raw, "critique_batch.schema.json")
                 require_critique_provenance(
                     raw,
                     critic=path.stem,
                     run_id=run_id,
                     config_digest=config_digest,
                 )
-                critique_batches.append(
-                    finalize_critique_batch(
-                        raw,
-                        critic=path.stem,
-                        run_id=run_id,
-                        effective_config_sha256=config_digest,
-                    )
-                )
+                critique_batches.append(raw)
 
         validate_consensus_inputs(
             config=config,
@@ -1030,14 +1027,10 @@ def cli(argv: list[str] | None = None) -> int:
             manifest, batches, config, state=state, critique_batches=critique_batches
         )
         validate_instance(consensus, "consensus.schema.json")
-    except (
-        ConsensusIntegrityError,
-        SchemaValidationError,
-        CanonicalError,
-        json.JSONDecodeError,
-        OSError,
-        TypeError,
-    ) as exc:
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ai-review consensus: cannot read artifact: {exc}", file=sys.stderr)
+        return 3
+    except (ConsensusIntegrityError, SchemaValidationError, CanonicalError) as exc:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
 

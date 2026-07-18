@@ -40,7 +40,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   critic≠filename spoofing, unknown critique targets, or malformed consumed
   artifacts (including garbage JSON / schema errors). Digest checks are
   success-only; non-success batches with a mismatched digest degrade the panel
-  instead of hard-failing the run.
+  instead of hard-failing the run. Consensus does not repair critique identity
+  fields — missing/blank critics fail schema validation before accept.
+  Unreadable/malformed JSON surfaces as `cannot read artifact`; programming
+  errors in the reducer are not mapped to integrity exit 3.
 - Posting now degrades update-path platform failures to summary fallback with a
   structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
   idempotent GET/PUT/PATCH calls on 429/5xx/connection errors (including

@@ -92,7 +92,9 @@ Same inputs → identical `consensus.json`, every time.
    detector for cross-job policy/env drift, not a tamper-proof seal. Digest and
    model binding apply to **success** finding/critique batches only; non-success
    seats may carry a degraded stamp and only degrade the panel. Critique
-   filename binds critic identity — a disagreeing payload `critic` fails closed.
+   files are consumed as adapter-finalized artifacts (no identity repair at
+   consensus); filename stem must equal batch `critic` exactly — blank,
+   whitespace-only, or disagreeing values fail closed.
 
 2. **Deduplication via union-find.** `same_issue(a, b)` is a symmetric predicate:
    same `source_finding_id` / validated critique duplicate-link; OR same

@@ -181,6 +181,7 @@ class ConsensusCliTests(unittest.TestCase):
                             "target_source_finding_id": "1" * 64,
                             "critic": "codex",
                             "verdict": "agree",
+                            "duplicate_of_source_finding_id": None,
                             "rationale": "valid",
                             "adjusted_severity": None,
                             "confidence": 0.8,
