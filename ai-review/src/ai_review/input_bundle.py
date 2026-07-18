@@ -15,6 +15,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
+from .platform import ReviewPlatformError
 from .platform.github import PullRequestVersion
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
@@ -318,7 +319,10 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
     version = client.fetch_version(project_id, mr_iid)
-    diff_text = client.fetch_diff(project_id, mr_iid)
+    try:
+        diff_text = client.fetch_diff(project_id, mr_iid)
+    except ReviewPlatformError as exc:
+        raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 

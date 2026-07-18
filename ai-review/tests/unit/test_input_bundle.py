@@ -16,6 +16,7 @@ from ai_review.input_bundle import (
     prepare_github_bundle,
     prepare_gitlab_bundle,
 )
+from ai_review.platform import ReviewPlatformError
 
 
 def _diff_with_files(count: int) -> str:
@@ -117,6 +118,41 @@ class InputBundleLimitTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "current_user"),
+        ):
+            prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
+
+    def test_prepare_surfaces_truncated_diff_as_bundle_error(self) -> None:
+        class TruncatedDiffClient:
+            def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
+                return MergeRequestVersion("base", "start", "head")
+
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
+                raise ReviewPlatformError(
+                    "merge request diff is truncated or collapsed for big.py; "
+                    "refusing to review an incomplete diff"
+                )
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                    "CI_PROJECT_ID": "1",
+                    "CI_MERGE_REQUEST_IID": "2",
+                    "GITLAB_TOKEN": "token",
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "ai_review.input_bundle.load_config",
+                return_value={"state": {"backend": "none"}},
+            ),
+            mock.patch(
+                "ai_review.input_bundle.create_runtime_platform",
+                return_value=TruncatedDiffClient(),
+            ),
+            self.assertRaisesRegex(BundleError, "truncated or collapsed"),
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
 

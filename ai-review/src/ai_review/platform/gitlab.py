@@ -44,7 +44,10 @@ class GitLabReviewPlatform(GitLabClient):
         return self.fetch_latest_mr_version(project_id_or_path, change_id)
 
     def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
-        return self.fetch_mr_diff(project_id_or_path, change_id)
+        try:
+            return self.fetch_mr_diff(project_id_or_path, change_id)
+        except GitLabApiError as exc:
+            raise GitLabReviewPlatformError(str(exc)) from exc
 
     def fetch_current_head_sha(self, project_id_or_path: str | int, change_id: str | int) -> str:
         return self.fetch_current_mr_head_sha(project_id_or_path, change_id)

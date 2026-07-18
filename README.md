@@ -386,7 +386,7 @@ secret is materialized only when the repository variable is exactly `true`.
 | Variable | Description | Masked | Protected | Required |
 |---|---|---|---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API Key for Claude, Codex, & OpenCode reviewers. | Yes | Yes | Yes |
-| `GITLAB_TOKEN` | Project access token with `api` scope. (Legacy `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` are deprecated). | Yes | Yes | Yes |
+| `GITLAB_TOKEN` | Project access token with `api` scope. | Yes | Yes | Yes |
 
 Protected variables are intentionally withheld from unprotected fork/MR branches. If an external fork pipeline needs advisory-only review, do not expose the secret-bearing template or tokens to that pipeline. Maintainers can audit a consumer CI file before rollout:
 

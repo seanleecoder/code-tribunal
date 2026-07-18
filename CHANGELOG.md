@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Changed
 
+- Posting now degrades update-path platform failures to summary fallback with a
+  structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
+  idempotent GET/PUT/PATCH calls on 429/5xx/connection errors.
+- GitLab prepare fetches MR diffs from the paginated `/diffs` endpoint and fails
+  loudly when GitLab marks any file as collapsed or truncated.
 - Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
@@ -21,6 +26,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Removed
 
+- Removed hand-rolled YAML and JSON Schema fallback parsers; PyYAML and jsonschema
+  are hard runtime dependencies and missing imports now fail fast.
+- Removed the deprecated `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` fallback; only
+  `GITLAB_TOKEN` is accepted for GitLab prepare and post.
 - Removed the unused `python-gitlab` runtime dependency from the package and base image
   (the in-tree requests-based GitLab client is the only integration path).
 - Removed the unused `respond` adapter stage, direct OpenRouter reviewer module,
@@ -31,6 +40,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Migration
 
+- Replace any remaining `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` CI variables with a
+  single `GITLAB_TOKEN` project access token (`api` scope) used by prepare and post.
 - The posted-body format is now `render-body.v2`. Existing bot-authored threads receive
   a one-time body update on the next review run.
 - Replace legacy top-level `state.overflow_behavior: fail_closed` with

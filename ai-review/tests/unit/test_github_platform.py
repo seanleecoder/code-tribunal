@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest import mock
 
 from ai_review.memory import encode_state_note
 from ai_review.platform.github import (
@@ -579,3 +580,43 @@ def test_unresolve_thread_validates_successful_mutation() -> None:
 
     assert thread["resolved"] is False
     assert "unresolveReviewThread" in session.calls[-1][2]["json"]["query"]
+
+
+def test_request_retries_idempotent_verbs_on_502() -> None:
+    class FlakySession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            self.calls += 1
+            if self.calls < 3:
+                return Response(502, {"message": "bad gateway"})
+            return Response(200, {"ok": True})
+
+    session = FlakySession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch("ai_review.http_retry.sleep"):
+        payload = platform._request("GET", "/repos/octo/repo")
+    assert payload == {"ok": True}
+    assert session.calls == 3
+
+
+def test_request_does_not_retry_post() -> None:
+    class Always502Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            self.calls += 1
+            return Response(502, {"message": "bad gateway"})
+
+    session = Always502Session()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch("ai_review.http_retry.sleep"):
+        try:
+            platform._request("POST", "/repos/octo/repo/issues/7/comments", json={"body": "x"})
+        except GitHubReviewPlatformError as exc:
+            assert "502" in str(exc)
+        else:
+            raise AssertionError("POST should fail without retrying")
+    assert session.calls == 1

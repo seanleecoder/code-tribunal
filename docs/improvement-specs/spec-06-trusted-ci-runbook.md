@@ -87,9 +87,9 @@ In the consumer project, configure these as Masked and Protected variables:
 - `OPENROUTER_API_KEY`
 - `GITLAB_TOKEN`
 
-`GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` remain temporary deprecated
-fallbacks. Do not configure them for new installations: separate project
-access tokens have separate bot identities and break self-recognition.
+Do not configure `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN`: they are no longer
+accepted. Separate project access tokens have separate bot identities and break
+self-recognition; use one `GITLAB_TOKEN` for prepare and post.
 
 Protected variables must not be available to unprotected external fork branches.
 That property is the security boundary this runbook validates.
@@ -109,8 +109,7 @@ the PR evidence.
    run from the protected template or are withheld from the unprotected fork
    because Protected variables are unavailable.
 4. Confirm job logs do not contain `OPENROUTER_API_KEY` or `GITLAB_TOKEN`
-   values. If validating a legacy installation, also confirm they do not
-   contain `GITLAB_READ_TOKEN` or `GITLAB_WRITE_TOKEN` values.
+   values.
 5. Download artifacts and confirm any `gate_result.json` was produced by the
    trusted gate job, not by an MR-controlled job definition.
 6. Re-run after changing the MR branch's local review template and child trigger

@@ -113,7 +113,7 @@ indexes existing discussions by marker and edits in place. What you may see:
 On GitLab, each project access token is its own bot user.
 
 - **Token rotation consequences**: Rotating `GITLAB_TOKEN` creates a new bot user. By design, the pipeline distrusts state notes and discussions authored by the old bot user. This causes a one-time re-post of active findings under the new identity.
-- **Two-token identity split (legacy)**: Using `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` as two separate tokens creates an identity split where the read step rejects the write step's notes on every run. Use a single `GITLAB_TOKEN` to fix this pitfall.
+- **Split-token variables are not accepted**: `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` are no longer read. Configure a single `GITLAB_TOKEN` for prepare and post.
 
 ## GitHub review threads remain open after a clean rerun
 
