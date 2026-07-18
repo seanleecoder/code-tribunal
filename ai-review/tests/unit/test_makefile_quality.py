@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -8,8 +9,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+MAKEFILE = REPO_ROOT / "Makefile"
+MAKE_TESTS_AVAILABLE = MAKEFILE.exists() and shutil.which("make") is not None
 
 
+@unittest.skipUnless(
+    MAKE_TESTS_AVAILABLE,
+    "repository Makefile and make executable are unavailable in the runtime image",
+)
 class MakeQualityExitPropagationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -114,6 +121,10 @@ exit 0
         )
 
 
+@unittest.skipUnless(
+    CI_WORKFLOW.exists(),
+    "repository CI workflow is unavailable in the runtime image",
+)
 class QualityWorkflowContractTests(unittest.TestCase):
     def test_ci_uses_the_canonical_blocking_quality_target(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import types
+import unittest
 from typing import Literal, TypedDict, Union, get_args, get_origin, get_type_hints, is_typeddict
 
-import pytest
 from ai_review import types as domain_types
 from ai_review.schema import load_schema
 
@@ -135,16 +135,19 @@ def _assert_typed_dict_matches_schema(
                 _assert_typed_dict_matches_schema(item_type, items, schema_root)
 
 
-@pytest.mark.parametrize(("schema_name", "artifact_type"), ARTIFACT_TYPES.items())
-def test_artifact_type_recursively_matches_schema(
-    schema_name: str, artifact_type: type[object]
-) -> None:
-    schema = load_schema(schema_name)
-    _assert_typed_dict_matches_schema(artifact_type, schema, schema)
+class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
+    def test_artifact_types_recursively_match_schemas(self) -> None:
+        for schema_name, artifact_type in ARTIFACT_TYPES.items():
+            with self.subTest(schema_name=schema_name, artifact_type=artifact_type.__name__):
+                schema = load_schema(schema_name)
+                _assert_typed_dict_matches_schema(artifact_type, schema, schema)
+
+    def test_obsolete_critique_keys_fail_alignment(self) -> None:
+        schema = load_schema("critique_batch.schema.json")
+        critique_schema = schema["properties"]["critiques"]["items"]
+        with self.assertRaises(AssertionError):
+            _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)
 
 
-def test_obsolete_critique_keys_fail_alignment() -> None:
-    schema = load_schema("critique_batch.schema.json")
-    critique_schema = schema["properties"]["critiques"]["items"]
-    with pytest.raises(AssertionError):
-        _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)
+if __name__ == "__main__":
+    unittest.main()
