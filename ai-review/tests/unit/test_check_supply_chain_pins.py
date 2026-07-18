@@ -98,6 +98,13 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
             [],
         )
+        self.assertEqual(
+            check_supply_chain_pins._overlapping_python_pin_issues(
+                check_supply_chain_pins.PYTHON_CONSTRAINTS.read_text(encoding="utf-8"),
+                requirements,
+            ),
+            [],
+        )
 
     def test_detects_floating_dev_tool_requirement(self) -> None:
         self.assertEqual(
@@ -106,6 +113,18 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 "requirements-dev.txt",
             ),
             ["requirements-dev.txt must use exact == pins only, got 'pytest>=9'"],
+        )
+
+    def test_detects_dev_runtime_pin_drift(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._overlapping_python_pin_issues(
+                "PyYAML==6.0.3\nrequests==2.32.5\n",
+                "pyyaml==6.0.2\npytest==9.1.1\n",
+            ),
+            [
+                "requirements-dev.txt pin pyyaml==6.0.2 must match "
+                "python-constraints.txt pin PyYAML==6.0.3"
+            ],
         )
 
     def test_detects_malformed_cursor_agent_pin(self) -> None:

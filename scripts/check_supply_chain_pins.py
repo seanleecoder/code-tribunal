@@ -87,6 +87,37 @@ def _exact_requirement_issues(text: str, filename: str) -> list[str]:
     return issues
 
 
+def _exact_pins(text: str) -> dict[str, tuple[str, str]]:
+    pins: dict[str, tuple[str, str]] = {}
+    for line in text.splitlines():
+        requirement = line.strip()
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s]+)", requirement)
+        if match is None:
+            continue
+        name, version = match.groups()
+        normalized = re.sub(r"[-_.]+", "-", name).lower()
+        pins[normalized] = (name, version)
+    return pins
+
+
+def _overlapping_python_pin_issues(
+    constraints_text: str, requirements_text: str
+) -> list[str]:
+    constraints = _exact_pins(constraints_text)
+    requirements = _exact_pins(requirements_text)
+    issues: list[str] = []
+    for normalized_name in sorted(constraints.keys() & requirements.keys()):
+        constraint_name, constraint_version = constraints[normalized_name]
+        requirement_name, requirement_version = requirements[normalized_name]
+        if constraint_version != requirement_version:
+            issues.append(
+                f"requirements-dev.txt pin {requirement_name}=={requirement_version} "
+                f"must match python-constraints.txt pin "
+                f"{constraint_name}=={constraint_version}"
+            )
+    return issues
+
+
 def _workflow_structure_issues(text: str) -> list[str]:
     """Catch YAML entries accidentally folded into an inline comment.
 
@@ -334,6 +365,9 @@ def main() -> int:
         failures += 1
     if dev_requirements is not None:
         for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):
+            error(issue)
+            failures += 1
+        for issue in _overlapping_python_pin_issues(constraints, dev_requirements):
             error(issue)
             failures += 1
     if "npm install -g" in reviewer:
