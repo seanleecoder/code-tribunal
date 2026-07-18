@@ -641,3 +641,35 @@ def test_request_normalizes_exhausted_connection_errors() -> None:
         else:
             raise AssertionError("exhausted connection retries should raise platform error")
     assert session.calls == 3
+
+
+def test_request_retries_and_normalizes_exhausted_proxy_errors() -> None:
+    requests_connection_error = type(
+        "ConnectionError",
+        (Exception,),
+        {"__module__": "requests.exceptions"},
+    )
+    proxy_error = type(
+        "ProxyError",
+        (requests_connection_error,),
+        {"__module__": "requests.exceptions"},
+    )
+
+    class ProxyBoomSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, method: str, url: str, **kwargs: Any) -> Response:
+            self.calls += 1
+            raise proxy_error("proxy down")
+
+    session = ProxyBoomSession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch("ai_review.http_retry.sleep"):
+        try:
+            platform._request("GET", "/repos/octo/repo")
+        except GitHubReviewPlatformError as exc:
+            assert "connection error" in str(exc)
+        else:
+            raise AssertionError("exhausted proxy retries should raise platform error")
+    assert session.calls == 3

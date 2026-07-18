@@ -11,6 +11,23 @@ MAX_ATTEMPTS = 3
 # immediately re-enter the same rate-limit window.
 BACKOFF_SECONDS = (1.0, 2.0, 4.0)
 
+# Transient transport failure type names under requests/urllib3. Matched via
+# MRO so subclasses (e.g. requests.exceptions.ProxyError → ConnectionError)
+# are recognized without importing requests at module import time.
+_TRANSIENT_TRANSPORT_NAMES = frozenset(
+    {
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "ChunkedEncodingError",
+        "ProtocolError",
+        "NewConnectionError",
+        "MaxRetryError",
+        "ProxyError",
+    }
+)
+
 # Tests patch this symbol to avoid real delays.
 sleep = time.sleep
 
@@ -22,22 +39,15 @@ def is_retryable_status(status_code: int) -> bool:
 def is_connection_error(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
-    module = type(exc).__module__ or ""
-    name = type(exc).__name__
-    # Enumerate transient transport failures only. Do not treat the requests
-    # base RequestException as retryable — it also covers permanent errors
-    # such as InvalidURL, MissingSchema, and TooManyRedirects.
-    if module.startswith(("requests", "urllib3")):
-        return name in {
-            "ConnectionError",
-            "ConnectTimeout",
-            "ReadTimeout",
-            "Timeout",
-            "ChunkedEncodingError",
-            "ProtocolError",
-            "NewConnectionError",
-            "MaxRetryError",
-        }
+    # Walk the MRO so requests.exceptions.ProxyError (subclass of
+    # requests.exceptions.ConnectionError) is treated as transient, while the
+    # requests base RequestException and permanent subclasses are not.
+    for cls in type(exc).mro():
+        module = getattr(cls, "__module__", "") or ""
+        if module.startswith(("requests", "urllib3")) and (
+            cls.__name__ in _TRANSIENT_TRANSPORT_NAMES
+        ):
+            return True
     return False
 
 
@@ -68,14 +78,11 @@ def send_with_retries[T](
         try:
             response = do_request()
         except Exception as exc:
-            if (
-                retryable
-                and is_connection_error(exc)
-                and attempt_index < attempts - 1
-            ):
+            connection_error = is_connection_error(exc)
+            if retryable and connection_error and attempt_index < attempts - 1:
                 sleep(backoff_seconds[min(attempt_index, len(backoff_seconds) - 1)])
                 continue
-            if is_connection_error(exc) and make_connection_error is not None:
+            if connection_error and make_connection_error is not None:
                 raise make_connection_error(exc) from exc
             raise
 

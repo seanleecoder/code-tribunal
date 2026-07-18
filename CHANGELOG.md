@@ -10,7 +10,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 - Posting now degrades update-path platform failures to summary fallback with a
   structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
-  idempotent GET/PUT/PATCH calls on 429/5xx/connection errors.
+  idempotent GET/PUT/PATCH calls on 429/5xx/connection errors (including
+  `requests` proxy/transport subclasses such as `ProxyError`). Exhausted
+  connection failures on any verb, including non-retried POST, are normalized
+  to platform API errors instead of raw transport exceptions.
 - GitLab prepare fetches MR diffs from the paginated `/diffs` endpoint and fails
   loudly when GitLab marks any file as collapsed or truncated.
 - Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
