@@ -78,7 +78,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
+          # The suite creates executable fake reviewer CLIs under /tmp. Keep it
+          # checkout-independent, but do not mount /tmp noexec for this command.
+          docker run --rm --workdir /tmp "$AI_REVIEW_BASE_TAG" \
             python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
