@@ -77,6 +77,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
+        effective_config_sha256="0" * 64,
         )
         batch["critiques"] = [
             {
@@ -124,6 +125,7 @@ class SchemaValidationTests(unittest.TestCase):
             model="local",
             started_at=started,
             completed_at=started,
+        effective_config_sha256="0" * 64,
         )
         validate_instance(batch, "finding_batch.schema.json")
 
@@ -133,6 +135,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
+        effective_config_sha256="0" * 64,
         )
 
         validate_instance(batch, "critique_batch.schema.json")
@@ -143,6 +146,7 @@ class SchemaValidationTests(unittest.TestCase):
             "success",
             run_id="local",
             started_at=now_iso(),
+        effective_config_sha256="0" * 64,
         )
         batch["critiques"] = [
             {
@@ -175,6 +179,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="codex",
             run_id="local",
+        effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["schema_version"], "critique_batch.v1")
@@ -206,6 +211,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="claude",
             run_id="local",
+        effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["adapter_status"], "model_error")
@@ -231,6 +237,7 @@ class SchemaValidationTests(unittest.TestCase):
             },
             critic="claude",
             run_id="local",
+        effective_config_sha256="0" * 64,
         )
 
         self.assertEqual(finalized["adapter_status"], "schema_error")
@@ -429,6 +436,7 @@ class SchemaValidationTests(unittest.TestCase):
                 run_id="local",
                 started_at="2026-06-29T00:00:00Z",
                 input_dir=input_dir,
+            effective_config_sha256="0" * 64,
             )
             signature = finalized["findings"][0]["candidate_issue_signature"]
             self.assertEqual(signature["path_key"], "src/foo.py")

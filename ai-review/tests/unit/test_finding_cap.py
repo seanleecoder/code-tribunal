@@ -76,6 +76,7 @@ class FindingCapTests(unittest.TestCase):
                 started_at="2026-06-29T00:00:00Z",
                 input_dir=input_dir,
                 max_findings=2,
+            effective_config_sha256="0" * 64,
             )
         self.assertEqual(len(finalized["findings"]), 2)
         self.assertEqual({finding["severity"] for finding in finalized["findings"]}, {"blocker"})
@@ -112,6 +113,7 @@ class FindingCapTests(unittest.TestCase):
                     started_at="2026-06-29T00:00:00Z",
                     input_dir=input_dir,
                     max_findings=2,
+                effective_config_sha256="0" * 64,
                 )
         self.assertEqual(finalized["adapter_status"], "success")
         self.assertEqual(
@@ -149,6 +151,7 @@ class FindingCapTests(unittest.TestCase):
                     run_id="local",
                     started_at="2026-06-29T00:00:00Z",
                     input_dir=input_dir,
+                effective_config_sha256="0" * 64,
                 )
         titles = {finding["title"] for finding in finalized["findings"]}
         self.assertEqual(titles, {"Valid one", "Valid two"})
@@ -175,6 +178,7 @@ class FindingCapTests(unittest.TestCase):
             model="model",
             run_id="local",
             started_at="2026-06-29T00:00:00Z",
+        effective_config_sha256="0" * 64,
         )
         self.assertEqual(len(finalized["findings"]), 1)
         validate_instance(finalized, "finding_batch.schema.json")
@@ -200,6 +204,7 @@ class FindingCapTests(unittest.TestCase):
                 run_id="local",
                 started_at="2026-06-29T00:00:00Z",
                 input_dir=input_dir,
+            effective_config_sha256="0" * 64,
             )
         self.assertEqual(len(finalized["findings"]), 2)
         validate_instance(finalized, "finding_batch.schema.json")

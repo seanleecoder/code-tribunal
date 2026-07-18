@@ -11,6 +11,7 @@
     "head_sha",
     "input_manifest_sha256",
     "successful_reviewers",
+    "resolution_eligible_reviewers",
     "failed_reviewers",
     "panel_status",
     "groups",
@@ -28,7 +29,13 @@
     },
     "successful_reviewers": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "description": "Reviewers with adapter_status=success and usable evidence for panel operation (valid empty or at least one accepted finding)."
+    },
+    "resolution_eligible_reviewers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Reviewers whose batches are usable for absence-based resolution quorum."
     },
     "failed_reviewers": {
       "type": "array",

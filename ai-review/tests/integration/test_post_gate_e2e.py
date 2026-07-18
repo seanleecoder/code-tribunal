@@ -217,6 +217,7 @@ class PostGateEndToEndTests(unittest.TestCase):
         return [self._batch("claude", finding)]
 
     def _batch(self, reviewer: str, finding: dict[str, Any]) -> dict[str, Any]:
+        findings = [copy.deepcopy(finding)]
         return {
             "schema_version": "finding_batch.v1",
             "run_id": "integration-run",
@@ -225,7 +226,12 @@ class PostGateEndToEndTests(unittest.TestCase):
             "model": "fixture-model",
             "started_at": "2026-07-11T00:00:00Z",
             "completed_at": "2026-07-11T00:00:01Z",
-            "findings": [copy.deepcopy(finding)],
+            "raw_finding_count": len(findings),
+            "accepted_finding_count": len(findings),
+            "dropped_finding_count": 0,
+            "usable_for_resolution": True,
+            "effective_config_sha256": "0" * 64,
+            "findings": findings,
         }
 
     def _finding(

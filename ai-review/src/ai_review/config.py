@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .canonical import stable_json_hash
+
 
 class ConfigError(ValueError):
     pass
@@ -133,7 +135,7 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     Applied at load time so every stage (reviewer fan-out, panel sizing, and the
     deterministic consensus engine) sees a consistent view. This requires the
     override vars to be set as project-wide CI/CD variables (visible to all jobs);
-    the consensus stage additionally warns if its view disagrees with the manifest.
+    the consensus stage fails if its view disagrees with the prepare manifest.
 
     Recognized overrides:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
@@ -243,7 +245,7 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
                 "enabled": bool(reviewer.get("enabled")),
                 "effort": reviewer.get("effort"),
             }
-            for name, reviewer in reviewers.items()
+            for name, reviewer in sorted(reviewers.items())
             if isinstance(reviewer, dict)
         },
         "critique_enabled": bool(critique.get("enabled")),
@@ -258,6 +260,11 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
             float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
         ),
     }
+
+
+def effective_config_digest(config: dict[str, Any]) -> str:
+    """Canonical SHA-256 of ``effective_config_summary`` for cross-stage binding."""
+    return stable_json_hash(effective_config_summary(config))
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

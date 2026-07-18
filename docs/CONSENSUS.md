@@ -41,9 +41,11 @@ regex-scraping of prose** for findings — the funnel is:
    (extra fields are dropped), and — critically — **recomputes each finding's
    `context_hash` from the actual MR diff** (`anchors.py`) rather than trusting the
    hash the model reported. Fingerprints and IDs are computed deterministically. A
-   single malformed finding is dropped on its own, not fatal to the batch. Output
-   is capped at `max_findings`, but sorted by severity/confidence first so blockers
-   survive a verbose or prompt-injected flood.
+   single malformed finding is dropped on its own, not fatal to the batch; the batch
+   records `raw_finding_count` / `accepted_finding_count` / `dropped_finding_count`
+   and `usable_for_resolution` (valid empty or at least one accepted finding).
+   Output is capped at `max_findings`, but sorted by severity/confidence first so
+   blockers survive a verbose or prompt-injected flood.
 
 4. **Hard JSON-Schema validation** ([`schemas/`](../ai-review/schemas/)). Closed enums for
    `severity` (`info|minor|major|blocker`) and `category`; every id must be a
@@ -79,9 +81,12 @@ Same inputs → identical `consensus.json`, every time.
 
 ## 3. The algorithm (`build_consensus()`)
 
-1. **Panel status.** `failed` (0 successful reviewers) → `advisory_only`
+1. **Panel status.** Counts only reviewers with usable evidence
+   (`adapter_status=success` and `usable_for_resolution=true`). All-dropped
+   “success” batches do not count. `failed` (0 usable) → `advisory_only`
    (< `panel.min_successful_reviewers_for_blocking`) → `degraded` (< enabled) →
-   `full`. A `failed` panel short-circuits and the CLI exits `3`.
+   `full`. A `failed` panel short-circuits and the CLI exits `3`. Consensus also
+   records `resolution_eligible_reviewers` for absence-based resolution quorum.
 
 2. **Deduplication via union-find.** `same_issue(a, b)` is a symmetric predicate:
    same `source_finding_id` / validated critique duplicate-link; OR same

@@ -11,6 +11,11 @@
     "model",
     "started_at",
     "completed_at",
+    "raw_finding_count",
+    "accepted_finding_count",
+    "dropped_finding_count",
+    "usable_for_resolution",
+    "effective_config_sha256",
     "findings"
   ],
   "properties": {
@@ -21,6 +26,11 @@
     "model": { "type": "string", "minLength": 1 },
     "started_at": { "type": "string", "minLength": 1 },
     "completed_at": { "type": "string", "minLength": 1 },
+    "raw_finding_count": { "type": "integer", "minimum": 0 },
+    "accepted_finding_count": { "type": "integer", "minimum": 0 },
+    "dropped_finding_count": { "type": "integer", "minimum": 0 },
+    "usable_for_resolution": { "type": "boolean" },
+    "effective_config_sha256": { "$ref": "#/$defs/sha256" },
     "findings": {
       "type": "array",
       "items": { "$ref": "#/$defs/finding" }

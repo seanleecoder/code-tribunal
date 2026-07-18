@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import json_loads_no_duplicates
-from .config import ConfigError, load_config, resolve_adapter_path
+from .config import ConfigError, effective_config_digest, load_config, resolve_adapter_path
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
@@ -81,6 +81,18 @@ def _manifest_run_id(input_dir: Path) -> str:
     return "unknown-run"
 
 
+def _manifest_effective_config_sha256(input_dir: Path) -> str | None:
+    manifest_path = input_dir / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    manifest = load_json_file(manifest_path)
+    if isinstance(manifest, dict):
+        digest = manifest.get("effective_config_sha256")
+        if isinstance(digest, str) and len(digest) == 64:
+            return digest
+    return None
+
+
 def _output_file(stage: str, reviewer: str) -> Path:
     if stage == "review":
         return Path("findings") / f"{reviewer}.json"
@@ -104,6 +116,12 @@ def _write_status(
     *,
     error_class: str | None = None,
     error_message: str | None = None,
+    run_id: str | None = None,
+    effective_config_sha256: str | None = None,
+    raw_finding_count: int | None = None,
+    accepted_finding_count: int | None = None,
+    dropped_finding_count: int | None = None,
+    usable_for_resolution: bool | None = None,
 ) -> None:
     completed = now_iso()
     artifact = adapter_status_artifact(
@@ -116,6 +134,12 @@ def _write_status(
         output_file.as_posix(),
         error_class=error_class,
         error_message_redacted=redact_text(error_message) if error_message else None,
+        run_id=run_id,
+        effective_config_sha256=effective_config_sha256,
+        raw_finding_count=raw_finding_count,
+        accepted_finding_count=accepted_finding_count,
+        dropped_finding_count=dropped_finding_count,
+        usable_for_resolution=usable_for_resolution,
     )
     validate_instance(artifact, "adapter_status.schema.json")
     write_canonical_json(output_dir / "status" / f"{_status_stem(stage, reviewer)}.json", artifact)
@@ -130,6 +154,8 @@ def _write_empty(
     run_id: str,
     model: str,
     started_at: str,
+    *,
+    effective_config_sha256: str,
 ) -> None:
     if stage == "review":
         batch = empty_finding_batch(
@@ -138,10 +164,17 @@ def _write_empty(
             run_id=run_id,
             model=model,
             started_at=started_at,
+            effective_config_sha256=effective_config_sha256,
         )
         validate_instance(batch, "finding_batch.schema.json")
     else:
-        batch = empty_critique_batch(reviewer, status, run_id=run_id, started_at=started_at)
+        batch = empty_critique_batch(
+            reviewer,
+            status,
+            run_id=run_id,
+            started_at=started_at,
+            effective_config_sha256=effective_config_sha256,
+        )
         validate_instance(batch, "critique_batch.schema.json")
     write_canonical_json(output_dir / output_file, batch)
 
@@ -639,19 +672,41 @@ def run_adapter(reviewer: str, stage: str) -> int:
     started_at = now_iso()
     started_monotonic = time.monotonic()
     run_id = _manifest_run_id(input_dir)
+    config_digest = _manifest_effective_config_sha256(input_dir) or ("0" * 64)
 
     try:
         config = load_config(config_path)
+        config_digest = effective_config_digest(config)
         reviewer_config = config["reviewers"].get(reviewer)
         if not isinstance(reviewer_config, dict):
             raise ConfigError(f"unknown reviewer: {reviewer}")
         model = str(reviewer_config.get("model", "unknown-model"))
         if reviewer_config.get("enabled") is not True:
             _write_empty(
-                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+                output_dir,
+                output_file,
+                reviewer,
+                stage,
+                "skipped",
+                run_id,
+                model,
+                started_at,
+                effective_config_sha256=config_digest,
             )
             _write_status(
-                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+                output_dir,
+                reviewer,
+                stage,
+                "skipped",
+                started_at,
+                started_monotonic,
+                output_file,
+                run_id=run_id,
+                effective_config_sha256=config_digest,
+                raw_finding_count=0,
+                accepted_finding_count=0,
+                dropped_finding_count=0,
+                usable_for_resolution=False,
             )
             return 0
 
@@ -660,10 +715,30 @@ def run_adapter(reviewer: str, stage: str) -> int:
             critique_config.get("enabled") is not True or int(critique_config.get("rounds", 0)) == 0
         ):
             _write_empty(
-                output_dir, output_file, reviewer, stage, "skipped", run_id, model, started_at
+                output_dir,
+                output_file,
+                reviewer,
+                stage,
+                "skipped",
+                run_id,
+                model,
+                started_at,
+                effective_config_sha256=config_digest,
             )
             _write_status(
-                output_dir, reviewer, stage, "skipped", started_at, started_monotonic, output_file
+                output_dir,
+                reviewer,
+                stage,
+                "skipped",
+                started_at,
+                started_monotonic,
+                output_file,
+                run_id=run_id,
+                effective_config_sha256=config_digest,
+                raw_finding_count=0,
+                accepted_finding_count=0,
+                dropped_finding_count=0,
+                usable_for_resolution=False,
             )
             return 0
 
@@ -677,6 +752,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 run_id,
                 model,
                 started_at,
+                effective_config_sha256=config_digest,
             )
             _write_status(
                 output_dir,
@@ -688,6 +764,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_file,
                 error_class="ReviewerConfigValidation",
                 error_message=validation_error,
+                run_id=run_id,
+                effective_config_sha256=config_digest,
+                raw_finding_count=0,
+                accepted_finding_count=0,
+                dropped_finding_count=0,
+                usable_for_resolution=False,
             )
             return _EXIT_ERROR
 
@@ -746,6 +828,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 run_id,
                 model,
                 started_at,
+                effective_config_sha256=config_digest,
             )
             _write_status(
                 output_dir,
@@ -757,6 +840,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_file,
                 error_class="AdapterExit",
                 error_message=result.stderr or f"adapter exited {result.returncode}",
+                run_id=run_id,
+                effective_config_sha256=config_digest,
+                raw_finding_count=0,
+                accepted_finding_count=0,
+                dropped_finding_count=0,
+                usable_for_resolution=False,
             )
             return _EXIT_ERROR
 
@@ -772,6 +861,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     model=model,
                     run_id=run_id,
                     started_at=started_at,
+                    effective_config_sha256=config_digest,
                     input_dir=input_dir,
                     max_findings=int(max_findings) if max_findings is not None else None,
                 )
@@ -781,6 +871,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     raw,
                     critic=reviewer,
                     run_id=run_id,
+                    effective_config_sha256=config_digest,
                 )
                 validate_instance(finalized, "critique_batch.schema.json")
             else:
@@ -797,6 +888,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 run_id,
                 model,
                 started_at,
+                effective_config_sha256=config_digest,
             )
             _write_status(
                 output_dir,
@@ -808,12 +900,36 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_file,
                 error_class=exc.__class__.__name__,
                 error_message=str(exc),
+                run_id=run_id,
+                effective_config_sha256=config_digest,
+                raw_finding_count=0,
+                accepted_finding_count=0,
+                dropped_finding_count=0,
+                usable_for_resolution=False,
             )
             return _EXIT_ERROR
 
         write_canonical_json(output_dir / output_file, finalized)
         _write_status(
-            output_dir, reviewer, stage, "success", started_at, started_monotonic, output_file
+            output_dir,
+            reviewer,
+            stage,
+            "success",
+            started_at,
+            started_monotonic,
+            output_file,
+            run_id=run_id,
+            effective_config_sha256=config_digest,
+            raw_finding_count=finalized.get("raw_finding_count") if stage == "review" else None,
+            accepted_finding_count=(
+                finalized.get("accepted_finding_count") if stage == "review" else None
+            ),
+            dropped_finding_count=(
+                finalized.get("dropped_finding_count") if stage == "review" else None
+            ),
+            usable_for_resolution=(
+                finalized.get("usable_for_resolution") if stage == "review" else None
+            ),
         )
         return 0
     except subprocess.TimeoutExpired as exc:
@@ -821,6 +937,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             config = load_config(config_path)
             model = str(config.get("reviewers", {}).get(reviewer, {}).get("model", model))
+            config_digest = effective_config_digest(config)
         except Exception:
             pass
         # Archive whatever the reviewer emitted before the kill so a timeout is
@@ -834,7 +951,17 @@ def run_adapter(reviewer: str, stage: str) -> int:
             exc.stderr or "",
             kind="timeout",
         )
-        _write_empty(output_dir, output_file, reviewer, stage, "timeout", run_id, model, started_at)
+        _write_empty(
+            output_dir,
+            output_file,
+            reviewer,
+            stage,
+            "timeout",
+            run_id,
+            model,
+            started_at,
+            effective_config_sha256=config_digest,
+        )
         _write_status(
             output_dir,
             reviewer,
@@ -845,6 +972,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
             output_file,
             error_class="TimeoutExpired",
             error_message=str(exc),
+            run_id=run_id,
+            effective_config_sha256=config_digest,
+            raw_finding_count=0,
+            accepted_finding_count=0,
+            dropped_finding_count=0,
+            usable_for_resolution=False,
         )
         return _EXIT_ERROR
     except Exception as exc:
@@ -857,6 +990,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             run_id,
             "unknown-model",
             started_at,
+            effective_config_sha256=config_digest,
         )
         _write_status(
             output_dir,
@@ -868,6 +1002,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
             output_file,
             error_class=exc.__class__.__name__,
             error_message=str(exc),
+            run_id=run_id,
+            effective_config_sha256=config_digest,
+            raw_finding_count=0,
+            accepted_finding_count=0,
+            dropped_finding_count=0,
+            usable_for_resolution=False,
         )
         return _EXIT_ERROR
 

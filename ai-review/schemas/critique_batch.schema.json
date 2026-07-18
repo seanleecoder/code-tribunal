@@ -8,6 +8,7 @@
     "run_id",
     "critic",
     "adapter_status",
+    "effective_config_sha256",
     "critiques"
   ],
   "properties": {
@@ -35,6 +36,10 @@
         "internal_error"
       ],
       "type": "string"
+    },
+    "effective_config_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     },
     "critiques": {
       "type": "array",

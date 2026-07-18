@@ -13,15 +13,26 @@ def evaluate_gate(
     consensus: Consensus,
     post_result: PostResult,
 ) -> tuple[GateResult, int]:
-    if config.get("merge_gate", {}).get("enabled") is False:
-        disabled_result: GateResult = {
+    """Evaluate merge-gate status with fail-closed operational precedence.
+
+    Precedence:
+    1. Post/state operational failures (``failed``, ``partial_failed``,
+       ``state_overflow``) always fail closed with exit ``7``, even when
+       ``merge_gate.enabled`` is false.
+    2. ``stale_head`` is a successful noop (exit ``0``).
+    3. When finding-based merge gating is disabled, ignore only
+       ``summary.block_merge`` and return ``skipped_disabled`` (exit ``0``).
+    4. Otherwise enforce consensus ``block_merge``.
+    """
+    if post_result["status"] in {"failed", "partial_failed", "state_overflow"}:
+        post_failure_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
-            "status": "skipped_disabled",
-            "block_merge": False,
-            "reason": "merge_gate_disabled",
+            "status": "failed_post_result",
+            "block_merge": True,
+            "reason": post_result["status"],
         }
-        return disabled_result, 0
+        return post_failure_result, 7
 
     if post_result["status"] == "stale_head":
         stale_head_result: GateResult = {
@@ -33,15 +44,15 @@ def evaluate_gate(
         }
         return stale_head_result, 0
 
-    if post_result["status"] in {"failed", "partial_failed", "state_overflow"}:
-        post_failure_result: GateResult = {
+    if config.get("merge_gate", {}).get("enabled") is False:
+        disabled_result: GateResult = {
             "schema_version": "gate_result.v1",
             "run_id": consensus["run_id"],
-            "status": "failed_post_result",
-            "block_merge": True,
-            "reason": post_result["status"],
+            "status": "skipped_disabled",
+            "block_merge": False,
+            "reason": "merge_gate_disabled",
         }
-        return post_failure_result, 7
+        return disabled_result, 0
 
     if consensus["summary"]["block_merge"] is True:
         blocking_result: GateResult = {

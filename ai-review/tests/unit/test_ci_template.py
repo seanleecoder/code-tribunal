@@ -749,6 +749,37 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                 self.assertEqual(text.count(f"  {name}: {expression}"), 1)
         self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
 
+    def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
+        template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
+        text = template.read_text(encoding="utf-8")
+        expected_overrides = [
+            "AI_REVIEW_CLAUDE_MODEL",
+            "AI_REVIEW_CODEX_MODEL",
+            "AI_REVIEW_OPENCODE_MODEL",
+            "AI_REVIEW_CURSOR_MODEL",
+            "AI_REVIEW_CLAUDE_ENABLED",
+            "AI_REVIEW_CODEX_ENABLED",
+            "AI_REVIEW_OPENCODE_ENABLED",
+            "AI_REVIEW_CURSOR_ENABLED",
+            "AI_REVIEW_CLAUDE_EFFORT",
+            "AI_REVIEW_CODEX_EFFORT",
+            "AI_REVIEW_OPENCODE_EFFORT",
+            "AI_REVIEW_CRITIQUE_ENABLED",
+            "AI_REVIEW_MERGE_GATE_ENABLED",
+            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
+            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
+            "AI_REVIEW_POSTING_MODE",
+            "AI_REVIEW_STATE_BACKEND",
+        ]
+        self.assertIn("effective_config_sha256", text)
+        self.assertIn("Environment-consistency contract", text)
+        for name in expected_overrides:
+            with self.subTest(name=name):
+                self.assertIn(name, text)
+        # Critique enablement remains an explicit top-level variable shared by
+        # job rules and apply_env_overrides.
+        self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")
+
     def test_github_actions_supports_manual_pr_dispatch(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         text = template.read_text(encoding="utf-8")

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from ai_review.config import effective_config_digest, effective_config_summary, load_config
 from ai_review.consensus import cli
 from ai_review.schema import (
     empty_finding_batch,
@@ -14,6 +15,8 @@ from ai_review.schema import (
 )
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_CONFIG = load_config(_REPO_CONFIG)
+_CONFIG_DIGEST = effective_config_digest(_CONFIG)
 
 _DIFF = "\n".join(
     [
@@ -41,8 +44,14 @@ _MANIFEST = {
     "repo_snapshot_sha256": "0" * 64,
     "config_sha256": "0" * 64,
     "rules_sha256": "0" * 64,
+    "effective_config": effective_config_summary(_CONFIG),
+    "effective_config_sha256": _CONFIG_DIGEST,
     "created_at": "2026-06-29T00:00:00Z",
 }
+
+
+def _reviewer_model(reviewer: str) -> str:
+    return str(_CONFIG["reviewers"][reviewer]["model"])
 
 
 def _raw_security_blocker() -> dict[str, Any]:
@@ -68,12 +77,13 @@ def _raw_security_blocker() -> dict[str, Any]:
 
 
 def _success_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
+    model = _reviewer_model(reviewer)
     raw = {
         "schema_version": "finding_batch.v1",
         "run_id": "local-test",
         "reviewer": reviewer,
         "adapter_status": "success",
-        "model": f"{reviewer}-model",
+        "model": model,
         "started_at": "2026-06-29T00:00:00Z",
         "completed_at": "2026-06-29T00:00:01Z",
         "findings": [_raw_security_blocker()],
@@ -81,9 +91,10 @@ def _success_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
     return finalize_finding_batch(
         raw,
         reviewer=reviewer,
-        model=f"{reviewer}-model",
+        model=model,
         run_id="local-test",
         started_at="2026-06-29T00:00:00Z",
+        effective_config_sha256=_CONFIG_DIGEST,
         input_dir=input_dir,
     )
 
@@ -93,8 +104,9 @@ def _error_batch(reviewer: str, status: str) -> dict[str, Any]:
         reviewer,
         status,
         run_id="local-test",
-        model=f"{reviewer}-model",
+        model=_reviewer_model(reviewer),
         started_at="2026-06-29T00:00:00Z",
+        effective_config_sha256=_CONFIG_DIGEST,
     )
 
 
@@ -104,6 +116,7 @@ class PanelDegradationTests(unittest.TestCase):
     ) -> tuple[int, dict[str, Any]]:
         input_dir = root / "inputs"
         input_dir.mkdir(parents=True, exist_ok=True)
+        (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
         write_canonical_json(input_dir / "manifest.json", _MANIFEST)
         findings_dir = root / "findings"
         for reviewer, batch in batches.items():
@@ -126,8 +139,11 @@ class PanelDegradationTests(unittest.TestCase):
     def test_full_panel_all_three_succeed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            input_dir = root / "inputs"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             batches = {
-                reviewer: _success_batch(reviewer, root)
+                reviewer: _success_batch(reviewer, input_dir)
                 for reviewer in ("claude", "codex", "opencode")
             }
             code, consensus = self._run_consensus(root, batches)
@@ -136,6 +152,10 @@ class PanelDegradationTests(unittest.TestCase):
             self.assertEqual(consensus["panel_status"], "full")
             self.assertEqual(
                 consensus["successful_reviewers"],
+                ["claude", "codex", "opencode"],
+            )
+            self.assertEqual(
+                consensus["resolution_eligible_reviewers"],
                 ["claude", "codex", "opencode"],
             )
             self.assertEqual(consensus["failed_reviewers"], [])
@@ -149,9 +169,12 @@ class PanelDegradationTests(unittest.TestCase):
     def test_degraded_panel_two_of_three_still_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            input_dir = root / "inputs"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             batches = {
-                "claude": _success_batch("claude", root),
-                "codex": _success_batch("codex", root),
+                "claude": _success_batch("claude", input_dir),
+                "codex": _success_batch("codex", input_dir),
                 "opencode": _error_batch("opencode", "model_error"),
             }
             code, consensus = self._run_consensus(root, batches)
@@ -169,8 +192,11 @@ class PanelDegradationTests(unittest.TestCase):
     def test_advisory_only_single_success_never_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            input_dir = root / "inputs"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             batches = {
-                "claude": _success_batch("claude", root),
+                "claude": _success_batch("claude", input_dir),
                 "codex": _error_batch("codex", "model_error"),
                 "opencode": _error_batch("opencode", "timeout"),
             }
@@ -197,8 +223,63 @@ class PanelDegradationTests(unittest.TestCase):
             self.assertEqual(code, 3)
             self.assertEqual(consensus["panel_status"], "failed")
             self.assertEqual(consensus["successful_reviewers"], [])
+            self.assertEqual(consensus["resolution_eligible_reviewers"], [])
             self.assertEqual(consensus["failed_reviewers"], ["claude", "codex", "opencode"])
             self.assertEqual(consensus["groups"], [])
+
+    def test_all_dropped_success_cannot_manufacture_panel_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
+            raw = {
+                "schema_version": "finding_batch.v1",
+                "run_id": "local-test",
+                "reviewer": "claude",
+                "adapter_status": "success",
+                "model": _reviewer_model("claude"),
+                "started_at": "2026-06-29T00:00:00Z",
+                "completed_at": "2026-06-29T00:00:01Z",
+                "findings": [
+                    {
+                        "severity": "blocker",
+                        "category": "security",
+                        "title": "bad",
+                        "body": "bad",
+                        # missing anchor -> dropped
+                    }
+                ],
+            }
+            all_dropped = finalize_finding_batch(
+                raw,
+                reviewer="claude",
+                model=_reviewer_model("claude"),
+                run_id="local-test",
+                started_at="2026-06-29T00:00:00Z",
+                effective_config_sha256=_CONFIG_DIGEST,
+                input_dir=input_dir,
+            )
+            self.assertFalse(all_dropped["usable_for_resolution"])
+            self.assertEqual(all_dropped["dropped_finding_count"], 1)
+            batches = {
+                "claude": all_dropped,
+                "codex": finalize_finding_batch(
+                    {**raw, "reviewer": "codex", "model": _reviewer_model("codex")},
+                    reviewer="codex",
+                    model=_reviewer_model("codex"),
+                    run_id="local-test",
+                    started_at="2026-06-29T00:00:00Z",
+                    effective_config_sha256=_CONFIG_DIGEST,
+                    input_dir=input_dir,
+                ),
+                "opencode": _error_batch("opencode", "timeout"),
+            }
+            code, consensus = self._run_consensus(root, batches)
+            self.assertEqual(code, 3)
+            self.assertEqual(consensus["panel_status"], "failed")
+            self.assertEqual(consensus["successful_reviewers"], [])
+            self.assertEqual(consensus["resolution_eligible_reviewers"], [])
 
 
 if __name__ == "__main__":

@@ -84,8 +84,10 @@ The finding no longer appears in any reviewer's output. It is **not**
 immediately declared fixed:
 
 - If at least `panel.min_successful_reviewers_for_resolution` (default 2)
-  reviewers ran successfully and none re-found it → status `resolved`, and the
-  GitLab discussion is resolved by the bot.
+  reviewers completed a trustworthy empty-or-valid review
+  (`resolution_eligible_reviewers`) and none re-found it → status `resolved`,
+  and the GitLab discussion is resolved by the bot. Batches where every finding
+  was dropped as malformed do not count toward that quorum.
 - If the panel was degraded below that quorum → `stale_unverified`: the
   absence might just mean the reviewers that would have seen it didn't run.
   A degraded panel cannot "resolve away" your findings.

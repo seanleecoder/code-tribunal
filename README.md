@@ -140,9 +140,16 @@ pipeline.
 ### 6. `gate` (CI Pipeline Gate Enforcement)
 - Executed by `python -m ai_review.gate`.
 - Reads `consensus.json` and `post_result.json`.
-- Enforces merge policy: if consensus decided `block_merge: true`, exits with code `7` (`failed_blocking_findings`), failing the MR pipeline.
-- **Fails closed** on posting/state failures: a `failed`, `partial_failed`, or `state_overflow` post result also exits `7` (`failed_post_result`) — a review whose results could not be recorded does not pass silently.
-- Handles stale HEAD safety (`passed_stale_head` when the pipeline HEAD no longer matches the current MR HEAD), and `skipped_disabled` when `merge_gate.enabled: false` (advisory mode).
+- Evaluation precedence: posting/state failures first, then stale HEAD, then
+  finding-based merge gating.
+- **Fails closed** on posting/state failures: a `failed`, `partial_failed`, or
+  `state_overflow` post result exits `7` (`failed_post_result`) even when
+  `merge_gate.enabled: false` — disabling finding-based blocking does not hide
+  operational publish/persist failures.
+- When the merge gate is enabled, `block_merge: true` exits `7`
+  (`failed_blocking_findings`).
+- Handles stale HEAD safety (`passed_stale_head`) and advisory mode
+  (`skipped_disabled` ignores only finding-based `block_merge`).
 - Outputs `out/gate/gate_result.json` matching [ai-review/schemas/gate_result.schema.json](ai-review/schemas/gate_result.schema.json).
 
 ---

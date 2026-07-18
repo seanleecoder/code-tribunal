@@ -20,6 +20,18 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Changed
 
+- Finding batches now record batch-quality fields (`raw_finding_count`,
+  `accepted_finding_count`, `dropped_finding_count`, `usable_for_resolution`)
+  and bind `effective_config_sha256`. Consensus panel seats and absence-based
+  resolution use only reviewers with trustworthy empty-or-valid evidence;
+  all-dropped malformed output cannot resolve open findings or manufacture
+  panel success. Consensus artifacts expose `resolution_eligible_reviewers`.
+- Gate evaluation fails closed on post/state failures before consulting
+  `merge_gate.enabled`. Advisory mode disables finding-based blocking only.
+- Prepare records `effective_config_sha256`; consensus fails (exit 3) on
+  consequential config divergence, wrong run IDs, duplicate/disabled reviewer
+  batches, model/digest mismatches, unknown critique targets, or malformed
+  consumed artifacts.
 - Posting now degrades update-path platform failures to summary fallback with a
   structured `partial_failed` result, and GitLab/GitHub HTTP clients retry
   idempotent GET/PUT/PATCH calls on 429/5xx/connection errors (including
@@ -55,6 +67,13 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 
 ### Migration
 
+- Finding-batch and critique-batch consumers must accept the new required
+  quality/digest fields (`usable_for_resolution`, `effective_config_sha256`,
+  and finding counts). Older finding batches without those fields are rejected
+  at the consensus CLI boundary rather than treated as resolution-eligible.
+- Ensure `AI_REVIEW_*` overrides are scoped identically across prepare, review,
+  critique, consensus, post, and gate jobs (project/group variables or workflow
+  env). Job-scoped mismatches that used to warn now fail consensus.
 - Prepare rejects every symlink in the reviewed checkout when building
   `repo_snapshot`. Repositories that intentionally track symlinks must remove or
   replace them before review, or wait for a future non-followed link

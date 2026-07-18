@@ -25,6 +25,7 @@ class GateTests(unittest.TestCase):
             "head_sha": "head",
             "input_manifest_sha256": "a" * 64,
             "successful_reviewers": [],
+            "resolution_eligible_reviewers": [],
             "failed_reviewers": [],
             "panel_status": "full",
             "groups": [],
@@ -121,6 +122,37 @@ class GateTests(unittest.TestCase):
                 self.assertEqual(exit_code, 7)
                 self.assertEqual(result["status"], "failed_post_result")
                 validate_instance(result, "gate_result.schema.json")
+
+    def test_advisory_mode_still_fails_closed_for_post_failures(self) -> None:
+        for status in ("failed", "partial_failed", "state_overflow"):
+            with self.subTest(status=status):
+                result, exit_code = evaluate_gate(
+                    self._config(False),
+                    self._consensus(False),
+                    {"status": status},
+                )
+                self.assertEqual(exit_code, 7)
+                self.assertEqual(result["status"], "failed_post_result")
+                self.assertTrue(result["block_merge"])
+
+    def test_advisory_mode_ignores_only_blocking_findings(self) -> None:
+        result, exit_code = evaluate_gate(
+            self._config(False),
+            self._consensus(True),
+            {"status": "success"},
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "skipped_disabled")
+        self.assertFalse(result["block_merge"])
+
+    def test_stale_head_precedes_finding_gate_when_enabled(self) -> None:
+        result, exit_code = evaluate_gate(
+            self._config(True),
+            self._consensus(True),
+            {"status": "stale_head"},
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed_stale_head")
 
 
 if __name__ == "__main__":

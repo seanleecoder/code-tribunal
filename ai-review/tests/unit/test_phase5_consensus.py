@@ -57,6 +57,7 @@ def _critique_batch(critic: str, critiques: list[dict], status: str = "success")
         "run_id": "run",
         "critic": critic,
         "adapter_status": status,
+        "effective_config_sha256": "0" * 64,
         "critiques": critiques,
     }
 
@@ -311,6 +312,7 @@ class Phase5ConsensusTests(unittest.TestCase):
             ),
             critic="codex",
             run_id="run",
+            effective_config_sha256="0" * 64,
         )
         consensus = build_consensus(
             _manifest(),
@@ -339,6 +341,7 @@ class Phase5ConsensusTests(unittest.TestCase):
             _critique_batch("codex", [_critique("codex", source_id, "agree")]),
             critic="claude",
             run_id="run",
+            effective_config_sha256="0" * 64,
         )
 
         consensus = build_consensus(
