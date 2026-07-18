@@ -5,8 +5,14 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 build/
+dist/
+htmlcov/
 *.egg-info/
+.tox/
+.venv/
+venv/
 
 # Internal-only material (company-internal evidence, case studies, presentations — never commit)
 docs/internal/

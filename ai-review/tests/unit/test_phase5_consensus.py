@@ -20,7 +20,6 @@ def _critique_config(
     config["critique"] = {
         "enabled": enabled,
         "rounds": rounds,
-        "max_rounds": 1,
         "blind_reviewer_identity": True,
         "can_add_quorum_votes": False,
         "allow_advisory_escalation": allow_advisory_escalation,

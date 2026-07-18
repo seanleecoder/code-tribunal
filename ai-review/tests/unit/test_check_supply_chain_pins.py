@@ -87,6 +87,46 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
+    def test_current_dev_requirements_are_exactly_pinned(self) -> None:
+        if not check_supply_chain_pins.DEV_REQUIREMENTS.exists():
+            self.skipTest("contributor requirements are intentionally absent from runtime images")
+        requirements = check_supply_chain_pins.DEV_REQUIREMENTS.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            check_supply_chain_pins._exact_requirement_issues(
+                requirements, "requirements-dev.txt"
+            ),
+            [],
+        )
+        self.assertEqual(
+            check_supply_chain_pins._overlapping_python_pin_issues(
+                check_supply_chain_pins.PYTHON_CONSTRAINTS.read_text(encoding="utf-8"),
+                requirements,
+            ),
+            [],
+        )
+
+    def test_detects_floating_dev_tool_requirement(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._exact_requirement_issues(
+                "-c ai-review/images/python-constraints.txt\npytest>=9\n",
+                "requirements-dev.txt",
+            ),
+            ["requirements-dev.txt must use exact == pins only, got 'pytest>=9'"],
+        )
+
+    def test_detects_dev_runtime_pin_drift(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._overlapping_python_pin_issues(
+                "PyYAML==6.0.3\nrequests==2.32.5\n",
+                "pyyaml==6.0.2\npytest==9.1.1\n",
+            ),
+            [
+                "requirements-dev.txt pin pyyaml==6.0.2 must match "
+                "python-constraints.txt pin PyYAML==6.0.3"
+            ],
+        )
+
     def test_detects_malformed_cursor_agent_pin(self) -> None:
         self.assertIn(
             "cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest",

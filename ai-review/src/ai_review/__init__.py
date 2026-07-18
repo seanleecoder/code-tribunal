@@ -1,5 +1,1 @@
-"""AI review package."""
-
-__all__ = ["__version__"]
-
-__version__ = "0.4.0"
+"""Internal Python implementation for the Code Tribunal container images."""

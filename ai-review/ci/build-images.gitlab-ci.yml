@@ -73,8 +73,14 @@ preflight_ai_review_reviewer_image:
     AI_REVIEW_OUTPUT_DIR: /tmp/ai-review-preflight/out
     AI_REVIEW_LOCAL_MOCK: "1"
   script:
+    - cd /tmp
     - python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
     - python -m compileall -q /opt/ai-review/src
+    - python -m ai_review.input_bundle --help >/dev/null
+    - python -m ai_review.consensus --help >/dev/null
+    - python -m ai_review.post --help >/dev/null
+    - python -m ai_review.gate --help >/dev/null
+    - python -m ai_review.schema --help >/dev/null
     - claude --version
     - codex --version
     - opencode --version

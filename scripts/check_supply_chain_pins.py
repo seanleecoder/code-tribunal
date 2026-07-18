@@ -20,6 +20,7 @@ README = ROOT / "README.md"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
+DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
@@ -73,6 +74,48 @@ def _constraint_packages(text: str) -> set[str]:
             continue
         packages.add(line.split("==", 1)[0])
     return packages
+
+
+def _exact_requirement_issues(text: str, filename: str) -> list[str]:
+    issues: list[str] = []
+    for line in text.splitlines():
+        requirement = line.strip()
+        if not requirement or requirement.startswith(("#", "-c ")):
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+==[^\s]+", requirement):
+            issues.append(f"{filename} must use exact == pins only, got {requirement!r}")
+    return issues
+
+
+def _exact_pins(text: str) -> dict[str, tuple[str, str]]:
+    pins: dict[str, tuple[str, str]] = {}
+    for line in text.splitlines():
+        requirement = line.strip()
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s]+)", requirement)
+        if match is None:
+            continue
+        name, version = match.groups()
+        normalized = re.sub(r"[-_.]+", "-", name).lower()
+        pins[normalized] = (name, version)
+    return pins
+
+
+def _overlapping_python_pin_issues(
+    constraints_text: str, requirements_text: str
+) -> list[str]:
+    constraints = _exact_pins(constraints_text)
+    requirements = _exact_pins(requirements_text)
+    issues: list[str] = []
+    for normalized_name in sorted(constraints.keys() & requirements.keys()):
+        constraint_name, constraint_version = constraints[normalized_name]
+        requirement_name, requirement_version = requirements[normalized_name]
+        if constraint_version != requirement_version:
+            issues.append(
+                f"requirements-dev.txt pin {requirement_name}=={requirement_version} "
+                f"must match python-constraints.txt pin "
+                f"{constraint_name}=={constraint_version}"
+            )
+    return issues
 
 
 def _workflow_structure_issues(text: str) -> list[str]:
@@ -281,6 +324,7 @@ def main() -> int:
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
     readme = _read(README)
     constraints = _read(PYTHON_CONSTRAINTS)
+    dev_requirements = _read_optional(DEV_REQUIREMENTS)
     cursor_pin = _read(CURSOR_AGENT_PIN)
     package = json.loads(_read(PACKAGE_JSON))
     lock = json.loads(_read(PACKAGE_LOCK))
@@ -319,6 +363,13 @@ def main() -> int:
     if not PYTHON_DIRECT_PACKAGES.issubset(constrained):
         error("python-constraints.txt must pin every package named in base.Dockerfile pip install")
         failures += 1
+    if dev_requirements is not None:
+        for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):
+            error(issue)
+            failures += 1
+        for issue in _overlapping_python_pin_issues(constraints, dev_requirements):
+            error(issue)
+            failures += 1
     if "npm install -g" in reviewer:
         error("reviewer.Dockerfile must use npm ci against the committed lockfile")
         failures += 1

@@ -1,11 +1,17 @@
 # Code Tribunal (`ai-review`)
 
 [![CI](https://github.com/seanleecoder/code-tribunal/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml) [![CI / Image Publish](https://github.com/seanleecoder/code-tribunal/workflows/Publish%20AI%20Review%20Images/badge.svg)](.github/workflows/publish-ai-review-images.yml)
-[![Python Version](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](pyproject.toml)
+[![Container Python](https://img.shields.io/badge/Container%20Python-3.12-blue.svg)](ai-review/images/base.Dockerfile)
 [![Config Schema](https://img.shields.io/badge/Config-review__config.v1-orange.svg)](ai-review/config/review.yaml)
 [![Container Registry](https://img.shields.io/badge/GHCR-ai--review--reviewer-blue.svg)](.github/workflows/publish-ai-review-images.yml)
 
 **Code Tribunal** is a multi-agent AI code review engine for **GitLab Merge Requests and GitHub Pull Requests**: consensus-driven defect detection, blind cross-examination (critique), persistent finding identity across revisions, and automated merge gating.
+
+The supported distribution is the digest-pinned base/reviewer container images
+plus the GitLab CI and GitHub Actions templates that execute them. The Python
+modules in this repository are internal container code, not an installable or
+supported Python package; see
+[ADR-0001](docs/decisions/0001-container-template-distribution.md).
 
 It orchestrates a panel of independent LLM reviewer models via provider CLIs (**Claude Code**, **Codex CLI**, and **OpenCode CLI**) routed through OpenRouter, aggregates structured findings via a deterministic consensus engine, performs blind cross-examination, posts idempotent inline discussions, maintains state across MR/PR revisions, and enforces CI/CD merge gating.
 
@@ -166,7 +172,7 @@ The shipped [runtime configuration](ai-review/config/review.yaml) contains only 
 | `critique` | `enabled: true`, `rounds: 1` (fixed in v1), `blind_reviewer_identity: true`, `allow_advisory_escalation: true`, `allow_severity_downgrade: false`, `can_add_quorum_votes: false` (must stay false in v1) |
 | `posting` | `mode: gitlab_discussions` or `github_reviews`, `fyi_mode: summary_comment`, `stale_head_guard: true` |
 | `merge_gate` | `enabled: true` (set `false` for advisory mode) |
-| `state` | `backend: gitlab_mr_state_note` or `github_pr_comment`, `checksum_required: true`, `recover_from_discussion_markers: true`, `fail_closed_on_load_error: false`, retention caps (writes fail closed on overflow) |
+| `state` | `backend: gitlab_mr_state_note` or `github_pr_comment`, `checksum_required: true`, `recover_from_discussion_markers: true`, `fail_closed_on_load_error: false`, `retention.keep_resolved_records: 5`, `retention.keep_stale_records: 2`, and hard size/count caps (writes fail closed on overflow) |
 | `limits` | `max_diff_bytes: 250000`, `max_files: 200`, `max_posted_surface_findings: 25`, `max_prompt_bytes: 500000` |
 | `security` | `allow_external_fork_secrets: false` (fail-closed on fork MRs) |
 
@@ -520,7 +526,8 @@ code-tribunal/
 ├── README.md                                  # Main repository documentation
 ├── SECURITY.md                                # Vulnerability reporting & known tracked issues
 ├── CHANGELOG.md                               # Release history (Keep a Changelog)
-├── pyproject.toml                             # Python packaging & tool configuration
+├── pyproject.toml                             # Pytest, Ruff, and mypy configuration only
+├── requirements-dev.txt                       # Contributor dependencies
 ├── Makefile                                   # Local development & testing targets
 ├── scripts/
 │   ├── verify_pipeline_trust.py               # Consumer CI composition auditor (child/direct mode)
@@ -573,7 +580,7 @@ code-tribunal/
     │   ├── state.schema.json
     │   └── state_aliases.schema.json
     └── src/
-        └── ai_review/                         # Core Python engine package
+        └── ai_review/                         # Internal container Python implementation
             ├── adapter_runner.py              # Runner subprocess dispatch, timeout & log redaction
             ├── anchors.py                     # Diff line parsing & anchor drift remapping
             ├── canonical.py                   # Canonical JSON formatting & SHA-256 context hashing

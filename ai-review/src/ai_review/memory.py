@@ -330,8 +330,8 @@ def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None) -> dict[str, Any]:
     retention = retention or {}
-    keep_resolved_runs = int(retention.get("keep_resolved_runs", 5))
-    keep_stale_runs = int(retention.get("keep_stale_runs", 2))
+    keep_resolved_records = int(retention.get("keep_resolved_records", 5))
+    keep_stale_records = int(retention.get("keep_stale_records", 2))
     records = []
     resolved = []
     stale = []
@@ -364,8 +364,8 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
     compacted = dict(state)
     compacted["records"] = (
         records
-        + keep_latest(resolved, keep_resolved_runs)
-        + keep_latest(stale, keep_stale_runs)
+        + keep_latest(resolved, keep_resolved_records)
+        + keep_latest(stale, keep_stale_records)
     )
     return attach_state_hash(
         {key: value for key, value in compacted.items() if key != "state_hash"}

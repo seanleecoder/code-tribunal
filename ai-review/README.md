@@ -1,6 +1,6 @@
 # AI Review Subsystem (`ai-review`)
 
-This directory contains the core implementation, configuration schemas, prompt templates, CLI adapters, and documentation for **Code Tribunal** (AI Review Subsystem).
+This directory contains the core implementation, configuration schemas, prompt templates, CLI adapters, and documentation for **Code Tribunal** (AI Review Subsystem). The supported artifacts are the digest-pinned OCI images and CI templates. `src/ai_review` is internal container code, not a supported Python distribution or API; see [ADR-0001](../docs/decisions/0001-container-template-distribution.md).
 
 For high-level system architecture, pipeline execution stages, local harness usage, security container isolation model, and the GitLab CI integration guide, see the main repository [README.md](../README.md). Completed requirement status is reconciled in the [improvement-spec audit](../docs/improvement-specs/completion-audit.md).
 
@@ -13,7 +13,7 @@ For high-level system architecture, pipeline execution stages, local harness usa
 - **[ci/review-child.gitlab-ci.yml](ci/review-child.gitlab-ci.yml)**: Protected child-pipeline stage wrapper for the hardened child-pipeline integration mode.
 - **[ci/review.github-actions.yml](ci/review.github-actions.yml)**: Canonical GitHub Actions review workflow (the installed copy lives at `.github/workflows/ai-review.yml` and must stay byte-identical).
 - **[ci/build-images.gitlab-ci.yml](ci/build-images.gitlab-ci.yml)**: Internal GitLab image building and preflight pipeline.
-- **[src/ai_review/](src/ai_review/)**: Core Python engine package for input bundle packaging, consensus voting, canonical hashing, line remapping, platform discussion posting, state management, and merge gate evaluation.
+- **[src/ai_review/](src/ai_review/)**: Internal container implementation for input bundle packaging, consensus voting, canonical hashing, line remapping, platform discussion posting, state management, and merge gate evaluation.
 - **[adapters/](adapters/)**: Shell script adapters wrapping CLI reviewer executables (`run_reviewer.sh`, `claude.sh`, `codex.sh`, `opencode.sh`).
 - **[prompts/](prompts/)**: Markdown prompt templates (`review.md`, `critique.md`).
 - **[rules/](rules/)**: Custom review rules guidelines ([rules/README.md](rules/README.md)).

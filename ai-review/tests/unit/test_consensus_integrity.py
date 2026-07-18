@@ -56,7 +56,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "critique:",
                     f"  enabled: {'true' if critique_enabled else 'false'}",
                     f"  rounds: {'1' if critique_enabled else '0'}",
-                    "  max_rounds: 1",
                     "  blind_reviewer_identity: true",
                     "  can_add_quorum_votes: false",
                     "  allow_advisory_escalation: false",

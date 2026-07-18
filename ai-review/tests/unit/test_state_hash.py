@@ -189,7 +189,7 @@ class StateHashTests(unittest.TestCase):
                 ],
             }
         )
-        compacted = compact_state(state, {"keep_stale_runs": 2})
+        compacted = compact_state(state, {"keep_stale_records": 2})
         self.assertEqual(
             [record["last_matched_run_id"] for record in compacted["records"]],
             ["gl-3-1", "gl-2-1"],
@@ -231,7 +231,7 @@ class StateHashTests(unittest.TestCase):
                 "records": [record("a", "gl-9-1"), record("b", "gl-100-1")],
             }
         )
-        compacted = compact_state(state, {"keep_resolved_runs": 1})
+        compacted = compact_state(state, {"keep_resolved_records": 1})
         self.assertEqual(compacted["records"][0]["last_matched_run_id"], "gl-100-1")
 
 

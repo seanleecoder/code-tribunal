@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any
 
 from .base import ReviewPlatform
 from .factory import create_github_platform, create_gitlab_platform
-
-PlatformAccess = Literal["read", "write"]
 
 
 class PlatformRuntimeError(RuntimeError):
@@ -19,14 +17,10 @@ class PlatformRuntimeError(RuntimeError):
 def create_runtime_platform(
     config: Mapping[str, Any],
     *,
-    access: PlatformAccess,
     env: Mapping[str, str] | None = None,
     allow_dry_run_defaults: bool = False,
 ) -> ReviewPlatform:
     """Construct the configured adapter from trusted runtime environment values."""
-    # ``access`` remains part of the public API for callers that distinguish
-    # prepare/post; both GitLab paths now use the same GITLAB_TOKEN.
-    _ = access
     runtime_env = os.environ if env is None else env
     posting = config.get("posting", {})
     mode = posting.get("mode", "gitlab_discussions") if isinstance(posting, Mapping) else None

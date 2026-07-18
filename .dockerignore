@@ -1,0 +1,16 @@
+.ai-review-local/
+.coverage
+.coverage.*
+.git/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.venv/
+__pycache__/
+*.egg-info/
+*.py[cod]
+build/
+dist/
+htmlcov/
+venv/

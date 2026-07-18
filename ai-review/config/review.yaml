@@ -79,7 +79,6 @@ severity_policy:
 critique:
   enabled: true # Override: AI_REVIEW_CRITIQUE_ENABLED (strict true/false; same var gates the CI critique jobs, default "true" in the CI template — single source of truth)
   rounds: 1 # Current critique round count (must be 1 for critique to affect consensus)
-  max_rounds: 1 # Reserved for future multi-round critique; not consumed by v1 logic (which activates critique only when rounds == 1)
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
   can_add_quorum_votes: false # Must be false in v1 schema
   allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
@@ -107,8 +106,8 @@ state:
   retention:
     keep_open: true # Preserve state records for open findings
     keep_wontfix: true # Preserve state records marked as won't fix
-    keep_resolved_runs: 5 # Number of past pipeline runs to retain resolved findings history
-    keep_stale_runs: 2 # Retention depth for stale/stale_unverified records
+    keep_resolved_records: 5 # Number of resolved finding records to retain
+    keep_stale_records: 2 # Number of stale/stale_unverified records to retain
     max_records: 200 # Max state entry count
     max_state_bytes: 50000 # Max byte size for state payload note
 

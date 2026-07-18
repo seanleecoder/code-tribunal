@@ -144,7 +144,6 @@ class ConsensusCliTests(unittest.TestCase):
                         "critique:",
                         "  enabled: true",
                         "  rounds: 1",
-                        "  max_rounds: 1",
                         "  blind_reviewer_identity: true",
                         "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",

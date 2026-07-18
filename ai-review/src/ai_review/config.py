@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +48,6 @@ QUORUM_BLOCKER_KEYS = {"block_merge"}
 CRITIQUE_KEYS = {
     "enabled",
     "rounds",
-    "max_rounds",
     "blind_reviewer_identity",
     "can_add_quorum_votes",
     "allow_advisory_escalation",
@@ -70,14 +68,12 @@ STATE_KEYS = {
     "checksum_required",
     "retention",
     "fail_closed_on_load_error",
-    # Accepted for one release and normalized to fail_closed_on_load_error.
-    "overflow_behavior",
 }
 STATE_RETENTION_KEYS = {
     "keep_open",
     "keep_wontfix",
-    "keep_resolved_runs",
-    "keep_stale_runs",
+    "keep_resolved_records",
+    "keep_stale_records",
     "max_records",
     "max_state_bytes",
 }
@@ -360,28 +356,6 @@ def _validate_posting(config: dict[str, Any]) -> None:
         state["fail_closed_on_load_error"], bool
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
-    legacy_overflow = state.get("overflow_behavior")
-    if "overflow_behavior" in state:
-        legacy_values = {"fail_closed": True, "fail_open": False}
-        if not isinstance(legacy_overflow, str) or legacy_overflow not in legacy_values:
-            raise ConfigError(
-                "state.overflow_behavior must be fail_closed or fail_open while using the "
-                "deprecated compatibility key"
-            )
-        print(
-            "ai-review: DEPRECATED: state.overflow_behavior is deprecated; use "
-            "state.fail_closed_on_load_error instead.",
-            file=sys.stderr,
-        )
-        legacy_fail_closed = legacy_values[legacy_overflow]
-        if (
-            "fail_closed_on_load_error" in state
-            and state["fail_closed_on_load_error"] != legacy_fail_closed
-        ):
-            raise ConfigError(
-                "state.overflow_behavior conflicts with state.fail_closed_on_load_error"
-            )
-        state.setdefault("fail_closed_on_load_error", legacy_fail_closed)
     state.setdefault("fail_closed_on_load_error", False)
     backend = state.setdefault(
         "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
@@ -427,7 +401,6 @@ def validate_config(config: dict[str, Any]) -> None:
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
     critique.setdefault("enabled", False)
     critique.setdefault("rounds", 0)
-    critique.setdefault("max_rounds", 1)
     critique.setdefault("blind_reviewer_identity", True)
     critique.setdefault("can_add_quorum_votes", False)
     critique.setdefault("allow_advisory_escalation", True)

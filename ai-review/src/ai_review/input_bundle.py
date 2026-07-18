@@ -509,7 +509,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
     config_dict = load_config(config)
     try:
-        client = create_runtime_platform(config_dict, access="read")
+        client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     pull_request = _resolve_github_pull_request(client, repo)
@@ -592,7 +592,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
     try:
-        client = create_runtime_platform(config_dict, access="read")
+        client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
     version = client.fetch_version(project_id, mr_iid)
