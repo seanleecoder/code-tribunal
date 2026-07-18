@@ -120,7 +120,6 @@ def _open_nofollow(
 
 
 def _copy_regular_file_nofollow(
-    _source: Path,
     dest: Path,
     expected: os.stat_result,
     rel_parts: tuple[str, ...],
@@ -128,12 +127,7 @@ def _copy_regular_file_nofollow(
     dir_fd: int,
     name: str,
 ) -> None:
-    """Open ``name`` relative to ``dir_fd`` with ``O_NOFOLLOW`` and copy to ``dest``.
-
-    ``_source`` is the reconstructed path for callers/tests; I/O is always
-    dir_fd-relative. Path-based opens were removed because production requires
-    ``_DIR_FD_SUPPORTED`` (which implies ``O_NOFOLLOW``).
-    """
+    """Open ``name`` relative to ``dir_fd`` with ``O_NOFOLLOW`` and copy to ``dest``."""
     fd = _open_nofollow(name, flags=os.O_RDONLY, dir_fd=dir_fd, rel_parts=rel_parts)
     try:
         _write_regular_file_from_fd(fd, dest, expected, rel_parts)
@@ -182,12 +176,12 @@ def _copy_snapshot_tree(
             f"repository snapshot failed to open source root: {exc}"
         ) from exc
 
-    # (dir_fd, source_dir Path, rel_parts) — Path is for relative joins only.
-    stack: list[tuple[int, Path, tuple[str, ...]]] = [(root_fd, source_root, ())]
+    # (dir_fd, rel_parts)
+    stack: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
     try:
         while stack:
-            dir_fd, source_dir, rel_parts = stack.pop()
-            child_dirs: list[tuple[int, Path, tuple[str, ...]]] = []
+            dir_fd, rel_parts = stack.pop()
+            child_dirs: list[tuple[int, tuple[str, ...]]] = []
             try:
                 if len(rel_parts) > _MAX_SNAPSHOT_DEPTH:
                     raise BundleError(
@@ -213,19 +207,17 @@ def _copy_snapshot_tree(
                         ) from exc
                     mode = entry_stat.st_mode
                     if stat.S_ISDIR(mode):
-                        dest_dir = dest_root.joinpath(*child_parts)
-                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_root.joinpath(*child_parts).mkdir(parents=True, exist_ok=True)
                         child_fd = _open_nofollow(
                             name,
                             flags=os.O_RDONLY | _O_DIRECTORY,
                             dir_fd=dir_fd,
                             rel_parts=child_parts,
                         )
-                        child_dirs.append((child_fd, source_dir / name, child_parts))
+                        child_dirs.append((child_fd, child_parts))
                         continue
                     if stat.S_ISREG(mode):
                         _copy_regular_file_nofollow(
-                            source_dir / name,
                             dest_root.joinpath(*child_parts),
                             entry_stat,
                             child_parts,
@@ -238,13 +230,13 @@ def _copy_snapshot_tree(
                 stack.extend(reversed(child_dirs))
                 child_dirs = []
             finally:
-                for leaked_fd, _, _ in child_dirs:
+                for leaked_fd, _ in child_dirs:
                     os.close(leaked_fd)
                 if dir_fd != root_fd:
                     os.close(dir_fd)
     finally:
         while stack:
-            leftover_fd, _, _ = stack.pop()
+            leftover_fd, _ = stack.pop()
             if leftover_fd != root_fd:
                 os.close(leftover_fd)
         os.close(root_fd)

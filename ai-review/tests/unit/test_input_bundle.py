@@ -447,7 +447,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             outside.write_text("outside\n", encoding="utf-8")
 
             def race_then_copy(
-                src: Path,
                 dst: Path,
                 expected: os.stat_result,
                 rel_parts: tuple[str, ...],
@@ -455,11 +454,11 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 dir_fd: int,
                 name: str,
             ) -> None:
-                if src.resolve() == victim:
-                    src.unlink()
-                    src.symlink_to(outside)
+                if rel_parts == ("src", "pkg", "mod.py"):
+                    victim.unlink()
+                    victim.symlink_to(outside)
                 _copy_regular_file_nofollow(
-                    src, dst, expected, rel_parts, dir_fd=dir_fd, name=name
+                    dst, expected, rel_parts, dir_fd=dir_fd, name=name
                 )
 
             with (
