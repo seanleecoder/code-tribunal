@@ -1,5 +1,8 @@
 # Phase 5.5 Acceptance Evidence
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 ## Public GHCR Publish
 
 - Status: accepted — first public publish completed.

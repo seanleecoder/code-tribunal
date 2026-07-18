@@ -1,177 +1,40 @@
-# Code Tribunal — Improvement Specs and Status
+# Improvement specifications and status
 
-These documents began as agent-ready work units derived from the Staff+ and
-security review. Phases 0–3 are retained as implementation and decision history.
-The active follow-on work is SPEC-19–22 below (spec IDs continue after the
-archived SPEC-17/18). SPEC-23–30 are retained as implemented planning history.
-SPEC-31–39 are the actionable outcomes of the final 2026-07 1.0.0 critical
-release audit (see [Phase 6](#phase-6--final-10-release-gate)). Paused ideas are
-stored under
-[`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
-
-Each spec follows the same template so an agent can execute it without extra
-context:
-
-- **ID / Title / Severity / Effort / ROI rank**
-- **Depends on** — specs that must land first
-- **Why** — the problem and the risk
-- **Scope (in / out)** — what to change and what NOT to touch
-- **Implementation** — concrete files + changes
-- **Acceptance criteria** — observable pass/fail
-- **Tests** — what to add
-- **Risk / rollback**
-
-> Effort key: XS (<½ day), S (~1 day), M (2–4 days), L (~1–2 weeks).
-> Severity uses the review's scale (Critical/High/Medium).
-
-Completed implementation plans are removed once their acceptance criteria are
-represented by tests and release history. Requirement documents remain so the
-reasoning and security invariants are not lost.
+These files are requirement and implementation history. They are not current
+product documentation. Where a spec conflicts with code, schemas, tests,
+canonical templates, or the task-oriented docs, the executable/current contract
+wins.
 
 ## Current status
 
-| Phase | Theme | Specs | Status |
-|---|---|---|---|
-| **0** | Quick wins | SPEC-01…05 | Complete; implemented before the Phase 1/2 releases. |
-| **1** | Security + determinism | SPEC-06…10 | Released as `v0.2.0`; SPEC-06 deployment evidence remains outstanding. |
-| **2** | Correctness + testability | SPEC-11…14 | Complete; released as `v0.3.0`. |
-| **3** | Platform + supply chain | SPEC-15…16 | Complete; implemented on `main` ([completion audit](completion-audit.md)). |
-| **4** | Reviewer cost + panel flexibility | SPEC-19…21 | SPEC-19 implemented in this branch; SPEC-20/21 proposed. |
-| — | Project rules, learning loop, rule tracing | SPEC-22 | Proposed design; phases A0–E not started. |
-| **5** | Initial 1.0 release readiness | SPEC-23…30 | Implemented on `main`; retained as planning history pending release notes/archive. |
-| **6** | Final 1.0 release gate | SPEC-31…39 | Active. SPEC-31…38 and SPEC-39 milestone A gate 1.0; SPEC-39 milestone B may follow in 1.0.x. |
-
-## Phase 4 — Reviewer cost + panel flexibility
-
-Prompted by real-run observations: the opencode reviewer is the slowest and
-most expensive panel seat (occasional timeouts; on
-`google/gemini-3.1-flash-lite` it out-costs the claude/codex seats on stronger
-models), and no token/cost data is recorded anywhere to steer tuning. Each
-spec is independently implementable; SPEC-20 is the measurement instrument
-that validates SPEC-19.
-
-| Spec | Title | Effort | Depends on |
-|---|---|---|---|
-| [SPEC-19](spec-19-opencode-reviewer-optimization.md) | OpenCode reviewer cost/latency optimization | S | Implemented in this branch (SPEC-20 recommended for measurement) |
-| [SPEC-20](spec-20-reviewer-usage-accounting.md) | Per-reviewer token/cost usage accounting | S | none |
-| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Cursor CLI as an opt-in substitute reviewer | M | none hard (SPEC-20 recommended first) |
-
-## Proposed
-
-Independent of Phase 4 (SPEC-19…21); no shared dependency in either direction.
-
-| Spec | Title | Status |
+| Specs | Status | Evidence or remaining work |
 |---|---|---|
-| [SPEC-22](spec-22-project-rules-and-learning.md) | Project review rules from the target branch + human-gated learning loop + rule-level tracing (rule-trace interop) | Proposed design; phases A0–E not started. |
+| SPEC-01–05 | Complete | Initial quality, security, and documentation foundations shipped before Phase 1. |
+| SPEC-06 | Implementation complete; deployment evidence outstanding | Trust auditor/template tests exist; hostile-MR scratch evidence remains open. |
+| SPEC-07–19 | Complete | State, consensus, correctness, platform, supply-chain, and reviewer optimization changes are represented by tests/changelog. |
+| SPEC-20–22 | Proposed | Usage accounting, Cursor-as-generalized feature work, and project learning/rules are not advertised product features. Cursor reviewer support that exists is documented independently of the old proposal. |
+| SPEC-23–30 | Complete history | Implemented on `main`; requirements retained for provenance. |
+| SPEC-31–36 | Complete on `main` | Snapshot containment, reviewer validity, artifact/config integrity, revision binding, distribution contract, and quality/type gates landed. |
+| [SPEC-37](spec-37-final-release-artifacts.md) | Active final gate | Publish/tag exact final source after documentation/evidence and milestone A. |
+| [SPEC-38](spec-38-documentation-evidence-restructure.md) | Active | Task-oriented docs/checks implemented; required live evidence remains open until recorded. |
+| [SPEC-39](spec-39-simplification-deletion.md) | Milestone A complete; B post-1.0 | Container-only contract cleanup landed; posting decomposition may follow in 1.0.x. |
 
-## Phase 5 — 1.0 release readiness
+## Active dependency order
 
-Outcomes of the 2026-07 release-readiness review after maintainer triage.
-Each spec is self-contained and independently implementable; SPEC-26 shares a
-`RENDER_BODY_VERSION` bump with SPEC-25 and should land after or with it.
-Release sequencing: SPEC-23…29 land before the 1.0.0 version bump + `v1.0.0`
-tag + image publish; SPEC-30 may ship in 1.0.x.
+1. Keep SPEC-31–36 and SPEC-39 milestone A regression tests green.
+2. Complete SPEC-38 repository documentation/checking changes.
+3. Publish release-candidate images from one reviewed commit and execute the
+   [live evidence matrix](../history/evidence/README.md).
+4. Close SPEC-38 only when required evidence is recorded and claims link to it.
+5. Execute SPEC-37 to update final pins, version, changelog, tag, and release.
 
-| Spec | Title | Effort | Depends on |
-|---|---|---|---|
-| [SPEC-23](spec-23-github-thread-commands.md) | GitHub review-thread grouping: working `/ai-review` commands + real thread resolution | M | none |
-| [SPEC-24](spec-24-single-gitlab-token.md) | Single GitLab token; fix self-recognition of state notes and posts | S | none |
-| [SPEC-25](spec-25-suggestion-evidence-dissent.md) | Propagate suggestion/evidence into groups; surface dispute rationale | M | none |
-| [SPEC-26](spec-26-untruncated-rendering-platform-limits.md) | Remove fixed truncation; enforce platform comment limits | S | SPEC-25 |
-| [SPEC-27](spec-27-node24-action-pins.md) | Upgrade GitHub Actions pins off the deprecated node20 runtime | S | none |
-| [SPEC-28](spec-28-packaging-metadata.md) | Drop unused python-gitlab; correct package description | XS | none |
-| [SPEC-29](spec-29-pre-1.0-fix-batch.md) | Pre-1.0 fix batch: pin drift, CI rules, dead surface, trust auditor, config validation, doc claims | M | none |
-| [SPEC-30](spec-30-post-1.0-robustness.md) | Post-1.0 robustness: posting resilience, diff endpoint, fallback-parser removal | M | SPEC-23, SPEC-24 |
+## Historical indexes
 
-The implementation commits for SPEC-23–30 are present on `main`. Their individual
-files remain useful requirement history, but their old “pre/post-1.0” sequencing is
-superseded by the Phase 6 audit below.
+- [Completion audit](completion-audit.md)
+- [Completed specification index](../history/completed-specs/README.md)
+- [Paused plans](../archived-improvement-plans/README.md)
+- [Live and legacy evidence](../history/README.md)
 
-## Phase 6 — Final 1.0 release gate
-
-These specs convert the final critical release review into independently
-implementable work. The recommended sequence is:
-
-1. Land SPEC-31, SPEC-32, SPEC-34, and SPEC-35 in parallel.
-2. Land SPEC-33 after SPEC-32 fixes the reviewer-quality artifact contract.
-3. Land SPEC-36 after SPEC-32/33 schemas stabilize.
-4. Land SPEC-39 milestone A and reconcile documentation/evidence under SPEC-38.
-5. Execute SPEC-37 last to publish and pin artifacts from the exact release source.
-6. Defer only SPEC-39 milestone B until 1.0.x.
-
-| Spec | Title | Effort | Depends on | 1.0 timing |
-|---|---|---|---|---|
-| [SPEC-31](spec-31-snapshot-symlink-containment.md) | Contain repository snapshots and reject symlink escapes | M | none | blocker |
-| [SPEC-32](spec-32-reviewer-validity-resolution-quorum.md) | Separate usable reviewer evidence from syntactic adapter success | M | none | must land |
-| [SPEC-33](spec-33-gate-config-artifact-integrity.md) | Gate failures and cross-stage configuration integrity | M | SPEC-32 | must land |
-| [SPEC-34](spec-34-github-revision-bound-input.md) | Bind GitHub diff, snapshot, and manifest to one revision | S–M | none | must land |
-| [SPEC-35](spec-35-distribution-contract.md) | Define and test the Python/container distribution contract | M | none | must land |
-| [SPEC-36](spec-36-types-quality-gates.md) | Align typed contracts and make quality gates fail honestly | M | SPEC-32, SPEC-33 | must land |
-| [SPEC-37](spec-37-final-release-artifacts.md) | Cut reproducible 1.0 artifacts from one exact release commit | M | SPEC-31…36, SPEC-38, SPEC-39 A | final release gate |
-| [SPEC-38](spec-38-documentation-evidence-restructure.md) | Task-oriented documentation and live acceptance evidence | L | SPEC-31…36 | must land |
-| [SPEC-39](spec-39-simplification-deletion.md) | Simplify the 1.0 surface and decompose posting internals | L, split | SPEC-35, SPEC-36 | A before 1.0; B after |
-
-### Phase 6 dependency graph
-
-```text
-SPEC-31 snapshot containment ───────────────┐
-SPEC-32 reviewer validity ──► SPEC-33 ──┐   │
-SPEC-34 revision-bound GitHub input ─────┼───┤
-SPEC-35 distribution ──► SPEC-39 A ─────┤   ├─► SPEC-37 final artifacts
-SPEC-32 + SPEC-33 ──► SPEC-36 ──────────┤   │
-SPEC-31…36 ──► SPEC-38 docs/evidence ────┘   │
-SPEC-35 + SPEC-36 ──► SPEC-39 B (post-1.0)   │
-```
-
-## Downstream validation
-
-On 2026-07-13, the GitLab integration was exercised in a private downstream
-merge request on GitLab 18.6.2 using the published `v0.3.0` images:
-
-- one mirrored child pipeline ran the complete single-stage `ai_review` DAG;
-- prepare, three reviews, three critiques, consensus, post, and gate succeeded;
-- all three reviewers contributed valid artifacts and consensus converged;
-- posting created one inline discussion and one summary containing three FYI
-  findings; and
-- the gate passed and mirrored success to the parent pipeline.
-
-This validates the child topology and posting path in a real consumer. It does
-not replace the hostile-MR trust validation required by the SPEC-06 runbook.
-
-## Dependency graph (must-land-before)
-
-```
-SPEC-03 (CI: ruff+mypy+pytest) ──┐
-                                 ├─► every later spec relies on this gate
-SPEC-09 (extract render.py) ─────┼─► SPEC-13 (TypedDicts), SPEC-14 (decompose post)
-SPEC-13 (TypedDicts) ────────────┼─► SPEC-14, SPEC-15 (platform iface)
-SPEC-14 (decompose post) ────────┼─► SPEC-15
-SPEC-12 (E2E post→gate) ─────────┴─► guards SPEC-14, SPEC-15 refactors
-SPEC-08 (downgrade cap) ── independent
-SPEC-07 (state auth) ── independent
-SPEC-06 (CI trust) ── independent (docs + reference pipeline)
-```
-
-The graph is retained as implementation history. See the
-[completion audit](completion-audit.md) before treating a phase-level status as
-proof that every acceptance criterion is closed.
-
-## Historical reassessment — PR #3 (`mr-review-performance`)
-
-PR #3 improved the claude reviewer (schema steering via `--json-schema`, a
-validated `effort` knob, selective-exploration prompt + `<DIFF_STATS>`, `--bare`
-hardening on the non-OpenRouter path, image-build smoke test). It **did not
-change any Critical/High finding**. Two consequences for these specs:
-
-- **SPEC-04 is now slightly larger**: the loose `*openrouter.ai*` substring
-  match exists in **two** places in `claude.sh` (endpoint auth mapping *and* the
-  new `--bare` guard). Both must be fixed.
-- The `effort` field is a **good template to copy**: closed-set value,
-  `validate_config` check, `effective_config_summary` surfacing, and unit tests.
-  Reuse that pattern only when a new control is implemented end to end.
-
-## Source of truth
-
-The executable product contract lives in code, schemas, tests, and the canonical
-CI templates. These documents explain why the work exists; where they conflict
-with executable behavior, the implementation and current README win.
+Completed plans remain at their old paths for one compatibility release so
+external links continue to resolve. Their implementation sequencing and image
+examples are historical.

@@ -1,5 +1,8 @@
 # SPEC-35 — Define and test the supported Python/container distribution contract
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** High (published package is incomplete) · **Effort:** M · **ROI rank:** 5 (pre-1.0)
 - **Depends on:** none; SPEC-37 consumes the final distribution decision.
 

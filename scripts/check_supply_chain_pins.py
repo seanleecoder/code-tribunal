@@ -16,7 +16,6 @@ GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
 GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
-README = ROOT / "README.md"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
@@ -234,17 +233,11 @@ def _concrete_image_pins(text: str) -> dict[str, str]:
     }
 
 
-def _readme_image_pin_issues(readme: str, template: str) -> list[str]:
-    readme_values = _concrete_image_pin_values(readme)
+def _gitlab_image_pin_issues(template: str) -> list[str]:
     template_values = _concrete_image_pin_values(template)
     issues: list[str] = []
     for key in IMAGE_PIN_KEYS:
-        readme_count = len(readme_values[key])
         template_count = len(template_values[key])
-        if readme_count == 0:
-            issues.append(f"README is missing a concrete {key} value")
-        elif readme_count > 1:
-            issues.append(f"README contains {readme_count} concrete {key} values; expected one")
         if template_count == 0:
             issues.append(f"GitLab review template is missing a concrete {key} value")
         elif template_count > 1:
@@ -252,11 +245,32 @@ def _readme_image_pin_issues(readme: str, template: str) -> list[str]:
                 f"GitLab review template contains {template_count} concrete {key} values; "
                 "expected one"
             )
-        if readme_count == 1 and template_count == 1 and readme_values[key] != template_values[key]:
-            issues.append(f"README {key} must match ai-review/ci/review.gitlab-ci.yml")
+    pins = _concrete_image_pins(template)
+    trusted_sha = pins.get("AI_REVIEW_TRUSTED_IMAGE_SHA")
+    for key in ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE"):
+        image = pins.get(key, "")
+        match = re.fullmatch(r"ghcr\.io/[^\s]+:1\.0-([0-9a-f]{40})@sha256:[0-9a-f]{64}", image)
+        if not match:
+            issues.append(f"GitLab review template {key} must be a digest-pinned 1.0 source tag")
+        elif trusted_sha and match.group(1) != trusted_sha:
+            issues.append(f"GitLab review template {key} source SHA must match trusted SHA")
     return issues
 
 
+def _cross_platform_image_pin_issues(gitlab: str, github: str) -> list[str]:
+    pins = _concrete_image_pins(gitlab)
+    containers = re.findall(r"^\s+container:\s+(\S+)\s*$", github, re.M)
+    expected = {
+        "AI_REVIEW_BASE_IMAGE": {item for item in containers if "/ai-review-base:" in item},
+        "AI_REVIEW_REVIEWER_IMAGE": {
+            item for item in containers if "/ai-review-reviewer:" in item
+        },
+    }
+    issues: list[str] = []
+    for key, github_values in expected.items():
+        if len(github_values) == 1 and pins.get(key) not in github_values:
+            issues.append(f"GitHub containers must match GitLab {key}")
+    return issues
 
 def _cursor_agent_pin_issues(text: str) -> list[str]:
     values: dict[str, str] = {}
@@ -322,14 +336,16 @@ def main() -> int:
             failures += 1
     gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
-    readme = _read(README)
     constraints = _read(PYTHON_CONSTRAINTS)
     dev_requirements = _read_optional(DEV_REQUIREMENTS)
     cursor_pin = _read(CURSOR_AGENT_PIN)
     package = json.loads(_read(PACKAGE_JSON))
     lock = json.loads(_read(PACKAGE_LOCK))
 
-    for issue in _readme_image_pin_issues(readme, gitlab_review):
+    for issue in _gitlab_image_pin_issues(gitlab_review):
+        error(issue)
+        failures += 1
+    for issue in _cross_platform_image_pin_issues(gitlab_review, canonical_review_workflow):
         error(issue)
         failures += 1
 

@@ -1,5 +1,8 @@
 # SPEC-27 — Upgrade GitHub Actions pins off the deprecated node20 runtime
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (deprecation warnings on every run; future forced breakage) · **Effort:** S · **ROI rank:** 5 (pre-1.0)
 - **Depends on:** none.
 

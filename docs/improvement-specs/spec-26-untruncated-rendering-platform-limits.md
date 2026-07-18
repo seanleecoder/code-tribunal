@@ -1,5 +1,8 @@
 # SPEC-26 — Remove fixed truncation for evidence, dissent, and advisory findings; enforce platform limits instead
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (useful content destroyed by arbitrary caps) · **Effort:** S · **ROI rank:** 4 (pre-1.0)
 - **Depends on:** SPEC-25 (shares the `render-body.v2` bump; the dissent and
   evidence sections this spec un-truncates are introduced there).

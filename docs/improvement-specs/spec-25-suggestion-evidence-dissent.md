@@ -1,5 +1,8 @@
 # SPEC-25 — Propagate suggestion/evidence into consensus groups; surface dispute rationale
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (validated reviewer content silently discarded) · **Effort:** M · **ROI rank:** 3 (pre-1.0)
 - **Depends on:** none. SPEC-26 (untruncated rendering) should land after or together with this spec — they share one `RENDER_BODY_VERSION` bump.
 

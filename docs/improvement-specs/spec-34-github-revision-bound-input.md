@@ -1,5 +1,8 @@
 # SPEC-34 — Bind GitHub diff, snapshot, and manifest to one revision
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** High (review inputs can describe different revisions) · **Effort:** S–M · **ROI rank:** 4 (pre-1.0)
 - **Depends on:** none.
 

@@ -1,5 +1,8 @@
 # SPEC-36 — Align typed contracts and make quality gates fail honestly
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (misleading typed API and green checks) · **Effort:** M · **ROI rank:** 6 (pre-1.0)
 - **Depends on:** SPEC-32 and SPEC-33 for their final artifact fields.
 

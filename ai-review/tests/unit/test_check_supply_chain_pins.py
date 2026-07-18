@@ -31,48 +31,46 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             finally:
                 check_supply_chain_pins.REVIEWER_DOCKERFILE = original
 
-    def test_detects_readme_image_pin_drift(self) -> None:
-        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+    def test_detects_cross_platform_image_pin_drift(self) -> None:
         template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
+        workflow = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
+        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
         replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
-        mutated = readme.replace(base_pin, replacement, 1)
+        mutated = workflow.replace(base_pin, replacement)
 
         self.assertIn(
-            "README AI_REVIEW_BASE_IMAGE must match ai-review/ci/review.gitlab-ci.yml",
-            check_supply_chain_pins._readme_image_pin_issues(mutated, template),
+            "GitHub containers must match GitLab AI_REVIEW_BASE_IMAGE",
+            check_supply_chain_pins._cross_platform_image_pin_issues(template, mutated),
         )
 
-    def test_readme_image_pin_diagnostics_distinguish_missing_and_duplicate(self) -> None:
-        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+    def test_gitlab_image_pin_diagnostics_distinguish_missing_and_duplicate(self) -> None:
         template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
-        concrete_line = f'     AI_REVIEW_BASE_IMAGE: "{base_pin}"'
+        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
+        concrete_line = f'  AI_REVIEW_BASE_IMAGE: "{base_pin}"'
 
-        missing = readme.replace(concrete_line, "", 1)
-        duplicate = readme + f'\nAI_REVIEW_BASE_IMAGE: "{base_pin}"\n'
+        missing = template.replace(concrete_line, "", 1)
+        duplicate = template + f'\nAI_REVIEW_BASE_IMAGE: "{base_pin}"\n'
 
         self.assertIn(
-            "README is missing a concrete AI_REVIEW_BASE_IMAGE value",
-            check_supply_chain_pins._readme_image_pin_issues(missing, template),
+            "GitLab review template is missing a concrete AI_REVIEW_BASE_IMAGE value",
+            check_supply_chain_pins._gitlab_image_pin_issues(missing),
         )
         self.assertIn(
-            "README contains 2 concrete AI_REVIEW_BASE_IMAGE values; expected one",
-            check_supply_chain_pins._readme_image_pin_issues(duplicate, template),
+            "GitLab review template contains 2 concrete AI_REVIEW_BASE_IMAGE values; expected one",
+            check_supply_chain_pins._gitlab_image_pin_issues(duplicate),
         )
 
-    def test_readme_image_pin_parser_accepts_equivalent_yaml_formatting(self) -> None:
-        readme = check_supply_chain_pins.README.read_text(encoding="utf-8")
+    def test_gitlab_image_pin_parser_accepts_equivalent_yaml_formatting(self) -> None:
         template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(readme)["AI_REVIEW_BASE_IMAGE"]
-        reformatted = readme.replace(
+        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
+        reformatted = template.replace(
             f'AI_REVIEW_BASE_IMAGE: "{base_pin}"',
             f"AI_REVIEW_BASE_IMAGE : {base_pin}  # current base image",
             1,
         )
 
         self.assertEqual(
-            check_supply_chain_pins._readme_image_pin_issues(reformatted, template),
+            check_supply_chain_pins._gitlab_image_pin_issues(reformatted),
             [],
         )
 

@@ -1,5 +1,8 @@
 # Phase 4 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 Status: Phase 4 implementation synced; baseline real MR smoke passed; anchor-drift smoke passed conservative safety checks with missing-remap fallback.
 
 Date: 2026-07-03

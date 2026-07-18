@@ -1,5 +1,8 @@
 # Phase 2 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 This file tracks Phase 2 acceptance for parallel fan-out reviewers
 (spec `../specs/ai-review-implementation-ready-spec.md` section 21,
 "Phase 2 - Parallel fan-out reviewers"). Phase 1's remaining acceptance checks

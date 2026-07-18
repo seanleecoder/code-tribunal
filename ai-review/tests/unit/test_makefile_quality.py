@@ -39,6 +39,9 @@ if [ "$1" = "-m" ]; then
     esac
 fi
 case "$1" in
+    scripts/check_docs.py)
+        exit "${STUB_DOCS_STATUS:-0}"
+        ;;
     scripts/check_supply_chain_pins.py)
         exit "${STUB_SUPPLY_CHAIN_STATUS:-0}"
         ;;
@@ -111,11 +114,20 @@ exit 0
         self.assertFalse(any(call.startswith("-m compileall") for call in calls))
         self.assertFalse(any(call == "scripts/check_supply_chain_pins.py" for call in calls))
 
+    def test_documentation_failure_stops_quality(self) -> None:
+        result = self._make("quality", STUB_DOCS_STATUS=6)
+
+        self.assertNotEqual(result.returncode, 0)
+        calls = self._calls()
+        self.assertIn("scripts/check_docs.py", calls)
+        self.assertFalse(any(call.startswith("-m ruff") for call in calls))
+
     def test_quality_runs_every_gate_when_they_pass(self) -> None:
         result = self._make("quality")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self._calls()
+        self.assertIn("scripts/check_docs.py", calls)
         ruff_call = next(call for call in calls if call.startswith("-m ruff"))
         self.assertIn("ai-review/src", ruff_call)
         self.assertIn("ai-review/tests", ruff_call)

@@ -1,5 +1,8 @@
 # Phase 5 Acceptance Evidence
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 ## Local Validation
 
 - Status: complete on 2026-07-04 after live-provider hardening

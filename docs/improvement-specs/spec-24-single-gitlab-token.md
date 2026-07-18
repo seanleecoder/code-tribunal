@@ -1,5 +1,8 @@
 # SPEC-24 — Single GitLab token; fix self-recognition of state notes and posts
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** High (state loss / duplicate posts observed in production) · **Effort:** S · **ROI rank:** 2 (pre-1.0)
 - **Depends on:** none.
 

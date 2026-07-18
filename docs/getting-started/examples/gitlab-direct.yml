@@ -1,0 +1,8 @@
+stages:
+  - test
+  - ai_review
+
+include:
+  - project: org/code-tribunal-ci
+    ref: "1111111111111111111111111111111111111111"
+    file: /ai-review/ci/review.gitlab-ci.yml

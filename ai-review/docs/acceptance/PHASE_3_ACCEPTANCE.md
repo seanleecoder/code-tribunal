@@ -1,5 +1,8 @@
 # Phase 3 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 This file tracks Phase 3 acceptance for deterministic consensus,
 idempotent GitLab upsert, and the merge gate (spec
 `../specs/ai-review-implementation-ready-spec.md` section 21,

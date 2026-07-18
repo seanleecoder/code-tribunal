@@ -1,5 +1,8 @@
 # SPEC-30 — Post-1.0 robustness follow-ups: posting resilience, diff endpoint, fallback-parser removal
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (robustness/maintenance; no correctness regression today) · **Effort:** M · **ROI rank:** 8 (may land after 1.0)
 - **Depends on:** SPEC-23 (resolve-path error guarding lands there); SPEC-24
   (split-token deprecation completes here).

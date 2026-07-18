@@ -1,232 +1,70 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-Symptom-first guide for diagnosing Code Tribunal pipeline problems. Artifacts
-are your friends: every stage writes JSON you can download from the job
-(`out/status/`, `out/findings/`, `out/critiques/`, `out/consensus/`,
-`out/post/`, `out/gate/`).
+Use the symptom, collect the named evidence, then take the action. Do not paste
+credentials or sensitive model content into issues.
 
-## Quick triage table
+| Symptom | Likely cause | Evidence | Action |
+|---|---|---|---|
+| Reviewer job failed | Provider/CLI/model/config/timeout error | `out/status/<reviewer>.json` and redacted job log | Fix credential scope/model/config or retry transient failure |
+| Reviewer succeeded but does not count | All findings dropped or batch not resolution-eligible | Finding batch quality counts and `usable_for_resolution` | Use a stronger/compatible model; do not lower safety thresholds blindly |
+| Consensus exits 3 | No usable panel, config drift, wrong run, malformed or spoofed artifact | Consensus log, manifest run/config digests, finding/critique identities | Rerun from prepare with identical project-scoped variables; do not mix artifacts |
+| Gate exits 7 with no blocker | Post/state failure has precedence | `out/post/post_result.json`, `out/gate/gate_result.json` | Repair platform API/state capacity and rerun post/gate |
+| Pipeline is green but no comments appear | Zero surfaced findings, stale head, or advisory-only panel | Consensus summary and post result | Confirm expected policy; let newer revision run after stale head |
+| Gate does not block a merge | Gate disabled, no blocker quorum, advisory panel, or platform setting missing | Config, consensus, gate artifact, required checks/settings | Enable gate and platform enforcement only after validation |
+| Duplicate-looking discussion | Lost/untrusted state, changed bot identity, conservative rematch, or different category | Issue markers, state author, `issue_id`, remap status | Restore bot/state ownership; distinguish a true duplicate from a new identity |
+| `/ai-review` command ignored | Wrong thread, syntax, or authorization | Root finding marker and author permission | Reply in the finding thread with one exact command line |
+| GitHub thread stays open | Built-in token cannot mutate review threads or root comment was deleted | Post warnings and GraphQL error | Add a fine-grained resolve token; preserve root comments |
+| GitHub prepare reports stale input | PR changed or checkout is dirty/untracked | Prepare error with selected/current SHA | Rerun current revision; never weaken SHA checks |
+| GitHub prepare reports HTTP 406/too-large | GitHub refused a complete raw diff | Prepare log | Split/reduce the PR; do not use incomplete `/files` data as a substitute |
+| GitLab child trust audit fails | Include project/SHA, forwarding, inheritance, or bridge contract changed | Auditor errors | Restore the exact hardened example; do not bypass the validator |
+| Runtime override appears ignored | Pinned image predates it or variable scope differs | Template image source SHA and manifest effective config | Rotate all image pins together or move override to shared project/repository scope |
+| Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
 
-| Symptom | First place to look | Likely cause |
-|---|---|---|
-| A reviewer job is red | `out/status/<reviewer>.json` | `model_error`, `schema_error`, `timeout`, or `config_error` (see below) |
-| Pipeline green but no comments | `out/consensus/consensus.json`, `out/post/post_result.json` | Nothing surfaced; or posting hit `stale_head`; or panel `advisory_only` |
-| Consensus job exits 3 | job log / `panel_status` | All usable reviewers failed, or artifact/config integrity failure (including `effective_config_sha256` drift — a misconfiguration detector for job-scoped `AI_REVIEW_*` / policy mismatches, not tamper-proofing; success-only digest/model checks; critique critic≠filename; garbage JSON/schema errors) |
-| Gate exits 7 | `out/gate/gate_result.json` | Blocking finding, or post/state failure (fails closed, including advisory mode) |
-| Gate doesn't block when you expect it to | gate_result + consensus summary | See "Gate does not block" |
-| Same comment appears twice | discussion markers | See "Duplicate-looking comments" |
-| Comment anchored to a wrong line | state note remap status | See "Wrong line anchor" |
-| Child pipeline refuses to start / trust error | bridge job log | Trust validation (see below) |
+## Reviewer status meanings
 
-## Reviewer failures
+- `model_error`: provider/CLI call failed, credential is absent, or endpoint/model
+  validation rejected input.
+- `schema_error`: model output could not satisfy the structured contract.
+- `timeout`: the complete reviewer process group exceeded
+  `reviewers.<name>.timeout_seconds`.
+- `config_error`: configuration or an environment override failed strict
+  validation.
 
-Reviewer and critique jobs are `allow_failure: true` — one red reviewer does
-**not** fail the pipeline; it degrades the panel. Check
-`out/status/<reviewer>.json`:
+One failed seat normally degrades the panel. Zero usable seats or evidence
+integrity failure stops consensus.
 
-- **`model_error`** — the CLI/provider call failed: missing or invalid
-  credential (`OPENROUTER_API_KEY` unset in this job's scope — check that the
-  variable is *not* Protected while running on an unprotected branch), provider
-  outage, or a model id rejected by the format check
-  (`[A-Za-z0-9._:/-]` only). In CI, `AI_REVIEW_REQUIRE_REAL_OPENROUTER=1`
-  makes a missing CLI/key a hard `model_error` instead of a silent mock run.
-- **`schema_error`** — the model responded, but the output could not be parsed
-  into `{"findings": [...]}`. Individual malformed findings are dropped and
-  logged (redacted); a batch-level schema error means the whole response was
-  unusable. Retrying the job often succeeds; recurring schema errors on one
-  model usually mean the configured model is too weak for the structured
-  output contract.
-- **`timeout`** — the adapter exceeded `reviewers.<name>.timeout_seconds`
-  (default 600 s) and the whole process group was killed. Large MRs and slow
-  providers are the usual causes. Options: raise the timeout, choose a faster
-  model, or reduce input size via `limits.max_diff_bytes` / `max_files`.
-  Retrying the job is legitimate — consensus and post will re-run and upsert
-  idempotently (no duplicate comments).
-- **`config_error`** — the effective config failed validation. Booleans in
-  `AI_REVIEW_*` overrides must be exactly `true` or `false` (lowercase, no
-  whitespace); unknown config keys are rejected at every nesting level.
+## Human commands
 
-## Too few successful reviewers
+Reply on the finding's GitLab discussion or GitHub root inline review comment.
+The command must appear alone on a line:
 
-`consensus.json → panel_status`:
+```text
+/ai-review resolve
+/ai-review wontfix
+/ai-review reopen
+```
 
-| panel_status | Meaning | Effect |
-|---|---|---|
-| `full` | all enabled reviewers succeeded | normal operation |
-| `degraded` | ≥ `min_successful_reviewers_for_blocking` (default 2) | can still surface, block, and resolve |
-| `advisory_only` | fewer than the blocking minimum | findings surface, **nothing blocks, nothing auto-resolves** |
-| `failed` | zero successes | consensus exits 3, pipeline fails |
+GitLab requires Developer access or higher. GitHub accepts Write, Maintain, or
+Admin. UI-only thread resolution is not the same as durable `wontfix`.
 
-If you consistently land in `advisory_only`, one reviewer is chronically
-failing — fix that reviewer rather than lowering the minimum.
+## Configuration drift
 
-## My `/ai-review` command was ignored
-
-Check all three requirements:
-
-1. **Reply in the finding's thread.** On GitLab, reply in the finding's
-   discussion. On GitHub, reply directly to the bot's inline review comment in
-   **Files changed**. A top-level MR/PR comment has no finding marker and is
-   ignored.
-2. **Use an account with enough permission.** Commands require Developer access
-   or above on GitLab, or Write/Maintain/Admin on GitHub.
-3. **Put the command on its own line.** Accepted commands are
-   `/ai-review wontfix`, `/ai-review reopen`, and `/ai-review resolve`. Extra
-   text on the same line does not match the line-anchored command syntax.
-
-Do not delete the bot's root inline comment. GitHub thread resolution maps the
-persisted root review-comment ID to GitHub's GraphQL thread ID. If the root is
-deleted, GitHub no longer returns that ID and Code Tribunal cannot resolve or
-reopen the remaining thread automatically; the post result records a warning
-instead of claiming success.
-
-## No comments posted
-
-1. `consensus.json → summary`: `surface_count: 0` means the panel genuinely
-   had nothing (or everything was dropped/FYI — check `fyi_count`,
-   `drop_count`). FYI findings go to the **summary comment**, not inline.
-2. `post_result.json → status: stale_head`: the MR HEAD changed while the
-   pipeline ran; this pipeline deliberately posted nothing and the gate passed
-   as a no-op. The newer pipeline owns the MR.
-3. Posting errors: check the post job log for API failures (token scope: the
-   write token needs `api`; the read token `read_api`).
-
-## Duplicate-looking comments
-
-True duplicates (same `issue_id` marker twice) should not happen — posting
-indexes existing discussions by marker and edits in place. What you may see:
-
-- **Same concern, new thread after a refactor** — identity matching is
-  deterministic and conservative; if the code moved so much that no
-  fingerprint survives, the old record is closed and a new finding is created.
-  See [REVISION_LIFECYCLE.md](REVISION_LIFECYCLE.md).
-- **A dismissed finding came back** — it was dismissed by resolving the thread
-  in the GitLab/GitHub UI instead of replying `/ai-review wontfix`. Only the
-  command records a durable disposition.
-- **Similar findings from different reviewers in two threads** — grouping
-  requires the same path *and category*; two models describing one defect
-  under different categories produce two groups. Known limitation; the
-  optional semantic grouping flag is off by default pending calibration.
-
-## Bot doesn't recognise its own previous posts / duplicates after a token change
-
-On GitLab, each project access token is its own bot user.
-
-- **Token rotation consequences**: Rotating `GITLAB_TOKEN` creates a new bot user. By design, the pipeline distrusts state notes and discussions authored by the old bot user. This causes a one-time re-post of active findings under the new identity.
-- **Split-token variables are not accepted**: `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` are no longer read. Configure a single `GITLAB_TOKEN` for prepare and post.
-
-## GitHub review threads remain open after a clean rerun
-
-Inspect the `ai-review-post` artifact. If it contains `Resource not accessible by
-integration` for `resolveReviewThread`, the built-in Actions `GITHUB_TOKEN` cannot
-resolve threads in that repository context. Create an Actions repository secret
-named `AI_REVIEW_GITHUB_RESOLVE_TOKEN` containing a fine-grained personal access
-token limited to this repository with Pull requests read/write access, then rerun
-AI Review. Avoid a classic PAT with broad `repo` scope. Do not replace
-`GITHUB_TOKEN`: the dedicated token is intentionally used only for resolve and
-unresolve mutations so existing `github-actions[bot]` state ownership remains
-stable.
-
-## Wrong line anchor
-
-Decode the state note (base64url payload after `ai-review-state:v1` in the
-hidden bot note) and check the record's `remap_status`: `exact`/`remapped` are
-healthy; `ambiguous` means the ±6-line context now matches several places
-(record goes `stale`); `missing` means the context vanished
-(`stale_unverified`). Anchors are recomputed against the *current* diff each
-run — a persistently wrong anchor usually means the finding matched an
-unintended record (check the alias fingerprints).
-
-## Gate does not block
-
-Check in order:
-
-1. `merge_gate.enabled` / `AI_REVIEW_MERGE_GATE_ENABLED` — advisory mode
-   disables finding-based blocking only; post/state failures still exit 7.
-2. `consensus.summary.block_merge` — blocking requires a **`blocker`-severity**
-   group meeting the 2-vote quorum (majors/minors never block, by policy).
-3. Panel status `advisory_only` — degraded panels cannot block.
-4. GitLab: is **Pipelines must succeed** enabled? GitHub: is the gate job a
-   required status check?
-5. `AI_REVIEW_MANUAL="true"` — a review that was never manually started leaves
-   the MR mergeable; the gate only enforces once a review ran.
-6. Note: the gate **fails closed** on post/state failures (exit 7 with
-   `failed_post_result`) — that is intended, not a bug.
-
-## Missing protected variables
-
-`OPENROUTER_API_KEY` and `GITLAB_TOKEN` must be
-Masked + Protected project variables. Two classic traps:
-
-- Protected variables are **absent on unprotected branches** and in fork MRs —
-  prepare fails closed on external forks by default
-  (`security.allow_external_fork_secrets: false`).
-- A variable defined at the wrong scope reaches only some jobs — see next item.
-
-## Runtime configuration disagreement (config drift)
-
-The prepare stage records the effective config in `inputs/manifest.json`; the
-consensus stage re-derives its own view and prints
-`WARNING effective config differs from the prepare manifest` when they
-disagree. This has been observed in production when an `AI_REVIEW_*` override
-was scoped to only some jobs. **Set overrides as project-level (or
-pipeline-level) variables so every ai-review job inherits the identical
-value.** The manifest side reflects what reviewers actually ran with.
-
-## GitHub prepare reports stale or oversized input
-
-GitHub prepare binds the selected workflow revision, clean checkout, immutable
-base/head comparison diff, and manifest to one verified PR revision. Messages
-such as `checkout HEAD
-differs from the workflow-selected head`, `pull-request base/head changed during
-prepare`, or `stale GitHub input at manifest finalization` mean the PR changed at
-a preparation boundary or the checkout contains modified, untracked, or ignored
-input. Rerun the workflow against the current PR revision; do not replace the SHA
-checkout with a branch ref or disable the stale-input checks.
-
-`GitHub rejected the raw diff as oversized (HTTP 406/too_large)`
-means GitHub did not return a complete raw diff. Prepare intentionally emits no
-review bundle in this case. Reduce or split the PR before rerunning. This is
-separate from the configured `limits.max_diff_bytes` and `limits.max_files`
-checks, which run only after GitHub has returned a complete diff.
-
-## Child-pipeline trust validation failure
-
-`verify_pipeline_trust.py` (and the runtime guards) reject consumer configs
-that deviate from the contract: child mode must contain *exactly* the two
-project includes (`review-child.gitlab-ci.yml` + `review.gitlab-ci.yml`) at
-the same trusted project and 40-char commit SHA, with
-`inherit:variables: false`, no bridge `variables:`, `strategy: mirror`, and
-both `forward:` flags false. Any extra include, a branch name instead of a
-SHA, or re-enabled forwarding fails validation. Fix the consumer file; do not
-work around the validator.
-
-## Container image mismatch
-
-The three image variables (`AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`,
-`AI_REVIEW_TRUSTED_IMAGE_SHA`) must be updated **together** to the digests
-from one publish-workflow run. Symptoms of a mismatch: env-override logic
-"not working" (the code that reads a new variable ships *inside* the image),
-or supply-chain checks failing. Remember: runtime overrides need no rebuild,
-but only for knobs the pinned image already knows about.
+Prepare records the consequential effective configuration in the manifest and
+binds it by SHA-256. Current consensus behavior **fails with exit 3** when a
+later stage sees consequential drift; it does not merely warn. Set supported
+overrides at project/group or repository workflow scope and rerun from prepare.
 
 ## Local reproduction
 
-Reproduce most pipeline behavior offline, no credentials:
-
 ```bash
-make review-local      # mock reviewer fan-out on fixtures (AI_REVIEW_LOCAL_MOCK=1)
-make consensus-local   # ...plus consensus + schema validation
-make validate-local    # validate a findings batch against the schema
+make review-local REVIEWER=claude LOCAL_OUT=/tmp/code-tribunal-review
+make consensus-local LOCAL_OUT=/tmp/code-tribunal-consensus
+make validate-local LOCAL_OUT=/tmp/code-tribunal-validation
 ```
 
-For a single real-model call:
-`AI_REVIEW_REQUIRE_REAL_OPENROUTER=1 OPENROUTER_API_KEY=... make review-local REVIEWER=codex`.
+These commands use deterministic mock output. A real local provider call sends
+repository content to that provider and should be run only under the operator's
+data-handling policy.
 
-> **Local gotcha:** if your shell already exports provider endpoint variables
-> (common on developer machines with AI tooling — e.g.
-> `ANTHROPIC_BASE_URL=https://api.anthropic.com`), the adapter's endpoint
-> pinning rejects them (`model_error`:
-> `ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api`).
-> That is the security control working as designed; run the local harness with
-> `env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL make review-local ...`.
+See [operations](operations.md#failure-behavior) for the full failure matrix and
+[artifacts](reference/artifacts-and-schemas.md) for paths and schemas.

@@ -1,5 +1,8 @@
 # SPEC-29 — Pre-1.0 fix batch: pin drift, CI rules, dead surface, trust auditor, config validation, doc claims
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** Medium (aggregate of release-blocking small items) · **Effort:** M (many small independent items) · **ROI rank:** 7 (pre-1.0)
 - **Depends on:** none (item 3's `suggestion` note interacts with SPEC-25 — see below).
 
