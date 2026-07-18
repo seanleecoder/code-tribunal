@@ -25,6 +25,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   implementation details loaded from `/opt/ai-review/src`.
 - Contributor tools are exactly pinned in `requirements-dev.txt` and covered by
   the repository supply-chain check.
+- Schema-backed internal artifact types now match every shipped JSON schema,
+  including critique, adapter-status, raw-finding, and state-alias artifacts.
+  `make quality` is the canonical local and CI gate for Ruff, pytest with
+  coverage, whole-package mypy, supply-chain validation, and compilation;
+  installed checker failures can no longer fall through to successful fallback
+  commands.
 - State retention controls are named for their actual units:
   `keep_resolved_records` and `keep_stale_records` retain bounded counts of
   records rather than run windows.

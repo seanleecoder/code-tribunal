@@ -20,7 +20,7 @@ from .memory import (
     prior_decisions_from_state,
     state_aliases_from_state,
 )
-from .platform import ReviewPlatformError
+from .platform import ComparisonDiffPlatform, ReviewPlatformError
 from .platform.github import PullRequestVersion
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
@@ -616,6 +616,8 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
+    if not isinstance(client, ComparisonDiffPlatform):
+        raise SystemExit("prepare requires a platform with comparison diff support")
     pull_request = _resolve_github_pull_request(client, repo)
     pr_number = str(pull_request.get("number") or "")
     version = _require_github_revision(

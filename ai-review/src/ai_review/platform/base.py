@@ -4,6 +4,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from ai_review.types import Anchor
 
+# GitHub and GitLab use incompatible payloads at this API boundary. Keep these
+# aliases intentionally open instead of maintaining platform-specific shadow
+# TypedDicts that would falsely imply one shared wire shape.
 Position = dict[str, Any]
 InlineComment = dict[str, Any]
 Thread = dict[str, Any]
@@ -90,3 +93,15 @@ class ReviewPlatform(Protocol):
     def single_line_position(self, position: Position) -> Position: ...
 
     def root_note_id_from_thread(self, response: Thread) -> int: ...
+
+
+@runtime_checkable
+class ComparisonDiffPlatform(Protocol):
+    """Optional capability for platforms that expose revision-to-revision diffs."""
+
+    def fetch_comparison_diff(
+        self,
+        project_id_or_path: str | int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str: ...

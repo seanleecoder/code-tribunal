@@ -1,4 +1,4 @@
-from typing import Literal, NotRequired, Required, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 # JSON helper aliases for extension points whose schemas intentionally allow any
 # object shape (for example state run_history entries and raw candidate
@@ -42,6 +42,8 @@ type AdapterStatus = Literal[
     "config_error",
     "internal_error",
 ]
+type AdapterStage = Literal["review", "critique"]
+type CritiqueVerdict = Literal["agree", "dispute", "noise", "duplicate"]
 type PostStatus = Literal[
     "success",
     "stale_head",
@@ -100,6 +102,38 @@ class CandidateIssueSignature(TypedDict):
     symbol: str | None
 
 
+class RawLineRef(TypedDict):
+    old_line: int | None
+    new_line: int | None
+    line_code: None
+
+
+class RawAnchor(TypedDict):
+    old_path: str
+    new_path: str
+    side: AnchorSide
+    start: RawLineRef
+    end: RawLineRef
+    hunk_header: str
+    context_hash: str
+    symbol: str | None
+
+
+class RawFinding(TypedDict):
+    anchor: RawAnchor
+    severity: Severity
+    category: Category
+    title: str
+    body: str
+    evidence: list[str]
+    suggestion: str | None
+    confidence: float
+
+
+class RawFindingBatch(TypedDict):
+    findings: list[RawFinding]
+
+
 class Finding(TypedDict):
     source_finding_id: str
     run_local_id: str
@@ -131,21 +165,42 @@ class FindingBatch(TypedDict):
     findings: list[Finding]
 
 
-class Critique(TypedDict, total=False):
+class Critique(TypedDict):
     target_source_finding_id: str
-    reviewer: ReviewerId
-    verdict: Literal["agree", "dispute", "noise", "duplicate"]
+    critic: ReviewerId
+    verdict: CritiqueVerdict
+    duplicate_of_source_finding_id: str | None
     rationale: str
-    duplicate_of: str | None
-    severity_adjustment: Severity | None
+    adjusted_severity: Severity | None
+    confidence: float
 
 
-class CritiqueBatch(TypedDict, total=False):
-    schema_version: str
-    reviewer: ReviewerId
-    status: str
+class CritiqueBatch(TypedDict):
+    schema_version: Literal["critique_batch.v1"]
+    run_id: RunId
+    critic: ReviewerId
+    adapter_status: AdapterStatus
+    effective_config_sha256: str
     critiques: list[Critique]
-    error: str | None
+
+
+class AdapterStatusArtifact(TypedDict):
+    schema_version: Literal["adapter_status.v1"]
+    reviewer: ReviewerId
+    stage: AdapterStage
+    status: AdapterStatus
+    started_at: str
+    completed_at: str
+    duration_ms: int
+    error_class: str | None
+    error_message_redacted: str | None
+    output_file: str
+    run_id: NotRequired[RunId]
+    raw_finding_count: NotRequired[int]
+    accepted_finding_count: NotRequired[int]
+    dropped_finding_count: NotRequired[int]
+    usable_for_resolution: NotRequired[bool]
+    effective_config_sha256: NotRequired[str]
 
 
 class CritiqueSummary(TypedDict):
@@ -175,7 +230,7 @@ class GroupStateMatch(TypedDict):
     precedence: MatchPrecedence | None
 
 
-class FindingGroup(TypedDict, total=False):
+class FindingGroup(TypedDict):
     issue_id: str | None
     issue_id_source: IssueIdSource
     decision: Decision
@@ -233,7 +288,7 @@ class StateAliases(TypedDict):
     symbols: list[str]
 
 
-class StateRecord(TypedDict, total=False):
+class StateRecord(TypedDict):
     issue_id: str
     title: NotRequired[str]
     category: Category
@@ -254,7 +309,7 @@ class StateRecord(TypedDict, total=False):
     last_matched_run_id: RunId | None
 
 
-class State(TypedDict, total=False):
+class State(TypedDict):
     state_schema_version: Literal[1]
     project_id: ProjectId
     merge_request_iid: MergeRequestIid
@@ -265,6 +320,19 @@ class State(TypedDict, total=False):
     records: list[StateRecord]
     state_hash: str
     run_history: NotRequired[list[JsonObject]]
+
+
+class StateAliasRecord(TypedDict):
+    issue_id: str
+    category: str
+    status: str
+    aliases: JsonObject
+    anchor: JsonObject
+
+
+class StateAliasesArtifact(TypedDict):
+    schema_version: Literal["state_aliases.v1"]
+    records: list[StateAliasRecord]
 
 
 class PostedDiscussion(TypedDict):
@@ -281,20 +349,20 @@ class SummaryComment(TypedDict):
     fyi_findings: int
 
 
-class PostResult(TypedDict, total=False):
-    schema_version: Required[Literal["post_result.v1"]]
-    run_id: Required[RunId]
-    status: Required[PostStatus]
-    head_sha: Required[str]
-    current_head_sha: Required[str]
-    created_discussions: Required[int]
-    updated_discussions: Required[int]
-    resolved_discussions: Required[int]
-    skipped_unchanged: Required[int]
-    stale_unverified: Required[int]
-    posted_discussions: Required[list[PostedDiscussion]]
-    warnings: Required[list[str]]
-    summary_comment: SummaryComment
+class PostResult(TypedDict):
+    schema_version: Literal["post_result.v1"]
+    run_id: RunId
+    status: PostStatus
+    head_sha: str
+    current_head_sha: str
+    created_discussions: int
+    updated_discussions: int
+    resolved_discussions: int
+    skipped_unchanged: int
+    stale_unverified: int
+    posted_discussions: list[PostedDiscussion]
+    warnings: list[str]
+    summary_comment: NotRequired[SummaryComment]
 
 
 class GateResult(TypedDict):

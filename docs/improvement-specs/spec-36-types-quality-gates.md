@@ -7,7 +7,9 @@
 
 The current `Critique`/`CritiqueBatch` TypedDicts use obsolete keys that disagree
 with `critique_batch.schema.json`. Alignment tests cover only selected artifacts.
-The project nevertheless ships `py.typed`.
+At audit time the project nevertheless shipped `py.typed`. SPEC-35 subsequently
+selected the container/template-only distribution contract and removed that
+marker, so this spec must not recreate a public typed-package claim.
 
 Quality commands also mask failures:
 
@@ -58,7 +60,9 @@ coverage-percentage policy (may be a follow-up once branch data is reviewed).
 
 ## Acceptance criteria
 
-- `py.typed` is truthful for the supported package surface chosen in SPEC-35.
+- The container/template-only surface chosen in SPEC-35 remains free of a
+  misleading `py.typed` marker, while internal schema-backed contracts are typed
+  accurately.
 - No shipped contract has two disagreeing field-name/type definitions.
 - A failed checker cannot be converted into a successful local or CI result.
 - Contributor documentation contains one canonical quality command.

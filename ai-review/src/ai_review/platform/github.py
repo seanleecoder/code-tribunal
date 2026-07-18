@@ -102,7 +102,7 @@ class GitHubReviewPlatform:
                 code = ""
                 message = ""
                 try:
-                    payload = last_response.json()
+                    payload = last_response.json() if last_response is not None else None
                 except Exception:
                     payload = None
                 if isinstance(payload, dict):
@@ -386,14 +386,15 @@ class GitHubReviewPlatform:
                     raise GitHubReviewPlatformError(
                         "GitHub GraphQL review thread lookup returned a malformed comment"
                     )
-                node_id = node.get("id")
-                if root_comment and (not isinstance(node_id, str) or not node_id):
-                    raise GitHubReviewPlatformError(
-                        "GitHub GraphQL review thread lookup returned no thread id"
-                    )
-                database_id = root_comment.get("databaseId") if root_comment else None
-                if database_id is not None:
-                    node_ids[str(database_id)] = node_id
+                if root_comment:
+                    node_id = node.get("id")
+                    if not isinstance(node_id, str) or not node_id:
+                        raise GitHubReviewPlatformError(
+                            "GitHub GraphQL review thread lookup returned no thread id"
+                        )
+                    database_id = root_comment.get("databaseId")
+                    if database_id is not None:
+                        node_ids[str(database_id)] = node_id
 
             page_info = threads.get("pageInfo")
             if not isinstance(page_info, dict):

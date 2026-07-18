@@ -4,12 +4,16 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Literal
 
+yaml: ModuleType | None
 try:
-    import yaml  # type: ignore[import-not-found]
+    import yaml as _yaml
 except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal envs
     yaml = None
+else:
+    yaml = _yaml
 
 IntegrationMode = Literal["child", "direct"]
 
