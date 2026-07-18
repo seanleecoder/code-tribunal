@@ -197,10 +197,12 @@ maps the repository's `OPENROUTER_API_KEY` secret only into model-running jobs.
 Automatic runs explicitly check out the submitted pull-request head SHA instead
 of GitHub's synthetic merge commit. The resolver passes the same selected PR
 number and head SHA to checkout and prepare. Prepare verifies that the clean
-checkout HEAD matches that selected SHA, brackets the raw GitHub diff request
-with API metadata reads that must retain the same base/head pair, and rechecks
-the current PR head immediately before writing the manifest. A synchronize event
-at any boundary therefore aborts as stale input instead of combining revisions.
+checkout HEAD matches that selected SHA, rejects untracked and ignored snapshot
+input, and fetches the raw patch from GitHub's immutable comparison endpoint for
+the validated base/head SHAs. API metadata reads around collection must retain
+that same pair, and prepare rechecks the current PR head immediately before
+writing the manifest. A synchronize event at any boundary therefore aborts as
+stale input instead of combining revisions.
 The manifest records `selected_head_sha`, `checkout_head_sha`, the validated
 `base_sha`/`head_sha`, and `diff_sha256`. Before any checkout, manual dispatch
 validates the PR number, resolves its immutable head SHA through the GitHub API,
@@ -245,10 +247,11 @@ intentionally diverges from the canonical auto-capable template.
 Manual dispatch remains unavailable for external-fork PRs because model jobs
 receive `OPENROUTER_API_KEY`.
 
-GitHub's raw-diff endpoint remains fail-closed. An HTTP 406/`too_large` response
-means GitHub refused to provide a complete raw diff; prepare reports an
-oversized-diff error and produces no reviewable bundle. The configured 250 KB
-and 200-file product limits still apply after a complete diff is received.
+GitHub's raw comparison-diff endpoint remains fail-closed. An HTTP
+406/`too_large` response means GitHub refused to provide a complete raw diff;
+prepare reports an oversized-diff error and produces no reviewable bundle. The
+configured 250 KB and 200-file product limits still apply after a complete diff
+is received.
 
 ## Planned Features
 

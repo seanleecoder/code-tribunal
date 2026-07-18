@@ -163,6 +163,17 @@ def test_fetch_diff_returns_empty_string_for_empty_response() -> None:
     assert platform.fetch_diff("octo/repo", 7) == ""
 
 
+def test_fetch_comparison_diff_uses_immutable_base_and_head_shas() -> None:
+    diff = "diff --git a/a.py b/a.py\n+print('ok')\n"
+    session = DiffSession(diff)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    assert platform.fetch_comparison_diff("octo/repo", "0" * 40, "1" * 40) == diff
+    _, url, kwargs = session.calls[0]
+    assert url.endswith(f"/repos/octo/repo/compare/{'0' * 40}...{'1' * 40}")
+    assert kwargs["headers"]["Accept"] == "application/vnd.github.v3.diff"
+
+
 def test_fetch_diff_explains_oversized_406_response() -> None:
     platform = GitHubReviewPlatform(
         "https://api.github.test",
@@ -186,7 +197,7 @@ def test_fetch_diff_explains_oversized_406_response() -> None:
         raise AssertionError("oversized raw diff was accepted")
 
 
-def test_fetch_diff_explains_minimal_406_response() -> None:
+def test_fetch_diff_keeps_minimal_406_response_generic() -> None:
     platform = GitHubReviewPlatform(
         "https://api.github.test", "token", session=RejectedDiffSession(None)
     )
@@ -194,9 +205,26 @@ def test_fetch_diff_explains_minimal_406_response() -> None:
     try:
         platform.fetch_diff("octo/repo", 7)
     except GitHubReviewPlatformError as exc:
-        assert "oversized (HTTP 406)" in str(exc)
+        message = str(exc)
+        assert "raw diff request (HTTP 406)" in message
+        assert "oversized" not in message
     else:
         raise AssertionError("HTTP 406 raw diff was accepted")
+
+
+def test_fetch_comparison_diff_406_fails_closed() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "token",
+        session=RejectedDiffSession({"message": "Diff is too large to display"}),
+    )
+
+    try:
+        platform.fetch_comparison_diff("octo/repo", "0" * 40, "1" * 40)
+    except GitHubReviewPlatformError as exc:
+        assert "oversized" in str(exc)
+    else:
+        raise AssertionError("oversized immutable comparison diff was accepted")
 
 
 def test_fetch_pull_request_returns_metadata() -> None:
