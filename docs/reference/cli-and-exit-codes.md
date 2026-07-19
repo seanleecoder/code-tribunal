@@ -17,6 +17,7 @@ importable Python functions are not a public API.
 | `python -m ai_review.pipeline_trust PATH --mode MODE --template-project PROJECT --template-sha SHA` | Audit a GitLab consumer composition (`MODE` is `direct` or `child`) | 0 | 1 for trust violations, 2 for malformed input/arguments |
 | `scripts/verify_pipeline_trust.py PATH --mode MODE --template-project PROJECT --template-sha SHA` | Script wrapper for the same trust-auditor contract | 0 | 1 for trust violations, 2 for malformed input/arguments |
 | `python -m ai_review.mock_reviewer REVIEWER STAGE` | Emit deterministic local/preflight review or critique JSON | 0 | argparse uses 2; fixture/artifact errors propagate nonzero |
+| `scripts/check_docs.py` | Audit links, anchors, configuration/environment inventory, and install examples | 0 | 1 when the documentation contract fails |
 | `scripts/check_supply_chain_pins.py` | Audit shipped dependency and image pins | 0 | 1 when any pin contract fails |
 
 Signals and interpreter-level failures may use the host shell's conventional

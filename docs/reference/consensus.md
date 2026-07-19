@@ -34,5 +34,9 @@ boundary.
 | `failed` | No usable operational seat | consensus exits 3 | no |
 
 Output is stable across input-file ordering. Golden contract cases and unit
-tests in [`ai-review/tests/`](../../ai-review/tests/) pin normalization,
-grouping, voting, critique, integrity, and state-matching behavior.
+tests pin that behavior directly: the shuffled-batch case in
+[`test_consensus_state_matching.py`](../../ai-review/tests/unit/test_consensus_state_matching.py),
+the reversed-finding case in
+[`test_grouping.py`](../../ai-review/tests/unit/test_grouping.py), and the
+serialized contract fixtures in
+[`test_golden_consensus.py`](../../ai-review/tests/contract/test_golden_consensus.py).

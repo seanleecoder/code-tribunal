@@ -38,18 +38,23 @@ class DocumentationContractTests(unittest.TestCase):
     def test_link_checker_handles_titles_parentheses_and_fenced_examples(self) -> None:
         checker = _load_docs_checker()
         original_root = checker.ROOT
-        with tempfile.TemporaryDirectory(dir=original_root) as tmp:
-            root = Path(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
             source = root / "source.md"
             target = root / "target_(v1).md"
             target.write_text("# Real heading\n", encoding="utf-8")
             text = (
-                "```md\n# Fake heading\n[example](missing.md)\n```\n"
-                '[real](target_(v1).md#real-heading "Reference title")\n'
+                "```md\n``` (part of the example, not a closing fence)\n"
+                "# Fake heading\n[example](missing.md)\n```\n"
+                '[wrapped\nlabel](target_(v1).md#real-heading "Reference title")\n'
             )
             checker.ROOT = root
             try:
                 self.assertEqual(checker._link_issues(source, text), [])
+                self.assertIn(
+                    "target_(v1).md#real-heading",
+                    checker._markdown_link_targets(text),
+                )
                 self.assertNotIn("fake-heading", checker.heading_anchors(text))
             finally:
                 checker.ROOT = original_root
@@ -57,8 +62,8 @@ class DocumentationContractTests(unittest.TestCase):
     def test_link_checker_reports_missing_target_and_anchor(self) -> None:
         checker = _load_docs_checker()
         original_root = checker.ROOT
-        with tempfile.TemporaryDirectory(dir=original_root) as tmp:
-            root = Path(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
             source = root / "source.md"
             target = root / "target.md"
             target.write_text("# Present\n", encoding="utf-8")
@@ -80,6 +85,8 @@ class DocumentationContractTests(unittest.TestCase):
             "| `schema_version` | first |\n"
             "| `schema_version` | duplicate |\n"
             "| `panel.retired` | inert |\n"
+            "| `retired.enabled` | inert root |\n"
+            "## Environment variables\n"
             "| `AI_REVIEW_RETIRED` | inert |\n"
         )
 
@@ -95,6 +102,9 @@ class DocumentationContractTests(unittest.TestCase):
             any("panel.retired" in issue and "inert config" in issue for issue in issues)
         )
         self.assertTrue(
+            any("retired.enabled" in issue and "inert config" in issue for issue in issues)
+        )
+        self.assertTrue(
             any("AI_REVIEW_ACTIVE" in issue and "0 canonical" in issue for issue in issues)
         )
         self.assertTrue(
@@ -108,31 +118,87 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("ai-review/config/review.yaml: root must be a mapping", issues)
         self.assertTrue(any("GITHUB_API_URL" in issue for issue in issues))
 
+    def test_rejected_gitlab_token_names_require_canonical_rows(self) -> None:
+        checker = _load_docs_checker()
+        names = {"GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"}
+        self.assertEqual(
+            set(checker.ENV_RE.findall("GITLAB_READ_TOKEN GITLAB_WRITE_TOKEN")),
+            names,
+        )
+
+        missing = checker._inventory_issues({}, "", names)
+        documented = checker._inventory_issues(
+            {},
+            "## Environment variables\n"
+            "| `GITLAB_READ_TOKEN` | rejected |\n"
+            "| `GITLAB_WRITE_TOKEN` | rejected |\n",
+            names,
+        )
+
+        self.assertEqual(len([issue for issue in missing if "GITLAB_" in issue]), 2)
+        self.assertEqual([issue for issue in documented if "GITLAB_" in issue], [])
+
     def test_readme_line_limit_is_enforced(self) -> None:
         checker = _load_docs_checker()
-        self.assertEqual(checker._readme_issues("line\n" * 219), [])
+        self.assertEqual(checker._readme_issues("line\n" * 220), [])
         self.assertEqual(
-            checker._readme_issues("line\n" * 220),
+            checker._readme_issues("line\n" * 221),
             ["README.md: expected at most 220 lines, found 221"],
+        )
+
+    def test_github_install_contract_binds_source_and_destination(self) -> None:
+        checker = _load_docs_checker()
+        valid = (
+            f"[workflow]({checker.GITHUB_INSTALL_SOURCE}) copy to "
+            f"`{checker.GITHUB_INSTALL_DESTINATION}`"
+        )
+
+        self.assertEqual(checker._github_install_issues(valid), [])
+        self.assertEqual(
+            checker._github_install_issues(
+                f"[workflow](wrong.yml) `{checker.GITHUB_INSTALL_DESTINATION}`"
+            ),
+            [
+                "docs/getting-started/github.md: install source must link to "
+                f"{checker.GITHUB_INSTALL_SOURCE}"
+            ],
+        )
+        self.assertEqual(
+            checker._github_install_issues(
+                f"[workflow]({checker.GITHUB_INSTALL_SOURCE}) copy elsewhere"
+            ),
+            [
+                "docs/getting-started/github.md: install destination must be "
+                f"{checker.GITHUB_INSTALL_DESTINATION}"
+            ],
         )
 
     def test_example_checker_reports_malformed_yaml(self) -> None:
         checker = _load_docs_checker()
         original_root = checker.ROOT
         original_examples = checker.EXAMPLES
-        with tempfile.TemporaryDirectory(dir=original_root) as tmp:
-            root = Path(tmp)
+        original_github_guide = checker.GITHUB_GUIDE
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
             examples = root / "examples"
             examples.mkdir()
             (examples / "gitlab-direct.yml").write_text("[invalid", encoding="utf-8")
             (examples / "gitlab-child.yml").write_text("[invalid", encoding="utf-8")
+            github_guide = root / "github.md"
+            github_guide.write_text(
+                f"[workflow]({checker.GITHUB_INSTALL_SOURCE}) "
+                f"`{checker.GITHUB_INSTALL_DESTINATION}`\n",
+                encoding="utf-8",
+            )
             checker.ROOT = root
             checker.EXAMPLES = examples
+            checker.GITHUB_GUIDE = github_guide
             try:
                 issues = checker._example_issues()
             finally:
                 checker.ROOT = original_root
                 checker.EXAMPLES = original_examples
+                checker.GITHUB_GUIDE = original_github_guide
         self.assertEqual(len(issues), 2)
         self.assertTrue(all("cannot parse YAML" in issue for issue in issues))
 

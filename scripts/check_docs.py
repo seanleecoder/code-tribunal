@@ -17,6 +17,9 @@ CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
 CONFIG_DOC = ROOT / "docs/configuration.md"
 ROOT_README = ROOT / "README.md"
 EXAMPLES = ROOT / "docs/getting-started/examples"
+GITHUB_GUIDE = ROOT / "docs/getting-started/github.md"
+GITHUB_INSTALL_SOURCE = "../../ai-review/ci/review.github-actions.yml"
+GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
 
@@ -31,7 +34,8 @@ SOURCE_ENV_PATHS = (
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 ENV_RE = re.compile(
     r"\b(?:AI_REVIEW_[A-Z0-9_]+|GH_TOKEN|GITHUB_(?:API_URL|TOKEN)|"
-    r"CI_API_V4_URL|GITLAB_(?:API_URL|TOKEN)|OPENROUTER_(?:API_KEY|BASE_URL)|"
+    r"CI_API_V4_URL|GITLAB_(?:API_URL|TOKEN|READ_TOKEN|WRITE_TOKEN)|"
+    r"OPENROUTER_(?:API_KEY|BASE_URL)|"
     r"ANTHROPIC_(?:API_KEY|AUTH_TOKEN|BASE_URL)|CURSOR_API_KEY|"
     r"XDG_(?:CONFIG|DATA)_HOME|OPENCODE_CONFIG_(?:DIR|CONTENT))\b"
 )
@@ -49,20 +53,21 @@ def _without_fenced_code(text: str) -> str:
     marker: str | None = None
     marker_length = 0
     for line in text.splitlines(keepends=True):
-        match = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
         if marker is None:
-            if match is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if opening is None:
                 output.append(line)
                 continue
-            marker = match.group(1)[0]
-            marker_length = len(match.group(1))
-        elif (
-            match is not None
-            and match.group(1)[0] == marker
-            and len(match.group(1)) >= marker_length
-        ):
-            marker = None
-            marker_length = 0
+            marker = opening.group(1)[0]
+            marker_length = len(opening.group(1))
+        else:
+            closing = re.match(
+                rf"^ {{0,3}}{re.escape(marker)}{{{marker_length},}}[ \t]*(?:\r?\n)?$",
+                line,
+            )
+            if closing is not None:
+                marker = None
+                marker_length = 0
         output.append("\n" if line.endswith("\n") else "")
     return "".join(output)
 
@@ -71,7 +76,7 @@ def _markdown_link_targets(text: str) -> list[str]:
     """Extract inline Markdown destinations, including balanced parentheses."""
     text = _without_fenced_code(text)
     targets: list[str] = []
-    for match in re.finditer(r"(?<!!)\[[^\]\n]+\]\(", text):
+    for match in re.finditer(r"(?<!!)\[[^\]]+\]\(", text):
         start = match.end()
         depth = 1
         escaped = False
@@ -216,42 +221,58 @@ def _inventory_issues(
     else:
         issues.append("ai-review/config/review.yaml: root must be a mapping")
 
-    rows = _reference_row_counts(config_doc)
+    yaml_reference, environment_heading, environment_reference = config_doc.partition(
+        "## Environment variables"
+    )
+    config_rows = _reference_row_counts(yaml_reference)
+    environment_rows = (
+        _reference_row_counts(environment_reference) if environment_heading else Counter()
+    )
     for key in sorted(config_keys):
-        if rows[key] != 1:
+        if config_rows[key] != 1:
             issues.append(
                 f"docs/configuration.md: active config key {key!r} has "
-                f"{rows[key]} canonical table rows; expected 1"
+                f"{config_rows[key]} canonical table rows; expected 1"
             )
 
-    config_roots = {item.split(".", 1)[0] for item in config_keys}
-    documented_config_keys = {
-        key
-        for key in rows
-        if key == "schema_version" or ("." in key and key.split(".", 1)[0] in config_roots)
-    }
+    documented_config_keys = set(config_rows)
     for key in sorted(documented_config_keys - config_keys):
         issues.append(f"docs/configuration.md: inert config key {key!r} has a canonical row")
 
     expected_environment_names = source_environment_names | REJECTED_ENV_NAMES
     for name in sorted(source_environment_names):
-        if rows[name] != 1:
+        if environment_rows[name] != 1:
             issues.append(
                 f"docs/configuration.md: environment name {name!r} has "
-                f"{rows[name]} canonical table rows; expected 1"
+                f"{environment_rows[name]} canonical table rows; expected 1"
             )
 
-    documented_environment_names = {key for key in rows if ENV_RE.fullmatch(key)}
+    documented_environment_names = {key for key in environment_rows if ENV_RE.fullmatch(key)}
     for name in sorted(documented_environment_names - expected_environment_names):
         issues.append(f"docs/configuration.md: inert environment name {name!r} has a canonical row")
     return issues
 
 
 def _readme_issues(text: str) -> list[str]:
-    lines = text.count("\n") + 1
+    lines = len(text.splitlines())
     if lines > 220:
         return [f"README.md: expected at most 220 lines, found {lines}"]
     return []
+
+
+def _github_install_issues(text: str) -> list[str]:
+    issues: list[str] = []
+    targets = _markdown_link_targets(text)
+    if GITHUB_INSTALL_SOURCE not in targets:
+        issues.append(
+            f"docs/getting-started/github.md: install source must link to {GITHUB_INSTALL_SOURCE}"
+        )
+    if GITHUB_INSTALL_DESTINATION not in text:
+        issues.append(
+            "docs/getting-started/github.md: install destination must be "
+            f"{GITHUB_INSTALL_DESTINATION}"
+        )
+    return issues
 
 
 def _example_issues() -> list[str]:
@@ -275,6 +296,13 @@ def _example_issues() -> list[str]:
             expected_template_sha=expected_sha,
         ):
             issues.append(f"{path.relative_to(ROOT)}: {issue}")
+
+    try:
+        github_guide = GITHUB_GUIDE.read_text(encoding="utf-8")
+    except OSError as exc:
+        issues.append(f"{GITHUB_GUIDE.relative_to(ROOT)}: cannot read guide: {exc}")
+    else:
+        issues.extend(_github_install_issues(github_guide))
     return issues
 
 
@@ -310,7 +338,7 @@ def main() -> int:
         return 1
     print(
         "OK: current documentation links, anchors, configuration/environment "
-        "inventory, and GitLab examples are consistent"
+        "inventory, and GitHub/GitLab examples are consistent"
     )
     return 0
 

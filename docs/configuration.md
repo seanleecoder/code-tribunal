@@ -139,9 +139,6 @@ artifacts.
 | `GH_TOKEN` | trusted GitHub prepare/post jobs | Local or custom-workflow fallback when `GITHUB_TOKEN` is absent. |
 | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | trusted post job only | Optional fine-grained GraphQL thread mutation token. |
 
-`GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` are unsupported and must not be
-configured.
-
 ### Platform and provider runtime
 
 Canonical templates set these values. They matter to GHES, self-managed GitLab,
@@ -159,6 +156,8 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
+| `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
+| `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 
 ### Template and internal runtime variables
 
