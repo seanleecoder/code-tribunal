@@ -118,6 +118,52 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("ai-review/config/review.yaml: root must be a mapping", issues)
         self.assertTrue(any("GITHUB_API_URL" in issue for issue in issues))
 
+    def test_environment_heading_must_appear_exactly_once(self) -> None:
+        checker = _load_docs_checker()
+
+        missing = checker._inventory_issues({}, "", set())
+        duplicate = checker._inventory_issues(
+            {},
+            "## Environment variables\n## Environment variables\n",
+            set(),
+        )
+
+        self.assertIn(
+            "docs/configuration.md: expected exactly one '## Environment variables' "
+            "heading, found 0",
+            missing,
+        )
+        self.assertIn(
+            "docs/configuration.md: expected exactly one '## Environment variables' "
+            "heading, found 2",
+            duplicate,
+        )
+
+    def test_inventory_reports_rows_in_the_wrong_reference_section(self) -> None:
+        checker = _load_docs_checker()
+        config = {"schema_version": "review_config.v1"}
+        config_doc = (
+            "| `AI_REVIEW_ACTIVE` | misplaced environment |\n"
+            "## Environment variables\n"
+            "| `schema_version` | misplaced config |\n"
+        )
+
+        issues = checker._inventory_issues(config, config_doc, {"AI_REVIEW_ACTIVE"})
+
+        self.assertTrue(
+            any(
+                "active config key 'schema_version' appears in the Environment variables section"
+                in issue
+                for issue in issues
+            )
+        )
+        self.assertTrue(
+            any(
+                "environment name 'AI_REVIEW_ACTIVE' appears in the YAML keys section" in issue
+                for issue in issues
+            )
+        )
+
     def test_rejected_gitlab_token_names_require_canonical_rows(self) -> None:
         checker = _load_docs_checker()
         names = {"GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"}
@@ -171,6 +217,24 @@ class DocumentationContractTests(unittest.TestCase):
                 "docs/getting-started/github.md: install destination must be "
                 f"{checker.GITHUB_INSTALL_DESTINATION}"
             ],
+        )
+        destination_error = (
+            "docs/getting-started/github.md: install destination must be "
+            f"{checker.GITHUB_INSTALL_DESTINATION}"
+        )
+        self.assertIn(
+            destination_error,
+            checker._github_install_issues(
+                f"[workflow]({checker.GITHUB_INSTALL_SOURCE}) "
+                f"copy to {checker.GITHUB_INSTALL_DESTINATION}"
+            ),
+        )
+        self.assertIn(
+            destination_error,
+            checker._github_install_issues(
+                f"[workflow]({checker.GITHUB_INSTALL_SOURCE})\n"
+                f"```text\n{checker.GITHUB_INSTALL_DESTINATION}\n```\n"
+            ),
         )
 
     def test_example_checker_reports_malformed_yaml(self) -> None:

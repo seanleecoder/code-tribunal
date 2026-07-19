@@ -32,6 +32,8 @@ SOURCE_ENV_PATHS = (
 )
 
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+ENVIRONMENT_HEADING_RE = re.compile(r"^## Environment variables[ \t]*$", re.MULTILINE)
+INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\r\n]+)`(?!`)")
 ENV_RE = re.compile(
     r"\b(?:AI_REVIEW_[A-Z0-9_]+|GH_TOKEN|GITHUB_(?:API_URL|TOKEN)|"
     r"CI_API_V4_URL|GITLAB_(?:API_URL|TOKEN|READ_TOKEN|WRITE_TOKEN)|"
@@ -122,6 +124,11 @@ def _markdown_link_targets(text: str) -> list[str]:
         if destination_end:
             targets.append(payload[:destination_end])
     return targets
+
+
+def _inline_code_values(text: str) -> set[str]:
+    """Return single-backtick inline code values outside fenced examples."""
+    return set(INLINE_CODE_RE.findall(_without_fenced_code(text)))
 
 
 def github_slug(text: str) -> str:
@@ -221,33 +228,65 @@ def _inventory_issues(
     else:
         issues.append("ai-review/config/review.yaml: root must be a mapping")
 
-    yaml_reference, environment_heading, environment_reference = config_doc.partition(
-        "## Environment variables"
-    )
+    environment_headings = list(ENVIRONMENT_HEADING_RE.finditer(config_doc))
+    if len(environment_headings) != 1:
+        issues.append(
+            "docs/configuration.md: expected exactly one '## Environment variables' "
+            f"heading, found {len(environment_headings)}"
+        )
+    if environment_headings:
+        heading = environment_headings[0]
+        yaml_reference = config_doc[: heading.start()]
+        environment_reference = config_doc[heading.end() :]
+    else:
+        yaml_reference = config_doc
+        environment_reference = ""
+
     config_rows = _reference_row_counts(yaml_reference)
-    environment_rows = (
-        _reference_row_counts(environment_reference) if environment_heading else Counter()
-    )
+    environment_rows = _reference_row_counts(environment_reference)
     for key in sorted(config_keys):
+        if environment_rows[key]:
+            issues.append(
+                f"docs/configuration.md: active config key {key!r} appears in the "
+                "Environment variables section; expected the YAML keys section"
+            )
         if config_rows[key] != 1:
             issues.append(
                 f"docs/configuration.md: active config key {key!r} has "
-                f"{config_rows[key]} canonical table rows; expected 1"
+                f"{config_rows[key]} canonical table rows in the YAML keys section; "
+                "expected 1"
             )
 
-    documented_config_keys = set(config_rows)
+    documented_config_keys = {key for key in config_rows if not ENV_RE.fullmatch(key)}
     for key in sorted(documented_config_keys - config_keys):
         issues.append(f"docs/configuration.md: inert config key {key!r} has a canonical row")
 
+    misplaced_config_rows = {
+        key for key in environment_rows if key == "schema_version" or "." in key
+    }
+    for key in sorted(misplaced_config_rows - config_keys):
+        issues.append(
+            f"docs/configuration.md: configuration-style row {key!r} appears in the "
+            "Environment variables section"
+        )
+
     expected_environment_names = source_environment_names | REJECTED_ENV_NAMES
     for name in sorted(source_environment_names):
+        if config_rows[name]:
+            issues.append(
+                f"docs/configuration.md: environment name {name!r} appears in the "
+                "YAML keys section; expected the Environment variables section"
+            )
         if environment_rows[name] != 1:
             issues.append(
                 f"docs/configuration.md: environment name {name!r} has "
-                f"{environment_rows[name]} canonical table rows; expected 1"
+                f"{environment_rows[name]} canonical table rows in the Environment "
+                "variables section; expected 1"
             )
 
-    documented_environment_names = {key for key in environment_rows if ENV_RE.fullmatch(key)}
+    documented_environment_names = {
+        key for key in config_rows.keys() | environment_rows.keys() if ENV_RE.fullmatch(key)
+    }
     for name in sorted(documented_environment_names - expected_environment_names):
         issues.append(f"docs/configuration.md: inert environment name {name!r} has a canonical row")
     return issues
@@ -267,7 +306,7 @@ def _github_install_issues(text: str) -> list[str]:
         issues.append(
             f"docs/getting-started/github.md: install source must link to {GITHUB_INSTALL_SOURCE}"
         )
-    if GITHUB_INSTALL_DESTINATION not in text:
+    if GITHUB_INSTALL_DESTINATION not in _inline_code_values(text):
         issues.append(
             "docs/getting-started/github.md: install destination must be "
             f"{GITHUB_INSTALL_DESTINATION}"
