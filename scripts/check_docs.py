@@ -245,12 +245,13 @@ def _inventory_issues(
     config_rows = _reference_row_counts(yaml_reference)
     environment_rows = _reference_row_counts(environment_reference)
     for key in sorted(config_keys):
-        if environment_rows[key]:
+        misplaced_count = environment_rows[key]
+        if misplaced_count:
             issues.append(
                 f"docs/configuration.md: active config key {key!r} appears in the "
                 "Environment variables section; expected the YAML keys section"
             )
-        if config_rows[key] != 1:
+        if config_rows[key] != 1 and not (config_rows[key] == 0 and misplaced_count):
             issues.append(
                 f"docs/configuration.md: active config key {key!r} has "
                 f"{config_rows[key]} canonical table rows in the YAML keys section; "
@@ -271,13 +272,14 @@ def _inventory_issues(
         )
 
     expected_environment_names = source_environment_names | REJECTED_ENV_NAMES
-    for name in sorted(source_environment_names):
-        if config_rows[name]:
+    for name in sorted(expected_environment_names):
+        misplaced_count = config_rows[name]
+        if misplaced_count:
             issues.append(
                 f"docs/configuration.md: environment name {name!r} appears in the "
                 "YAML keys section; expected the Environment variables section"
             )
-        if environment_rows[name] != 1:
+        if environment_rows[name] != 1 and not (environment_rows[name] == 0 and misplaced_count):
             issues.append(
                 f"docs/configuration.md: environment name {name!r} has "
                 f"{environment_rows[name]} canonical table rows in the Environment "

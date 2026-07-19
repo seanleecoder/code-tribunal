@@ -150,39 +150,44 @@ class DocumentationContractTests(unittest.TestCase):
 
         issues = checker._inventory_issues(config, config_doc, {"AI_REVIEW_ACTIVE"})
 
-        self.assertTrue(
-            any(
-                "active config key 'schema_version' appears in the Environment variables section"
-                in issue
-                for issue in issues
-            )
+        schema_issues = [issue for issue in issues if "schema_version" in issue]
+        environment_issues = [issue for issue in issues if "AI_REVIEW_ACTIVE" in issue]
+        self.assertEqual(
+            schema_issues,
+            [
+                "docs/configuration.md: active config key 'schema_version' appears in the "
+                "Environment variables section; expected the YAML keys section"
+            ],
         )
-        self.assertTrue(
-            any(
-                "environment name 'AI_REVIEW_ACTIVE' appears in the YAML keys section" in issue
-                for issue in issues
-            )
+        self.assertEqual(
+            environment_issues,
+            [
+                "docs/configuration.md: environment name 'AI_REVIEW_ACTIVE' appears in the "
+                "YAML keys section; expected the Environment variables section"
+            ],
         )
 
-    def test_rejected_gitlab_token_names_require_canonical_rows(self) -> None:
+    def test_rejected_names_require_rows_without_source_inventory(self) -> None:
         checker = _load_docs_checker()
-        names = {"GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"}
+        names = checker.REJECTED_ENV_NAMES
         self.assertEqual(
             set(checker.ENV_RE.findall("GITLAB_READ_TOKEN GITLAB_WRITE_TOKEN")),
-            names,
+            {"GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"},
         )
 
-        missing = checker._inventory_issues({}, "", names)
+        missing = checker._inventory_issues({}, "## Environment variables\n", set())
         documented = checker._inventory_issues(
             {},
             "## Environment variables\n"
+            "| `AI_REVIEW_CURSOR_EFFORT` | rejected |\n"
             "| `GITLAB_READ_TOKEN` | rejected |\n"
             "| `GITLAB_WRITE_TOKEN` | rejected |\n",
-            names,
+            set(),
         )
 
-        self.assertEqual(len([issue for issue in missing if "GITLAB_" in issue]), 2)
-        self.assertEqual([issue for issue in documented if "GITLAB_" in issue], [])
+        for name in names:
+            self.assertTrue(any(name in issue and "0 canonical" in issue for issue in missing))
+            self.assertFalse(any(name in issue for issue in documented))
 
     def test_readme_line_limit_is_enforced(self) -> None:
         checker = _load_docs_checker()
