@@ -131,13 +131,30 @@ artifacts.
 | Variable | Visibility | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | reviewer jobs only | OpenRouter authentication for Claude/Codex/OpenCode. |
+| `ANTHROPIC_AUTH_TOKEN` | Claude reviewer only | Alternate Claude authentication for the pinned OpenRouter route; the canonical templates derive it from `OPENROUTER_API_KEY`. |
+| `ANTHROPIC_API_KEY` | Claude reviewer only | Native Anthropic credential recognized by the Claude CLI; cleared by the canonical OpenRouter route. |
 | `CURSOR_API_KEY` | Cursor reviewer jobs only | Cursor authentication and separate egress destination. |
 | `GITLAB_TOKEN` | trusted prepare/post jobs | GitLab API access with `api` scope. |
 | `GITHUB_TOKEN` | trusted prepare/post jobs | GitHub API access supplied by Actions. |
+| `GH_TOKEN` | trusted GitHub prepare/post jobs | Local or custom-workflow fallback when `GITHUB_TOKEN` is absent. |
 | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | trusted post job only | Optional fine-grained GraphQL thread mutation token. |
 
 `GITLAB_READ_TOKEN` and `GITLAB_WRITE_TOKEN` are unsupported and must not be
 configured.
+
+### Platform and provider runtime
+
+Canonical templates set these values. They matter to GHES, self-managed GitLab,
+provider routing, and local adapter troubleshooting; consumers should not place
+untrusted endpoints in merge-request-controlled configuration.
+
+| Variable | Default/source | Purpose |
+|---|---|---|
+| `GITHUB_API_URL` | `https://api.github.com` | GitHub REST endpoint; Actions supplies the GHES value. |
+| `CI_API_V4_URL` | GitLab predefined variable | Preferred GitLab v4 API endpoint. |
+| `GITLAB_API_URL` | none | Fallback GitLab API endpoint for custom runtimes without `CI_API_V4_URL`. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Exact pinned endpoint accepted by Codex and OpenCode adapters. |
+| `ANTHROPIC_BASE_URL` | unset, or `https://openrouter.ai/api` | Selects the Claude OpenRouter route; any other configured value is rejected. |
 
 | Rejected variable | Reason |
 |---|---|
@@ -170,6 +187,10 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
 | `AI_REVIEW_STREAM_ADAPTER_LOGS` | Internal diagnostic streaming switch; avoid in shared logs. |
+| `XDG_CONFIG_HOME` | Disposable OpenCode configuration home created by the adapter. |
+| `XDG_DATA_HOME` | Disposable OpenCode data home created by the adapter. |
+| `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory. |
+| `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON. |
 
 Build-only names such as `AI_REVIEW_IMAGE_VERSION`, package-name variables, and
 image tags belong to the release workflows, not the runtime configuration
@@ -186,7 +207,6 @@ surface.
 | `AI_REVIEW_OPENCODE_NPM_PACKAGE` | Pinned OpenCode package name during image build. |
 | `AI_REVIEW_REQUIRE_REAL_CODEX` | Image preflight requires the real Codex CLI. |
 | `AI_REVIEW_ROOT_DIR` | Internal shell path to the implementation root. |
-| `AI_REVIEW_ADAPTER_CONTROLS` | Internal adapter environment allowlist identifier used by tests/runner code. |
 
 ## Stage visibility and integrity
 

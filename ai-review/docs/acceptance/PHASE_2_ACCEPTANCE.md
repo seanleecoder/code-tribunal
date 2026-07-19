@@ -115,8 +115,8 @@ in the review path until a new trusted image is built. Enabling
    base and reviewer images at the new commit SHA, with `opencode-ai` installed
    and `reviewers.opencode` baked into the image config.
 2. Land a follow-up commit that bumps all six image tags in
-   `ci/review.gitlab-ci.yml` (four `ai_review_base_1_1_<sha>` and two
-   `ai_review_reviewer_1_1_<sha>`) and `AI_REVIEW_TRUSTED_IMAGE_SHA` to that new
+   `ci/review.gitlab-ci.yml` (four `<retired-private-base-tag>` and two
+   `<retired-private-reviewer-tag>`) and `AI_REVIEW_TRUSTED_IMAGE_SHA` to that new
    SHA.
 
 Until the pin is bumped in step 2, the pinned image lacks the `opencode` adapter
@@ -166,8 +166,8 @@ Protected image pipeline: 179186
 Image jobs: build_ai_review_base_image=success,
   build_ai_review_reviewer_image=success,
   preflight_ai_review_reviewer_image=success
-Base image: ai_review_base_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
-Reviewer image: ai_review_reviewer_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+Base image: <retired-private-base-tag>
+Reviewer image: <retired-private-reviewer-tag>
 
 prepare_ai_review: job 2526297, success
 review_claude: job 2526298, success, adapter_status=success,

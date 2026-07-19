@@ -13,7 +13,7 @@
 | Fork behavior | Protected variables withheld; deployment topology determines whether trusted jobs run | External forks skipped by the canonical workflow |
 | Concurrency | Post serialized with an MR-scoped resource group | Workflow concurrency groups by PR; in-progress runs are not cancelled |
 | Diff collection | Paginated MR diff API; collapsed/truncated files rejected | Immutable base/head comparison raw diff; HTTP 406/too-large rejected |
-| Artifact retention | Seven days in canonical template | Repository/organization Actions default |
+| Artifact retention | 7 days for prepare/review/critique; 30 days for consensus/post/gate | Repository/organization Actions default |
 
 Both platforms use the same configuration, reviewer adapters, artifact schemas,
 consensus policy, posting reconciliation, and gate evaluator. Platform-specific

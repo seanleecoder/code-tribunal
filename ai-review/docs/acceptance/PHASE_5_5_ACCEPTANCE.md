@@ -6,7 +6,7 @@
 ## Public GHCR Publish
 
 - Status: accepted — first public publish completed.
-- Workflow run: [`publish-ai-review-images.yml`](../.github/workflows/publish-ai-review-images.yml), run ID `28745175173`, triggered by commit `f7f1490` ("enable critique") pushed to `main`.
+- Workflow run: [`publish-ai-review-images.yml`](../../../.github/workflows/publish-ai-review-images.yml), run ID `28745175173`, triggered by commit `f7f1490` ("enable critique") pushed to `main`.
 - Source commit SHA: `f7f149089b85516c004e31255e6e57ac461ffed7`.
 - CLI versions observed in the `Build and preflight` step were recorded from the reviewer image. Current builds pin these versions through `images/package.json` and `images/package-lock.json`, not repository variables.
 - Base tag: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f7f149089b85516c004e31255e6e57ac461ffed7`.
@@ -29,7 +29,13 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
 ## Downstream Smoke
 
 - Status: cutover complete.
-- `ai-review/ci/review.gitlab-ci.yml` now pins `AI_REVIEW_BASE_IMAGE` / `AI_REVIEW_REVIEWER_IMAGE` to the public GHCR digests above (`AI_REVIEW_TRUSTED_IMAGE_SHA=f7f149089b85516c004e31255e6e57ac461ffed7`), replacing the private bootstrap registry image (`ai_review_base_1_1_3c484052e41cbe99b45339f4f4afccf72538e5b7`) — the GHCR Cutover Procedure step 3 in the root [README.md](../README.md#gitlab-ci-integration-guide--image-pinning) has been performed. Both digests were re-verified with an anonymous, unauthenticated `ghcr.io/token` pull immediately before the cutover landed.
+- `ai-review/ci/review.gitlab-ci.yml` then pinned `AI_REVIEW_BASE_IMAGE` /
+  `AI_REVIEW_REVIEWER_IMAGE` to the public GHCR digests above
+  (`AI_REVIEW_TRUSTED_IMAGE_SHA=f7f149089b85516c004e31255e6e57ac461ffed7`),
+  replacing the `<retired-private-base-tag>` bootstrap image under the historical
+  [GitLab installation procedure](../../../docs/getting-started/gitlab.md). Both
+  digests were re-verified with an anonymous, unauthenticated `ghcr.io/token`
+  pull immediately before the cutover landed.
 - External GitLab MR smoke: still outstanding — requires a live GitLab runner/project to trigger a pipeline against the new digests; not something this environment can execute. Pipeline `179684` (see [PHASE_5_ACCEPTANCE.md](PHASE_5_ACCEPTANCE.md)) still ran on the private bootstrap image and has not been re-run.
 - Expected result once that MR smoke runs: GitLab runners pull the public GHCR digest images without registry credentials and the AI Review jobs reach the same Phase 5 behavior.
 

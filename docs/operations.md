@@ -25,6 +25,21 @@ state migration.
    version changes. This should update existing identities, not duplicate them.
 8. Verify state ownership, posting, commands, and the gate before enforcing it.
 
+Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
+`needs`, overrides, dashboards, and scripts that refer to the old job names:
+
+| Previous job | Current grouped job |
+|---|---|
+| `review_claude` | `AI review: [claude]` |
+| `review_codex` | `AI review: [codex]` |
+| `review_opencode` | `AI review: [opencode]` |
+| `critique_claude` | `AI critique: [claude]` |
+| `critique_codex` | `AI critique: [codex]` |
+| `critique_opencode` | `AI critique: [opencode]` |
+
+Cursor review/critique jobs are new optional grouped jobs and have no legacy
+identifier.
+
 Python-package consumers must move to the supported containers and CI templates.
 There is no supported installable Python distribution in 1.0.
 
@@ -66,8 +81,9 @@ serialization.
 Start with `out/status/`, then consensus, post, and gate artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
 resolution-eligible reviewers, post status, and gate reason. GitLab canonical
-artifacts expire after seven days; GitHub follows repository/organization
-retention. Export sanitized evidence before expiry.
+prepare/review/critique artifacts expire after seven days; consensus/post/gate
+evidence expires after 30 days. GitHub follows repository/organization retention.
+Export sanitized evidence before expiry.
 
 Never retain credentials, CLI session files, sensitive prompts, raw proprietary
 source beyond policy, or unnecessary model-authored content in evidence.

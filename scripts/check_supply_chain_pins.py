@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fail on mutable image/workflow dependency inputs."""
+
 from __future__ import annotations
 
 import json
@@ -99,9 +100,7 @@ def _exact_pins(text: str) -> dict[str, tuple[str, str]]:
     return pins
 
 
-def _overlapping_python_pin_issues(
-    constraints_text: str, requirements_text: str
-) -> list[str]:
+def _overlapping_python_pin_issues(constraints_text: str, requirements_text: str) -> list[str]:
     constraints = _exact_pins(constraints_text)
     requirements = _exact_pins(requirements_text)
     issues: list[str] = []
@@ -176,8 +175,7 @@ def _workflow_action_issues(text: str) -> list[str]:
             )
         elif version_label is not None and expected_label is None:
             issues.append(
-                f"line {line_number}: {action}@{ref} has unregistered version label "
-                f"{version_label}"
+                f"line {line_number}: {action}@{ref} has unregistered version label {version_label}"
             )
     return issues
 
@@ -186,9 +184,7 @@ def _github_review_container_issues(text: str) -> list[str]:
     """Require every GitHub review job to use one of two consistent image pins."""
     issues: list[str] = []
     if re.search(r"^\s+AI_REVIEW_(?:BASE|REVIEWER)_IMAGE:", text, re.M):
-        issues.append(
-            "GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables"
-        )
+        issues.append("GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables")
 
     containers = re.findall(r"^\s+container:\s+(\S+)\s*$", text, re.M)
     classified = {
@@ -262,15 +258,19 @@ def _cross_platform_image_pin_issues(gitlab: str, github: str) -> list[str]:
     containers = re.findall(r"^\s+container:\s+(\S+)\s*$", github, re.M)
     expected = {
         "AI_REVIEW_BASE_IMAGE": {item for item in containers if "/ai-review-base:" in item},
-        "AI_REVIEW_REVIEWER_IMAGE": {
-            item for item in containers if "/ai-review-reviewer:" in item
-        },
+        "AI_REVIEW_REVIEWER_IMAGE": {item for item in containers if "/ai-review-reviewer:" in item},
     }
     issues: list[str] = []
     for key, github_values in expected.items():
-        if len(github_values) == 1 and pins.get(key) not in github_values:
+        if len(github_values) != 1:
+            issues.append(
+                f"GitHub containers contain {len(github_values)} distinct values for {key}; "
+                "expected one"
+            )
+        elif pins.get(key) not in github_values:
             issues.append(f"GitHub containers must match GitLab {key}")
     return issues
+
 
 def _cursor_agent_pin_issues(text: str) -> list[str]:
     values: dict[str, str] = {}
@@ -301,6 +301,7 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
     if sha256 == "0" * 64:
         issues.append("cursor-agent.pin sha256 must not be the all-zero placeholder")
     return issues
+
 
 def main() -> int:
     failures = 0
@@ -368,7 +369,7 @@ def main() -> int:
     if not re.search(node_from_pattern, reviewer, re.M):
         error("reviewer.Dockerfile must pin node:22-bookworm-slim by sha256 digest")
         failures += 1
-    if ">=" in base or "pip install --no-cache-dir \\\n      \"" in base:
+    if ">=" in base or 'pip install --no-cache-dir \\\n      "' in base:
         error("base.Dockerfile must install Python packages through python-constraints.txt")
         failures += 1
     for package_name in PYTHON_DIRECT_PACKAGES:

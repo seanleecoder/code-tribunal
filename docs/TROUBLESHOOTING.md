@@ -19,6 +19,8 @@ credentials or sensitive model content into issues.
 | GitLab child trust audit fails | Include project/SHA, forwarding, inheritance, or bridge contract changed | Auditor errors | Restore the exact hardened example; do not bypass the validator |
 | Runtime override appears ignored | Pinned image predates it or variable scope differs | Template image source SHA and manifest effective config | Rotate all image pins together or move override to shared project/repository scope |
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
+| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Status artifact, job duration, optional streamed adapter log | Temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`; unset it after diagnosis |
+| Local provider call rejects an endpoint | Developer shell exported a non-canonical provider URL | Redacted `model_error` naming `ANTHROPIC_BASE_URL` or `OPENROUTER_BASE_URL` | Run with `env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL make review-local ...` |
 
 ## Reviewer status meanings
 
@@ -32,6 +34,16 @@ credentials or sensitive model content into issues.
 
 One failed seat normally degrades the panel. Zero usable seats or evidence
 integrity failure stops consensus.
+
+## Adapter diagnostics
+
+`AI_REVIEW_STREAM_ADAPTER_LOGS=1` mirrors reviewer stdout and stderr while the
+process runs. It is off by default because verbose Claude stream output can
+exceed GitLab's job-log limit and truncate the useful tail. Adapter output is
+always captured for parsing. A parse or validation failure also writes a
+redacted, bounded head/tail preview to
+`out/status/<stage>-<reviewer>-parse-debug.txt`, so post-mortem evidence remains
+available without enabling live streaming.
 
 ## Human commands
 
@@ -65,6 +77,15 @@ make validate-local LOCAL_OUT=/tmp/code-tribunal-validation
 These commands use deterministic mock output. A real local provider call sends
 repository content to that provider and should be run only under the operator's
 data-handling policy.
+
+Provider endpoint pinning also applies locally. If the developer shell exports
+an Anthropic or OpenRouter endpoint for unrelated tooling, remove it for the
+harness:
+
+```bash
+env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL \
+  make review-local REVIEWER=claude
+```
 
 See [operations](operations.md#failure-behavior) for the full failure matrix and
 [artifacts](reference/artifacts-and-schemas.md) for paths and schemas.

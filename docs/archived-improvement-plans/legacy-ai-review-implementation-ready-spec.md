@@ -1,5 +1,10 @@
 # Multi-Agent Consensus Code Review - Implementation-Ready Build Spec
 
+> **Archived and non-normative.** This file preserves the historical build plan.
+> Current behavior is defined by the shipped configuration, schemas, tests, CI
+> templates, and task-oriented documentation linked from the
+> [documentation map](../../README.md#documentation).
+
 Version: 1.1
 Verified: 2026-07-13
 Target platform: GitLab merge requests, optional Jira Cloud integration in v1, Jira Data Center deferred unless explicitly needed
@@ -8,14 +13,16 @@ Implementation status: the core build phases are implemented. A private GitLab
 18.6.2 downstream run on 2026-07-13 validated the complete mirrored child DAG,
 all three review and critique adapters, deterministic consensus, one inline
 discussion, one FYI summary, and a passing mirrored gate. This document now
-serves as the normative architecture record; executable schemas, tests, and CI
-templates are authoritative where older phase wording is historical.
+serves only as a historical architecture record. Executable schemas, tests, CI
+templates, and current reference documentation are authoritative.
 
 ## 1. Purpose
 
 Build a CI-native review system for GitLab merge requests where multiple independent AI reviewers analyze the same MR input bundle, emit schema-valid findings, pass through deterministic grouping and consensus code, and post or update GitLab review discussions with persistent memory across runs.
 
-This document is normative. A coding agent should implement it phase by phase. Any behavior not explicitly defined must fail closed, emit structured diagnostics, and avoid side effects.
+At the time it was written, this document instructed a coding agent to implement
+the system phase by phase. That instruction is retained as history and is not a
+current product contract.
 
 ## 2. Review-pass changes incorporated in v1.0
 
@@ -2061,12 +2068,12 @@ If `AI_FLOW_EVENT=thread_reply`:
 
 The executable templates are the only source of truth for CI syntax:
 
-- [`ai-review/ci/review.gitlab-ci.yml`](../ai-review/ci/review.gitlab-ci.yml)
+- [`ai-review/ci/review.gitlab-ci.yml`](../../ai-review/ci/review.gitlab-ci.yml)
   defines the review DAG.
-- [`ai-review/ci/review-child.gitlab-ci.yml`](../ai-review/ci/review-child.gitlab-ci.yml)
+- [`ai-review/ci/review-child.gitlab-ci.yml`](../../ai-review/ci/review-child.gitlab-ci.yml)
   supplies the child pipeline's single stage.
-- The [GitLab integration guide](../README.md#gitlab-ci-integration-guide--image-pinning)
-  and [trusted-CI runbook](../docs/improvement-specs/spec-06-trusted-ci-runbook.md)
+- The [GitLab integration guide](../getting-started/gitlab.md)
+  and [trusted-CI runbook](../improvement-specs/spec-06-trusted-ci-runbook.md)
   contain consumer examples.
 
 This specification intentionally does not embed a copy of the executable YAML.

@@ -3,7 +3,11 @@
 > **Historical example.** Image/configuration details may be obsolete and are
 > non-normative; see the [history index](../docs/history/README.md).
 
-This is a concrete, artifact-backed walkthrough of one real GitLab CI pipeline run, showing exactly how Code Tribunal's 6 stages ([README.md](../README.md#6-stage-ci-pipeline-execution-lifecycle)) turn three independent model opinions into a single merge-gate decision. All data below was pulled directly from the pipeline's job artifacts and traces (no simulation).
+This is a concrete, artifact-backed walkthrough of one real GitLab CI pipeline
+run, showing how the [pipeline stages](../README.md#pipeline-at-a-glance) turned
+three independent model opinions into a single merge-gate decision. All data
+below was pulled directly from that pipeline's job artifacts and traces (no
+simulation).
 
 - **Pipeline**: [`179684`](https://gitlab.example.internal/example-org/downstream-app/-/pipelines/179684)
 - **MR**: `!3144`, "Revert \"remove fake bad code\"", source branch `ai-review-smoke-throw-away`

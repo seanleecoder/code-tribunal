@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline checks for the current documentation contract."""
+
 from __future__ import annotations
 
 import re
@@ -17,24 +18,7 @@ CONFIG_DOC = ROOT / "docs/configuration.md"
 ROOT_README = ROOT / "README.md"
 EXAMPLES = ROOT / "docs/getting-started/examples"
 
-CURRENT_MARKDOWN = (
-    ROOT_README,
-    ROOT / "SECURITY.md",
-    ROOT / "CONTRIBUTING.md",
-    ROOT / "ai-review/README.md",
-    ROOT / "docs/improvement-specs/README.md",
-    ROOT / "docs/improvement-specs/completion-audit.md",
-    ROOT / "docs/archived-improvement-plans/README.md",
-    *sorted(
-        path
-        for path in (ROOT / "docs").rglob("*.md")
-        if not any(
-            part in {"improvement-specs", "archived-improvement-plans"}
-            for part in path.parts
-        )
-        and path.name not in {"ARCHITECTURE.md", "CONSENSUS.md", "REVISION_LIFECYCLE.md"}
-    ),
-)
+CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
 
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
@@ -44,10 +28,95 @@ SOURCE_ENV_PATHS = (
     ROOT / "scripts",
 )
 
-LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
-ENV_RE = re.compile(r"\bAI_REVIEW_[A-Z0-9_]+\b")
+ENV_RE = re.compile(
+    r"\b(?:AI_REVIEW_[A-Z0-9_]+|GH_TOKEN|GITHUB_(?:API_URL|TOKEN)|"
+    r"CI_API_V4_URL|GITLAB_(?:API_URL|TOKEN)|OPENROUTER_(?:API_KEY|BASE_URL)|"
+    r"ANTHROPIC_(?:API_KEY|AUTH_TOKEN|BASE_URL)|CURSOR_API_KEY|"
+    r"XDG_(?:CONFIG|DATA)_HOME|OPENCODE_CONFIG_(?:DIR|CONTENT))\b"
+)
 TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+REJECTED_ENV_NAMES = {
+    "AI_REVIEW_CURSOR_EFFORT",
+    "GITLAB_READ_TOKEN",
+    "GITLAB_WRITE_TOKEN",
+}
+
+
+def _without_fenced_code(text: str) -> str:
+    """Remove CommonMark fenced blocks while preserving surrounding Markdown."""
+    output: list[str] = []
+    marker: str | None = None
+    marker_length = 0
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker is None:
+            if match is None:
+                output.append(line)
+                continue
+            marker = match.group(1)[0]
+            marker_length = len(match.group(1))
+        elif (
+            match is not None
+            and match.group(1)[0] == marker
+            and len(match.group(1)) >= marker_length
+        ):
+            marker = None
+            marker_length = 0
+        output.append("\n" if line.endswith("\n") else "")
+    return "".join(output)
+
+
+def _markdown_link_targets(text: str) -> list[str]:
+    """Extract inline Markdown destinations, including balanced parentheses."""
+    text = _without_fenced_code(text)
+    targets: list[str] = []
+    for match in re.finditer(r"(?<!!)\[[^\]\n]+\]\(", text):
+        start = match.end()
+        depth = 1
+        escaped = False
+        end: int | None = None
+        for index in range(start, len(text)):
+            char = text[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        if end is None:
+            continue
+        payload = text[start:end].strip()
+        if payload.startswith("<"):
+            closing = payload.find(">")
+            if closing != -1:
+                targets.append(payload[1:closing])
+            continue
+        nested = 0
+        escaped = False
+        destination_end = len(payload)
+        for index, char in enumerate(payload):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+            elif char == "(":
+                nested += 1
+            elif char == ")" and nested:
+                nested -= 1
+            elif char.isspace() and nested == 0:
+                destination_end = index
+                break
+        if destination_end:
+            targets.append(payload[:destination_end])
+    return targets
 
 
 def github_slug(text: str) -> str:
@@ -55,13 +124,13 @@ def github_slug(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"[`*_~]", "", text).strip().lower()
     text = re.sub(r"[^\w\- ]", "", text, flags=re.UNICODE)
-    return re.sub(r"[\s]+", "-", text)
+    return re.sub(r"\s", "-", text)
 
 
 def heading_anchors(text: str) -> set[str]:
     counts: Counter[str] = Counter()
     anchors: set[str] = set()
-    for heading in HEADING_RE.findall(text):
+    for heading in HEADING_RE.findall(_without_fenced_code(text)):
         base = github_slug(heading)
         count = counts[base]
         counts[base] += 1
@@ -77,9 +146,12 @@ def _target_parts(raw_target: str) -> tuple[str, str]:
     return unquote(path), unquote(anchor) if separator else ""
 
 
-def _link_issues(path: Path, text: str) -> list[str]:
+def _link_issues(
+    path: Path, text: str, anchor_cache: dict[Path, set[str]] | None = None
+) -> list[str]:
     issues: list[str] = []
-    for raw_target in LINK_RE.findall(text):
+    anchor_cache = {} if anchor_cache is None else anchor_cache
+    for raw_target in _markdown_link_targets(text):
         if re.match(r"^(?:https?|mailto):", raw_target):
             continue
         target_text, anchor = _target_parts(raw_target)
@@ -93,7 +165,10 @@ def _link_issues(path: Path, text: str) -> list[str]:
             issues.append(f"{path.relative_to(ROOT)}: missing link target: {raw_target}")
             continue
         if anchor and target.is_file() and target.suffix.lower() == ".md":
-            anchors = heading_anchors(target.read_text(encoding="utf-8"))
+            anchors = anchor_cache.get(target)
+            if anchors is None:
+                anchors = heading_anchors(target.read_text(encoding="utf-8"))
+                anchor_cache[target] = anchors
             if anchor not in anchors:
                 issues.append(
                     f"{path.relative_to(ROOT)}: missing heading #{anchor} in "
@@ -131,6 +206,54 @@ def _reference_row_counts(text: str) -> Counter[str]:
     return Counter(TABLE_KEY_RE.findall(text))
 
 
+def _inventory_issues(
+    config: object, config_doc: str, source_environment_names: set[str]
+) -> list[str]:
+    issues: list[str] = []
+    config_keys: set[str] = set()
+    if isinstance(config, dict):
+        config_keys = _config_leaf_paths(config)
+    else:
+        issues.append("ai-review/config/review.yaml: root must be a mapping")
+
+    rows = _reference_row_counts(config_doc)
+    for key in sorted(config_keys):
+        if rows[key] != 1:
+            issues.append(
+                f"docs/configuration.md: active config key {key!r} has "
+                f"{rows[key]} canonical table rows; expected 1"
+            )
+
+    config_roots = {item.split(".", 1)[0] for item in config_keys}
+    documented_config_keys = {
+        key
+        for key in rows
+        if key == "schema_version" or ("." in key and key.split(".", 1)[0] in config_roots)
+    }
+    for key in sorted(documented_config_keys - config_keys):
+        issues.append(f"docs/configuration.md: inert config key {key!r} has a canonical row")
+
+    expected_environment_names = source_environment_names | REJECTED_ENV_NAMES
+    for name in sorted(source_environment_names):
+        if rows[name] != 1:
+            issues.append(
+                f"docs/configuration.md: environment name {name!r} has "
+                f"{rows[name]} canonical table rows; expected 1"
+            )
+
+    documented_environment_names = {key for key in rows if ENV_RE.fullmatch(key)}
+    for name in sorted(documented_environment_names - expected_environment_names):
+        issues.append(f"docs/configuration.md: inert environment name {name!r} has a canonical row")
+    return issues
+
+
+def _readme_issues(text: str) -> list[str]:
+    lines = text.count("\n") + 1
+    if lines > 220:
+        return [f"README.md: expected at most 220 lines, found {lines}"]
+    return []
+
+
 def _example_issues() -> list[str]:
     issues: list[str] = []
     expected_project = "org/code-tribunal-ci"
@@ -158,38 +281,22 @@ def _example_issues() -> list[str]:
 def find_issues() -> list[str]:
     issues: list[str] = []
     seen: set[Path] = set()
+    anchor_cache: dict[Path, set[str]] = {}
     for path in CURRENT_MARKDOWN:
         if path in seen:
             continue
         seen.add(path)
         text = path.read_text(encoding="utf-8")
-        issues.extend(_link_issues(path, text))
+        issues.extend(_link_issues(path, text, anchor_cache))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
 
-    readme_lines = ROOT_README.read_text(encoding="utf-8").count("\n") + 1
-    if readme_lines > 220:
-        issues.append(f"README.md: expected at most 220 lines, found {readme_lines}")
+    issues.extend(_readme_issues(ROOT_README.read_text(encoding="utf-8")))
 
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-    if not isinstance(config, dict):
-        issues.append("ai-review/config/review.yaml: root must be a mapping")
-        return issues
     config_doc = CONFIG_DOC.read_text(encoding="utf-8")
-    rows = _reference_row_counts(config_doc)
-    for key in sorted(_config_leaf_paths(config)):
-        if rows[key] != 1:
-            issues.append(
-                f"docs/configuration.md: active config key {key!r} has "
-                f"{rows[key]} canonical table rows; expected 1"
-            )
-
-    for name in sorted(_source_environment_names()):
-        if rows[name] != 1:
-            issues.append(
-                f"docs/configuration.md: environment name {name!r} has "
-                f"{rows[name]} canonical table rows; expected 1"
-            )
+    source_environment_names = _source_environment_names()
+    issues.extend(_inventory_issues(config, config_doc, source_environment_names))
 
     issues.extend(_example_issues())
     return issues
