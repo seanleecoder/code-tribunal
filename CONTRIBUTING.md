@@ -1,40 +1,28 @@
 # Contributing
 
-Thanks for helping improve Code Tribunal.
-
-## Development Setup
-
-```bash
-# From the repository root:
-python3 -m pip install -r requirements-dev.txt
-export PYTHONPATH="$PWD/ai-review/src"
-```
-
-The Python source under `ai-review/src` is an internal implementation used by
-the shipped container images. It is loaded directly from the checkout during
-development and is not an installable or supported Python distribution.
-
-Run the local quality checks before opening a pull request:
+Use the canonical [development setup](docs/development/setup.md) and run:
 
 ```bash
 make quality
 ```
 
-This is the same blocking command used by CI. It runs Ruff over the package,
-tests, and shipped scripts; pytest with coverage; whole-package mypy; the
-supply-chain pin audit; and Python compilation checks. For a minimal local
-environment, `make test` uses unittest only when pytest is not installed. An
-installed pytest failure is never retried through the fallback, and
-`make quality` never uses it.
+That command is the same blocking documentation, lint, test, type, supply-chain,
+and compile gate used by CI. The internal Python source is loaded directly from
+the checkout for development; it is not an installable supported distribution.
 
-## Pull Request Checklist
+Pull requests should:
 
-- Summarize the change and link the finding/spec ID when applicable.
-- Add or update tests for behavior changes.
-- Keep the canonical `make quality` gate green.
-- Document new configuration and mark reserved/inert options honestly.
-- Avoid exposing GitLab, OpenRouter, Anthropic, or reviewer CLI tokens in logs or posted comments.
+- Summarize the change and link the relevant finding/spec when applicable.
+- Add or update tests for behavior and contract changes.
+- Update the canonical configuration/reference entry for new runtime controls.
+- Keep examples immutable and mechanically parseable.
+- Avoid exposing platform/provider credentials, CLI session material, prompts,
+  proprietary source, or sensitive model output in logs and fixtures.
 
-## Adding a Reviewer Backend
+New reviewer adapters must validate model/endpoint input, sanitize the child
+environment, receive only their own credential, enforce the strongest available
+read-only/no-shell policy, and produce schema-valid finding and critique
+artifacts. Network egress limitations must be documented honestly.
 
-Reviewer backends are wired through `ai-review/config/review.yaml`, `ai-review/src/ai_review/adapter_runner.py`, and a shell adapter under `ai-review/adapters/`. New backends should validate model IDs, pin provider endpoints exactly, sanitize environment variables, and produce schema-valid finding/critique artifacts.
+Architecture, testing, and release guidance is indexed under
+[docs/development/](docs/development/README.md).

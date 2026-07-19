@@ -1,5 +1,8 @@
 # Phase 5 Acceptance Evidence
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 ## Local Validation
 
 - Status: complete on 2026-07-04 after live-provider hardening
@@ -54,12 +57,12 @@ Artifact checks:
 ## Final Configuration Decision: Critique Enabled by Default
 
 - Status: accepted
-- Decision reversal: the critique phase shipped in the trusted config as **permanently enabled**, not disabled-by-default as originally planned above. Commit `f7f1490` ("enable critique") flipped `critique.enabled: false → true`, `rounds: 0 → 1`, `allow_advisory_escalation: false → true`, and `allow_severity_downgrade: false → true` in [config/review.yaml](config/review.yaml).
+- Decision reversal: the critique phase shipped in the trusted config as **permanently enabled**, not disabled-by-default as originally planned above. Commit `f7f1490` ("enable critique") flipped `critique.enabled: false → true`, `rounds: 0 → 1`, `allow_advisory_escalation: false → true`, and `allow_severity_downgrade: false → true` in [config/review.yaml](../../config/review.yaml).
 - Follow-up policy keeps `allow_advisory_escalation=true` so peer-supported
   advisory findings are surfaced, while restoring
   `allow_severity_downgrade=false`; critique cannot downgrade a blocker across
-  the merge-blocking boundary. This is the configuration documented in the root
-  [README.md](../README.md) reference.
+  the merge-blocking boundary. This is the configuration documented in the
+  [implementation README](../../README.md) reference.
 
 ## Live Verification of the Enabled-by-Default Config
 
@@ -73,7 +76,7 @@ Artifact checks:
 - Run ID: `gl-179684-2529360`
 - Trusted image SHA (pinned in `ci/review.gitlab-ci.yml` at run time): `3c484052e41cbe99b45339f4f4afccf72538e5b7`
 - Pipeline status: failed as expected because `ai_review_gate` enforced blocking consensus findings on the permanently-enabled critique config.
-- Full stage-by-stage breakdown of this run, including the consensus critique-summary self-exclusion rule it revealed, is documented in [EXAMPLE_PIPELINE_WALKTHROUGH.md](EXAMPLE_PIPELINE_WALKTHROUGH.md).
+- Full stage-by-stage breakdown of this run, including the consensus critique-summary self-exclusion rule it revealed, is documented in [EXAMPLE_PIPELINE_WALKTHROUGH.md](../../EXAMPLE_PIPELINE_WALKTHROUGH.md).
 
 AI-review jobs:
 

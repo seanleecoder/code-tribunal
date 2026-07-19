@@ -23,6 +23,7 @@ _CURSOR_PERMISSION_SMOKE = (
     Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 )
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
+_CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 
 
@@ -208,15 +209,20 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(old_name, text)
 
-    def test_root_readme_explains_cursor_gitlab_static_job_graph(self) -> None:
-        text = _ROOT_README.read_text(encoding="utf-8")
+    @unittest.skipUnless(
+        _CONFIG_DOC.exists(),
+        "repository-only configuration reference is absent from the runtime image",
+    )
+    def test_configuration_reference_explains_cursor_gitlab_static_job_graph(self) -> None:
+        text = _CONFIG_DOC.read_text(encoding="utf-8")
+        text = " ".join(text.split())
 
         self.assertIn("AI review: [cursor]", text)
         self.assertIn("AI critique: [cursor]", text)
         self.assertIn("GitLab creates jobs from the included YAML", text)
         self.assertIn("consumer is still including an older template ref", text)
         self.assertIn("with OpenCode", text)
-        self.assertIn("disabled they should complete quickly with skipped artifacts", text)
+        self.assertIn("complete quickly with skipped artifacts", text)
 
     def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")

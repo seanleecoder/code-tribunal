@@ -1,5 +1,8 @@
 # SPEC-32 — Separate usable reviewer evidence from syntactic adapter success
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** High (incorrect automatic state resolution) · **Effort:** M · **ROI rank:** 2 (pre-1.0)
 - **Depends on:** none.
 

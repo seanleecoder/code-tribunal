@@ -1,5 +1,8 @@
 # SPEC-33 — Make gate failures and cross-stage configuration integrity explicit
 
+> **Historical completed requirement.** Current behavior is documented under
+> [`../reference/`](../reference/README.md); this file is non-normative.
+
 - **Severity:** High (false-green operational failure / policy mismatch) · **Effort:** M · **ROI rank:** 3 (pre-1.0)
 - **Depends on:** SPEC-32 for the final reviewer-quality artifact shape.
 

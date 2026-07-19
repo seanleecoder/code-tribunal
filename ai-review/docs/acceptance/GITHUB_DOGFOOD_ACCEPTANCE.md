@@ -1,5 +1,8 @@
 # GitHub Dogfood Acceptance Evidence
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 ## Controlled pre-v0.4.0 run
 
 - Status: accepted on 2026-07-14.

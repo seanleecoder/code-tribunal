@@ -1,5 +1,8 @@
 # Phase 4 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 Status: Phase 4 implementation synced; baseline real MR smoke passed; anchor-drift smoke passed conservative safety checks with missing-remap fallback.
 
 Date: 2026-07-03
@@ -28,7 +31,7 @@ Branch: `ai-review-poc-throw-away`
 - Downstream CI branch rules for `ai-review-*` and the existing trusted image SHA were preserved during sync.
 - Downstream Claude reviewer config remains `anthropic/claude-haiku-4.5`.
 - OpenCode active config/tests/docs now use `google/gemini-3.1-flash-lite`.
-- Trusted image observed in drift gate trace: `registry.example.internal/example-org/downstream-app:ai_review_base_1_1_f4723dd31834d53c4ba4395ea8fb1cdd54e3f913`.
+- Trusted image observed in drift gate trace: `<retired-private-base-image>`.
 
 ## Baseline MR Smoke
 

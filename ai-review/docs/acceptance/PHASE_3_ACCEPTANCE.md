@@ -1,5 +1,8 @@
 # Phase 3 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 This file tracks Phase 3 acceptance for deterministic consensus,
 idempotent GitLab upsert, and the merge gate (spec
 `../specs/ai-review-implementation-ready-spec.md` section 21,
@@ -64,9 +67,9 @@ Merge request: !3134
 Smoke SHA: 5d2b44380b0ba3b8c593f8662f18d7da6453812e
 Run ID: gl-179203-2526297
 
-Reviewer image: ai_review_reviewer_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+Reviewer image: <retired-private-reviewer-tag>
 Reviewer image digest: registry.example.internal/example-org/downstream-app@sha256:db5e50189d41471223ae7c47d166635438b1d26cc723b55cca8a43a0b2f32f30
-Base image: ai_review_base_1_1_6e4ab18e372d4ea7bb665ce849fd4991e53a5937
+Base image: <retired-private-base-tag>
 Base image digest: registry.example.internal/example-org/downstream-app@sha256:ea773050d54822bf1ec22829a236d1545b08d2fe52bada7caa93b8f34860362a
 Protected image pipeline: 179186
 Protected image jobs: build_ai_review_base_image=success,

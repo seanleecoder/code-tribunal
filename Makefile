@@ -8,10 +8,13 @@ LOCAL_OUT ?= .ai-review-local
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
-.PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain \
+.PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain docs-check \
 	update-golden review-local consensus-local validate-local
 
-quality: lint test-strict typecheck supply-chain compile
+quality: docs-check lint test-strict typecheck supply-chain compile
+
+docs-check:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py
 
 test:
 	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \

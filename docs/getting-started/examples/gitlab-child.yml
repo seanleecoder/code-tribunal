@@ -1,0 +1,23 @@
+stages:
+  - test
+  - ai_review
+
+ai_review:
+  stage: ai_review
+  needs: []
+  inherit:
+    variables: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  trigger:
+    include:
+      - project: org/code-tribunal-ci
+        ref: "1111111111111111111111111111111111111111"
+        file: /ai-review/ci/review-child.gitlab-ci.yml
+      - project: org/code-tribunal-ci
+        ref: "1111111111111111111111111111111111111111"
+        file: /ai-review/ci/review.gitlab-ci.yml
+    strategy: mirror
+    forward:
+      yaml_variables: false
+      pipeline_variables: false

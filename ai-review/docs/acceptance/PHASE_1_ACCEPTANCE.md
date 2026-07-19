@@ -1,5 +1,8 @@
 # Phase 1 Acceptance
 
+> **Historical evidence.** This record predates the current 1.0 evidence matrix
+> and is non-normative; see the [evidence index](../../../docs/history/evidence/README.md).
+
 This file records the private GitLab MR smoke evidence for Phase 1 and keeps
 live GitLab-only checks separate from local automated coverage.
 
