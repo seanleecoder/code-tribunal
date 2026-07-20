@@ -257,6 +257,7 @@ class GitLabClient:
                     primary_identity_counts[identity] = (
                         primary_identity_counts.get(identity, 0) + 1
                     )
+            incomplete_identities: dict[int, tuple[str, str]] = {}
             for index in incomplete_indexes:
                 incomplete = change_list[index]
                 path_name = _diff_path(incomplete)
@@ -271,6 +272,7 @@ class GitLabClient:
                         f"merge request diff is truncated or collapsed for {path_name}; "
                         "primary diff response returned duplicate matching changes"
                     )
+                incomplete_identities[index] = identity
 
             changes_path = (
                 f"/projects/{self._project(project_id_or_path)}"
@@ -317,12 +319,7 @@ class GitLabClient:
             for index in incomplete_indexes:
                 incomplete = change_list[index]
                 path_name = _diff_path(incomplete)
-                identity = _diff_identity(incomplete)
-                if identity is None:
-                    raise GitLabApiError(
-                        f"merge request diff is truncated or collapsed for {path_name}; "
-                        "primary diff response did not include text old/new paths"
-                    )
+                identity = incomplete_identities[index]
                 candidates = raw_by_paths.get(identity, [])
                 if not candidates:
                     raise GitLabApiError(
