@@ -342,6 +342,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         text = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
         build_preflight = _workflow_job(text, "build-preflight")
+        base_preflight_match = re.search(
+            r"(?ms)^      - name: Preflight base image\n.*?(?=^      - |\Z)",
+            build_preflight,
+        )
+        self.assertIsNotNone(base_preflight_match)
+        base_preflight_step = base_preflight_match.group(0)
         cursor_smoke = _workflow_job(text, "cursor-permission-smoke")
         publish = _workflow_job(text, "publish")
 
@@ -405,9 +411,48 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn(":latest", text)
         self.assertNotRegex(text, r":1\.0(?:\s|\"|$)")
 
+        base_build_idx = build_preflight.index("- name: Build base image")
+        base_preflight_idx = build_preflight.index("- name: Preflight base image")
+        reviewer_build_idx = build_preflight.index("- name: Build reviewer image")
+        self.assertLess(base_build_idx, base_preflight_idx)
+        self.assertLess(base_preflight_idx, reviewer_build_idx)
+
+        self.assertIn(
+            'raise SystemExit("preflight requires checkout owner and container uid to differ")',
+            base_preflight_step,
+        )
+        self.assertIn(
+            '"preflight negative control expected dubious ownership from "',
+            base_preflight_step,
+        )
+        self.assertIn('["git", *bare_args]', base_preflight_step)
+        self.assertIn('("status", "--porcelain=v1")', base_preflight_step)
+        embedded_python_match = re.search(
+            r"(?ms)python -c '\n(?P<code>.*?)^          '$",
+            base_preflight_step,
+        )
+        self.assertIsNotNone(embedded_python_match)
+        embedded_python = textwrap.dedent(embedded_python_match.group("code"))
+        self.assertNotIn("'", embedded_python, "single quote would end the shell argument")
+        compile(embedded_python, "ownership-preflight", "exec")
+        self.assertRegex(
+            base_preflight_step,
+            r"(?s)docker run --rm --user 65532:65532.*?--read-only --tmpfs /tmp "
+            r"--env HOME=/tmp.*?--volume \"\$GITHUB_WORKSPACE:/runner-checkout:ro\" "
+            r"\"\$AI_REVIEW_BASE_TAG\".*?python -c",
+        )
+
         for preflight in (
             "python -m unittest discover",
             "python -m compileall",
+            "--user 65532:65532",
+            'workdir /runner-checkout',
+            "--env HOME=/tmp",
+            'PREFLIGHT_HEAD_SHA=$GITHUB_SHA',
+            '$GITHUB_WORKSPACE:/runner-checkout:ro',
+            "checkout owner and container uid to differ",
+            "preflight negative control expected dubious ownership",
+            "from ai_review.input_bundle import _github_checkout_head",
             "claude --version",
             "codex --version",
             "opencode --version",
