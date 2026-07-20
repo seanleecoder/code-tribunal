@@ -19,6 +19,7 @@ from ai_review.input_bundle import (
     _copy_regular_file_nofollow,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
+    _git_command,
     _github_checkout_head,
     _github_pull_request_version,
     _resolve_github_pull_request,
@@ -296,6 +297,79 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "external fork PR secret-bearing path"),
         ):
             _resolve_github_pull_request(client, "octo/repo")
+
+    def test_git_command_trusts_only_the_resolved_checkout_for_the_invocation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="checkout with spaces ") as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="abc123\n", stderr=""
+            )
+            with mock.patch(
+                "ai_review.input_bundle.subprocess.run", return_value=completed
+            ) as run:
+                output = _git_command(repo, "rev-parse", "--verify", "HEAD^{commit}")
+
+            resolved_repo = repo.resolve(strict=True)
+            self.assertEqual(output, "abc123")
+            run.assert_called_once_with(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={resolved_repo}",
+                    "rev-parse",
+                    "--verify",
+                    "HEAD^{commit}",
+                ],
+                cwd=resolved_repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            command = run.call_args.args[0]
+            self.assertNotIn("safe.directory=*", command)
+            self.assertNotIn("config", command)
+            self.assertNotIn("--global", command)
+
+    def test_git_command_preserves_git_failure_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=128, stdout="", stderr="fatal: invalid HEAD\n"
+            )
+            with (
+                mock.patch(
+                    "ai_review.input_bundle.subprocess.run", return_value=completed
+                ),
+                self.assertRaisesRegex(
+                    BundleError,
+                    r"git rev-parse --verify HEAD\^\{commit\}: fatal: invalid HEAD",
+                ),
+            ):
+                _git_command(repo, "rev-parse", "--verify", "HEAD^{commit}")
+
+    def test_git_command_rejects_a_missing_checkout_before_running_git(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing"
+            with (
+                mock.patch("ai_review.input_bundle.subprocess.run") as run,
+                self.assertRaisesRegex(
+                    BundleError, r"failed to validate GitHub checkout path"
+                ),
+            ):
+                _git_command(missing, "status")
+            run.assert_not_called()
+
+    def test_git_command_rejects_a_file_checkout_before_running_git(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "not-a-checkout"
+            file_path.write_text("not a directory\n", encoding="utf-8")
+            with (
+                mock.patch("ai_review.input_bundle.subprocess.run") as run,
+                self.assertRaisesRegex(BundleError, r"checkout path: not a directory"),
+            ):
+                _git_command(file_path, "status")
+            run.assert_not_called()
 
     def test_checkout_head_must_match_selected_sha(self) -> None:
         selected = "1" * 40

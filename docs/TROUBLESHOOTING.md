@@ -15,6 +15,7 @@ credentials or sensitive model content into issues.
 | `/ai-review` command ignored | Wrong thread, syntax, or authorization | Root finding marker and author permission | Reply in the finding thread with one exact command line |
 | GitHub thread stays open | Built-in token cannot mutate review threads or root comment was deleted | Post warnings and GraphQL error | Add a fine-grained resolve token; preserve root comments |
 | GitHub prepare reports stale input | PR changed or checkout is dirty/untracked | Prepare error with selected/current SHA | Rerun current revision; never weaken SHA checks |
+| GitHub prepare reports dubious repository ownership | Old image pin, custom image user/config, or prepare running from an unexpected checkout | Image source SHA, working directory, checkout owner, container uid, and prepare log | Publish the fix from trusted `main`, update all image pins together, and verify custom workflow paths; never configure `safe.directory=*` |
 | GitHub prepare reports HTTP 406/too-large | GitHub refused a complete raw diff | Prepare log | Split/reduce the PR; do not use incomplete `/files` data as a substitute |
 | GitLab child trust audit fails | Include project/SHA, forwarding, inheritance, or bridge contract changed | Auditor errors | Restore the exact hardened example; do not bypass the validator |
 | Runtime override appears ignored | Pinned image predates it or variable scope differs | Template image source SHA and manifest effective config | Rotate all image pins together or move override to shared project/repository scope |
