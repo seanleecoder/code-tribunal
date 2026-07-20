@@ -21,6 +21,19 @@ class MergeRequestVersion:
     head_sha: str
 
 
+def _diff_identity(change: dict[str, Any]) -> tuple[str, str] | None:
+    old_path = change.get("old_path")
+    new_path = change.get("new_path")
+    if not isinstance(old_path, str) or not isinstance(new_path, str):
+        return None
+    return old_path, new_path
+
+
+def _diff_path(change: dict[str, Any]) -> str:
+    path = change.get("new_path") or change.get("old_path")
+    return path if isinstance(path, str) else "<unknown>"
+
+
 def _line_range_type(anchor: dict[str, Any]) -> str:
     if anchor["side"] == "old":
         return "old"
@@ -225,18 +238,126 @@ class GitLabClient:
         )
 
     def fetch_mr_diff(self, project_id_or_path: str | int, merge_request_iid: str | int) -> str:
-        # Prefer the paginated /diffs endpoint over deprecated /changes. Fail loudly
-        # when GitLab marks any file as collapsed/truncated so prepare cannot review
-        # a silently incomplete diff (mirrors the max_diff_bytes fail-fast policy).
+        # Prefer the paginated /diffs endpoint over deprecated /changes. GitLab may
+        # collapse an otherwise reviewable file in the database-backed response; in
+        # that case, recover only the affected entries from Gitaly's raw-diff path.
         change_list = self._get_all_pages(
             f"/projects/{self._project(project_id_or_path)}/merge_requests/{merge_request_iid}/diffs"
         )
+        incomplete_indexes = [
+            index
+            for index, change in enumerate(change_list)
+            if change.get("collapsed") or change.get("too_large")
+        ]
+        if incomplete_indexes:
+            primary_identity_counts: dict[tuple[str, str], int] = {}
+            for change in change_list:
+                identity = _diff_identity(change)
+                if identity is not None:
+                    primary_identity_counts[identity] = (
+                        primary_identity_counts.get(identity, 0) + 1
+                    )
+            incomplete_identities: dict[int, tuple[str, str]] = {}
+            for index in incomplete_indexes:
+                incomplete = change_list[index]
+                path_name = _diff_path(incomplete)
+                identity = _diff_identity(incomplete)
+                if identity is None:
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "primary diff response did not include text old/new paths"
+                    )
+                if primary_identity_counts[identity] != 1:
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "primary diff response returned duplicate matching changes"
+                    )
+                incomplete_identities[index] = identity
+
+            changes_path = (
+                f"/projects/{self._project(project_id_or_path)}"
+                f"/merge_requests/{merge_request_iid}/changes"
+            )
+            raw_response = self._request(
+                "GET", changes_path, params={"access_raw_diffs": "true"}
+            )
+            first_incomplete = change_list[incomplete_indexes[0]]
+            first_path = _diff_path(first_incomplete)
+            if not isinstance(raw_response, dict):
+                raise GitLabApiError(
+                    f"merge request diff is truncated or collapsed for {first_path}; "
+                    "raw-diff fallback returned a non-object response"
+                )
+            # GitLab documents top-level overflow plus per-file collapsed/too_large
+            # as the completeness signals. Raw access bypasses database limits, but
+            # Gitaly limits can still make the response incomplete.
+            if raw_response.get("overflow") is not False:
+                raise GitLabApiError(
+                    f"merge request diff is truncated or collapsed for {first_path}; "
+                    "raw-diff fallback did not prove a non-overflowing response"
+                )
+            raw_changes = raw_response.get("changes")
+            if not isinstance(raw_changes, list) or not all(
+                isinstance(change, dict) for change in raw_changes
+            ):
+                raise GitLabApiError(
+                    f"merge request diff is truncated or collapsed for {first_path}; "
+                    "raw-diff fallback returned malformed changes"
+                )
+
+            raw_by_paths: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for raw_change in raw_changes:
+                identity = _diff_identity(raw_change)
+                if identity is None:
+                    raise GitLabApiError(
+                        "merge request raw-diff fallback returned malformed change paths "
+                        "while recovering truncated or collapsed files"
+                    )
+                raw_by_paths.setdefault(identity, []).append(raw_change)
+
+            recovered_paths: list[str] = []
+            for index in incomplete_indexes:
+                incomplete = change_list[index]
+                path_name = _diff_path(incomplete)
+                identity = incomplete_identities[index]
+                candidates = raw_by_paths.get(identity, [])
+                if not candidates:
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "raw-diff fallback returned no matching change"
+                    )
+                if len(candidates) > 1:
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "raw-diff fallback returned multiple matching changes"
+                    )
+                recovered = candidates[0]
+                if recovered.get("collapsed") or recovered.get("too_large"):
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "raw-diff fallback remained incomplete"
+                    )
+                if not isinstance(recovered.get("diff"), str):
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "raw-diff fallback did not return text diff content"
+                    )
+                # Empty text can be a valid API diff for metadata-only or other changes;
+                # GitLab's overflow and per-file flags govern acceptance, not length.
+                change_list[index] = dict(recovered)
+                recovered_paths.append(path_name)
+
+            rendered_paths = ", ".join(repr(path) for path in recovered_paths)
+            sys.stderr.write(
+                f"ai-review: recovered {len(recovered_paths)} GitLab raw diff(s): "
+                f"{rendered_paths}\n"
+            )
+
         chunks: list[str] = []
         for change in change_list:
-            # /diffs exposes per-file collapsed/too_large; the old /changes
-            # top-level overflow flag is not present on these items.
+            # This remains a final invariant check after any recovery attempt.
             if change.get("collapsed") or change.get("too_large"):
-                path_name = change.get("new_path") or change.get("old_path") or "<unknown>"
+                path_name = _diff_path(change)
                 raise GitLabApiError(
                     f"merge request diff is truncated or collapsed for {path_name}; "
                     "refusing to review an incomplete diff"

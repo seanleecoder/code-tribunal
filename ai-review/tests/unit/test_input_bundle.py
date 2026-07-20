@@ -176,6 +176,45 @@ class InputBundleLimitTests(unittest.TestCase):
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
 
+    def test_gitlab_prepare_rejects_revision_change_during_diff_collection(self) -> None:
+        class MovingVersionClient:
+            def __init__(self) -> None:
+                self.versions = iter(
+                    [
+                        MergeRequestVersion("base", "start", "head-1"),
+                        MergeRequestVersion("base", "start", "head-2"),
+                    ]
+                )
+
+            def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
+                return next(self.versions)
+
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
+                return "diff --git a/f.py b/f.py\n"
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "CI_PROJECT_ID": "1",
+                    "CI_MERGE_REQUEST_IID": "2",
+                    "GITLAB_TOKEN": "token",
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "ai_review.input_bundle.load_config",
+                return_value={"state": {"backend": "none"}},
+            ),
+            mock.patch(
+                "ai_review.input_bundle.create_runtime_platform",
+                return_value=MovingVersionClient(),
+            ),
+            self.assertRaisesRegex(BundleError, "version changed during diff collection"),
+        ):
+            prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
+
 
 class GitHubPullRequestResolutionTests(unittest.TestCase):
     @staticmethod
@@ -987,8 +1026,13 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
 
     def test_github_and_gitlab_prepare_use_shared_snapshot_builder(self) -> None:
         class GitLabClient:
+            def __init__(self) -> None:
+                self.fetch_version_calls = 0
+                self.version = MergeRequestVersion("b", "s", "h")
+
             def fetch_version(self, project_id: str, change_id: str) -> object:
-                return type("V", (), {"base_sha": "b", "start_sha": "s", "head_sha": "h"})()
+                self.fetch_version_calls += 1
+                return self.version
 
             def fetch_diff(self, project_id: str, change_id: str) -> str:
                 return "diff --git a/f.py b/f.py\n"
@@ -1005,6 +1049,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
         }
         github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
 
+        gitlab_client = GitLabClient()
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             with (
@@ -1061,7 +1106,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 ),
                 mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",
-                    return_value=GitLabClient(),
+                    return_value=gitlab_client,
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copy2"),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
@@ -1073,6 +1118,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
             self.assertEqual(snap.call_args.args[1], out / "repo_snapshot")
+            self.assertEqual(gitlab_client.fetch_version_calls, 2)
 
 
 if __name__ == "__main__":

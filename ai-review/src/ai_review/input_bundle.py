@@ -753,6 +753,21 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         diff_text = client.fetch_diff(project_id, mr_iid)
     except ReviewPlatformError as exc:
         raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
+    try:
+        confirmed_version = client.fetch_version(project_id, mr_iid)
+    except ReviewPlatformError as exc:
+        raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
+    selected_revision = (version.base_sha, version.start_sha, version.head_sha)
+    confirmed_revision = (
+        confirmed_version.base_sha,
+        confirmed_version.start_sha,
+        confirmed_version.head_sha,
+    )
+    if confirmed_revision != selected_revision:
+        raise BundleError(
+            "merge request version changed during diff collection; "
+            "refusing to combine diff data from different revisions"
+        )
     _enforce_diff_limits(diff_text, config_dict)
     (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
