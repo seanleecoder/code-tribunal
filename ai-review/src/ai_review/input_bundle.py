@@ -294,7 +294,11 @@ def _snapshot_symlink_mode(config: object) -> str:
     security = config.get("security", {})
     if not isinstance(security, dict):
         return "reject"
-    return security.get("snapshot_symlink_mode", "reject")
+    mode = security.get("snapshot_symlink_mode", "reject")
+    # Pass through a configured string verbatim so copy_repo_snapshot validates
+    # it; a non-string only reaches here when config validation was bypassed, so
+    # fall back to the safe default rather than returning a non-str.
+    return mode if isinstance(mode, str) else "reject"
 
 
 def copy_repo_snapshot(
