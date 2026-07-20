@@ -308,8 +308,8 @@ class GitLabClient:
                 identity = _diff_identity(raw_change)
                 if identity is None:
                     raise GitLabApiError(
-                        f"merge request diff is truncated or collapsed for {first_path}; "
-                        "raw-diff fallback returned malformed change paths"
+                        "merge request raw-diff fallback returned malformed change paths "
+                        "while recovering truncated or collapsed files"
                     )
                 raw_by_paths.setdefault(identity, []).append(raw_change)
 
@@ -340,14 +340,13 @@ class GitLabClient:
                         f"merge request diff is truncated or collapsed for {path_name}; "
                         "raw-diff fallback remained incomplete"
                     )
-                # Empty diff text is valid for binary or metadata-only changes. GitLab's
-                # overflow and per-file flags, rather than non-empty text, prove that the
-                # raw response is complete enough to accept.
                 if not isinstance(recovered.get("diff"), str):
                     raise GitLabApiError(
                         f"merge request diff is truncated or collapsed for {path_name}; "
                         "raw-diff fallback did not return text diff content"
                     )
+                # Empty text can be a valid API diff for metadata-only or other changes;
+                # GitLab's overflow and per-file flags govern acceptance, not length.
                 change_list[index] = dict(recovered)
                 recovered_paths.append(path_name)
 

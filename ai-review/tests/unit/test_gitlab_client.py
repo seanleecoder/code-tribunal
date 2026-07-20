@@ -245,8 +245,11 @@ class GitLabClientTests(unittest.TestCase):
         class PagedDiffSession:
             def __init__(self) -> None:
                 self.requested_pages: list[int] = []
+                self.requested_urls: list[str] = []
 
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.requested_urls.append(url)
+                # A fallback /changes call must fail this complete-primary happy path.
                 if "/diffs" not in url:
                     raise AssertionError(f"expected /diffs URL, got {url}")
                 page = int(kwargs["params"]["page"])
@@ -277,6 +280,8 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
         diff = client.fetch_mr_diff("group/project", 1)
         self.assertEqual(session.requested_pages, [1, 2])
+        self.assertEqual(len(session.requested_urls), 2)
+        self.assertTrue(all(url.endswith("/diffs") for url in session.requested_urls))
         self.assertIn("diff --git a/a.py b/a.py", diff)
         self.assertIn("diff --git a/b.py b/b.py", diff)
         self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
@@ -444,6 +449,44 @@ class GitLabClientTests(unittest.TestCase):
         with self.assertRaisesRegex(GitLabApiError, "primary diff response returned duplicate"):
             client.fetch_mr_diff("group/project", 1)
         self.assertEqual(len(session.calls), 1)
+
+    def test_fetch_mr_diff_fails_when_primary_paths_are_malformed(self) -> None:
+        primary = [
+            {
+                "old_path": None,
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        session = DiffFallbackSession(primary, {})
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+
+        with self.assertRaisesRegex(GitLabApiError, "did not include text old/new paths"):
+            client.fetch_mr_diff("group/project", 1)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_fetch_mr_diff_fails_without_misattributing_malformed_raw_paths(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        malformed = {"old_path": None, "new_path": "untrusted.py", "diff": ""}
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary, {"overflow": False, "changes": [malformed]}
+            ),
+        )
+
+        with self.assertRaisesRegex(GitLabApiError, "raw-diff fallback returned malformed") as cm:
+            client.fetch_mr_diff("group/project", 1)
+        self.assertNotIn("big.py", str(cm.exception))
 
     def test_fetch_mr_diff_fails_when_raw_change_is_missing(self) -> None:
         primary = [
