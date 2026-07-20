@@ -64,8 +64,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   `requests` proxy/transport subclasses such as `ProxyError`). Exhausted
   connection failures on any verb, including non-retried POST, are normalized
   to platform API errors instead of raw transport exceptions.
-- GitLab prepare fetches MR diffs from the paginated `/diffs` endpoint and fails
-  loudly when GitLab marks any file as collapsed or truncated.
+- GitLab prepare fetches MR diffs from the paginated `/diffs` endpoint. When
+  GitLab collapses an otherwise reviewable file, prepare recovers that exact
+  entry through the raw-diff compatibility endpoint and still fails loudly if
+  the fallback overflows, is ambiguous, or remains incomplete.
 - Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to

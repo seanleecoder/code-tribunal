@@ -266,9 +266,62 @@ class GitLabClientTests(unittest.TestCase):
         self.assertIn("diff --git a/b.py b/b.py", diff)
         self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
 
-    def test_fetch_mr_diff_fails_loudly_on_collapsed_file(self) -> None:
-        class CollapsedDiffSession:
+    def test_fetch_mr_diff_recovers_collapsed_file_from_raw_changes(self) -> None:
+        class RecoveringDiffSession:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any]]] = []
+
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.calls.append((url, kwargs))
+                if url.endswith("/changes"):
+                    return FakeResponse(
+                        {
+                            "overflow": False,
+                            "changes": [
+                                {
+                                    "old_path": "big.py",
+                                    "new_path": "big.py",
+                                    "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                    "collapsed": False,
+                                    "too_large": False,
+                                }
+                            ],
+                        }
+                    )
+                return FakeResponse(
+                    [
+                        {
+                            "old_path": "small.py",
+                            "new_path": "small.py",
+                            "diff": "@@ -0,0 +1 @@\n+small\n",
+                        },
+                        {
+                            "old_path": "big.py",
+                            "new_path": "big.py",
+                            "diff": "",
+                            "collapsed": True,
+                        }
+                    ],
+                    headers={"X-Next-Page": ""},
+                )
+
+        session = RecoveringDiffSession()
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        diff = client.fetch_mr_diff("group/project", 1)
+
+        self.assertIn("diff --git a/small.py b/small.py", diff)
+        self.assertIn("diff --git a/big.py b/big.py", diff)
+        self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
+        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(session.calls[0][0].endswith("/diffs"))
+        self.assertTrue(session.calls[1][0].endswith("/changes"))
+        self.assertEqual(session.calls[1][1]["params"], {"access_raw_diffs": True})
+
+    def test_fetch_mr_diff_fails_when_raw_changes_overflow(self) -> None:
+        class OverflowingDiffSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                if url.endswith("/changes"):
+                    return FakeResponse({"overflow": True, "changes": []})
                 return FakeResponse(
                     [
                         {
@@ -282,9 +335,51 @@ class GitLabClientTests(unittest.TestCase):
                 )
 
         client = GitLabClient(
-            "https://gitlab.example.com/api/v4", "token", session=CollapsedDiffSession()
+            "https://gitlab.example.com/api/v4", "token", session=OverflowingDiffSession()
         )
-        with self.assertRaisesRegex(GitLabApiError, "truncated or collapsed"):
+        with self.assertRaisesRegex(GitLabApiError, "non-overflowing response"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_change_is_missing(self) -> None:
+        class MissingRawDiffSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                if url.endswith("/changes"):
+                    return FakeResponse({"overflow": False, "changes": []})
+                return FakeResponse(
+                    [
+                        {
+                            "old_path": "big.py",
+                            "new_path": "big.py",
+                            "diff": "",
+                            "collapsed": True,
+                        }
+                    ],
+                    headers={"X-Next-Page": ""},
+                )
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=MissingRawDiffSession()
+        )
+        with self.assertRaisesRegex(GitLabApiError, "exactly one matching change"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_change_remains_incomplete(self) -> None:
+        class IncompleteRawDiffSession:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                change = {
+                    "old_path": "big.py",
+                    "new_path": "big.py",
+                    "diff": "",
+                    "too_large": True,
+                }
+                if url.endswith("/changes"):
+                    return FakeResponse({"overflow": False, "changes": [change]})
+                return FakeResponse([change], headers={"X-Next-Page": ""})
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=IncompleteRawDiffSession()
+        )
+        with self.assertRaisesRegex(GitLabApiError, "remained incomplete"):
             client.fetch_mr_diff("group/project", 1)
 
     def test_send_retries_idempotent_verbs_on_502(self) -> None:
