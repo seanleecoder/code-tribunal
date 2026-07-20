@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 from typing import Any
 from unittest import mock
@@ -54,6 +56,19 @@ class FakeSession:
         if "/merge_requests/" in url and method == "GET":
             return FakeResponse({"sha": "head"})
         return FakeResponse({"id": "discussion", "notes": [{"id": 123}]})
+
+
+class DiffFallbackSession:
+    def __init__(self, primary: list[dict[str, Any]], raw_payload: Any) -> None:
+        self.primary = primary
+        self.raw_payload = raw_payload
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append((url, kwargs))
+        if url.endswith("/changes"):
+            return FakeResponse(self.raw_payload)
+        return FakeResponse(self.primary, headers={"X-Next-Page": ""})
 
 
 class GitLabClientTests(unittest.TestCase):
@@ -230,8 +245,11 @@ class GitLabClientTests(unittest.TestCase):
         class PagedDiffSession:
             def __init__(self) -> None:
                 self.requested_pages: list[int] = []
+                self.requested_urls: list[str] = []
 
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                self.requested_urls.append(url)
+                # A fallback /changes call must fail this complete-primary happy path.
                 if "/diffs" not in url:
                     raise AssertionError(f"expected /diffs URL, got {url}")
                 page = int(kwargs["params"]["page"])
@@ -262,29 +280,295 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
         diff = client.fetch_mr_diff("group/project", 1)
         self.assertEqual(session.requested_pages, [1, 2])
+        self.assertEqual(len(session.requested_urls), 2)
+        self.assertTrue(all(url.endswith("/diffs") for url in session.requested_urls))
         self.assertIn("diff --git a/a.py b/a.py", diff)
         self.assertIn("diff --git a/b.py b/b.py", diff)
         self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
 
-    def test_fetch_mr_diff_fails_loudly_on_collapsed_file(self) -> None:
-        class CollapsedDiffSession:
-            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
-                return FakeResponse(
-                    [
-                        {
-                            "old_path": "big.py",
-                            "new_path": "big.py",
-                            "diff": "",
-                            "collapsed": True,
-                        }
-                    ],
-                    headers={"X-Next-Page": ""},
-                )
-
-        client = GitLabClient(
-            "https://gitlab.example.com/api/v4", "token", session=CollapsedDiffSession()
+    def test_fetch_mr_diff_recovers_collapsed_file_from_raw_changes(self) -> None:
+        primary = [
+            {
+                "old_path": "small.py",
+                "new_path": "small.py",
+                "diff": "@@ -0,0 +1 @@\n+small\n",
+            },
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            },
+        ]
+        recovered = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+            "collapsed": False,
+            "too_large": False,
+        }
+        session = DiffFallbackSession(
+            primary, {"overflow": False, "changes": [recovered]}
         )
-        with self.assertRaisesRegex(GitLabApiError, "truncated or collapsed"):
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            diff = client.fetch_mr_diff("group/project", 1)
+
+        self.assertIn("diff --git a/small.py b/small.py", diff)
+        self.assertIn("diff --git a/big.py b/big.py", diff)
+        self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
+        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(session.calls[0][0].endswith("/diffs"))
+        self.assertTrue(session.calls[1][0].endswith("/changes"))
+        self.assertEqual(session.calls[1][1]["params"], {"access_raw_diffs": "true"})
+        self.assertIn("recovered 1 GitLab raw diff(s): 'big.py'", stderr.getvalue())
+
+    def test_fetch_mr_diff_recovers_too_large_file_from_raw_changes(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "too_large": True,
+            }
+        ]
+        recovered = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+            "too_large": False,
+        }
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary, {"overflow": False, "changes": [recovered]}
+            ),
+        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            diff = client.fetch_mr_diff("group/project", 1)
+
+        self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
+
+    def test_fetch_mr_diff_accepts_complete_empty_raw_diff(self) -> None:
+        primary = [
+            {
+                "old_path": "binary.dat",
+                "new_path": "binary.dat",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        recovered = {
+            "old_path": "binary.dat",
+            "new_path": "binary.dat",
+            "diff": "",
+            "collapsed": False,
+            "too_large": False,
+        }
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary, {"overflow": False, "changes": [recovered]}
+            ),
+        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            diff = client.fetch_mr_diff("group/project", 1)
+
+        self.assertIn("diff --git a/binary.dat b/binary.dat", diff)
+
+    def test_fetch_mr_diff_fails_when_raw_response_is_not_an_object(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(primary, []),
+        )
+        with self.assertRaisesRegex(GitLabApiError, "non-object response"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_without_explicit_non_overflow_signal(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        for raw_payload in ({}, {"overflow": None}, {"overflow": True}):
+            with self.subTest(raw_payload=raw_payload):
+                client = GitLabClient(
+                    "https://gitlab.example.com/api/v4",
+                    "token",
+                    session=DiffFallbackSession(primary, raw_payload),
+                )
+                with self.assertRaisesRegex(GitLabApiError, "non-overflowing response"):
+                    client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_changes_are_malformed(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        for changes in ({}, ["not-an-object"]):
+            with self.subTest(changes=changes):
+                client = GitLabClient(
+                    "https://gitlab.example.com/api/v4",
+                    "token",
+                    session=DiffFallbackSession(
+                        primary, {"overflow": False, "changes": changes}
+                    ),
+                )
+                with self.assertRaisesRegex(GitLabApiError, "malformed changes"):
+                    client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_primary_identity_is_duplicated(self) -> None:
+        duplicate = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": "",
+            "collapsed": True,
+        }
+        session = DiffFallbackSession([duplicate, dict(duplicate)], {})
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+
+        with self.assertRaisesRegex(GitLabApiError, "primary diff response returned duplicate"):
+            client.fetch_mr_diff("group/project", 1)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_fetch_mr_diff_fails_when_primary_paths_are_malformed(self) -> None:
+        primary = [
+            {
+                "old_path": None,
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        session = DiffFallbackSession(primary, {})
+        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+
+        with self.assertRaisesRegex(GitLabApiError, "did not include text old/new paths"):
+            client.fetch_mr_diff("group/project", 1)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_fetch_mr_diff_fails_without_misattributing_malformed_raw_paths(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        malformed = {"old_path": None, "new_path": "untrusted.py", "diff": ""}
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary, {"overflow": False, "changes": [malformed]}
+            ),
+        )
+
+        with self.assertRaisesRegex(GitLabApiError, "raw-diff fallback returned malformed") as cm:
+            client.fetch_mr_diff("group/project", 1)
+        self.assertNotIn("big.py", str(cm.exception))
+
+    def test_fetch_mr_diff_fails_when_raw_change_is_missing(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(primary, {"overflow": False, "changes": []}),
+        )
+        with self.assertRaisesRegex(GitLabApiError, "no matching change"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_change_is_ambiguous(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        recovered = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+        }
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary,
+                {"overflow": False, "changes": [recovered, dict(recovered)]},
+            ),
+        )
+        with self.assertRaisesRegex(GitLabApiError, "multiple matching changes"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_change_remains_incomplete(self) -> None:
+        change = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": "",
+            "too_large": True,
+        }
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                [change], {"overflow": False, "changes": [change]}
+            ),
+        )
+        with self.assertRaisesRegex(GitLabApiError, "remained incomplete"):
+            client.fetch_mr_diff("group/project", 1)
+
+    def test_fetch_mr_diff_fails_when_raw_diff_is_not_text(self) -> None:
+        primary = [
+            {
+                "old_path": "big.py",
+                "new_path": "big.py",
+                "diff": "",
+                "collapsed": True,
+            }
+        ]
+        recovered = {
+            "old_path": "big.py",
+            "new_path": "big.py",
+            "diff": None,
+        }
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4",
+            "token",
+            session=DiffFallbackSession(
+                primary, {"overflow": False, "changes": [recovered]}
+            ),
+        )
+        with self.assertRaisesRegex(GitLabApiError, "did not return text diff content"):
             client.fetch_mr_diff("group/project", 1)
 
     def test_send_retries_idempotent_verbs_on_502(self) -> None:
