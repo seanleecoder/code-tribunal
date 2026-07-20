@@ -23,6 +23,7 @@ from ai_review.input_bundle import (
     _external_fork_secrets_blocked,
     _github_checkout_head,
     _github_pull_request_version,
+    _prepare_snapshot,
     _resolve_github_pull_request,
     _symlinks_touched_by_diff,
     copy_repo_snapshot,
@@ -1333,6 +1334,74 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)
             self.assertEqual(snap.call_args.kwargs["symlink_mode"], "skip")
 
+    def test_github_prepare_records_skip_manifest_fields(self) -> None:
+        # Drive the real _prepare_snapshot; only stub copy_repo_snapshot's report
+        # so the manifest fields are exercised through the GitHub prepare path.
+        def fake_snapshot(
+            source: object,
+            dest: object,
+            *,
+            ignore_top_level_names: object = None,
+            symlink_mode: str = "reject",
+            skipped_report: dict[str, object] | None = None,
+        ) -> Path:
+            if skipped_report is not None:
+                skipped_report["count"] = 3
+                skipped_report["sample"] = ["a.link", "b.link"]
+            return Path(dest)  # type: ignore[arg-type]
+
+        github_client = _github_platform_mock()
+        github_client.fetch_pull_request.return_value = {
+            "number": 9,
+            "head": {"ref": "feature", "sha": "1" * 40, "repo": {"full_name": "octo/repo"}},
+            "base": {"ref": "main", "sha": "0" * 40},
+        }
+        github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n+++ b/f.py\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "9",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
+                        "GITHUB_RUN_ID": "1",
+                        "GITHUB_RUN_ATTEMPT": "1",
+                    },
+                    clear=True,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.load_config",
+                    return_value={"security": {"snapshot_symlink_mode": "skip"}},
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform",
+                    return_value=github_client,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                ),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch(
+                    "ai_review.input_bundle.copy_repo_snapshot", side_effect=fake_snapshot
+                ),
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="a" * 64),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
+            ):
+                prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["snapshot_skipped_symlink_count"], 3)
+            self.assertEqual(
+                manifest["snapshot_skipped_symlink_sample"], ["a.link", "b.link"]
+            )
+            self.assertEqual(manifest["effective_config"]["snapshot_symlink_mode"], "skip")
+
     def test_symlinks_touched_by_diff_flags_file_and_directory_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
@@ -1340,9 +1409,9 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             (source / "alias.py").symlink_to("README.md")
             (source / "linkdir").symlink_to("src")
             diff = (
-                "diff --git a/alias.py b/alias.py\n"
-                "diff --git a/linkdir/mod.py b/linkdir/mod.py\n"
-                "diff --git a/README.md b/README.md\n"
+                "diff --git a/alias.py b/alias.py\n+++ b/alias.py\n"
+                "diff --git a/linkdir/mod.py b/linkdir/mod.py\n+++ b/linkdir/mod.py\n"
+                "diff --git a/README.md b/README.md\n+++ b/README.md\n"
             )
             touched = _symlinks_touched_by_diff(source, diff)
             # The file symlink and the path reached through the dir symlink are
@@ -1357,7 +1426,9 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             (repo / "alias.py").symlink_to("README.md")
             out = Path(tmpdir) / "bundle"
             diff = Path(tmpdir) / "mr.diff"
-            diff.write_text("diff --git a/alias.py b/alias.py\n", encoding="utf-8")
+            diff.write_text(
+                "diff --git a/alias.py b/alias.py\n+++ b/alias.py\n", encoding="utf-8"
+            )
             captured = io.StringIO()
             with (
                 mock.patch("ai_review.input_bundle.load_config", return_value=skip_cfg),
@@ -1373,8 +1444,53 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["snapshot_skipped_symlink_count"], 1)
             self.assertIn("alias.py", manifest["snapshot_skipped_symlink_sample"])
+            # The changed-and-omitted tripwire is durable in the manifest, too.
+            self.assertEqual(manifest["snapshot_changed_symlink_count"], 1)
+            self.assertIn("alias.py", manifest["snapshot_changed_symlink_sample"])
             # The MR changed the omitted symlink → elevated warning.
             self.assertIn("omitted from repo_snapshot", captured.getvalue())
+
+    def test_symlinks_touched_by_diff_handles_git_quoted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            name = "evil\nlink"
+            try:
+                (source / name).symlink_to("README.md")
+            except (OSError, ValueError):
+                self.skipTest("filesystem rejects newline in names")
+            # git quotes control-character paths: +++ "b/evil\nlink"
+            diff = (
+                'diff --git "a/evil\\nlink" "b/evil\\nlink"\n'
+                "new file mode 120000\n"
+                "--- /dev/null\n"
+                '+++ "b/evil\\nlink"\n'
+                "@@ -0,0 +1 @@\n"
+                "+README.md\n"
+            )
+            self.assertEqual(_symlinks_touched_by_diff(source, diff), [name])
+
+    def test_intersection_warning_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            lines = []
+            for i in range(25):
+                (source / f"lk{i:02d}").symlink_to("README.md")
+                lines.append(f"diff --git a/lk{i:02d} b/lk{i:02d}\n+++ b/lk{i:02d}\n")
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                _prepare_snapshot(
+                    source,
+                    Path(tmpdir) / "snap",
+                    out_name="snap",
+                    config_dict={"security": {"snapshot_symlink_mode": "skip"}},
+                    diff_text="".join(lines),
+                )
+            stderr = captured.getvalue()
+            named = [ln for ln in stderr.splitlines() if ln.startswith("ai-review:   - ")]
+            self.assertEqual(len(named), 20)
+            self.assertIn("showing first 20, 5 more", stderr)
 
 
 if __name__ == "__main__":

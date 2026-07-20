@@ -407,19 +407,67 @@ def copy_repo_snapshot(
     return Path(dest_root)
 
 
-def _changed_paths_from_diff(diff_text: str) -> list[str]:
-    """Best-effort repo-relative paths of files touched by a unified diff.
+_GIT_QUOTE_ESCAPES = {
+    "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13,
+    '"': 0x22, "\\": 0x5C,
+}
 
-    Reads the ``b/``-side of each ``diff --git`` header. Good enough to flag
-    diff/snapshot divergence; renames or space-bearing quoted paths may be
-    missed, which only weakens the warning, never containment.
+
+def _git_unquote_path(token: str) -> str:
+    """Decode a git-quoted diff path (C-style, UTF-8 octal escapes).
+
+    Git wraps paths with special bytes in double quotes and escapes them as
+    ``\\n``/``\\t``/... or ``\\NNN`` octal of the UTF-8 bytes. Unquoted tokens are
+    returned unchanged.
+    """
+    if len(token) < 2 or not (token.startswith('"') and token.endswith('"')):
+        return token
+    body = token[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt in _GIT_QUOTE_ESCAPES:
+                out.append(_GIT_QUOTE_ESCAPES[nxt])
+                i += 2
+            elif nxt.isdigit():
+                out.append(int(body[i + 1 : i + 4], 8) & 0xFF)
+                i += 4
+            else:
+                out.append(ord(nxt))
+                i += 2
+        else:
+            out.extend(ch.encode("utf-8"))
+            i += 1
+    return out.decode("utf-8", "replace")
+
+
+def _changed_paths_from_diff(diff_text: str) -> list[str]:
+    """Best-effort repo-relative post-image paths touched by a unified diff.
+
+    Reads the ``+++`` post-image line (unambiguous single token, unlike the
+    ``diff --git`` header when names contain spaces) plus ``rename to``/``copy to``
+    for content-free renames, decoding git's quoted-path form so control-character
+    names (e.g. an embedded newline) are still recognized. Deletions (``/dev/null``)
+    are ignored since the path no longer exists in the checkout.
     """
     paths: list[str] = []
     for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
-            _, _, rest = line.partition(" b/")
-            if rest:
-                paths.append(rest.strip())
+        token: str | None = None
+        if line.startswith("+++ "):
+            raw = line[4:].strip()
+            if raw == "/dev/null":
+                continue
+            decoded = _git_unquote_path(raw)
+            token = decoded[2:] if decoded.startswith("b/") else decoded
+        elif line.startswith("rename to "):
+            token = _git_unquote_path(line[len("rename to ") :].strip())
+        elif line.startswith("copy to "):
+            token = _git_unquote_path(line[len("copy to ") :].strip())
+        if token:
+            paths.append(token)
     return paths
 
 
@@ -467,22 +515,30 @@ def _prepare_snapshot(
         symlink_mode=mode,
         skipped_report=report,
     )
+    touched: list[str] = []
     if mode == "skip":
         touched = _symlinks_touched_by_diff(Path(source), diff_text)
         if touched:
+            shown = touched[:_MAX_SKIPPED_SYMLINK_SAMPLE]
+            remaining = len(touched) - len(shown)
+            more = f" (showing first {len(shown)}, {remaining} more)" if remaining else ""
             sys.stderr.write(
                 f"ai-review: WARNING: {len(touched)} path(s) changed in this merge "
                 "request are omitted from repo_snapshot under "
                 "security.snapshot_symlink_mode=skip; reviewers will not see their "
-                "content:\n"
+                f"content{more}:\n"
             )
-            for path in touched[:_MAX_SKIPPED_SYMLINK_SAMPLE]:
+            for path in shown:
                 sys.stderr.write(f"ai-review:   - {_escape_for_log(path)}\n")
     count = report.get("count", 0)
     sample = report.get("sample", [])
     return {
         "snapshot_skipped_symlink_count": count if isinstance(count, int) else 0,
         "snapshot_skipped_symlink_sample": sample if isinstance(sample, list) else [],
+        "snapshot_changed_symlink_count": len(touched),
+        "snapshot_changed_symlink_sample": [
+            _escape_for_log(p) for p in touched[:_MAX_SKIPPED_SYMLINK_SAMPLE]
+        ],
     }
 
 

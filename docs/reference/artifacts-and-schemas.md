@@ -5,7 +5,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 
 | Path | Producer | Consumer | Schema or contract |
 |---|---|---|---|
-| `inputs/manifest.json` | prepare | all later stages | revision, run ID, diff digest, and effective-config binding |
+| `inputs/manifest.json` | prepare | all later stages | revision, run ID, diff digest, and effective-config binding. Under `security.snapshot_symlink_mode: skip` also records `snapshot_skipped_symlink_count` and a bounded `snapshot_skipped_symlink_sample` (all symlinks omitted from the snapshot), plus `snapshot_changed_symlink_count` and a bounded `snapshot_changed_symlink_sample` (omitted paths the merge request actually changed); sample paths are escaped |
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring, post | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; special files always rejected; symlinks rejected by default or omitted under `security.snapshot_symlink_mode: skip` (never followed) |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
