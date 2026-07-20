@@ -45,8 +45,10 @@ Repositories that intentionally track benign symlinks may set
 instead of rejecting them. Skipping preserves containment: the link is never
 followed or recreated, so no symlink target is ever opened, read, or materialized —
 `/proc/self/environ` and other out-of-checkout targets remain unreachable. The
-default remains `reject`. Mid-copy TOCTOU replacement races fail closed in either
-mode, and special files (FIFO/socket/device) are always rejected.
+default remains `reject`. Each omitted symlink is reported to stderr (with a
+summary count) so `skip` is never silent and operators retain a review tripwire.
+Mid-copy TOCTOU replacement races fail closed in either mode, and special files
+(FIFO/socket/device) are always rejected.
 
 The hostile-symlink, no-follow, and skip-mode behaviors are exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).

@@ -22,8 +22,9 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   closed, so repositories that track benign symlinks can be reviewed. Skipping
   never follows or recreates the link, so containment is preserved — no symlink
   target (including `/proc/self/environ`) is ever opened, read, or materialized.
-  Special files are still always rejected, and mid-copy TOCTOU replacement races
-  fail closed in both modes.
+  Each skipped symlink is reported to stderr (with a summary count) so the
+  relaxation is never silent. Special files are still always rejected, and
+  mid-copy TOCTOU replacement races fail closed in both modes.
 
 ### Changed
 

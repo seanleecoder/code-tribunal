@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -826,6 +828,32 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 if not path.is_file() or path.is_symlink():
                     continue
                 self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
+
+    def test_symlink_mode_skip_reports_omitted_symlinks_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            (source / "src" / "alias.py").symlink_to("pkg/mod.py")
+            (source / "top.link").symlink_to("README.md")
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            stderr = captured.getvalue()
+            # Each omitted symlink is named, and a summary count is emitted.
+            self.assertIn("snapshot skipped symlink: src/alias.py", stderr)
+            self.assertIn("snapshot skipped symlink: top.link", stderr)
+            self.assertIn("omitted 2 symlink(s)", stderr)
+
+    def test_symlink_mode_reject_emits_no_skip_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                copy_repo_snapshot(source, dest)
+            self.assertNotIn("snapshot skipped symlink", captured.getvalue())
 
     def test_symlink_mode_skip_still_rejects_special_files(self) -> None:
         if not hasattr(os, "mkfifo"):

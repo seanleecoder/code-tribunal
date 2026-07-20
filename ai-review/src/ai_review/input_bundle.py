@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -163,6 +164,7 @@ def _copy_snapshot_tree(
     *,
     top_level_ignore: frozenset[str],
     symlink_mode: str = "reject",
+    skipped_symlinks: list[str] | None = None,
 ) -> None:
     """Copy ``source_root`` into ``dest_root`` without following links.
 
@@ -175,7 +177,9 @@ def _copy_snapshot_tree(
     handled: ``"reject"`` (default) fails closed on the first symlink; ``"skip"``
     omits the entry entirely. Skipping never follows or recreates the link, so
     no symlink target is ever opened, read, or materialized — containment holds.
-    Mid-copy TOCTOU replacement races still fail closed in either mode.
+    Mid-copy TOCTOU replacement races still fail closed in either mode. When a
+    list is passed as ``skipped_symlinks``, each omitted symlink's repo-relative
+    path is appended so the caller can surface a diagnostic.
     """
     root_flags = os.O_RDONLY | _O_DIRECTORY
     try:
@@ -207,6 +211,10 @@ def _copy_snapshot_tree(
                     child_parts = (*rel_parts, name)
                     if entry.is_symlink():
                         if symlink_mode == "skip":
+                            if skipped_symlinks is not None:
+                                skipped_symlinks.append(
+                                    _snapshot_rel_display(child_parts)
+                                )
                             continue
                         _raise_snapshot_rejected("symlink", child_parts)
                     try:
@@ -284,6 +292,7 @@ def copy_repo_snapshot(
     ``symlink_mode`` defaults to ``"reject"`` (fail closed on the first symlink).
     ``"skip"`` omits symlinks from the snapshot without following or recreating
     them, so containment is preserved for repositories that track benign links.
+    Skipped symlinks are reported to stderr so the relaxation is never silent.
     """
     _require_dir_fd_containment()
     source_root = Path(source).resolve(strict=True)
@@ -306,12 +315,14 @@ def copy_repo_snapshot(
             dir=dest_resolved_parent,
         )
     )
+    skipped_symlinks: list[str] = []
     try:
         _copy_snapshot_tree(
             source_root,
             tmp_dest,
             top_level_ignore=top_level_ignore,
             symlink_mode=symlink_mode,
+            skipped_symlinks=skipped_symlinks,
         )
         # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
         # that are not the preparing uid (same-user CI jobs are unaffected either way).
@@ -326,6 +337,13 @@ def copy_repo_snapshot(
         if tmp_dest.exists():
             shutil.rmtree(tmp_dest, ignore_errors=True)
         raise
+    if skipped_symlinks:
+        for rel in skipped_symlinks:
+            sys.stderr.write(f"ai-review: snapshot skipped symlink: {rel}\n")
+        sys.stderr.write(
+            f"ai-review: snapshot omitted {len(skipped_symlinks)} symlink(s) "
+            "under security.snapshot_symlink_mode=skip\n"
+        )
     return Path(dest_root)
 
 
