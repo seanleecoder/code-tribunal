@@ -318,7 +318,11 @@ class GitLabClient:
                 incomplete = change_list[index]
                 path_name = _diff_path(incomplete)
                 identity = _diff_identity(incomplete)
-                assert identity is not None  # Validated before making the fallback request.
+                if identity is None:
+                    raise GitLabApiError(
+                        f"merge request diff is truncated or collapsed for {path_name}; "
+                        "primary diff response did not include text old/new paths"
+                    )
                 candidates = raw_by_paths.get(identity, [])
                 if not candidates:
                     raise GitLabApiError(
@@ -336,6 +340,9 @@ class GitLabClient:
                         f"merge request diff is truncated or collapsed for {path_name}; "
                         "raw-diff fallback remained incomplete"
                     )
+                # Empty diff text is valid for binary or metadata-only changes. GitLab's
+                # overflow and per-file flags, rather than non-empty text, prove that the
+                # raw response is complete enough to accept.
                 if not isinstance(recovered.get("diff"), str):
                     raise GitLabApiError(
                         f"merge request diff is truncated or collapsed for {path_name}; "
@@ -354,7 +361,7 @@ class GitLabClient:
         for change in change_list:
             # This remains a final invariant check after any recovery attempt.
             if change.get("collapsed") or change.get("too_large"):
-                path_name = change.get("new_path") or change.get("old_path") or "<unknown>"
+                path_name = _diff_path(change)
                 raise GitLabApiError(
                     f"merge request diff is truncated or collapsed for {path_name}; "
                     "refusing to review an incomplete diff"
