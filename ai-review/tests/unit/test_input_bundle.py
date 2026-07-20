@@ -1564,6 +1564,9 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
 
         # Malformed octal escape does not raise; the char is kept literally.
         self.assertEqual(_git_unquote_path('"a\\8b"'), "a8b")
+        # A malformed escape before a non-ASCII char (code point > 255) must not
+        # crash bytearray handling.
+        self.assertEqual(_git_unquote_path('"a\\éb"'), "aéb")
         # High byte decodes via surrogateescape and escapes cleanly for logs.
         decoded = _git_unquote_path('"\\377.py"')
         self.assertEqual(decoded, "\udcff.py")

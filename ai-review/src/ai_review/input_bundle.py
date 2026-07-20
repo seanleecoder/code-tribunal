@@ -441,7 +441,9 @@ def _git_unquote_path(token: str) -> str:
             else:
                 # Malformed escape (git always emits a known letter or 3 octal
                 # digits); keep the next char literally rather than raising.
-                out.append(ord(nxt))
+                # Encode to bytes so a non-ASCII char (code point > 255) does not
+                # blow up bytearray.append.
+                out.extend(nxt.encode("utf-8"))
                 i += 2
         else:
             out.extend(ch.encode("utf-8"))

@@ -266,6 +266,47 @@ class GitLabClientTests(unittest.TestCase):
         self.assertIn("diff --git a/b.py b/b.py", diff)
         self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
 
+    def test_fetch_mr_diff_quotes_control_character_paths(self) -> None:
+        from ai_review.input_bundle import _changed_paths_from_diff
+
+        class Session:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                return FakeResponse(
+                    [
+                        {
+                            "old_path": "ev\nil.py",
+                            "new_path": "ev\nil.py",
+                            "diff": "@@ -0,0 +1 @@\n+x\n",
+                        }
+                    ],
+                    headers={"X-Next-Page": ""},
+                )
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=Session()
+        )
+        diff = client.fetch_mr_diff("group/project", 1)
+        # The synthesized header is a single physical line with git C-quoting.
+        self.assertIn('diff --git "a/ev\\nil.py" "b/ev\\nil.py"', diff)
+        self.assertIn('+++ "b/ev\\nil.py"', diff)
+        # And it round-trips back through the changed-path parser.
+        self.assertIn("ev\nil.py", _changed_paths_from_diff(diff))
+
+    def test_fetch_mr_diff_leaves_ordinary_paths_unquoted(self) -> None:
+        class Session:
+            def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+                return FakeResponse(
+                    [{"old_path": "src/m.py", "new_path": "src/m.py", "diff": "@@ -1 +1 @@\n"}],
+                    headers={"X-Next-Page": ""},
+                )
+
+        client = GitLabClient(
+            "https://gitlab.example.com/api/v4", "token", session=Session()
+        )
+        diff = client.fetch_mr_diff("group/project", 1)
+        self.assertIn("diff --git a/src/m.py b/src/m.py", diff)
+        self.assertNotIn('"', diff)
+
     def test_fetch_mr_diff_fails_loudly_on_collapsed_file(self) -> None:
         class CollapsedDiffSession:
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:

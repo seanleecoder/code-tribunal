@@ -14,6 +14,35 @@ class GitLabApiError(RuntimeError):
     pass
 
 
+_GIT_QUOTE_SIMPLE = {
+    "\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v",
+    "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\",
+}
+
+
+def _git_quote_diff_token(prefix: str, path: str) -> str:
+    """Render an ``a/``/``b/`` diff-header token the way git would.
+
+    GitLab's ``/diffs`` endpoint returns structured paths that this client
+    synthesizes into ``diff --git``/``---``/``+++`` headers. A raw path containing
+    control characters (notably a newline or tab) would break the line-based diff
+    format and hide the file from downstream parsers. Quote and C-escape such
+    paths exactly like git so the synthesized diff stays well-formed; ordinary
+    paths are returned unquoted and byte-for-byte unchanged.
+    """
+    if not any(ord(c) < 0x20 or ord(c) == 0x7F or c in '"\\' for c in path):
+        return f"{prefix}/{path}"
+    escaped: list[str] = []
+    for ch in path:
+        if ch in _GIT_QUOTE_SIMPLE:
+            escaped.append(_GIT_QUOTE_SIMPLE[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            escaped.extend(f"\\{byte:03o}" for byte in ch.encode("utf-8"))
+        else:
+            escaped.append(ch)
+    return f'"{prefix}/{"".join(escaped)}"'
+
+
 @dataclass(frozen=True)
 class MergeRequestVersion:
     base_sha: str
@@ -243,9 +272,11 @@ class GitLabClient:
                 )
             old_path = change.get("old_path") or change.get("new_path")
             new_path = change.get("new_path") or change.get("old_path")
-            chunks.append(f"diff --git a/{old_path} b/{new_path}")
-            chunks.append(f"--- a/{old_path}")
-            chunks.append(f"+++ b/{new_path}")
+            a_token = _git_quote_diff_token("a", str(old_path))
+            b_token = _git_quote_diff_token("b", str(new_path))
+            chunks.append(f"diff --git {a_token} {b_token}")
+            chunks.append(f"--- {a_token}")
+            chunks.append(f"+++ {b_token}")
             chunks.append(str(change.get("diff", "")))
         return "\n".join(chunks).rstrip() + "\n"
 
