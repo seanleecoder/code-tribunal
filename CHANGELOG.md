@@ -77,6 +77,12 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   `state.fail_closed_on_load_error`; state writes remain unconditionally fail-closed
   on overflow.
 
+### Fixed
+
+- GitHub prepare now trusts only the exact resolved checkout for each Git command,
+  allowing revision validation to run when a container uid differs from the owner
+  of the runner-mounted workspace without changing global Git configuration.
+
 ### Removed
 
 - Removed the incomplete Python distribution metadata, `py.typed` marker,

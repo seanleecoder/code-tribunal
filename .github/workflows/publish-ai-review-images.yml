@@ -58,6 +58,64 @@ jobs:
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             .
 
+      - name: Preflight base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The suite creates executable fake reviewer CLIs under /tmp. Keep it
+          # checkout-independent, but do not mount /tmp noexec for this command.
+          docker run --rm --workdir /tmp "$AI_REVIEW_BASE_TAG" \
+            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
+            python -m compileall -q /opt/ai-review/src
+          # Run this as early as possible because the complete checkout validator
+          # intentionally requires a pristine workspace, including ignored files.
+          # The default checkout ref must resolve to GITHUB_SHA; update the expected
+          # SHA here if the checkout step is ever changed to use a custom ref.
+          # Pin a non-owner uid and prove the ownership mismatch is real. HOME is
+          # on the writable tmpfs so this does not rely on the image user's home.
+          docker run --rm --user 65532:65532 --workdir /runner-checkout \
+            --read-only --tmpfs /tmp --env HOME=/tmp \
+            --env "PREFLIGHT_HEAD_SHA=$GITHUB_SHA" \
+            --volume "$GITHUB_WORKSPACE:/runner-checkout:ro" "$AI_REVIEW_BASE_TAG" \
+            python -c '
+          import os
+          import subprocess
+          from pathlib import Path
+          from ai_review.input_bundle import _github_checkout_head
+
+          repo = Path.cwd()
+          if repo.stat().st_uid == os.geteuid():
+              raise SystemExit("preflight requires checkout owner and container uid to differ")
+          for bare_args in (
+              ("rev-parse", "--verify", "HEAD^{commit}"),
+              ("status", "--porcelain=v1"),
+          ):
+              bare = subprocess.run(
+                  ["git", *bare_args],
+                  cwd=repo,
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              detail = (bare.stderr or bare.stdout).lower()
+              if bare.returncode == 0 or "dubious ownership" not in detail:
+                  bare_command = " ".join(bare_args)
+                  raise SystemExit(
+                      "preflight negative control expected dubious ownership from "
+                      "bare git " + bare_command
+                  )
+          _github_checkout_head(
+              repo,
+              Path("/tmp/inputs"),
+              expected_head_sha=os.environ["PREFLIGHT_HEAD_SHA"],
+          )
+          '
+          for module in input_bundle consensus post gate schema; do
+            docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
+              python -m "ai_review.$module" --help >/dev/null
+          done
+
       - name: Build reviewer image
         shell: bash
         run: |
@@ -73,21 +131,6 @@ jobs:
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             .
-
-      - name: Preflight base image
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The suite creates executable fake reviewer CLIs under /tmp. Keep it
-          # checkout-independent, but do not mount /tmp noexec for this command.
-          docker run --rm --workdir /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
-          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m compileall -q /opt/ai-review/src
-          for module in input_bundle consensus post gate schema; do
-            docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
-              python -m "ai_review.$module" --help >/dev/null
-          done
 
       - name: Preflight reviewer image
         shell: bash

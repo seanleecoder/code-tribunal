@@ -498,16 +498,33 @@ def _github_pull_request_version(pull_request: dict[str, Any]) -> PullRequestVer
 
 
 def _git_command(repo_path: Path, *args: str) -> str:
+    try:
+        resolved_repo_path = repo_path.resolve(strict=True)
+    except OSError as exc:
+        raise BundleError(
+            f"failed to validate GitHub checkout path {repo_path}: {exc}"
+        ) from exc
+    if not resolved_repo_path.is_dir():
+        raise BundleError(
+            f"failed to validate GitHub checkout path: not a directory: "
+            f"{resolved_repo_path}"
+        )
+
+    # Container jobs commonly run as a different uid from the host runner that
+    # owns the bind-mounted checkout. Trust only this validated checkout for this
+    # invocation; do not mutate global config or weaken Git with safe.directory=*.
     completed = subprocess.run(
-        ["git", *args],
-        cwd=repo_path,
+        ["git", "-c", f"safe.directory={resolved_repo_path}", *args],
+        cwd=resolved_repo_path,
         capture_output=True,
         text=True,
         check=False,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
-        raise BundleError(f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}")
+        raise BundleError(
+            f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}"
+        )
     return completed.stdout.strip()
 
 
