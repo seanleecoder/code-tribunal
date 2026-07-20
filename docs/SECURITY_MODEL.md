@@ -45,12 +45,15 @@ Repositories that intentionally track benign symlinks may set
 instead of rejecting them. Skipping preserves containment: the link is never
 followed or recreated, so no symlink target is ever opened, read, or materialized —
 `/proc/self/environ` and other out-of-checkout targets remain unreachable. The
-default remains `reject`, and the active mode is recorded in the prepare
-manifest's effective config so a relaxed run is auditable. Omitted symlinks are
-reported to stderr — a bounded sample of paths plus the full count — so `skip` is
-never silent and operators retain a review tripwire; the reported paths are
-control-character-escaped so a crafted filename cannot forge CI log lines. Mid-copy
-TOCTOU replacement races fail closed in either mode, and special files
+default remains `reject`, and the active mode plus a skipped-symlink count and
+bounded sample are recorded in the prepare manifest so a relaxed run is auditable
+without job logs. Omitted symlinks are also reported to stderr — a bounded sample
+of paths plus the full count — so `skip` is never silent and operators retain a
+review tripwire; reported paths are escaped (C0/C1/DEL and Unicode bidi/format
+controls) so a crafted filename cannot forge or spoof CI log lines. When the merge
+request changed a path that is omitted because it is (or is reached through) a
+symlink, prepare emits an elevated warning naming those paths. Mid-copy TOCTOU
+replacement races fail closed in either mode, and special files
 (FIFO/socket/device) are always rejected.
 
 The hostile-symlink, no-follow, and skip-mode behaviors are exercised in

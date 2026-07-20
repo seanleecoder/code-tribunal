@@ -24,6 +24,7 @@ from ai_review.input_bundle import (
     _github_checkout_head,
     _github_pull_request_version,
     _resolve_github_pull_request,
+    _symlinks_touched_by_diff,
     copy_repo_snapshot,
     prepare_github_bundle,
     prepare_gitlab_bundle,
@@ -891,6 +892,52 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             for line in stderr.splitlines():
                 self.assertTrue(line.startswith("ai-review: "), line)
 
+    def test_skip_diagnostic_escapes_unicode_bidi_controls(self) -> None:
+        # Bidi/format controls (Cf) can visually spoof a log line; escape them too.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            hostile = "safe‮dnegol-daor​.txt"  # RLO + zero-width space
+            try:
+                (source / hostile).symlink_to("README.md")
+            except (OSError, ValueError):
+                self.skipTest("filesystem rejects these characters in names")
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            stderr = captured.getvalue()
+            self.assertNotIn("‮", stderr)
+            self.assertNotIn("​", stderr)
+            self.assertIn("\\u202e", stderr)
+            self.assertIn("\\u200b", stderr)
+
+    def test_skip_report_records_count_and_bounded_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            for i in range(25):
+                (source / f"link{i:02d}").symlink_to("README.md")
+            report: dict[str, object] = {}
+            copy_repo_snapshot(
+                source, dest, symlink_mode="skip", skipped_report=report
+            )
+            self.assertEqual(report["count"], 25)
+            self.assertEqual(len(report["sample"]), 20)  # bounded
+
+    def test_skip_report_empty_when_no_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            report: dict[str, object] = {}
+            copy_repo_snapshot(
+                source, dest, symlink_mode="skip", skipped_report=report
+            )
+            self.assertEqual(report["count"], 0)
+            self.assertEqual(report["sample"], [])
+
     def test_skip_diagnostic_is_bounded_for_many_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
@@ -1285,6 +1332,49 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             ):
                 prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)
             self.assertEqual(snap.call_args.kwargs["symlink_mode"], "skip")
+
+    def test_symlinks_touched_by_diff_flags_file_and_directory_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            (source / "alias.py").symlink_to("README.md")
+            (source / "linkdir").symlink_to("src")
+            diff = (
+                "diff --git a/alias.py b/alias.py\n"
+                "diff --git a/linkdir/mod.py b/linkdir/mod.py\n"
+                "diff --git a/README.md b/README.md\n"
+            )
+            touched = _symlinks_touched_by_diff(source, diff)
+            # The file symlink and the path reached through the dir symlink are
+            # flagged; the ordinary changed file is not.
+            self.assertEqual(touched, ["alias.py", "linkdir"])
+
+    def test_local_prepare_records_skipped_symlinks_and_warns_on_diff(self) -> None:
+        skip_cfg = {"security": {"snapshot_symlink_mode": "skip"}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            self._write_nested_repo(repo)
+            (repo / "alias.py").symlink_to("README.md")
+            out = Path(tmpdir) / "bundle"
+            diff = Path(tmpdir) / "mr.diff"
+            diff.write_text("diff --git a/alias.py b/alias.py\n", encoding="utf-8")
+            captured = io.StringIO()
+            with (
+                mock.patch("ai_review.input_bundle.load_config", return_value=skip_cfg),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="a" * 64),
+                mock.patch(
+                    "ai_review.input_bundle._directory_sha256", return_value="b" * 64
+                ),
+                contextlib.redirect_stderr(captured),
+            ):
+                prepare_local_bundle(Path("cfg/review.yaml"), diff, repo, out)
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["snapshot_skipped_symlink_count"], 1)
+            self.assertIn("alias.py", manifest["snapshot_skipped_symlink_sample"])
+            # The MR changed the omitted symlink → elevated warning.
+            self.assertIn("omitted from repo_snapshot", captured.getvalue())
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -55,12 +56,28 @@ _DIR_FD_SUPPORTED = (
 _GIT_OBJECT_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
+def _escape_for_log(text: str) -> str:
+    """Escape characters that could spoof or forge log/CI output.
+
+    Repository-controlled names reach error messages and CI logs. Control
+    characters (C0/C1/DEL) let a crafted filename forge log lines or CI workflow
+    commands (e.g. a newline followed by ``::error::``); Unicode format controls
+    (bidi overrides, zero-width) let it spoof how a line renders. Both categories
+    (Unicode ``Cc``/``Cf``) are rendered as ``\\xHH``/``\\uHHHH`` escapes.
+    """
+    out: list[str] = []
+    for ch in text:
+        if unicodedata.category(ch) in ("Cc", "Cf"):
+            cp = ord(ch)
+            out.append(f"\\x{cp:02x}" if cp <= 0xFF else f"\\u{cp:04x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
     raw = Path(*parts).as_posix() if parts else "."
-    # Repository-controlled names reach error messages and CI logs. Escape C0/DEL
-    # control characters so a crafted filename (e.g. containing a newline followed
-    # by "::error::") cannot forge log lines or CI workflow commands.
-    return re.sub(r"[\x00-\x1f\x7f]", lambda m: f"\\x{ord(m.group()):02x}", raw)
+    return _escape_for_log(raw)
 
 
 def _raise_snapshot_rejected(kind: str, rel_parts: tuple[str, ...]) -> None:
@@ -307,6 +324,7 @@ def copy_repo_snapshot(
     *,
     ignore_top_level_names: Iterable[str] | None = None,
     symlink_mode: str = "reject",
+    skipped_report: dict[str, object] | None = None,
 ) -> Path:
     """Copy a repository tree into ``dest`` without following any symlinks.
 
@@ -322,6 +340,9 @@ def copy_repo_snapshot(
     ``"skip"`` omits symlinks from the snapshot without following or recreating
     them, so containment is preserved for repositories that track benign links.
     Skipped symlinks are reported to stderr so the relaxation is never silent.
+    When a dict is passed as ``skipped_report`` it is populated with ``"count"``
+    (total symlinks omitted) and ``"sample"`` (a bounded list of their escaped
+    repo-relative paths) so the caller can persist a durable record.
     """
     if not isinstance(symlink_mode, str) or symlink_mode not in SNAPSHOT_SYMLINK_MODES:
         raise ValueError(
@@ -371,6 +392,9 @@ def copy_repo_snapshot(
         if tmp_dest.exists():
             shutil.rmtree(tmp_dest, ignore_errors=True)
         raise
+    if skipped_report is not None:
+        skipped_report["count"] = skipped_total
+        skipped_report["sample"] = list(skipped_sample)
     if skipped_total:
         for rel in skipped_sample:
             sys.stderr.write(f"ai-review: snapshot skipped symlink: {rel}\n")
@@ -381,6 +405,85 @@ def copy_repo_snapshot(
             f"under security.snapshot_symlink_mode=skip{suffix}\n"
         )
     return Path(dest_root)
+
+
+def _changed_paths_from_diff(diff_text: str) -> list[str]:
+    """Best-effort repo-relative paths of files touched by a unified diff.
+
+    Reads the ``b/``-side of each ``diff --git`` header. Good enough to flag
+    diff/snapshot divergence; renames or space-bearing quoted paths may be
+    missed, which only weakens the warning, never containment.
+    """
+    paths: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            _, _, rest = line.partition(" b/")
+            if rest:
+                paths.append(rest.strip())
+    return paths
+
+
+def _symlinks_touched_by_diff(source_root: Path, diff_text: str) -> list[str]:
+    """Changed paths that are — or are reached through — a symlink in the checkout.
+
+    Under ``skip`` mode such paths are omitted from ``repo_snapshot``, so their
+    content is absent from what reviewers see even though the diff changed them.
+    """
+    touched: set[str] = set()
+    for rel in _changed_paths_from_diff(diff_text):
+        comps = [c for c in rel.split("/") if c and c != "."]
+        if not comps or ".." in comps:
+            continue
+        for i in range(1, len(comps) + 1):
+            try:
+                if source_root.joinpath(*comps[:i]).is_symlink():
+                    touched.add("/".join(comps[:i]))
+                    break
+            except OSError:
+                break
+    return sorted(touched)
+
+
+def _prepare_snapshot(
+    source: str | Path,
+    snapshot_dir: Path,
+    *,
+    out_name: str,
+    config_dict: dict[str, Any],
+    diff_text: str,
+) -> dict[str, object]:
+    """Build the repo snapshot for a prepare path and return manifest fields.
+
+    Threads the configured symlink mode, records how many symlinks were omitted,
+    and — under ``skip`` — warns when the merge request changed a path that is
+    absent from the snapshot because it is (or is reached through) a symlink.
+    """
+    mode = _snapshot_symlink_mode(config_dict)
+    report: dict[str, object] = {}
+    copy_repo_snapshot(
+        source,
+        snapshot_dir,
+        ignore_top_level_names={out_name},
+        symlink_mode=mode,
+        skipped_report=report,
+    )
+    if mode == "skip":
+        touched = _symlinks_touched_by_diff(Path(source), diff_text)
+        if touched:
+            sys.stderr.write(
+                f"ai-review: WARNING: {len(touched)} path(s) changed in this merge "
+                "request are omitted from repo_snapshot under "
+                "security.snapshot_symlink_mode=skip; reviewers will not see their "
+                "content:\n"
+            )
+            for path in touched[:_MAX_SKIPPED_SYMLINK_SAMPLE]:
+                sys.stderr.write(f"ai-review:   - {_escape_for_log(path)}\n")
+    count = report.get("count", 0)
+    sample = report.get("sample", [])
+    return {
+        "snapshot_skipped_symlink_count": count if isinstance(count, int) else 0,
+        "snapshot_skipped_symlink_sample": sample if isinstance(sample, list) else [],
+    }
 
 
 def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
@@ -432,16 +535,18 @@ def prepare_local_bundle(
     out_path.mkdir(parents=True, exist_ok=True)
 
     config_dict = load_config(config_path)
-    _enforce_diff_limits(diff_path.read_text(encoding="utf-8"), config_dict)
+    diff_text = diff_path.read_text(encoding="utf-8")
+    _enforce_diff_limits(diff_text, config_dict)
     shutil.copy2(diff_path, out_path / "mr.diff")
     shutil.copy2(config_path, out_path / "config.review.yaml")
 
     snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
+    snapshot_fields = _prepare_snapshot(
         repo_path,
         snapshot_dir,
-        ignore_top_level_names={out_path.name},
-        symlink_mode=_snapshot_symlink_mode(config_dict),
+        out_name=out_path.name,
+        config_dict=config_dict,
+        diff_text=diff_text,
     )
 
     source_rules = config_path.parent.parent / "rules"
@@ -477,6 +582,7 @@ def prepare_local_bundle(
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
         "effective_config_sha256": effective_config_digest(config_dict),
+        **snapshot_fields,
         "created_at": now_iso(),
     }
     write_canonical_json(out_path / "manifest.json", manifest)
@@ -735,11 +841,12 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
 
     snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
+    snapshot_fields = _prepare_snapshot(
         Path.cwd(),
         snapshot_dir,
-        ignore_top_level_names={out_path.name},
-        symlink_mode=_snapshot_symlink_mode(config_dict),
+        out_name=out_path.name,
+        config_dict=config_dict,
+        diff_text=diff_text,
     )
     diff_sha = sha256_hex(diff_text)
     raw_head = pull_request.get("head")
@@ -767,6 +874,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
         "effective_config_sha256": effective_config_digest(config_dict),
+        **snapshot_fields,
         "created_at": now_iso(),
     }
     state = empty_state(
@@ -831,11 +939,12 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
     shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
 
     snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
+    snapshot_fields = _prepare_snapshot(
         Path.cwd(),
         snapshot_dir,
-        ignore_top_level_names={out_path.name},
-        symlink_mode=_snapshot_symlink_mode(config_dict),
+        out_name=out_path.name,
+        config_dict=config_dict,
+        diff_text=diff_text,
     )
     diff_sha = sha256_hex(diff_text)
     manifest = {
@@ -855,6 +964,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         "rules_sha256": _directory_sha256(source_rules),
         "effective_config": effective_config_summary(config_dict),
         "effective_config_sha256": effective_config_digest(config_dict),
+        **snapshot_fields,
         "created_at": now_iso(),
     }
     state = empty_state(

@@ -17,7 +17,8 @@ by trusted prepare/post jobs and are not forwarded to reviewer subprocesses.
 Repository snapshots reject symlinks and special files and use descriptor-based
 no-follow traversal on supported Unix platforms. Symlink handling is opt-in
 relaxable via `security.snapshot_symlink_mode: skip`, which omits symlinks
-(never following or recreating them) and reports each omission to stderr;
+(never following or recreating them), reports a bounded sample and total count
+to stderr, and records the mode and skipped count in the prepare manifest;
 special files are always rejected.
 
 The outer CI job remains trusted and can see CI-provided variables. Reviewer CLI

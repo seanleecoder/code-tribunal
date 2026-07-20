@@ -22,11 +22,15 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   closed, so repositories that track benign symlinks can be reviewed. Skipping
   never follows or recreates the link, so containment is preserved — no symlink
   target (including `/proc/self/environ`) is ever opened, read, or materialized.
-  Omitted symlinks are reported to stderr (a bounded, control-character-escaped
-  sample plus the full count) so the relaxation is never silent, and the active
-  mode is recorded in the prepare manifest's effective config for auditability.
-  Special files are still always rejected, and mid-copy TOCTOU replacement races
-  fail closed in both modes.
+  Omitted symlinks are reported to stderr (a bounded, escaped sample plus the
+  full count) so the relaxation is never silent; the active mode, a
+  skipped-symlink count, and a bounded sample are recorded in the prepare
+  manifest for durable auditability; and prepare emits an elevated warning when
+  the merge request changed a path omitted because it is (or is reached through)
+  a symlink. Reported paths escape C0/C1/DEL and Unicode bidi/format controls so
+  a crafted filename cannot forge or spoof CI log lines. Special files are still
+  always rejected, and mid-copy TOCTOU replacement races fail closed in both
+  modes.
 
 ### Changed
 
