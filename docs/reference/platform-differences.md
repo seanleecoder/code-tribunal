@@ -18,3 +18,10 @@
 Both platforms use the same configuration, reviewer adapters, artifact schemas,
 consensus policy, posting reconciliation, and gate evaluator. Platform-specific
 credentials are never passed into reviewer subprocess environments.
+
+GitLab's deprecated `/changes?access_raw_diffs=true` endpoint is a conditional
+compatibility fallback only; the paginated `/diffs` endpoint remains primary.
+Fallback data is accepted only when the response explicitly reports
+`overflow=false`, every affected old/new path has one exact match, and the
+replacement has no `collapsed` or `too_large` flag. Prepare re-fetches the MR
+diff version afterward and rejects any base, start, or head revision change.

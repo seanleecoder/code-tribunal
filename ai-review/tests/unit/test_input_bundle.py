@@ -176,6 +176,45 @@ class InputBundleLimitTests(unittest.TestCase):
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
 
+    def test_gitlab_prepare_rejects_revision_change_during_diff_collection(self) -> None:
+        class MovingVersionClient:
+            def __init__(self) -> None:
+                self.versions = iter(
+                    [
+                        MergeRequestVersion("base", "start", "head-1"),
+                        MergeRequestVersion("base", "start", "head-2"),
+                    ]
+                )
+
+            def fetch_version(self, project_id: str, change_id: str) -> MergeRequestVersion:
+                return next(self.versions)
+
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
+                return "diff --git a/f.py b/f.py\n"
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "CI_PROJECT_ID": "1",
+                    "CI_MERGE_REQUEST_IID": "2",
+                    "GITLAB_TOKEN": "token",
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "ai_review.input_bundle.load_config",
+                return_value={"state": {"backend": "none"}},
+            ),
+            mock.patch(
+                "ai_review.input_bundle.create_runtime_platform",
+                return_value=MovingVersionClient(),
+            ),
+            self.assertRaisesRegex(BundleError, "version changed during diff collection"),
+        ):
+            prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
+
 
 class GitHubPullRequestResolutionTests(unittest.TestCase):
     @staticmethod

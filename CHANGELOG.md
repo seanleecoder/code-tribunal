@@ -66,8 +66,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   to platform API errors instead of raw transport exceptions.
 - GitLab prepare fetches MR diffs from the paginated `/diffs` endpoint. When
   GitLab collapses an otherwise reviewable file, prepare recovers that exact
-  entry through the raw-diff compatibility endpoint and still fails loudly if
-  the fallback overflows, is ambiguous, or remains incomplete.
+  entry through the deprecated `/changes` raw-diff compatibility endpoint and
+  still fails loudly if the fallback overflows, is ambiguous, or remains
+  incomplete. Prepare revalidates the complete MR diff version after collection
+  so paginated and fallback reads cannot silently mix revisions.
 - Consensus groups now preserve reviewer suggestions and distinct evidence, and posted
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
