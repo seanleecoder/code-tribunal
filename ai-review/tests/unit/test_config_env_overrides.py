@@ -404,10 +404,26 @@ class LoadConfigOverrideTests(unittest.TestCase):
         validate_config(config)
 
     def test_invalid_snapshot_symlink_mode_fails_loudly(self) -> None:
+        # Unknown strings and non-string YAML structures both raise ConfigError
+        # (not TypeError from a set-membership test against an unhashable value).
+        for bad in ("follow", ["skip"], {"mode": "skip"}, True, 1):
+            with self.subTest(bad=bad):
+                config = load_config(_REPO_CONFIG)
+                config.setdefault("security", {})["snapshot_symlink_mode"] = bad
+                with self.assertRaisesRegex(ConfigError, "security.snapshot_symlink_mode"):
+                    validate_config(config)
+
+    def test_effective_config_summary_records_snapshot_symlink_mode(self) -> None:
+        from ai_review.config import effective_config_summary
+
         config = load_config(_REPO_CONFIG)
-        config.setdefault("security", {})["snapshot_symlink_mode"] = "follow"
-        with self.assertRaisesRegex(ConfigError, "security.snapshot_symlink_mode"):
-            validate_config(config)
+        self.assertEqual(
+            effective_config_summary(config)["snapshot_symlink_mode"], "reject"
+        )
+        config.setdefault("security", {})["snapshot_symlink_mode"] = "skip"
+        self.assertEqual(
+            effective_config_summary(config)["snapshot_symlink_mode"], "skip"
+        )
 
     def test_effective_config_summary_includes_semantic_grouping(self) -> None:
         from ai_review.config import effective_config_summary

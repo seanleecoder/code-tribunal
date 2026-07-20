@@ -239,6 +239,7 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     quorum = panel.get("quorum", {}) if isinstance(panel, dict) else {}
     grouping = panel.get("grouping", {}) if isinstance(panel, dict) else {}
     semantic = grouping.get("semantic", {}) if isinstance(grouping, dict) else {}
+    security = config.get("security", {}) if isinstance(config, dict) else {}
     severity = config.get("severity_policy", {}) if isinstance(config, dict) else {}
     single = severity.get("single_reviewer_blocker", {}) if isinstance(severity, dict) else {}
     quorum_blocker = severity.get("quorum_blocker", {}) if isinstance(severity, dict) else {}
@@ -285,6 +286,11 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         ),
         "panel_grouping_semantic_threshold": (
             float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
+        ),
+        "snapshot_symlink_mode": (
+            security.get("snapshot_symlink_mode", "reject")
+            if isinstance(security, dict)
+            else "reject"
         ),
     }
 
@@ -471,7 +477,7 @@ def validate_config(config: dict[str, Any]) -> None:
     _reject_unknown_keys(security, SECURITY_KEYS, "security")
     if "snapshot_symlink_mode" in security:
         mode = security["snapshot_symlink_mode"]
-        if mode not in SNAPSHOT_SYMLINK_MODES:
+        if not isinstance(mode, str) or mode not in SNAPSHOT_SYMLINK_MODES:
             raise ConfigError(
                 "security.snapshot_symlink_mode must be 'reject' or 'skip'"
             )

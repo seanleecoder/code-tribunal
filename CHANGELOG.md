@@ -22,9 +22,11 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   closed, so repositories that track benign symlinks can be reviewed. Skipping
   never follows or recreates the link, so containment is preserved — no symlink
   target (including `/proc/self/environ`) is ever opened, read, or materialized.
-  Each skipped symlink is reported to stderr (with a summary count) so the
-  relaxation is never silent. Special files are still always rejected, and
-  mid-copy TOCTOU replacement races fail closed in both modes.
+  Omitted symlinks are reported to stderr (a bounded, control-character-escaped
+  sample plus the full count) so the relaxation is never silent, and the active
+  mode is recorded in the prepare manifest's effective config for auditability.
+  Special files are still always rejected, and mid-copy TOCTOU replacement races
+  fail closed in both modes.
 
 ### Changed
 

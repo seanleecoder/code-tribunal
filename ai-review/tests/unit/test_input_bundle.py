@@ -868,6 +868,94 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 copy_repo_snapshot(source, dest, symlink_mode="skip")
             self.assertFalse(dest.exists())
 
+    def test_skip_diagnostic_escapes_control_characters_in_names(self) -> None:
+        # A crafted filename containing a newline + a forged CI workflow command
+        # must not produce a standalone "::error::" line in stderr.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            hostile = "evil\n::error::forged\x1b[31m"
+            try:
+                (source / hostile).symlink_to("README.md")
+            except (OSError, ValueError):
+                self.skipTest("filesystem rejects control characters in names")
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            stderr = captured.getvalue()
+            self.assertNotIn("\n::error::forged", stderr)
+            self.assertNotIn("\x1b", stderr)
+            self.assertIn("\\x0a", stderr)  # newline rendered as an escape
+            # Every emitted line still carries the diagnostic prefix.
+            for line in stderr.splitlines():
+                self.assertTrue(line.startswith("ai-review: "), line)
+
+    def test_skip_diagnostic_is_bounded_for_many_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            for i in range(50):
+                (source / f"link{i:02d}").symlink_to("README.md")
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            stderr = captured.getvalue()
+            per_path = [
+                ln for ln in stderr.splitlines()
+                if "snapshot skipped symlink:" in ln
+            ]
+            self.assertEqual(len(per_path), 20)  # capped sample
+            self.assertIn("omitted 50 symlink(s)", stderr)
+            self.assertIn("showing first 20, 30 more", stderr)
+
+    def test_invalid_symlink_mode_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            for bad in ("follow", ["skip"], True):
+                with self.assertRaises(ValueError):
+                    copy_repo_snapshot(source, dest, symlink_mode=bad)
+            self.assertFalse(dest.exists())
+
+    def test_symlink_mode_skip_still_fails_closed_on_copy_race(self) -> None:
+        # The "skip" relaxation only applies to entries that are symlinks at scan
+        # time; a file swapped to a symlink mid-copy must still fail closed.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            victim = (source / "src" / "pkg" / "mod.py").resolve()
+            outside = Path(tmpdir) / "outside.txt"
+            outside.write_text("outside\n", encoding="utf-8")
+
+            def race_then_copy(
+                dst: Path,
+                expected: os.stat_result,
+                rel_parts: tuple[str, ...],
+                *,
+                dir_fd: int,
+                name: str,
+            ) -> None:
+                if rel_parts == ("src", "pkg", "mod.py"):
+                    victim.unlink()
+                    victim.symlink_to(outside)
+                _copy_regular_file_nofollow(
+                    dst, expected, rel_parts, dir_fd=dir_fd, name=name
+                )
+
+            with (
+                mock.patch(
+                    "ai_review.input_bundle._copy_regular_file_nofollow",
+                    side_effect=race_then_copy,
+                ),
+                self.assertRaisesRegex(BundleError, r"rejects symlink: src/pkg/mod.py"),
+            ):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            self.assertFalse(dest.exists())
+
     def test_validation_copy_race_replacing_file_with_symlink_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
@@ -1058,6 +1146,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
             self.assertEqual(snap.call_args.args[1], out / "repo_snapshot")
+            self.assertEqual(snap.call_args.kwargs["symlink_mode"], "reject")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
@@ -1090,6 +1179,112 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
             self.assertEqual(snap.call_args.args[1], out / "repo_snapshot")
+            self.assertEqual(snap.call_args.kwargs["symlink_mode"], "reject")
+
+    def test_prepare_threads_skip_symlink_mode_from_config(self) -> None:
+        skip_cfg = {"security": {"snapshot_symlink_mode": "skip"}}
+
+        # Local prepare.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            self._write_nested_repo(repo)
+            out = Path(tmpdir) / "bundle"
+            diff = Path(tmpdir) / "mr.diff"
+            diff.write_text("diff --git a/a.py b/a.py\n", encoding="utf-8")
+            with (
+                mock.patch("ai_review.input_bundle.load_config", return_value=skip_cfg),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="a" * 64),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
+            ):
+                prepare_local_bundle(Path("cfg/review.yaml"), diff, repo, out)
+            self.assertEqual(snap.call_args.kwargs["symlink_mode"], "skip")
+
+        # GitHub prepare.
+        github_client = _github_platform_mock()
+        github_client.fetch_pull_request.return_value = {
+            "number": 9,
+            "head": {"ref": "feature", "sha": "1" * 40, "repo": {"full_name": "octo/repo"}},
+            "base": {"ref": "main", "sha": "0" * 40},
+        }
+        github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "9",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": "1" * 40,
+                        "GITHUB_RUN_ID": "1",
+                        "GITHUB_RUN_ATTEMPT": "1",
+                    },
+                    clear=True,
+                ),
+                mock.patch("ai_review.input_bundle.load_config", return_value=skip_cfg),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform",
+                    return_value=github_client,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                ),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="a" * 64),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
+            ):
+                prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
+            self.assertEqual(snap.call_args.kwargs["symlink_mode"], "skip")
+
+        # GitLab prepare.
+        class GitLabClient:
+            def fetch_version(self, project_id: str, change_id: str) -> object:
+                return type("V", (), {"base_sha": "b", "start_sha": "s", "head_sha": "h"})()
+
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
+                return "diff --git a/f.py b/f.py\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                        "CI_PROJECT_ID": "1",
+                        "CI_MERGE_REQUEST_IID": "2",
+                        "GITLAB_TOKEN": "token",
+                    },
+                    clear=True,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.load_config",
+                    return_value={
+                        "security": {"snapshot_symlink_mode": "skip"},
+                        "state": {"backend": "none"},
+                    },
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform",
+                    return_value=GitLabClient(),
+                ),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="c" * 64),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="d" * 64),
+            ):
+                prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)
+            self.assertEqual(snap.call_args.kwargs["symlink_mode"], "skip")
 
 
 if __name__ == "__main__":

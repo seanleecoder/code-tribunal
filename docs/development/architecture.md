@@ -15,7 +15,10 @@ Reviewer subprocesses receive an allowlisted environment containing only their
 selected credential and runtime controls. GitHub/GitLab posting tokens are held
 by trusted prepare/post jobs and are not forwarded to reviewer subprocesses.
 Repository snapshots reject symlinks and special files and use descriptor-based
-no-follow traversal on supported Unix platforms.
+no-follow traversal on supported Unix platforms. Symlink handling is opt-in
+relaxable via `security.snapshot_symlink_mode: skip`, which omits symlinks
+(never following or recreating them) and reports each omission to stderr;
+special files are always rejected.
 
 The outer CI job remains trusted and can see CI-provided variables. Reviewer CLI
 tool policies and endpoint validation are defense in depth, not a container

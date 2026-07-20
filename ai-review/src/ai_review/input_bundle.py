@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import sha256_hex
-from .config import effective_config_digest, effective_config_summary, load_config
+from .config import (
+    SNAPSHOT_SYMLINK_MODES,
+    effective_config_digest,
+    effective_config_summary,
+    load_config,
+)
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
@@ -35,6 +40,10 @@ class BundleError(RuntimeError):
 _SNAPSHOT_IGNORE_ALWAYS = frozenset({".git", ".ai-review-local"})
 _COPY_BUFFER_SIZE = 1024 * 1024
 _MAX_SNAPSHOT_DEPTH = 512
+# Cap the number of skipped-symlink paths retained for the stderr diagnostic so a
+# symlink-heavy tree cannot exhaust memory or flood CI logs; the full count is
+# always reported.
+_MAX_SKIPPED_SYMLINK_SAMPLE = 20
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _DIR_FD_SUPPORTED = (
@@ -47,7 +56,11 @@ _GIT_OBJECT_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
-    return Path(*parts).as_posix() if parts else "."
+    raw = Path(*parts).as_posix() if parts else "."
+    # Repository-controlled names reach error messages and CI logs. Escape C0/DEL
+    # control characters so a crafted filename (e.g. containing a newline followed
+    # by "::error::") cannot forge log lines or CI workflow commands.
+    return re.sub(r"[\x00-\x1f\x7f]", lambda m: f"\\x{ord(m.group()):02x}", raw)
 
 
 def _raise_snapshot_rejected(kind: str, rel_parts: tuple[str, ...]) -> None:
@@ -164,8 +177,8 @@ def _copy_snapshot_tree(
     *,
     top_level_ignore: frozenset[str],
     symlink_mode: str = "reject",
-    skipped_symlinks: list[str] | None = None,
-) -> None:
+    skipped_sample: list[str] | None = None,
+) -> int:
     """Copy ``source_root`` into ``dest_root`` without following links.
 
     Requires ``dir_fd`` + ``O_NOFOLLOW`` + ``O_DIRECTORY`` (enforced by the
@@ -177,9 +190,11 @@ def _copy_snapshot_tree(
     handled: ``"reject"`` (default) fails closed on the first symlink; ``"skip"``
     omits the entry entirely. Skipping never follows or recreates the link, so
     no symlink target is ever opened, read, or materialized — containment holds.
-    Mid-copy TOCTOU replacement races still fail closed in either mode. When a
-    list is passed as ``skipped_symlinks``, each omitted symlink's repo-relative
-    path is appended so the caller can surface a diagnostic.
+    Mid-copy TOCTOU replacement races still fail closed in either mode.
+
+    Returns the total number of symlinks skipped. When a list is passed as
+    ``skipped_sample`` it is filled with up to ``_MAX_SKIPPED_SYMLINK_SAMPLE``
+    repo-relative paths so the caller can surface a bounded diagnostic.
     """
     root_flags = os.O_RDONLY | _O_DIRECTORY
     try:
@@ -189,6 +204,7 @@ def _copy_snapshot_tree(
             f"repository snapshot failed to open source root: {exc}"
         ) from exc
 
+    total_skipped = 0
     # (dir_fd, rel_parts)
     stack: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
     try:
@@ -211,8 +227,12 @@ def _copy_snapshot_tree(
                     child_parts = (*rel_parts, name)
                     if entry.is_symlink():
                         if symlink_mode == "skip":
-                            if skipped_symlinks is not None:
-                                skipped_symlinks.append(
+                            total_skipped += 1
+                            if (
+                                skipped_sample is not None
+                                and len(skipped_sample) < _MAX_SKIPPED_SYMLINK_SAMPLE
+                            ):
+                                skipped_sample.append(
                                     _snapshot_rel_display(child_parts)
                                 )
                             continue
@@ -259,17 +279,22 @@ def _copy_snapshot_tree(
             if leftover_fd != root_fd:
                 os.close(leftover_fd)
         os.close(root_fd)
+    return total_skipped
 
 
 def _snapshot_symlink_mode(config: object) -> str:
-    """Read ``security.snapshot_symlink_mode`` from a loaded config, default reject."""
+    """Read ``security.snapshot_symlink_mode`` from a loaded config, default reject.
+
+    Returns the configured value verbatim (defaulting to ``"reject"`` when
+    absent); ``copy_repo_snapshot`` validates it so an invalid mode fails loudly
+    rather than being silently coerced.
+    """
     if not isinstance(config, dict):
         return "reject"
     security = config.get("security", {})
     if not isinstance(security, dict):
         return "reject"
-    mode = security.get("snapshot_symlink_mode", "reject")
-    return mode if mode in {"reject", "skip"} else "reject"
+    return security.get("snapshot_symlink_mode", "reject")
 
 
 def copy_repo_snapshot(
@@ -294,6 +319,11 @@ def copy_repo_snapshot(
     them, so containment is preserved for repositories that track benign links.
     Skipped symlinks are reported to stderr so the relaxation is never silent.
     """
+    if not isinstance(symlink_mode, str) or symlink_mode not in SNAPSHOT_SYMLINK_MODES:
+        raise ValueError(
+            f"symlink_mode must be one of {sorted(SNAPSHOT_SYMLINK_MODES)}; "
+            f"got {symlink_mode!r}"
+        )
     _require_dir_fd_containment()
     source_root = Path(source).resolve(strict=True)
     dest_root = Path(dest)
@@ -315,14 +345,14 @@ def copy_repo_snapshot(
             dir=dest_resolved_parent,
         )
     )
-    skipped_symlinks: list[str] = []
+    skipped_sample: list[str] = []
     try:
-        _copy_snapshot_tree(
+        skipped_total = _copy_snapshot_tree(
             source_root,
             tmp_dest,
             top_level_ignore=top_level_ignore,
             symlink_mode=symlink_mode,
-            skipped_symlinks=skipped_symlinks,
+            skipped_sample=skipped_sample,
         )
         # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
         # that are not the preparing uid (same-user CI jobs are unaffected either way).
@@ -337,12 +367,14 @@ def copy_repo_snapshot(
         if tmp_dest.exists():
             shutil.rmtree(tmp_dest, ignore_errors=True)
         raise
-    if skipped_symlinks:
-        for rel in skipped_symlinks:
+    if skipped_total:
+        for rel in skipped_sample:
             sys.stderr.write(f"ai-review: snapshot skipped symlink: {rel}\n")
+        remaining = skipped_total - len(skipped_sample)
+        suffix = f" (showing first {len(skipped_sample)}, {remaining} more)" if remaining else ""
         sys.stderr.write(
-            f"ai-review: snapshot omitted {len(skipped_symlinks)} symlink(s) "
-            "under security.snapshot_symlink_mode=skip\n"
+            f"ai-review: snapshot omitted {skipped_total} symlink(s) "
+            f"under security.snapshot_symlink_mode=skip{suffix}\n"
         )
     return Path(dest_root)
 
