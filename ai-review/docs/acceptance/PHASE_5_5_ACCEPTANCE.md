@@ -151,3 +151,17 @@ Note: an earlier successful publish run also exists (run ID `28717646348`, commi
   in PR #54. The installed GitHub workflow and the canonical GitHub and GitLab
   templates were advanced together to these immutable pins.
 - Exact-runtime dogfood verification remains pending on an open pull request.
+
+### Documentation restructure images
+
+- Source merge commit: `5a24b557e793447fd41b7244c715a134bc1b9592`.
+- Publication workflow: GitHub Actions run `29699507298`; image preflight,
+  publication, and both attestations passed.
+- Base image digest:
+  `sha256:eb8e5d1e9d611f4056216c88a58e10bcb33b758d2fabb7a93b5ddb567d3271b2`.
+- Reviewer image digest:
+  `sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a`.
+- These images contain the documentation and evidence restructure merged in
+  PR #68. The installed GitHub workflow and the canonical GitHub and GitLab
+  templates were advanced together to these immutable pins.
+- Exact-runtime dogfood verification remains pending on an open pull request.
