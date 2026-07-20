@@ -52,8 +52,10 @@ of paths plus the full count — so `skip` is never silent and operators retain 
 review tripwire; reported paths are escaped (C0/C1/DEL and Unicode bidi/format
 controls) so a crafted filename cannot forge or spoof CI log lines. When the merge
 request changed a path that is omitted because it is (or is reached through) a
-symlink, prepare emits an elevated warning naming those paths. Mid-copy TOCTOU
-replacement races fail closed in either mode, and special files
+symlink, prepare emits an elevated warning naming those paths and records
+`snapshot_changed_symlink_count` plus a bounded `snapshot_changed_symlink_sample`
+on the manifest, so this tripwire is durable and not only in job logs. Mid-copy
+TOCTOU replacement races fail closed in either mode, and special files
 (FIFO/socket/device) are always rejected.
 
 The hostile-symlink, no-follow, and skip-mode behaviors are exercised in

@@ -62,12 +62,14 @@ def _escape_for_log(text: str) -> str:
     Repository-controlled names reach error messages and CI logs. Control
     characters (C0/C1/DEL) let a crafted filename forge log lines or CI workflow
     commands (e.g. a newline followed by ``::error::``); Unicode format controls
-    (bidi overrides, zero-width) let it spoof how a line renders. Both categories
-    (Unicode ``Cc``/``Cf``) are rendered as ``\\xHH``/``\\uHHHH`` escapes.
+    (bidi overrides, zero-width) let it spoof how a line renders. Surrogates
+    (``Cs``) arise from ``surrogateescape``-decoded non-UTF-8 byte names and would
+    otherwise raise on encode. All three categories (``Cc``/``Cf``/``Cs``) are
+    rendered as ``\\xHH``/``\\uHHHH`` escapes.
     """
     out: list[str] = []
     for ch in text:
-        if unicodedata.category(ch) in ("Cc", "Cf"):
+        if unicodedata.category(ch) in ("Cc", "Cf", "Cs"):
             cp = ord(ch)
             out.append(f"\\x{cp:02x}" if cp <= 0xFF else f"\\u{cp:04x}")
         else:
@@ -429,19 +431,24 @@ def _git_unquote_path(token: str) -> str:
         ch = body[i]
         if ch == "\\" and i + 1 < len(body):
             nxt = body[i + 1]
+            octal = body[i + 1 : i + 4]
             if nxt in _GIT_QUOTE_ESCAPES:
                 out.append(_GIT_QUOTE_ESCAPES[nxt])
                 i += 2
-            elif nxt.isdigit():
-                out.append(int(body[i + 1 : i + 4], 8) & 0xFF)
+            elif len(octal) == 3 and all(c in "01234567" for c in octal):
+                out.append(int(octal, 8) & 0xFF)
                 i += 4
             else:
+                # Malformed escape (git always emits a known letter or 3 octal
+                # digits); keep the next char literally rather than raising.
                 out.append(ord(nxt))
                 i += 2
         else:
             out.extend(ch.encode("utf-8"))
             i += 1
-    return out.decode("utf-8", "replace")
+    # surrogateescape mirrors how Python surfaces non-UTF-8 byte names, so the
+    # decoded path can still match its on-disk counterpart in the symlink check.
+    return out.decode("utf-8", "surrogateescape")
 
 
 def _changed_paths_from_diff(diff_text: str) -> list[str]:
@@ -450,22 +457,34 @@ def _changed_paths_from_diff(diff_text: str) -> list[str]:
     Reads the ``+++`` post-image line (unambiguous single token, unlike the
     ``diff --git`` header when names contain spaces) plus ``rename to``/``copy to``
     for content-free renames, decoding git's quoted-path form so control-character
-    names (e.g. an embedded newline) are still recognized. Deletions (``/dev/null``)
-    are ignored since the path no longer exists in the checkout.
+    and non-UTF-8 names are still recognized. Only file-header/metadata sections
+    are inspected — hunk state is tracked so an added content line that happens to
+    read ``+++ b/...`` is not mistaken for a post-image marker. A trailing
+    tab+timestamp suffix (some diff producers) is stripped. Deletions
+    (``/dev/null``) are ignored since the path no longer exists in the checkout.
     """
     paths: list[str] = []
+    in_hunk = False
     for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk:
+            continue
         token: str | None = None
         if line.startswith("+++ "):
-            raw = line[4:].strip()
+            raw = line[4:].split("\t", 1)[0]
             if raw == "/dev/null":
                 continue
             decoded = _git_unquote_path(raw)
             token = decoded[2:] if decoded.startswith("b/") else decoded
         elif line.startswith("rename to "):
-            token = _git_unquote_path(line[len("rename to ") :].strip())
+            token = _git_unquote_path(line[len("rename to ") :].split("\t", 1)[0])
         elif line.startswith("copy to "):
-            token = _git_unquote_path(line[len("copy to ") :].strip())
+            token = _git_unquote_path(line[len("copy to ") :].split("\t", 1)[0])
         if token:
             paths.append(token)
     return paths

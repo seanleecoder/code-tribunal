@@ -20,6 +20,7 @@ from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
     _enforce_diff_limits,
+    _escape_for_log,
     _external_fork_secrets_blocked,
     _github_checkout_head,
     _github_pull_request_version,
@@ -1402,6 +1403,65 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             )
             self.assertEqual(manifest["effective_config"]["snapshot_symlink_mode"], "skip")
 
+    def test_gitlab_prepare_records_skip_manifest_fields(self) -> None:
+        def fake_snapshot(
+            source: object,
+            dest: object,
+            *,
+            ignore_top_level_names: object = None,
+            symlink_mode: str = "reject",
+            skipped_report: dict[str, object] | None = None,
+        ) -> Path:
+            if skipped_report is not None:
+                skipped_report["count"] = 2
+                skipped_report["sample"] = ["x.link"]
+            return Path(dest)  # type: ignore[arg-type]
+
+        class GitLabClient:
+            def fetch_version(self, project_id: str, change_id: str) -> object:
+                return type("V", (), {"base_sha": "b", "start_sha": "s", "head_sha": "h"})()
+
+            def fetch_diff(self, project_id: str, change_id: str) -> str:
+                return "diff --git a/f.py b/f.py\n+++ b/f.py\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                        "CI_PROJECT_ID": "1",
+                        "CI_MERGE_REQUEST_IID": "2",
+                        "GITLAB_TOKEN": "token",
+                    },
+                    clear=True,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.load_config",
+                    return_value={
+                        "security": {"snapshot_symlink_mode": "skip"},
+                        "state": {"backend": "none"},
+                    },
+                ),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform",
+                    return_value=GitLabClient(),
+                ),
+                mock.patch("ai_review.input_bundle.shutil.copy2"),
+                mock.patch("ai_review.input_bundle.shutil.copytree"),
+                mock.patch(
+                    "ai_review.input_bundle.copy_repo_snapshot", side_effect=fake_snapshot
+                ),
+                mock.patch("ai_review.input_bundle._file_sha256", return_value="c" * 64),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="d" * 64),
+            ):
+                prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["snapshot_skipped_symlink_count"], 2)
+            self.assertEqual(manifest["snapshot_skipped_symlink_sample"], ["x.link"])
+            self.assertEqual(manifest["effective_config"]["snapshot_symlink_mode"], "skip")
+
     def test_symlinks_touched_by_diff_flags_file_and_directory_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
@@ -1469,6 +1529,45 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 "+README.md\n"
             )
             self.assertEqual(_symlinks_touched_by_diff(source, diff), [name])
+
+    def test_symlinks_touched_by_diff_ignores_hunk_content(self) -> None:
+        # An added content line that reads "+++ b/alias.py" must not be mistaken
+        # for a post-image header for the alias.py symlink.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            (source / "alias.py").symlink_to("README.md")
+            (source / "notes.txt").write_text("n\n", encoding="utf-8")
+            diff = (
+                "diff --git a/notes.txt b/notes.txt\n"
+                "--- a/notes.txt\n"
+                "+++ b/notes.txt\n"
+                "@@ -0,0 +1 @@\n"
+                "+++ b/alias.py\n"
+            )
+            self.assertNotIn("alias.py", _symlinks_touched_by_diff(source, diff))
+
+    def test_symlinks_touched_by_diff_handles_timestamp_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            self._write_nested_repo(source)
+            (source / "alias.py").symlink_to("README.md")
+            diff = (
+                "diff --git a/alias.py b/alias.py\n"
+                "+++ b/alias.py\t2024-01-01 12:00:00.000000000 +0000\n"
+                "@@ -0,0 +1 @@\n"
+            )
+            self.assertEqual(_symlinks_touched_by_diff(source, diff), ["alias.py"])
+
+    def test_git_unquote_path_edge_cases(self) -> None:
+        from ai_review.input_bundle import _git_unquote_path
+
+        # Malformed octal escape does not raise; the char is kept literally.
+        self.assertEqual(_git_unquote_path('"a\\8b"'), "a8b")
+        # High byte decodes via surrogateescape and escapes cleanly for logs.
+        decoded = _git_unquote_path('"\\377.py"')
+        self.assertEqual(decoded, "\udcff.py")
+        self.assertIn("\\udcff", _escape_for_log(decoded))
 
     def test_intersection_warning_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
