@@ -7,7 +7,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 |---|---|---|---|
 | `inputs/manifest.json` | prepare | all later stages | revision, run ID, diff digest, and effective-config binding |
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring, post | complete bounded diff for one verified revision; no standalone schema |
-| `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
+| `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; special files always rejected; symlinks rejected by default or omitted under `security.snapshot_symlink_mode: skip` (never followed) |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
 | `inputs/prompts/` | prepare | prompt rendering | immutable copy of trusted review/critique prompt templates; directory digest is indirectly bound by the trusted image/source |
 | `inputs/rules/` | prepare | prompt rendering | immutable trusted rule files; `rules_sha256` is recorded in the manifest |

@@ -122,3 +122,4 @@ limits:
 # Runtime security controls
 security:
   allow_external_fork_secrets: false # Block secret environment variables on external fork pipelines
+  snapshot_symlink_mode: reject # reject | skip. 'skip' omits symlinks from repo_snapshot (never followed) for repos that track benign symlinks

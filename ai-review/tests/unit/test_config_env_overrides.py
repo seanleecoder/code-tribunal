@@ -393,6 +393,22 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "panel.grouping.semantic.threshold"):
             validate_config(config)
 
+    def test_snapshot_symlink_mode_skip_is_accepted(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config.setdefault("security", {})["snapshot_symlink_mode"] = "skip"
+        validate_config(config)
+
+    def test_snapshot_symlink_mode_reject_is_accepted(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config.setdefault("security", {})["snapshot_symlink_mode"] = "reject"
+        validate_config(config)
+
+    def test_invalid_snapshot_symlink_mode_fails_loudly(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        config.setdefault("security", {})["snapshot_symlink_mode"] = "follow"
+        with self.assertRaisesRegex(ConfigError, "security.snapshot_symlink_mode"):
+            validate_config(config)
+
     def test_effective_config_summary_includes_semantic_grouping(self) -> None:
         from ai_review.config import effective_config_summary
 

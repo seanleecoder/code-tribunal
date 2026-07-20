@@ -84,7 +84,8 @@ LIMIT_KEYS = {
     "max_fyi_findings",
     "max_prompt_bytes",
 }
-SECURITY_KEYS = {"allow_external_fork_secrets"}
+SECURITY_KEYS = {"allow_external_fork_secrets", "snapshot_symlink_mode"}
+SNAPSHOT_SYMLINK_MODES = {"reject", "skip"}
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
 # levels; a closed set also means the value that reaches shell argv can never
@@ -468,6 +469,12 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(security, dict):
         raise ConfigError("security must be a mapping")
     _reject_unknown_keys(security, SECURITY_KEYS, "security")
+    if "snapshot_symlink_mode" in security:
+        mode = security["snapshot_symlink_mode"]
+        if mode not in SNAPSHOT_SYMLINK_MODES:
+            raise ConfigError(
+                "security.snapshot_symlink_mode must be 'reject' or 'skip'"
+            )
 
 
 def resolve_adapter_path(config_path: str | Path, adapter: str) -> Path:

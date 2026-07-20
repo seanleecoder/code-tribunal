@@ -17,6 +17,13 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   non-followed link representation exists. Snapshot directory depth is capped
   at 512; published `repo_snapshot` directories use mode `0755`. Contained prepare
   requires Linux/macOS `dir_fd` primitives (Windows local prepare fails closed).
+- Added an opt-in `security.snapshot_symlink_mode` config key (default `reject`).
+  Setting it to `skip` omits symlinks from `repo_snapshot` instead of failing
+  closed, so repositories that track benign symlinks can be reviewed. Skipping
+  never follows or recreates the link, so containment is preserved — no symlink
+  target (including `/proc/self/environ`) is ever opened, read, or materialized.
+  Special files are still always rejected, and mid-copy TOCTOU replacement races
+  fail closed in both modes.
 
 ### Changed
 

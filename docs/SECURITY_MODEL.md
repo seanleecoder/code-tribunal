@@ -34,18 +34,27 @@ allowlist and template design—not a completed claim about every installation.
 
 ### Repository snapshot containment
 
-Prepare rejects all symlinks and FIFO/socket/device nodes. On Linux and macOS it
-uses descriptor-relative `O_NOFOLLOW`/`O_DIRECTORY` traversal and fails closed
-where those primitives are unavailable. Directory depth is capped. A hostile
-checkout cannot copy a symlink target such as `/proc/self/environ` into the
-uploaded bundle.
+Prepare rejects all symlinks and FIFO/socket/device nodes by default. On Linux and
+macOS it uses descriptor-relative `O_NOFOLLOW`/`O_DIRECTORY` traversal and fails
+closed where those primitives are unavailable. Directory depth is capped. A hostile
+checkout cannot copy a symlink target such as `/proc/self/environ` into the uploaded
+bundle.
 
-The hostile-symlink and no-follow behavior is exercised in
+Repositories that intentionally track benign symlinks may set
+`security.snapshot_symlink_mode: skip`, which **omits** symlinks from the snapshot
+instead of rejecting them. Skipping preserves containment: the link is never
+followed or recreated, so no symlink target is ever opened, read, or materialized —
+`/proc/self/environ` and other out-of-checkout targets remain unreachable. The
+default remains `reject`. Mid-copy TOCTOU replacement races fail closed in either
+mode, and special files (FIFO/socket/device) are always rejected.
+
+The hostile-symlink, no-follow, and skip-mode behaviors are exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).
 
-Residual risk: intentionally tracked symlinks are unsupported. Hard links to
-outside same-filesystem content are not explicitly checked, although ordinary
-Git checkouts cannot create them.
+Residual risk: `skip` mode means intentionally tracked symlinks are absent from the
+content reviewers see, rather than reproduced. Hard links to outside same-filesystem
+content are not explicitly checked, although ordinary Git checkouts cannot create
+them.
 
 ### State authenticity and integrity
 

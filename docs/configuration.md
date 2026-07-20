@@ -95,6 +95,7 @@ template.
 | `limits.max_fyi_findings` | integer, `50` | Maximum FYI findings in the summary. |
 | `limits.max_prompt_bytes` | integer, `500000` | Maximum rendered prompt bytes sent to a model. |
 | `security.allow_external_fork_secrets` | boolean, `false` | Guard against provider/platform credentials in external-fork execution. Canonical GitHub workflows skip forks independently. |
+| `security.snapshot_symlink_mode` | `reject` \| `skip`, `reject` | How `repo_snapshot` handles symlinks. `reject` fails closed on any symlink; `skip` omits them (never following or recreating), preserving containment for repositories that track benign symlinks. |
 
 ## Environment variables
 

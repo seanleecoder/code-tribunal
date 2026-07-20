@@ -777,6 +777,69 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 copy_repo_snapshot(source, dest)
             self.assertFalse(dest.exists())
 
+    def test_symlink_mode_skip_omits_relative_file_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            (source / "src" / "alias.py").symlink_to("pkg/mod.py")
+            copy_repo_snapshot(source, dest, symlink_mode="skip")
+            # Regular files still copy; the symlink is absent from the snapshot.
+            self.assertEqual(
+                (dest / "src" / "pkg" / "mod.py").read_text(encoding="utf-8"),
+                "value = 1\n",
+            )
+            self.assertFalse((dest / "src" / "alias.py").exists())
+            self.assertFalse((dest / "src" / "alias.py").is_symlink())
+
+    def test_symlink_mode_skip_omits_directory_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            (source / "real_dir").mkdir()
+            (source / "real_dir" / "kept.txt").write_text("kept\n", encoding="utf-8")
+            (source / "link_dir").symlink_to("real_dir")
+            copy_repo_snapshot(source, dest, symlink_mode="skip")
+            # The real directory is copied; the directory symlink is not descended.
+            self.assertTrue((dest / "real_dir" / "kept.txt").is_file())
+            self.assertFalse((dest / "link_dir").exists())
+            self.assertFalse((dest / "link_dir").is_symlink())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "proc environ path is Linux-only")
+    def test_symlink_mode_skip_never_materializes_proc_environ(self) -> None:
+        sentinel = "AI_REVIEW_SNAPSHOT_SENTINEL=leaked-token-value-9f3c"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            (source / "environ.link").symlink_to("/proc/self/environ")
+            with mock.patch.dict(
+                "os.environ", {"AI_REVIEW_SNAPSHOT_SENTINEL": sentinel}
+            ):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            # Skip omits the link entirely — it is never followed, so no target
+            # content (and no sentinel) reaches the published snapshot.
+            self.assertFalse((dest / "environ.link").exists())
+            self.assertTrue((dest / "README.md").is_file())
+            for path in Path(tmpdir).rglob("*"):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                self.assertNotIn(sentinel.encode("utf-8"), path.read_bytes())
+
+    def test_symlink_mode_skip_still_rejects_special_files(self) -> None:
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("os.mkfifo is unavailable on this platform")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            os.mkfifo(source / "pipe.fifo")
+            # Skip is symlink-only; special files still fail closed.
+            with self.assertRaisesRegex(BundleError, r"rejects special file: pipe.fifo"):
+                copy_repo_snapshot(source, dest, symlink_mode="skip")
+            self.assertFalse(dest.exists())
+
     def test_validation_copy_race_replacing_file_with_symlink_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"

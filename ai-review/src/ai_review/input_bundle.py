@@ -162,6 +162,7 @@ def _copy_snapshot_tree(
     dest_root: Path,
     *,
     top_level_ignore: frozenset[str],
+    symlink_mode: str = "reject",
 ) -> None:
     """Copy ``source_root`` into ``dest_root`` without following links.
 
@@ -169,6 +170,12 @@ def _copy_snapshot_tree(
     caller). Traversal pins each parent directory inode and opens children
     relative to that fd so a directory→symlink swap between validation and
     descent cannot escape the checkout. Depth is bounded with an explicit stack.
+
+    ``symlink_mode`` controls how symlinks encountered during the scan are
+    handled: ``"reject"`` (default) fails closed on the first symlink; ``"skip"``
+    omits the entry entirely. Skipping never follows or recreates the link, so
+    no symlink target is ever opened, read, or materialized — containment holds.
+    Mid-copy TOCTOU replacement races still fail closed in either mode.
     """
     root_flags = os.O_RDONLY | _O_DIRECTORY
     try:
@@ -199,6 +206,8 @@ def _copy_snapshot_tree(
                         continue
                     child_parts = (*rel_parts, name)
                     if entry.is_symlink():
+                        if symlink_mode == "skip":
+                            continue
                         _raise_snapshot_rejected("symlink", child_parts)
                     try:
                         entry_stat = entry.stat(follow_symlinks=False)
@@ -244,21 +253,37 @@ def _copy_snapshot_tree(
         os.close(root_fd)
 
 
+def _snapshot_symlink_mode(config: object) -> str:
+    """Read ``security.snapshot_symlink_mode`` from a loaded config, default reject."""
+    if not isinstance(config, dict):
+        return "reject"
+    security = config.get("security", {})
+    if not isinstance(security, dict):
+        return "reject"
+    mode = security.get("snapshot_symlink_mode", "reject")
+    return mode if mode in {"reject", "skip"} else "reject"
+
+
 def copy_repo_snapshot(
     source: str | Path,
     dest: str | Path,
     *,
     ignore_top_level_names: Iterable[str] | None = None,
+    symlink_mode: str = "reject",
 ) -> Path:
     """Copy a repository tree into ``dest`` without following any symlinks.
 
-    Fail closed on every symlink and on FIFO/socket/device nodes. ``.git`` and
-    ``.ai-review-local`` are ignored at every depth; ``ignore_top_level_names``
-    (typically the prepare output directory basename) applies only at the
-    repository root. The destination is built in a temporary sibling directory
-    and published only on success so a rejected tree never leaves a usable
-    ``repo_snapshot`` artifact. Directory depth is capped at
-    ``_MAX_SNAPSHOT_DEPTH``; published snapshot directories use mode ``0o755``.
+    Fail closed on FIFO/socket/device nodes. ``.git`` and ``.ai-review-local``
+    are ignored at every depth; ``ignore_top_level_names`` (typically the prepare
+    output directory basename) applies only at the repository root. The
+    destination is built in a temporary sibling directory and published only on
+    success so a rejected tree never leaves a usable ``repo_snapshot`` artifact.
+    Directory depth is capped at ``_MAX_SNAPSHOT_DEPTH``; published snapshot
+    directories use mode ``0o755``.
+
+    ``symlink_mode`` defaults to ``"reject"`` (fail closed on the first symlink).
+    ``"skip"`` omits symlinks from the snapshot without following or recreating
+    them, so containment is preserved for repositories that track benign links.
     """
     _require_dir_fd_containment()
     source_root = Path(source).resolve(strict=True)
@@ -283,7 +308,10 @@ def copy_repo_snapshot(
     )
     try:
         _copy_snapshot_tree(
-            source_root, tmp_dest, top_level_ignore=top_level_ignore
+            source_root,
+            tmp_dest,
+            top_level_ignore=top_level_ignore,
+            symlink_mode=symlink_mode,
         )
         # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
         # that are not the preparing uid (same-user CI jobs are unaffected either way).
@@ -359,6 +387,7 @@ def prepare_local_bundle(
         repo_path,
         snapshot_dir,
         ignore_top_level_names={out_path.name},
+        symlink_mode=_snapshot_symlink_mode(config_dict),
     )
 
     source_rules = config_path.parent.parent / "rules"
@@ -656,6 +685,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         Path.cwd(),
         snapshot_dir,
         ignore_top_level_names={out_path.name},
+        symlink_mode=_snapshot_symlink_mode(config_dict),
     )
     diff_sha = sha256_hex(diff_text)
     raw_head = pull_request.get("head")
@@ -751,6 +781,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         Path.cwd(),
         snapshot_dir,
         ignore_top_level_names={out_path.name},
+        symlink_mode=_snapshot_symlink_mode(config_dict),
     )
     diff_sha = sha256_hex(diff_text)
     manifest = {
