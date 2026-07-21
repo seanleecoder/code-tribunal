@@ -1,11 +1,8 @@
-# Evidence record: GITLAB / HOSTILE-MR DEPLOYMENT BOUNDARY / <DATE>
+# Evidence record: GitLab hostile-MR deployment boundary / 2026-07-21
 
-Status: pending
+Status: partial
 
-> Draft prepared against release-candidate `963ae5e`. Fill the `<...>`
-> placeholders and the Actual result / Audit / Verdict sections as you execute
-> the run. Record only sanitized identifiers, digests, expected/actual
-> outcomes, and audit results — never credentials, CLI session material,
+> Sanitized partial record. Never record credentials, CLI session material,
 > proprietary source, or sensitive model content.
 
 Covers evidence-matrix row **GitLab hostile MR**: protected variables,
@@ -14,15 +11,19 @@ no token exposure. Procedure: [evidence README, "GitLab hostile-MR procedure"](R
 
 ## Identity
 
-- Platform and version: GitLab <self-managed|SaaS> <version>
-- Date/time and timezone:
-- Deployment topology: <direct include | hardened mirrored child>
-- Consumer/template project: <scratch consumer path> / <protected template project@sha>
-- Change request: MR `!<n>` from an **unprotected source branch or fork**
-- Pipeline/workflow run: <pipeline URL>
-- Relevant job IDs: prepare `<id>`, reviewers `<ids>`, consensus `<id>`, post `<id>`, gate `<id>`
+- Platform and version: GitLab.com SaaS
+- Date/time and timezone: 2026-07-21 14:01–14:04 UTC
+- Deployment topology: hardened mirrored child
+- Consumer/template project: `seanleecoder/code-tribunal-demo` /
+  `seanleecoder/code-tribunal-ci-template@a10483ef5f662ea250799db107aba7b2eee92605`
+- Change requests: MR `!1` (unprotected hostile branch) and MR `!3`
+  (symlink fixture)
+- Pipeline/workflow runs: MR !1 outer `2694046655`, child `2694046728`;
+  MR !3 outer `2694045917`, child `2694046025`
+- Relevant prepare jobs: `15455429557` (!1), `15455423075` (!3); downstream
+  review jobs did not receive a usable input bundle.
 - Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-- Template/workflow commit: `<40-char template SHA used by the include>`
+- Template/workflow commit: `a10483ef5f662ea250799db107aba7b2eee92605`
 - Base image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
   `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
 - Reviewer image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
@@ -69,22 +70,39 @@ Attempt each from the hostile MR; record actual outcome per row.
 
 ## Actual result
 
-- Stage outcomes:
-- Platform objects created/updated/resolved:
-- Consensus/post/gate summary:
-- Attack results (per row 1–7 above):
+- MR !1 failed closed in prepare because the unprotected branch did not receive
+  protected `GITLAB_TOKEN`. Its downloaded input artifact contained only an
+  empty `inputs/` directory.
+- MR !3 failed closed in prepare with `BundleError: repository snapshot rejects
+  symlink: hostile-fixtures/dangling`. The partial input artifact contained no
+  usable snapshot and no reviewable manifest.
+- No review discussion, consensus, post, or gate object was produced by either
+  failed-closed probe.
+- Attack row 5 passed for protected-variable withholding; attack row 7 passed
+  for the dangling-symlink variant. Rows 1–4 and 6, plus the absolute,
+  parent-escaping, directory, and `/proc/self/environ` symlink variants, were
+  not exercised live.
 
 ## Audit
 
-- Artifacts inspected (paths): <inputs/, findings/, consensus/, post/, gate/, repo_snapshot/>
-- Logs inspected (job trace URLs):
-- Credential values absent: <yes/no + how confirmed>
-- `verify_pipeline_trust.py` result:
-- Sensitive model content omitted from this record:
-- Known unexercised paths:
+- Artifacts inspected: all downloadable MR !1 and !3 prepare artifacts,
+  including the empty/partial `inputs/` trees.
+- Logs inspected: both outer and child pipelines and prepare jobs
+  `15455429557` and `15455423075`.
+- Credential values absent: yes; the operator confirmed a non-disclosing
+  actual-value audit across traces and artifacts, and a common token-pattern
+  scan was clean.
+- `verify_pipeline_trust.py` result: operator reported the trust audit clean for
+  the pinned hardened-child composition.
+- Sensitive model content omitted from this record: yes.
+- Known unexercised paths: attack rows 1–4 and 6, plus the remaining symlink
+  variants listed above.
 
 ## Verdict
 
-Pending. Replace with a scoped pass/fail statement naming exactly what this run
-proves (topology, source `963ae5e`, and the two image digests above); do not
-generalize beyond the recorded topology, source, and images.
+Partial for the recorded GitLab.com hardened-child topology, source
+`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, template commit, and image
+digests. Protected credentials were withheld from an unprotected branch, and a
+dangling symlink was rejected before a usable snapshot. The row is not a
+release pass until the remaining composition, override, forgery, and symlink
+probes are exercised live.

@@ -1,6 +1,6 @@
 # Evidence record: GitHub default-model smoke / 2026-07-21
 
-Status: passed
+Status: partial for the current release candidate; historical superseded run passed
 
 ## Identity
 
@@ -39,6 +39,30 @@ Status: passed
   resolution-eligible reviewers, no failed reviewers, and run identifier
   `gh-29824326048-1`.
 
+### Current release-candidate attempts
+
+Five no-override runs used runtime source
+`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, publication run `29834194647`,
+base digest `sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`,
+and reviewer digest
+`sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`:
+
+- `29837070046` and unchanged rerun `29837527812` completed end to end, but
+  OpenCode omitted a required `confidence` field and was excluded from
+  resolution.
+- `29838464552` completed every reviewer and critic job and produced a blocking
+  consensus, but Codex returned a malformed finding and the panel was degraded.
+- `29838897053` completed end to end, but OpenCode returned an anchor that did
+  not map to the unified diff and the panel was degraded.
+- PR-event run `29840867952` completed through post and the deliberately failed
+  required gate, but OpenCode again omitted `confidence` and the panel was
+  degraded.
+
+All five resolved the shipped no-override model names correctly: Claude
+`anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`, OpenCode
+`google/gemini-3.1-flash-lite`, and disabled Cursor `auto`. No single run
+produced the required current-image `panel_status: full`.
+
 ## Audit
 
 - Downloaded artifacts: all 11 artifacts attached to workflow run
@@ -55,8 +79,9 @@ Status: passed
 
 ## Verdict
 
-Passed for the recorded same-repository GitHub Actions topology, workflow head,
-runtime source, and image digests. The shipped no-override defaults resolve to
-the intended three OpenRouter models and operate successfully while Cursor is
-disabled. This verdict does not generalize to the outstanding live-evidence
-matrix scenarios.
+The historical run passed for its recorded, now-superseded source and images.
+For the current release candidate, default selection and end-to-end execution
+are verified, but the full-panel acceptance criterion remains unmet because a
+provider response was rejected in every attempt. Treat the current-image
+default-model row as partial; do not relabel the repeatable acceptance failure
+as a transient pass.
