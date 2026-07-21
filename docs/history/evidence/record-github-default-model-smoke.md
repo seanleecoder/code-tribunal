@@ -1,6 +1,7 @@
 # Evidence record: GitHub default-model smoke / 2026-07-21
 
-Status: passed for superseded candidates; replacement candidate pending
+Status: passed for superseded candidates; replacement candidate technical pass,
+actual-secret-value audit pending
 
 ## Identity
 
@@ -65,6 +66,27 @@ All six resolved the shipped no-override model names correctly: Claude
 `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`, OpenCode
 `google/gemini-3.1-flash-lite`, and disabled Cursor `auto`.
 
+### Replacement candidate P0
+
+Run `29848500791` used runtime source
+`15d424feea730a04338ed423bf93b8797d807bbc`, P0 workflow source
+`e1146612b4a86057d145ac14dc532c6a5afde5b7`, base digest
+`sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+and reviewer digest
+`sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+
+- Claude succeeded with `anthropic/claude-haiku-4.5`.
+- Codex succeeded with `openai/gpt-5.4-mini`.
+- OpenCode succeeded with `google/gemini-3.1-flash-lite`.
+- Cursor was disabled and recorded `auto` / skipped.
+- Consensus recorded `panel_status: full`, all three enabled reviewers as
+  successful and resolution-eligible, and no failed reviewers. The deliberate
+  fixture produced blocking consensus, so the workflow's failure conclusion is
+  the expected gate outcome rather than a default-model failure.
+
+This is a technical replacement-candidate pass. The non-disclosing comparison
+against the actual current secret values remains required before release.
+
 ## Audit
 
 - Downloaded artifacts: all 11 artifacts attached to workflow run
@@ -86,3 +108,6 @@ criterion for their respective recorded sources and images. The b674d1e
 candidate was subsequently invalidated by the separate GitHub command-auth
 defect, so this pass must be repeated against replacement images; it does not
 authorize release of either superseded candidate.
+
+Replacement run `29848500791` passes the full-panel default-model criterion for
+P0. Its actual-secret-value audit is still pending.

@@ -89,3 +89,19 @@ Partial for the recorded same-repository topology, source `b674d1e4962ec976b5ca2
 and image digests. The before-diff head re-read failed closed without a mixed or
 reviewable bundle. The row is not a release pass until the other two prepared
 boundaries and oversized-diff behavior are exercised live.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  P0 source `e1146612b4a86057d145ac14dc532c6a5afde5b7`, base digest
+  `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- PR #2 run `29851381896`, prepare job `88704844930`, repeated the
+  before-diff re-read race against P0. A harmless head commit landed during the
+  15-second synchronization window; prepare emitted the stale-input message,
+  artifact upload was skipped, and review, critique, consensus, post, and gate
+  were all skipped.
+- Checkout-versus-selected, manifest-finalization re-read, oversized raw-diff
+  HTTP 406, and the actual-secret-value audit remain pending.
+
+Replacement verdict remains **partial**.

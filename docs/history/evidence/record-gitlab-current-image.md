@@ -97,3 +97,23 @@ digests. Inline idempotency, direct resolve/reopen identity, state persistence,
 blocking gate behavior, and the project pipeline requirement passed. The row
 is not a release pass until the known unexercised lifecycle checks are
 completed.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  template project commit `18f9ea165bec211a8345fe38b894e0e0bb8a6ebd`,
+  base digest `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- MR !2 outer pipeline `2694536017`, child `2694536079`; prepare
+  `15459144480`, consensus `15459144489`, post `15459144490`, gate
+  `15459144491`.
+- Claude, Codex, and OpenCode succeeded and were resolution-eligible; consensus
+  reported a full panel with no failed reviewers. Post succeeded and updated one
+  existing discussion. Gate failed closed with `block_merge: true`,
+  `reason: blocking_consensus`.
+- Direct resolve then reopen preserved discussion
+  `f468894a31baa36a4b1c19e0eb296913ed75b917` and root note `3583823567`.
+- Body-change, genuinely unrelated line movement, summary fallback, a second
+  unchanged P0 rerun, and the actual-secret-value audit remain pending.
+
+Replacement verdict remains **partial**.

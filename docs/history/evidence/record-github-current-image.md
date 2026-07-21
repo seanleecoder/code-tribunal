@@ -114,3 +114,30 @@ idempotency, direct resolve/reopen identity, state persistence, summary
 fallback, blocking-consensus gate failure, and GitHub required-check enforcement
 passed. Repository-owner disposition authorization failed; the row and all
 remaining lifecycle paths must be repeated against the replacement runtime.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  P0 source commit `e1146612b4a86057d145ac14dc532c6a5afde5b7`, workflow-only consumer commit
+  `7bc9172730691b5442f2d6d6760b15557a292f98`, base digest
+  `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- Run `29850727379` reached a full three-reviewer panel and successful post; it
+  created one inline discussion and updated the existing summary comment. Its
+  gate was non-blocking for that model output.
+- A classic repository-scoped resolution token was required. Run `29853775152`
+  then resolved four review threads with zero warnings. Thread
+  `PRRT_kwDOTfDGoM6SqGn_` was directly reopened afterward with the same identity.
+- Repository owner command `/ai-review wontfix` on comment `3623180526` was
+  accepted in run `29854740464`; post resolved thread
+  `PRRT_kwDOTfDGoM6Snnyr` with no warnings. Unchanged run `29855100893` posted no
+  discussion, reported one skipped-unchanged item, and retained that thread as
+  resolved, proving command state persistence.
+- Manual P0 run `29848500791` produced a full three-reviewer panel and blocking
+  consensus on the deliberate fixture. It is useful gate evidence but is not by
+  itself the required PR-event check-enforcement proof.
+- Still pending: changed finding body, genuinely unrelated line movement,
+  deliberate summary-fallback mapping, stale post/gate no-op, a P0 PR-event
+  blocking required check, and the actual-secret-value audit.
+
+Replacement verdict remains **partial**.
