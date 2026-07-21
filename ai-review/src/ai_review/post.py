@@ -1329,8 +1329,6 @@ def post_inline(
         issue_id = group["issue_id"]
         if not isinstance(issue_id, str):
             continue
-        anchor = group["representative_anchor"]
-        position = client.build_position(cast(Anchor, anchor), version, multiline=inline_multiline)
         planned_record = state_plan.planned_by_issue.get(issue_id)
         if issue_id in state_plan.ambiguous_issue_ids:
             result["warnings"].append(
@@ -1367,10 +1365,9 @@ def post_inline(
                     if planned_record is not None:
                         planned_record["anchor"] = remapped_anchor
                         planned_record["remap_status"] = "remapped"
+                    # Platforms remap an existing thread as the head advances;
+                    # preserve that thread identity and persist the new anchor.
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
-                    position = client.build_position(
-                        cast(Anchor, remapped_anchor), version, multiline=inline_multiline
-                    )
                 elif remap_status == "missing":
                     if planned_record is not None:
                         planned_record["status"] = "stale_unverified"
@@ -1402,6 +1399,12 @@ def post_inline(
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
+            if dry_run:
+                if existing.get("last_posted_body_hash") == body_hash:
+                    result["skipped_unchanged"] += 1
+                else:
+                    result["updated_discussions"] += 1
+                continue
             _update_existing_inline_discussion(
                 client,
                 manifest,
@@ -1419,6 +1422,11 @@ def post_inline(
         if dry_run:
             result["created_discussions"] += 1
             continue
+        position = client.build_position(
+            cast(Anchor, post_group["representative_anchor"]),
+            version,
+            multiline=inline_multiline,
+        )
         created = _create_inline_discussion(
             client,
             manifest,
