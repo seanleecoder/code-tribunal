@@ -53,11 +53,12 @@ scratch consumer projects, runners, protected credentials, and an OpenRouter
 key. Prerequisites:
 
 - **GitLab:** a scratch consumer project + a protected template project holding
-  `ai-review/ci/` at a fixed SHA; a runner; protected+masked `OPENROUTER_API_KEY`
+  `ai-review/ci/` at P0 commit `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
+  a runner; protected+masked `OPENROUTER_API_KEY`
   and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled. Setup:
   [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
-- **GitHub:** a scratch consumer repo with the workflow copied from the merged
-  P0 release-preparation commit for this candidate (record that exact SHA);
+- **GitHub:** a scratch consumer repo with the workflow copied from P0 commit
+  `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
   `OPENROUTER_API_KEY` secret; the `gate` job added as a **required status
   check** in branch protection/ruleset. Setup:
   [`docs/getting-started/github.md`](../../getting-started/github.md).

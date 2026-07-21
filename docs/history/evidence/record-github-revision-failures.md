@@ -89,3 +89,49 @@ Partial for the recorded same-repository topology, source `b674d1e4962ec976b5ca2
 and image digests. The before-diff head re-read failed closed without a mixed or
 reviewable bundle. The row is not a release pass until the other two prepared
 boundaries and oversized-diff behavior are exercised live.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  P0 source `e1146612b4a86057d145ac14dc532c6a5afde5b7`, base digest
+  `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- PR #2 run `29851381896`, prepare job `88704844930`, repeated the
+  before-diff re-read race against P0. A harmless head commit landed during the
+  15-second synchronization window; prepare emitted the stale-input message,
+  artifact upload was skipped, and review, critique, consensus, post, and gate
+  were all skipped.
+- PR #2 run `29857996703`, prepare job `88727110199`, exercised a true
+  checkout-versus-selected mismatch against a dispatch-only harness commit
+  `5fe6b80` that intentionally checks out a mutable test branch while preserving
+  normal PR-event behavior. During the synchronization window, the test branch
+  advanced to marker commit `e3859db`; prepare then failed closed with
+  `checkout HEAD differs from the workflow-selected head`. The same log showed
+  `before_diff_stale=false` and `manifest_stale=false`, artifact upload was
+  skipped, and every downstream job was skipped.
+- PR #3 run `29865867240`, prepare job `88753799427`, attempted to exercise the
+  manifest-finalization re-read by moving the PR head from
+  `ab0236253fa264a33af71b9b178b6ea31250386c` to
+  `963742d48ead57dce72038ea9799207e8a049ca0` while the workflow was still in
+  progress. The timing missed the `prepare` finalization window: `prepare`,
+  review, critique, consensus, post, and gate all completed successfully. The
+  follow-up run for the marker commit, `29865999308`, was cancelled to avoid
+  unnecessary provider work. A non-disclosing common token-pattern scan of the
+  downloaded run log was clean. This is retained as a setup attempt, not
+  positive stale-finalization evidence.
+- PR #3 run `29866992538`, prepare job `88757599190`, repeated the
+  manifest-finalization attempt with a timed head move from
+  `4ad32c7e39221041c88f9da0fa9ff40d5f2d6eac` to
+  `5030d64d04449374d2b94ccf168acc7cb3da5ba6`. The local watcher observed the
+  prepare job only after it had already completed, so the head move again
+  landed after manifest finalization. `prepare`, review, critique, consensus,
+  post, and gate completed successfully. The follow-up run for the marker
+  commit, `29867063070`, was cancelled. This is retained as a setup attempt,
+  not positive stale-finalization evidence.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitHub
+  secret values and downloaded GitHub traces/logs covered by the audit. Secret
+  values are intentionally not recorded here.
+- Manifest-finalization re-read and oversized raw-diff HTTP 406 remain pending
+  as RC accepted gaps.
+
+Replacement verdict remains **partial**.

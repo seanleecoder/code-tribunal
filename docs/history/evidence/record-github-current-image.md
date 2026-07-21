@@ -114,3 +114,60 @@ idempotency, direct resolve/reopen identity, state persistence, summary
 fallback, blocking-consensus gate failure, and GitHub required-check enforcement
 passed. Repository-owner disposition authorization failed; the row and all
 remaining lifecycle paths must be repeated against the replacement runtime.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  P0 source commit `e1146612b4a86057d145ac14dc532c6a5afde5b7`, workflow-only consumer commit
+  `7bc9172730691b5442f2d6d6760b15557a292f98`, base digest
+  `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- Run `29850727379` reached a full three-reviewer panel and successful post; it
+  created one inline discussion and updated the existing summary comment. Its
+  gate was non-blocking for that model output.
+- A classic repository-scoped resolution token was required. Run `29853775152`
+  then resolved four review threads with zero warnings. Thread
+  `PRRT_kwDOTfDGoM6SqGn_` was directly reopened afterward with the same identity.
+- Repository owner command `/ai-review wontfix` on comment `3623180526` was
+  accepted in run `29854740464`; post resolved thread
+  `PRRT_kwDOTfDGoM6Snnyr` with no warnings. Unchanged run `29855100893` posted no
+  discussion, reported one skipped-unchanged item, and retained that thread as
+  resolved, proving command state persistence.
+- Changed-body probe run `29858643949` modified the SQL text on
+  `evidence/github-lifecycle` commit `85e7f4a` and completed successfully, but
+  `post_result.json` recorded `created_discussions=0`, `updated_discussions=0`,
+  `resolved_discussions=0`, and `summary_comment.action=updated` for summary
+  note `5035676723`. Existing inline thread `PRRT_kwDOTfDGoM6SqGn_` remained
+  unresolved and untouched, so this did **not** satisfy the "same discussion
+  updated in place after body change" requirement.
+- Stale-head probe run `29859238479` selected head
+  `2b065c46bc80533786a41facc9008d581336740e` after trigger commit `2b065c4`.
+  The branch then advanced to `69f34e40e51e76e92d33e584b2e6829ca0c75ab9`
+  (`69f34e4`) before post. `post_result.json` reported `status: stale_head`,
+  `summary_comment.action: none`, `created_discussions=0`,
+  `updated_discussions=0`, and `resolved_discussions=0`. Gate job
+  `88732352522` consumed the stale post artifact and completed success without a
+  published gate artifact. Successor run `29859295151` then completed on the
+  replacement head `69f34e40e51e76e92d33e584b2e6829ca0c75ab9`. This satisfies
+  the stale post/gate no-op requirement.
+- Manual P0 run `29848500791` produced a full three-reviewer panel and blocking
+  consensus on the deliberate fixture. It is useful gate evidence but is not by
+  itself the required PR-event check-enforcement proof.
+- PR-event run `29863231969` on head
+  `25c67d8ea83ee58559701920de553de0f3996087` then exercised the required-check
+  enforcement path directly. Overall conclusion was `failure`; the `gate`
+  status on PR #1 reported `FAILURE`; `mergeStateStatus` was `BLOCKED`; and
+  failing gate job `88745979825` stopped merge on the live repository. The
+  consensus artifact (`gh-29863231969-1`) reported `panel_status: full`,
+  `summary.block_merge: true`, `surface_count: 4`, and a blocker group
+  `Access control logic broken` contributed by Claude and OpenCode. The post
+  artifact recorded `created_discussions=4`, `updated_discussions=0`, and
+  `resolved_discussions=2`. This satisfies the P0 PR-event blocking
+  required-check proof.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitHub
+  secret values and downloaded GitHub traces/logs covered by the audit. Secret
+  values are intentionally not recorded here.
+- Still pending: a positive changed-body in-place update, genuinely unrelated
+  line movement, and deliberate summary-fallback mapping.
+
+Replacement verdict remains **partial**.

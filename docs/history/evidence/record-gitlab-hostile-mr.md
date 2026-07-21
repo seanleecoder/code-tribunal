@@ -106,3 +106,40 @@ digests. Protected credentials were withheld from an unprotected branch, and a
 dangling symlink was rejected before a usable snapshot. The row is not a
 release pass until the remaining composition, override, forgery, and symlink
 probes are exercised live.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+This section records new evidence for runtime source
+`15d424feea730a04338ed423bf93b8797d807bbc`, template project commit
+`18f9ea165bec211a8345fe38b894e0e0bb8a6ebd`, base digest
+`sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+and reviewer digest
+`sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+It does not rebind the invalidated evidence above.
+
+- Unprotected credential boundary: MR !1 outer `2694529484`, child
+  `2694529547`, prepare `15459093605`. Prepare failed because the protected
+  GitLab token was withheld; the artifact contained only an empty `inputs/`
+  directory.
+- Root-variable forwarding attempt: MR !4 outer `2694717166`, child
+  `2694717191`, prepare `15460468242`. The trusted bridge still passed
+  `verify_pipeline_trust.py`; attacker image/config/mock/source-SHA values were
+  absent from the trace, the protected token was withheld, and no usable bundle
+  was emitted.
+- Protected symlink probes all failed in prepare with `BundleError`, skipped all
+  downstream review/post/gate work, and emitted neither `manifest.json` nor
+  `repo_snapshot`: mixed fixture MR !3 (`2694571383` / `2694571454`, prepare
+  `15459398909`); relative file MR !5 (`2694728397` / `2694728547`, prepare
+  `15460535189`); `/proc/self/environ` MR !6 (`2694738564` / `2694738656`,
+  prepare `15460590728`); parent-escaping MR !7 (`2694746894` / `2694746962`,
+  prepare `15460647448`); dangling MR !8 (`2694750420` / `2694750457`, prepare
+  `15460672375`); directory-target MR !9 (`2694750370` / `2694750423`, prepare
+  `15460672165`). The proc target was not printed in its trace.
+- Generic structural scans were clean. The operator completed a non-disclosing
+  exact-value audit against the current GitLab secret values on 2026-07-21; no
+  configured secret value appeared in the downloaded GitLab traces or artifacts
+  covered by that audit.
+- Still unexercised against P0: template/job replacement, trusted image/config
+  override at a credential-bearing boundary, and forged gate artifact rejection.
+
+Replacement verdict remains **partial**.

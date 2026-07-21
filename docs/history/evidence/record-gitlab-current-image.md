@@ -97,3 +97,40 @@ digests. Inline idempotency, direct resolve/reopen identity, state persistence,
 blocking gate behavior, and the project pipeline requirement passed. The row
 is not a release pass until the known unexercised lifecycle checks are
 completed.
+
+## Replacement candidate P0 progress / 2026-07-21
+
+- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
+  template project commit `18f9ea165bec211a8345fe38b894e0e0bb8a6ebd`,
+  base digest `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
+  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
+- MR !2 outer pipeline `2694536017`, child `2694536079`; prepare
+  `15459144480`, consensus `15459144489`, post `15459144490`, gate
+  `15459144491`.
+- Claude, Codex, and OpenCode succeeded and were resolution-eligible; consensus
+  reported a full panel with no failed reviewers. Post succeeded and updated one
+  existing discussion. Gate failed closed with `block_merge: true`,
+  `reason: blocking_consensus`.
+- Direct resolve then reopen preserved discussion
+  `f468894a31baa36a4b1c19e0eb296913ed75b917` and root note `3583823567`.
+- An unchanged retry used bridge `15460824703` and child pipeline `2694773267`.
+  Prepare `15460824960`, consensus `15460824969`, post `15460824970`, and gate
+  `15460824971` completed against the same head. Post created no discussion and
+  updated the same discussion/root-note pair above; the full three-reviewer
+  panel and blocking gate result were unchanged.
+- A body-change probe used commit `503cac565c5535792ec43b93770317f6a7c94073`,
+  outer pipeline `2694801056`, child pipeline `2694801132`, prepare
+  `15461000933`, post `15461000943`, and gate `15461000944`. Post reported
+  `created_discussions: 0`, `updated_discussions: 0`, `resolved_discussions: 1`,
+  and `skipped_unchanged: 0`. Direct MR inspection confirmed the previously
+  active AI discussion/root-note pair `f468894a31baa36a4b1c19e0eb296913ed75b917`
+  / `3583823567` was resolved by the bot and no replacement inline discussion
+  was posted. This is useful lifecycle evidence, but it is not the expected
+  in-place update path for step 3.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitLab
+  secret values and downloaded GitLab traces/artifacts covered by the audit.
+  Secret values are intentionally not recorded here.
+- Genuinely unrelated line movement and summary fallback remain pending as RC
+  accepted gaps.
+
+Replacement verdict remains **partial**.
