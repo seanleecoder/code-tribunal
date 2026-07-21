@@ -133,11 +133,28 @@ remaining lifecycle paths must be repeated against the replacement runtime.
   `PRRT_kwDOTfDGoM6Snnyr` with no warnings. Unchanged run `29855100893` posted no
   discussion, reported one skipped-unchanged item, and retained that thread as
   resolved, proving command state persistence.
+- Changed-body probe run `29858643949` modified the SQL text on
+  `evidence/github-lifecycle` commit `85e7f4a` and completed successfully, but
+  `post_result.json` recorded `created_discussions=0`, `updated_discussions=0`,
+  `resolved_discussions=0`, and `summary_comment.action=updated` for summary
+  note `5035676723`. Existing inline thread `PRRT_kwDOTfDGoM6SqGn_` remained
+  unresolved and untouched, so this did **not** satisfy the "same discussion
+  updated in place after body change" requirement.
+- Stale-head probe run `29859238479` selected head
+  `2b065c46bc80533786a41facc9008d581336740e` after trigger commit `2b065c4`.
+  The branch then advanced to `69f34e40e51e76e92d33e584b2e6829ca0c75ab9`
+  (`69f34e4`) before post. `post_result.json` reported `status: stale_head`,
+  `summary_comment.action: none`, `created_discussions=0`,
+  `updated_discussions=0`, and `resolved_discussions=0`. Gate job
+  `88732352522` consumed the stale post artifact and completed success without a
+  published gate artifact. Successor run `29859295151` then completed on the
+  replacement head `69f34e40e51e76e92d33e584b2e6829ca0c75ab9`. This satisfies
+  the stale post/gate no-op requirement.
 - Manual P0 run `29848500791` produced a full three-reviewer panel and blocking
   consensus on the deliberate fixture. It is useful gate evidence but is not by
   itself the required PR-event check-enforcement proof.
-- Still pending: changed finding body, genuinely unrelated line movement,
-  deliberate summary-fallback mapping, stale post/gate no-op, a P0 PR-event
-  blocking required check, and the actual-secret-value audit.
+- Still pending: a positive changed-body in-place update, genuinely unrelated
+  line movement, deliberate summary-fallback mapping, a P0 PR-event blocking
+  required check, and the actual-secret-value audit.
 
 Replacement verdict remains **partial**.
