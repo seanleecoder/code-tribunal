@@ -396,6 +396,11 @@ def _author_access_level(
     access_level = author.get("access_level")
     if isinstance(access_level, int):
         return access_level
+    # GitHub computes author_association server-side. OWNER is sufficient on
+    # its own; other associations can include users without write permission
+    # and must still be checked through the collaborator-permission endpoint.
+    if author.get("association") == "OWNER":
+        return 50
     candidate_ids = [author.get("id"), author.get("username"), author.get("login")]
     for user_id in candidate_ids:
         if user_id is None:

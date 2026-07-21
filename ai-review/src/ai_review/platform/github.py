@@ -563,6 +563,7 @@ class GitHubReviewPlatform:
             "GET",
             f"/repos/{self._repo(project_id_or_path)}/collaborators/"
             f"{quote(str(user_id), safe='')}/permission",
+            auth_token=self._resolution_token,
         )
         if not isinstance(collaborator, dict):
             return None
@@ -675,6 +676,7 @@ class GitHubReviewPlatform:
                 "username": comment.get("user", {}).get("login")
                 if isinstance(comment.get("user"), dict)
                 else None,
+                "association": comment.get("author_association"),
             },
             "resolved": False,
         }

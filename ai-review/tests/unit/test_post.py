@@ -1096,6 +1096,41 @@ class PostTests(unittest.TestCase):
         commands = collect_human_commands(client, "octo/repo", threads)
         self.assertEqual(commands, {"1" * 64: "wontfix"})
 
+    def test_collect_human_commands_accepts_github_repository_owner(self) -> None:
+        class UnprivilegedTokenClient(FakeGitHubClient):
+            def member_access_level(
+                self, project_id: str, user_id: str | int
+            ) -> int | None:
+                raise PermissionError("workflow token cannot inspect collaborators")
+
+        client = UnprivilegedTokenClient(head_sha="head_sha", diff_text="")
+        marker = (
+            f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
+            f"body_hash={'a' * 64} source={'b' * 64} -->"
+        )
+        discussion = client.create_inline_comment(
+            "octo/repo",
+            7,
+            marker,
+            {"path": "a.py", "line": 1, "side": "RIGHT", "commit_id": "head"},
+        )
+        discussion["notes"].append(
+            {
+                "id": 124,
+                "body": "/ai-review wontfix",
+                "author": {
+                    "id": 100,
+                    "username": "owner",
+                    "association": "OWNER",
+                },
+                "created_at": "2026-07-21T00:00:00Z",
+            }
+        )
+
+        commands = collect_human_commands(client, "octo/repo", [discussion])
+
+        self.assertEqual(commands, {"1" * 64: "wontfix"})
+
     def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
         base_record = self._state_record(self._consensus()["groups"][0])
 

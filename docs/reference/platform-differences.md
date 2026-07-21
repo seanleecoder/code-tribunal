@@ -7,7 +7,7 @@
 | Review target | Merge request | Pull request |
 | Inline posting | Discussions/DiffNotes | Pull-request review comments |
 | Summary and state | MR notes; state author must match token bot | PR issue comments; state author must match configured bot login |
-| Commands | Reply in finding discussion; Developer/30+ | Reply to root inline comment; Write/Maintain/Admin |
+| Commands | Reply in finding discussion; Developer/30+ | Reply to root inline comment; repository owner, or Write/Maintain/Admin verified with the optional fine-grained token |
 | Thread resolution | GitLab discussion API | GraphQL; optional fine-grained resolve token |
 | Merge enforcement | **Pipelines must succeed** | Gate job configured as required check |
 | Fork behavior | Protected variables withheld; deployment topology determines whether trusted jobs run | External forks skipped by the canonical workflow |

@@ -134,6 +134,19 @@ def test_member_access_level_maps_github_write_permissions() -> None:
     assert platform.member_access_level("octo/repo", 99) is None
 
 
+def test_member_access_level_uses_dedicated_resolution_token() -> None:
+    session = Session()
+    platform = GitHubReviewPlatform(
+        "https://api.github.test",
+        "workflow-token",
+        resolution_token="resolution-token",
+        session=session,
+    )
+
+    assert platform.member_access_level("octo/repo", "alice") == 40
+    assert session.calls[-1][2]["headers"]["Authorization"] == "Bearer resolution-token"
+
+
 def test_current_user_uses_configured_bot_login_for_installation_token() -> None:
     session = Session()
     platform = GitHubReviewPlatform(
@@ -301,6 +314,7 @@ def test_list_threads_groups_replies() -> None:
                             "body": "earlier reply to 1",
                             "in_reply_to_id": 1,
                             "created_at": "2023-01-01T00:00:01Z",
+                            "author_association": "OWNER",
                         },
                         {
                             "id": 6,
@@ -327,6 +341,7 @@ def test_list_threads_groups_replies() -> None:
 
     t1 = next(t for t in threads if t["notes"][0]["id"] == 1)
     assert [note["id"] for note in t1["notes"]] == [1, 5, 2]
+    assert t1["notes"][1]["author"]["association"] == "OWNER"
 
     t2 = next(t for t in threads if t["notes"][0]["id"] == 3)
     assert [note["id"] for note in t2["notes"]] == [3, 6]

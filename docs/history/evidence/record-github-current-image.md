@@ -19,7 +19,8 @@ setup: [`docs/getting-started/github.md`](../../getting-started/github.md).
   workflow from `d183eab9f56f04588341b651bf16742b46b30fb2`
 - Change request: PR `#1` (same-repository lifecycle fixture)
 - Pipeline/workflow runs: `29837070046`, `29837527812`, `29838464552`,
-  `29838897053`, and PR-event run `29840867952`
+  `29838897053`, PR-event run `29840867952`, and command/fallback run
+  `29842017448`
 - Relevant gate jobs: `88661837348` (manual-dispatch failure) and
   `88670285940` (required PR-event failure); the complete job matrices are
   retained in the run metadata.
@@ -80,27 +81,36 @@ Perform on one PR; capture run/job IDs and platform object IDs (comment/review I
   Consensus did not match the prior issue and post created comments
   `3623180428` and `3623180526`; this does **not** satisfy the unrelated
   line-movement criterion and is retained as negative fixture evidence.
-- Steps 3, 7–8, and the post/gate stale-head case in step 9 were not exercised.
-  Step 10 passed, including required-check enforcement.
+- Run `29842017448` exercised summary fallback: post created summary comment
+  `5035676723` for one advisory finding.
+- The same run attempted step 8 after repository owner `seanleecoder` replied
+  `/ai-review wontfix` in thread `3623180428`. The reply was present and the
+  owner permission endpoint returned admin to a maintainer token, but the
+  workflow did not persist `human_disposition`; this runtime defect invalidated
+  the candidate.
+- Steps 3 and the post/gate stale-head case in step 9 were not exercised. Step
+  10 passed, including required-check enforcement.
 
 ## Audit
 
 - Artifacts inspected: prepared inputs, reviewer and critique statuses,
   consensus, and post results for all five runs.
 - Logs inspected: runs `29837070046`, `29837527812`, `29838464552`, and
-  `29838897053`, plus PR-event run `29840867952`.
+  `29838897053`, plus PR-event run `29840867952` and command/fallback run
+  `29842017448`.
 - Credential values absent: yes for the earlier operator-confirmed
   non-disclosing actual-value audit; a separate common token-pattern scan was
   also clean across the final PR-event download.
 - Sensitive model content omitted from this record: yes.
 - Known unexercised paths: changed finding body, a genuinely unrelated line
-  movement outside the finding context, summary fallback, human disposition
-  commands, and stale post/gate no-op.
+  movement outside the finding context, successful resolve/wontfix/reopen
+  command transitions, and stale post/gate no-op.
 
 ## Verdict
 
-Partial for the recorded same-repository topology, source `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`,
-and image digests. Inline idempotency, direct resolve/reopen identity, state
-persistence, blocking-consensus gate failure, and GitHub required-check
-enforcement passed. This row is not a release pass until the known unexercised
-lifecycle paths are demonstrated.
+Invalidated partial for the recorded same-repository topology, source
+`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, and image digests. Inline
+idempotency, direct resolve/reopen identity, state persistence, summary
+fallback, blocking-consensus gate failure, and GitHub required-check enforcement
+passed. Repository-owner disposition authorization failed; the row and all
+remaining lifecycle paths must be repeated against the replacement runtime.
