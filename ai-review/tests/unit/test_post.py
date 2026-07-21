@@ -1194,7 +1194,12 @@ class PostTests(unittest.TestCase):
             any("note 124" in warning and "does not have" in warning for warning in warnings)
         )
         self.assertTrue(
-            any("note 125" in warning and "could not verify" in warning for warning in warnings)
+            any(
+                "note 125" in warning
+                and "could not verify" in warning
+                and "PermissionError: workflow token cannot inspect collaborators" in warning
+                for warning in warnings
+            )
         )
         self.assertEqual(len(logs.output), 2)
 
