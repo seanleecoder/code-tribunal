@@ -153,8 +153,19 @@ remaining lifecycle paths must be repeated against the replacement runtime.
 - Manual P0 run `29848500791` produced a full three-reviewer panel and blocking
   consensus on the deliberate fixture. It is useful gate evidence but is not by
   itself the required PR-event check-enforcement proof.
+- PR-event run `29863231969` on head
+  `25c67d8ea83ee58559701920de553de0f3996087` then exercised the required-check
+  enforcement path directly. Overall conclusion was `failure`; the `gate`
+  status on PR #1 reported `FAILURE`; `mergeStateStatus` was `BLOCKED`; and
+  failing gate job `88745979825` stopped merge on the live repository. The
+  consensus artifact (`gh-29863231969-1`) reported `panel_status: full`,
+  `summary.block_merge: true`, `surface_count: 4`, and a blocker group
+  `Access control logic broken` contributed by Claude and OpenCode. The post
+  artifact recorded `created_discussions=4`, `updated_discussions=0`, and
+  `resolved_discussions=2`. This satisfies the P0 PR-event blocking
+  required-check proof.
 - Still pending: a positive changed-body in-place update, genuinely unrelated
-  line movement, deliberate summary-fallback mapping, a P0 PR-event blocking
-  required check, and the actual-secret-value audit.
+  line movement, deliberate summary-fallback mapping, and the actual-secret-value
+  audit.
 
 Replacement verdict remains **partial**.
