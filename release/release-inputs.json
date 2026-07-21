@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "d0aa71e0af1fbc8ee822a17409899ed538bfebc8a394f4fc1fb4bcce56c233e1"
+      "sha256": "27a35affda758fb34915c00fc24ba95081088bc0a59a1b49080e0fdfe1932743"
     },
     "configuration": {
       "files": [
@@ -59,21 +59,23 @@
   },
   "images": {
     "base": {
-      "digest": null,
+      "digest": "sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": null,
+      "digest": "sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.0",
-  "runtime_source": null,
+  "runtime_source": "b674d1e4962ec976b5ca2c056a78b47d2b3d9a61",
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "draft",
+  "status": "active",
   "verification": {
-    "ci_run_id": null,
-    "evidence_record_ids": [],
-    "publication_run_id": null
+    "ci_run_id": "29834194710",
+    "evidence_record_ids": [
+      "image-publication-verification-b674d1e4"
+    ],
+    "publication_run_id": "29834194647"
   }
 }

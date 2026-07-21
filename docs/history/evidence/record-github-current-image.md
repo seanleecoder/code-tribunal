@@ -21,12 +21,12 @@ setup: [`docs/getting-started/github.md`](../../getting-started/github.md).
 - Change request: PR `#<n>` (small reviewable change on a same-repo branch)
 - Pipeline/workflow run: <Actions run URL> (list one per lifecycle step)
 - Relevant job IDs: prepare/reviewers/consensus/post/gate `<ids per run>`
-- Source commit: `963ae5ef8415f6866258ca24c7b5b0b054f58411`
+- Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
 - Template/workflow commit: `<consumer .github/workflows/ai-review.yml source SHA>`
-- Base image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
-- Reviewer image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
+- Base image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
+- Reviewer image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
 
 ## Preconditions
 

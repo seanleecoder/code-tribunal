@@ -7,17 +7,17 @@ its record file. This complements — does not replace — the executable tests
 
 ## Release candidate under test
 
-- Source commit: `963ae5ef8415f6866258ca24c7b5b0b054f58411` (`main` HEAD)
-- Quality gate: CI `make quality` run **29819592071** — success (SPEC-31/34
+- Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` (`main` HEAD)
+- Quality gate: CI `make quality` run **29834194710** — success (SPEC-31/34
   regression tests are inside this run).
-- Publish run: **29819592080** — success
-  (<https://github.com/seanleecoder/code-tribunal/actions/runs/29819592080>)
-- Images (GHCR, tag `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`):
-  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
-  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
-- Default-model smoke: GitHub Actions run **29824326048** — passed with the
-  three shipped OpenRouter defaults and Cursor disabled; see
-  [the sanitized record](record-github-default-model-smoke.md).
+- Publish run: **29834194647** — success
+  (<https://github.com/seanleecoder/code-tribunal/actions/runs/29834194647>)
+- Images (GHCR, tag `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`):
+  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
+  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
+- Default-model smoke: pending against these image subjects. Run
+  **29824326048** is retained only as historical evidence for the superseded
+  image set; see [the sanitized record](record-github-default-model-smoke.md).
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
@@ -32,10 +32,10 @@ and both GitHub provenance attestations verified. See the
 From any machine with registry access (anonymous pulls should work — GHCR public):
 
 ```bash
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540
 # Optional: verify build provenance attestation
-gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae \
+gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540 \
   --repo seanleecoder/code-tribunal
 ```
 
