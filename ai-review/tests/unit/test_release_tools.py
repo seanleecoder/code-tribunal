@@ -11,6 +11,14 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "scripts"
+REQUIRED_RELEASE_SCRIPTS = (
+    "build_release_manifest.py",
+    "check_release_inputs.py",
+    "check_release_manifest.py",
+    "release_common.py",
+)
+if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
+    raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
 sys.path.insert(0, str(SCRIPTS))
 
 from build_release_manifest import build_manifest  # noqa: E402
