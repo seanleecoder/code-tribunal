@@ -2136,7 +2136,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(state_after["records"][0]["remap_status"], "exact")
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_remapped_anchor_creates_at_remapped_position(self) -> None:
+    def test_post_remapped_anchor_updates_existing_discussion_without_duplicate(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
@@ -2153,9 +2153,10 @@ class PostTests(unittest.TestCase):
             diff_text=current_diff,
         )
 
-        self.assertEqual(result["created_discussions"], 1)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(client.created_positions[0]["new_line"], 4)
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(client.created_positions, [])
+        self.assertEqual(client.updated_notes[0]["discussion_id"], "existing-discussion")
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual(state_after["records"][0]["anchor"]["start"]["new_line"], 4)
         self.assertEqual(state_after["records"][0]["remap_status"], "remapped")

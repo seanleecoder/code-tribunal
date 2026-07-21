@@ -1352,7 +1352,6 @@ def post_inline(
             continue
 
         post_group: dict[str, Any] = dict(group)
-        force_create_at_remapped_anchor = False
         if existing is not None:
             if existing["issue_id"] != group.get("issue_id"):
                 post_group = dict(group, issue_id=existing["issue_id"])
@@ -1372,7 +1371,6 @@ def post_inline(
                     position = client.build_position(
                         cast(Anchor, remapped_anchor), version, multiline=inline_multiline
                     )
-                    force_create_at_remapped_anchor = True
                 elif remap_status == "missing":
                     if planned_record is not None:
                         planned_record["status"] = "stale_unverified"
@@ -1401,7 +1399,6 @@ def post_inline(
         )
         if (
             existing is not None
-            and not force_create_at_remapped_anchor
             and existing.get("discussion_id") is not None
             and existing.get("root_note_id") is not None
         ):
