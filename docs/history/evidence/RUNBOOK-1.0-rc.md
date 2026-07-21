@@ -24,6 +24,11 @@ its record file. This complements — does not replace — the executable tests
 
 ## Step 0 — Verify the RC images (do this first)
 
+Completed for this release candidate. Both digest pulls succeeded with an empty
+Docker credential directory, both OCI revision labels equal the runtime source,
+and both GitHub provenance attestations verified. See the
+[sanitized image-verification record](record-image-publication-verification.md).
+
 From any machine with registry access (anonymous pulls should work — GHCR public):
 
 ```bash

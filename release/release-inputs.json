@@ -74,6 +74,7 @@
   "verification": {
     "ci_run_id": "29819592071",
     "evidence_record_ids": [
+      "image-publication-verification-963ae5ef",
       "github-default-model-smoke-29824326048"
     ],
     "publication_run_id": "29819592080"
