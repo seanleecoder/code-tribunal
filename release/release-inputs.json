@@ -1,0 +1,79 @@
+{
+  "hashes": {
+    "canonical_templates": {
+      "files": [
+        ".github/workflows/ai-review.yml",
+        "ai-review/ci/review.github-actions.yml",
+        "ai-review/ci/review.gitlab-ci.yml"
+      ],
+      "sha256": "7b8db8b7792381de5c9b1704b47c71e816dafab0d9200f4881cf115afebe64bf"
+    },
+    "configuration": {
+      "files": [
+        "ai-review/config/review.yaml"
+      ],
+      "sha256": "0b016668a6d97a2cff1071354fc95fee6952276a9a5e5d891801ab2a8cc26445"
+    },
+    "dependency_locks": {
+      "files": [
+        "ai-review/images/package-lock.json",
+        "ai-review/images/python-constraints.txt",
+        "requirements-dev.txt"
+      ],
+      "sha256": "743ad068e286bd8537b82a8972f3ee419a97e35efb8bc34de89f91af7beabb00"
+    },
+    "documentation_entry_points": {
+      "files": [
+        "README.md",
+        "SECURITY.md",
+        "docs/configuration.md",
+        "docs/getting-started/github.md",
+        "docs/getting-started/gitlab.md",
+        "docs/operations.md"
+      ],
+      "sha256": "31cef9afdc3dc6cd90eed9b946fac80d23bfa6c433b25a694292459e5e67996a"
+    },
+    "image_recipes": {
+      "files": [
+        "ai-review/images/base.Dockerfile",
+        "ai-review/images/cursor-agent.pin",
+        "ai-review/images/package.json",
+        "ai-review/images/reviewer.Dockerfile"
+      ],
+      "sha256": "04bbf53513d3f8938ea4db3048afdfae797866fe364c9e956690352590d9cc8a"
+    },
+    "schemas": {
+      "files": [
+        "ai-review/schemas/adapter_status.schema.json",
+        "ai-review/schemas/consensus.schema.json",
+        "ai-review/schemas/critique_batch.schema.json",
+        "ai-review/schemas/finding_batch.schema.json",
+        "ai-review/schemas/gate_result.schema.json",
+        "ai-review/schemas/post_result.schema.json",
+        "ai-review/schemas/raw_finding_batch.schema.json",
+        "ai-review/schemas/state.schema.json",
+        "ai-review/schemas/state_aliases.schema.json"
+      ],
+      "sha256": "1ecdbf5f83202a8be6c6a854bfcba91d3e66030a5f2e36cd2c21f4c5b2e21c05"
+    }
+  },
+  "images": {
+    "base": {
+      "digest": null,
+      "name": null
+    },
+    "reviewer": {
+      "digest": null,
+      "name": null
+    }
+  },
+  "release_version": "1.0.0",
+  "runtime_source": null,
+  "schema_version": "code_tribunal.release_inputs.v1",
+  "status": "draft",
+  "verification": {
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "publication_run_id": null
+  }
+}

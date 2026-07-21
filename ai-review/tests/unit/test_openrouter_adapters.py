@@ -492,6 +492,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
+        self.assertIn("--model openai/gpt-5.4-mini", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
@@ -633,6 +634,7 @@ PY
         # --bare would break ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
         self.assertNotIn("--bare", cli_args)
         self.assertIn("--safe-mode", cli_args)
+        self.assertIn("--model anthropic/claude-haiku-4.5", cli_args)
         # claude explores a clean copy of the pinned MR snapshot rooted at its
         # working directory (like codex --cd / opencode --dir), not the ambient
         # CI checkout nor the input/snapshot dirs directly.

@@ -45,8 +45,8 @@ template.
 | `panel.min_successful_reviewers_for_blocking` | integer, `2` | Operational seats required before findings may block. |
 | `panel.min_successful_reviewers_for_resolution` | integer, `2` | Trustworthy empty-or-valid seats required for absence-based resolution. |
 | `panel.quorum.votes_required` | integer, `2` | Agreeing reviewer votes required for quorum; minimum is two unless only one seat is enabled. |
-| `panel.grouping.semantic.enabled` | boolean, `false` | Enable deterministic similarity grouping. |
-| `panel.grouping.semantic.threshold` | number, `0.5` | Jaccard threshold from 0.0 through 1.0. |
+| `panel.grouping.semantic.enabled` | boolean, `false` | Experimental opt-in deterministic similarity grouping; outside the 1.0 compatibility guarantee. |
+| `panel.grouping.semantic.threshold` | number, `0.5` | Experimental Jaccard threshold from 0.0 through 1.0; outside the 1.0 compatibility guarantee. |
 | `severity_policy.single_reviewer_blocker.categories` | list, `[security, correctness]` | Categories eligible for the single-reviewer blocker policy. |
 | `severity_policy.quorum_blocker.block_merge` | boolean, `true` | Permit quorum-backed blocker groups to set `block_merge`. |
 
