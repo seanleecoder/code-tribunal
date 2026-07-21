@@ -10,17 +10,19 @@ model content.
 > The `b674d1e` candidate was invalidated after live run `29842017448`
 > demonstrated that repository-owner disposition commands were ignored when
 > the workflow token could not inspect collaborator permissions. The scoped
-> results below remain historical evidence for those exact images, but every
-> release-required row must be repeated against the replacement runtime source.
+> results below remain historical evidence for those exact images. The
+> replacement runtime source is `15d424feea730a04338ed423bf93b8797d807bbc`;
+> every release-required row below except image publication must be repeated
+> against its two published digests.
 
 | Suite | Required coverage | Status |
 |---|---|---|
-| Image publication verification | Anonymous digest pulls, OCI revision labels, and GitHub provenance attestations for both images | **Superseded pass** — [b674d1e images](record-image-publication-verification.md); replacement images pending |
+| Image publication verification | Anonymous digest pulls, OCI revision labels, and GitHub provenance attestations for both images | **Scoped pass** — [15d424f images](record-image-publication-verification.md) |
 | GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Superseded pass** — run `29842017448` reached a full panel on the invalidated b674d1e images; replacement-image rerun pending; [record](record-github-default-model-smoke.md) |
-| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Partial** — credential withholding and dangling-symlink rejection passed; remaining attack probes are explicit in the [record](record-gitlab-hostile-mr.md) |
-| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Partial** — create/update, direct resolve/reopen, persistence, and enforced merge blocking passed; body change, line movement, and fallback remain; [record](record-gitlab-current-image.md) |
-| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Invalidated partial** — posting, fallback, persistence, and enforced blocking passed, but owner command authorization failed and triggered the replacement runtime; [record](record-github-current-image.md) |
-| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Partial** — the before-diff boundary passed; checkout mismatch, final re-read, and 406 remain; [record](record-github-revision-failures.md) |
+| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Replacement rerun pending** — prior partial evidence is retained in the [record](record-gitlab-hostile-mr.md) |
+| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Replacement rerun pending** — prior partial evidence is retained in the [record](record-gitlab-current-image.md) |
+| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Replacement rerun pending** — includes the fixed owner-command path; prior partial evidence is retained in the [record](record-github-current-image.md) |
+| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Replacement rerun pending** — prior partial evidence is retained in the [record](record-github-revision-failures.md) |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required

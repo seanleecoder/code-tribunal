@@ -6,15 +6,15 @@ Status: passed
 
 - Registry: GitHub Container Registry
 - Repository: `seanleecoder/code-tribunal`
-- Runtime source: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-- Publication workflow run: `29834194647`
-- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
-- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
+- Runtime source: `15d424feea730a04338ed423bf93b8797d807bbc`
+- Publication workflow run: `29845398524`
+- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`
+- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`
 
 ## Anonymous pull result
 
-On 2026-07-21, the operator ran both digest pulls with `DOCKER_CONFIG` pointing
-to a newly created empty directory. GHCR resolved both subjects without stored
+On 2026-07-21, both digest pulls ran with Docker configured to use a newly
+created empty credential directory. GHCR resolved both subjects without stored
 Docker credentials and returned the exact requested digests. Local layers were
 already present, so Docker reported each image as up to date; registry manifest
 resolution still completed successfully.
@@ -22,7 +22,7 @@ resolution still completed successfully.
 ## Revision-label result
 
 Independent inspection of `org.opencontainers.image.revision` returned
-`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` for both the base and reviewer
+`15d424feea730a04338ed423bf93b8797d807bbc` for both the base and reviewer
 subjects.
 
 ## Attestation result
