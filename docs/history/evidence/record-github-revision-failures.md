@@ -109,6 +109,16 @@ boundaries and oversized-diff behavior are exercised live.
   `checkout HEAD differs from the workflow-selected head`. The same log showed
   `before_diff_stale=false` and `manifest_stale=false`, artifact upload was
   skipped, and every downstream job was skipped.
+- PR #3 run `29865867240`, prepare job `88753799427`, attempted to exercise the
+  manifest-finalization re-read by moving the PR head from
+  `ab0236253fa264a33af71b9b178b6ea31250386c` to
+  `963742d48ead57dce72038ea9799207e8a049ca0` while the workflow was still in
+  progress. The timing missed the `prepare` finalization window: `prepare`,
+  review, critique, consensus, post, and gate all completed successfully. The
+  follow-up run for the marker commit, `29865999308`, was cancelled to avoid
+  unnecessary provider work. A non-disclosing common token-pattern scan of the
+  downloaded run log was clean. This is retained as a setup attempt, not
+  positive stale-finalization evidence.
 - Manifest-finalization re-read, oversized raw-diff HTTP 406, and the
   actual-secret-value audit remain pending.
 
