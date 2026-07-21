@@ -1365,9 +1365,9 @@ def post_inline(
                     if planned_record is not None:
                         planned_record["anchor"] = remapped_anchor
                         planned_record["remap_status"] = "remapped"
-                    # Preserve thread identity after deterministic remap. The
-                    # platform owns display remapping; build a new position only
-                    # when no updateable thread exists below.
+                    # Preserve thread identity and state after deterministic
+                    # remap. Visible placement is platform-specific and requires
+                    # separate live validation; create only without a reusable thread.
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
                 elif remap_status == "missing":
                     if planned_record is not None:

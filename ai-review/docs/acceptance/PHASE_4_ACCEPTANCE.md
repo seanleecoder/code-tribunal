@@ -142,6 +142,10 @@ is durable platform evidence for GitLab's native position remapping, but it is
 not acceptance evidence for the fix: the corrected runtime still requires new
 images and a clean live rerun with no duplicate discussion.
 
+No equivalent positive-remap result has been observed for `github_reviews`;
+GitHub display placement after thread reuse remains explicitly unverified and
+requires its own live check if that path is included in acceptance scope.
+
 ## Secret Audit
 
 Baseline traces downloaded and scanned for jobs `2527701`, `2527702`, `2527703`, `2527704`, `2527705`, `2527706`, `2527786`, `2527707`, and `2527787`.
