@@ -123,6 +123,25 @@ Drift conclusion:
 - Positive remap was inconclusive: no live record reached `remap_status=remapped`.
 - Conservative behavior passed: explicit missing-remap warnings, no duplicate inline discussions, no corrupt state, and no unsafe auto-resolution.
 
+## Later GitLab Positive-Remap Observation (Non-Acceptance)
+
+On 2026-07-21, the 1.0 scratch consumer
+`seanleecoder/code-tribunal-demo` exercised an unrelated five-line insertion on
+MR `!2`. The finding moved from `src/access.py:17` to line 22 at head
+`90c1892e51b8ead6aee0813b6a05a9ee4c0e567f` (parent pipeline `2693803149`).
+
+GitLab natively updated the original discussion position to that new head and
+line 22. The posting implementation nevertheless created a second open
+discussion. Both markers carried the same deterministic `issue_id`, proving
+identity matching succeeded and isolating the defect to the forced-create path
+after positive remap.
+
+PR `#76` removed that forced creation and added regression coverage that reuses
+the existing discussion while persisting the remapped anchor. This observation
+is durable platform evidence for GitLab's native position remapping, but it is
+not acceptance evidence for the fix: the corrected runtime still requires new
+images and a clean live rerun with no duplicate discussion.
+
 ## Secret Audit
 
 Baseline traces downloaded and scanned for jobs `2527701`, `2527702`, `2527703`, `2527704`, `2527705`, `2527706`, `2527786`, `2527707`, and `2527787`.

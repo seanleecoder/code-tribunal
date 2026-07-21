@@ -1365,8 +1365,9 @@ def post_inline(
                     if planned_record is not None:
                         planned_record["anchor"] = remapped_anchor
                         planned_record["remap_status"] = "remapped"
-                    # Platforms remap an existing thread as the head advances;
-                    # preserve that thread identity and persist the new anchor.
+                    # Preserve thread identity after deterministic remap. The
+                    # platform owns display remapping; build a new position only
+                    # when no updateable thread exists below.
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
                 elif remap_status == "missing":
                     if planned_record is not None:
@@ -1400,6 +1401,7 @@ def post_inline(
             and existing.get("root_note_id") is not None
         ):
             if dry_run:
+                # Mirror _update_existing_inline_discussion accounting without I/O.
                 if existing.get("last_posted_body_hash") == body_hash:
                     result["skipped_unchanged"] += 1
                 else:
