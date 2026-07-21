@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "31cef9afdc3dc6cd90eed9b946fac80d23bfa6c433b25a694292459e5e67996a"
+      "sha256": "6cd0098e74603933fdc8ab6de3f62e87fac9688c9b2b4249166ef3a13f72ace6"
     },
     "image_recipes": {
       "files": [
@@ -59,23 +59,21 @@
   },
   "images": {
     "base": {
-      "digest": "sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.0",
-  "runtime_source": "b674d1e4962ec976b5ca2c056a78b47d2b3d9a61",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "29834194710",
-    "evidence_record_ids": [
-      "image-publication-verification-b674d1e4"
-    ],
-    "publication_run_id": "29834194647"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "publication_run_id": null
   }
 }

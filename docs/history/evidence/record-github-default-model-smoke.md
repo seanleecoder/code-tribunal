@@ -1,6 +1,6 @@
 # Evidence record: GitHub default-model smoke / 2026-07-21
 
-Status: partial for the current release candidate; historical superseded run passed
+Status: passed for superseded candidates; replacement candidate pending
 
 ## Identity
 
@@ -41,7 +41,7 @@ Status: partial for the current release candidate; historical superseded run pas
 
 ### Current release-candidate attempts
 
-Five no-override runs used runtime source
+Six no-override runs used runtime source
 `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, publication run `29834194647`,
 base digest `sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`,
 and reviewer digest
@@ -57,11 +57,13 @@ and reviewer digest
 - PR-event run `29840867952` completed through post and the deliberately failed
   required gate, but OpenCode again omitted `confidence` and the panel was
   degraded.
+- Run `29842017448` completed end to end with `panel_status: full`, successful
+  and resolution-eligible Claude, Codex, and OpenCode reviewers, no failed
+  reviewers, and disabled Cursor. It also exercised the summary-comment path.
 
-All five resolved the shipped no-override model names correctly: Claude
+All six resolved the shipped no-override model names correctly: Claude
 `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`, OpenCode
-`google/gemini-3.1-flash-lite`, and disabled Cursor `auto`. No single run
-produced the required current-image `panel_status: full`.
+`google/gemini-3.1-flash-lite`, and disabled Cursor `auto`.
 
 ## Audit
 
@@ -79,9 +81,8 @@ produced the required current-image `panel_status: full`.
 
 ## Verdict
 
-The historical run passed for its recorded, now-superseded source and images.
-For the current release candidate, default selection and end-to-end execution
-are verified, but the full-panel acceptance criterion remains unmet because a
-provider response was rejected in every attempt. Treat the current-image
-default-model row as partial; do not relabel the repeatable acceptance failure
-as a transient pass.
+Runs `29824326048` and `29842017448` passed the full-panel default-model
+criterion for their respective recorded sources and images. The b674d1e
+candidate was subsequently invalidated by the separate GitHub command-auth
+defect, so this pass must be repeated against replacement images; it does not
+authorize release of either superseded candidate.

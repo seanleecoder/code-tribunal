@@ -31,12 +31,20 @@ In **Settings → Secrets and variables → Actions**, create:
 |---|---|---:|---|
 | Secret | `OPENROUTER_API_KEY` | yes | Claude, Codex, and OpenCode model calls |
 | Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Cursor reviewer calls |
-| Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | optional | Fine-grained token for resolve/unresolve when the built-in token is rejected |
+| Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | conditional | Fine-grained token for resolve/unresolve; configure it for organization-repository command authorization or whenever the built-in token is rejected |
 | Variable | `AI_REVIEW_MANUAL` | optional | Exact `true` disables automatic review jobs; use manual dispatch |
 
 The resolve token should be a fine-grained token restricted to this repository
-with Pull requests read/write permission. Ordinary comments and state continue
-to use the short-lived `GITHUB_TOKEN`.
+and approved by the organization when its policy requires approval. Give it
+Pull requests read/write and Metadata read permissions. GitHub documents
+[Metadata read as the permission for the collaborator lookup endpoint](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user).
+The token also authorizes
+write-level command authors when the short-lived `GITHUB_TOKEN` cannot inspect
+collaborator permissions. On a user-owned repository, commands from the owner
+can instead use GitHub's signed `OWNER` association. Organization repositories
+normally report authorized users as `MEMBER` or `COLLABORATOR`, so configure the
+resolve token there for command authorization. Ordinary comments and state
+continue to use `GITHUB_TOKEN`.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them

@@ -7,6 +7,11 @@ its record file. This complements — does not replace — the executable tests
 
 ## Release candidate under test
 
+> **Invalidated on 2026-07-21.** Run `29842017448` exposed a runtime defect in
+> GitHub human-command authorization. The identities below are retained for
+> historical traceability only. Do not run additional release acceptance or
+> publish 1.0 from these images; choose a replacement R after the fix merges.
+
 - Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` (`main` HEAD)
 - Quality gate: CI `make quality` run **29834194710** — success (SPEC-31/34
   regression tests are inside this run).
@@ -15,10 +20,11 @@ its record file. This complements — does not replace — the executable tests
 - Images (GHCR, tag `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`):
   - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
   - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
-- Default-model smoke: five no-override runs completed against these image
-  subjects, but each was degraded by one malformed or unresolvable provider
-  response. Run **29824326048** remains historical full-panel evidence for the
-  superseded image set; see [the sanitized record](record-github-default-model-smoke.md).
+- Default-model smoke: six no-override runs completed against these image
+  subjects. Run **29842017448** reached a full panel; the separate command-auth
+  failure in that run invalidated the runtime candidate. Run **29824326048** is
+  the earlier superseded full-panel result; see
+  [the sanitized record](record-github-default-model-smoke.md).
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
