@@ -137,7 +137,7 @@ artifacts.
 | `GITLAB_TOKEN` | trusted prepare/post jobs | GitLab API access with `api` scope. |
 | `GITHUB_TOKEN` | trusted prepare/post jobs | GitHub API access supplied by Actions. |
 | `GH_TOKEN` | trusted GitHub prepare/post jobs | Local or custom-workflow fallback when `GITHUB_TOKEN` is absent. |
-| `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | trusted post job only | Optional fine-grained thread-mutation and collaborator-permission token. |
+| `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | trusted post job only | Fine-grained token with Pull requests read/write and Metadata read; optional for personal-repository owner commands, but required when the built-in token cannot authorize collaborators (normally organization repositories) or mutate threads. |
 
 ### Platform and provider runtime
 

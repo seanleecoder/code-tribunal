@@ -145,6 +145,9 @@ def test_member_access_level_uses_dedicated_resolution_token() -> None:
 
     assert platform.member_access_level("octo/repo", "alice") == 40
     assert session.calls[-1][2]["headers"]["Authorization"] == "Bearer resolution-token"
+    request_count = len(session.calls)
+    assert platform.member_access_level("octo/repo", 99) is None
+    assert len(session.calls) == request_count
 
 
 def test_current_user_uses_configured_bot_login_for_installation_token() -> None:

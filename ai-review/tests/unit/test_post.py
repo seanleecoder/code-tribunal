@@ -16,6 +16,7 @@ from ai_review.gitlab_client import (
 )
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
 from ai_review.platform import ReviewPlatformError
+from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.post import (
     _classify_post_groups,
     _desired_discussion_resolved,
@@ -1098,9 +1099,7 @@ class PostTests(unittest.TestCase):
 
     def test_collect_human_commands_accepts_github_repository_owner(self) -> None:
         class UnprivilegedTokenClient(FakeGitHubClient):
-            def member_access_level(
-                self, project_id: str, user_id: str | int
-            ) -> int | None:
+            def member_access_level(self, project_id: str, user_id: str | int) -> int | None:
                 raise PermissionError("workflow token cannot inspect collaborators")
 
         client = UnprivilegedTokenClient(head_sha="head_sha", diff_text="")
@@ -1108,28 +1107,96 @@ class PostTests(unittest.TestCase):
             f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
             f"body_hash={'a' * 64} source={'b' * 64} -->"
         )
-        discussion = client.create_inline_comment(
-            "octo/repo",
-            7,
-            marker,
-            {"path": "a.py", "line": 1, "side": "RIGHT", "commit_id": "head"},
+        discussion = GitHubReviewPlatform._thread_from_comment(
+            {"id": 123, "body": marker, "user": {"id": 1, "login": "bot"}}
         )
-        discussion["notes"].append(
+        owner_reply = GitHubReviewPlatform._thread_from_comment(
             {
                 "id": 124,
                 "body": "/ai-review wontfix",
-                "author": {
-                    "id": 100,
-                    "username": "owner",
-                    "association": "OWNER",
-                },
+                "user": {"id": 100, "login": "owner"},
+                "author_association": "OWNER",
                 "created_at": "2026-07-21T00:00:00Z",
             }
         )
+        discussion["notes"].extend(owner_reply["notes"])
 
         commands = collect_human_commands(client, "octo/repo", [discussion])
 
         self.assertEqual(commands, {"1" * 64: "wontfix"})
+
+    def test_collect_human_commands_member_requires_permission_lookup(self) -> None:
+        class MemberClient(FakeGitHubClient):
+            def __init__(self) -> None:
+                super().__init__(head_sha="head_sha", diff_text="")
+                self.permission_lookups: list[str | int] = []
+
+            def member_access_level(self, project_id: str, user_id: str | int) -> int | None:
+                self.permission_lookups.append(user_id)
+                return 40 if user_id == "member" else None
+
+        client = MemberClient()
+        marker = (
+            f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
+            f"body_hash={'a' * 64} source={'b' * 64} -->"
+        )
+        discussion = {
+            "notes": [
+                {"id": 123, "body": marker},
+                {
+                    "id": 124,
+                    "body": "/ai-review resolve",
+                    "author": {"username": "member", "association": "MEMBER"},
+                    "created_at": "2026-07-21T00:00:00Z",
+                },
+            ]
+        }
+
+        commands = collect_human_commands(client, "octo/repo", [discussion])
+
+        self.assertEqual(commands, {"1" * 64: "resolve"})
+        self.assertEqual(client.permission_lookups, ["member"])
+
+    def test_collect_human_commands_reports_rejected_and_unverifiable_authors(self) -> None:
+        class PermissionClient(FakeGitHubClient):
+            def member_access_level(self, project_id: str, user_id: str | int) -> int | None:
+                if user_id == "contributor":
+                    return 10
+                raise PermissionError("workflow token cannot inspect collaborators")
+
+        client = PermissionClient(head_sha="head_sha", diff_text="")
+        marker = (
+            f"<!-- ai-review:v1 issue_id={'1' * 64} run_id=1 "
+            f"body_hash={'a' * 64} source={'b' * 64} -->"
+        )
+        discussion = {
+            "notes": [
+                {"id": 123, "body": marker},
+                {
+                    "id": 124,
+                    "body": "/ai-review resolve",
+                    "author": {"username": "contributor", "association": "CONTRIBUTOR"},
+                },
+                {
+                    "id": 125,
+                    "body": "/ai-review wontfix",
+                    "author": {"username": "member", "association": "MEMBER"},
+                },
+            ]
+        }
+        warnings: list[str] = []
+
+        with self.assertLogs("ai_review.post", level="WARNING") as logs:
+            commands = collect_human_commands(client, "octo/repo", [discussion], warnings=warnings)
+
+        self.assertEqual(commands, {})
+        self.assertTrue(
+            any("note 124" in warning and "does not have" in warning for warning in warnings)
+        )
+        self.assertTrue(
+            any("note 125" in warning and "could not verify" in warning for warning in warnings)
+        )
+        self.assertEqual(len(logs.output), 2)
 
     def test_desired_discussion_resolved_tracks_only_state_transitions(self) -> None:
         base_record = self._state_record(self._consensus()["groups"][0])

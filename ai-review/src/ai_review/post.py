@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 from collections.abc import Mapping
@@ -91,6 +92,9 @@ SUMMARY_MARKER_RE = re.compile(
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
+ACCESS_OWNER = 50
+MIN_COMMAND_ACCESS = 30
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -400,7 +404,7 @@ def _author_access_level(
     # its own; other associations can include users without write permission
     # and must still be checked through the collaborator-permission endpoint.
     if author.get("association") == "OWNER":
-        return 50
+        return ACCESS_OWNER
     candidate_ids = [author.get("id"), author.get("username"), author.get("login")]
     for user_id in candidate_ids:
         if user_id is None:
@@ -418,6 +422,8 @@ def collect_human_commands(
     client: ReviewPlatform,
     project_id: str,
     discussions: list[dict[str, Any]],
+    *,
+    warnings: list[str] | None = None,
 ) -> dict[str, str]:
     commands: list[tuple[str, int, str, str]] = []
     for discussion in discussions:
@@ -440,7 +446,20 @@ def collect_human_commands(
             raw_author = note.get("author")
             author = raw_author if isinstance(raw_author, dict) else {}
             access_level = _author_access_level(client, project_id, author)
-            if access_level is None or access_level < 30:
+            if access_level is None or access_level < MIN_COMMAND_ACCESS:
+                note_id = note.get("id", index)
+                author_login = author.get("username") or author.get("login") or "unknown"
+                reason = (
+                    "could not verify write access"
+                    if access_level is None
+                    else "author does not have write access"
+                )
+                warning = (
+                    f"ignored /ai-review command in note {note_id} from {author_login}: {reason}"
+                )
+                LOGGER.warning(warning)
+                if warnings is not None:
+                    warnings.append(warning)
                 continue
             created_at = str(note.get("created_at") or "")
             note_id = int(note.get("id") or index)
@@ -1623,6 +1642,7 @@ def prepare_post_context(
         client,
         manifest["project_id"],
         raw_discussions,
+        warnings=result["warnings"],
     )
     return PostContext(
         version=version,
