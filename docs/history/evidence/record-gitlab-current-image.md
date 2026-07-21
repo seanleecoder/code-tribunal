@@ -1,11 +1,9 @@
-# Evidence record: GITLAB / CURRENT-IMAGE LIFECYCLE / <DATE>
+# Evidence record: GitLab current-image lifecycle / 2026-07-21
 
-Status: pending
+Status: partial
 
-> Draft prepared against release-candidate `963ae5e`. Fill the `<...>`
-> placeholders and the Actual result / Audit / Verdict sections as you execute.
-> Record only sanitized identifiers, digests, expected/actual outcomes, and
-> audit results.
+> Sanitized partial record. It is not a release pass until the known
+> unexercised paths below are completed.
 
 Covers evidence-matrix row **GitLab current image**: create, update, resolve,
 reopen, state persistence, blocking gate. Procedure:
@@ -13,15 +11,19 @@ reopen, state persistence, blocking gate. Procedure:
 
 ## Identity
 
-- Platform and version: GitLab <self-managed|SaaS> <version>
-- Date/time and timezone:
-- Deployment topology: <direct include | hardened mirrored child>
-- Consumer/template project: <scratch consumer> / <protected template project@sha>
-- Change request: MR `!<n>` (small reviewable change on a same-project branch)
-- Pipeline/workflow run: <pipeline URL> (list one per lifecycle step below)
-- Relevant job IDs: prepare/reviewers/consensus/post/gate `<ids per run>`
+- Platform and version: GitLab.com SaaS
+- Date/time and timezone: 2026-07-21 14:01–14:15 UTC
+- Deployment topology: hardened mirrored child
+- Consumer/template project: `seanleecoder/code-tribunal-demo` /
+  `seanleecoder/code-tribunal-ci-template@a10483ef5f662ea250799db107aba7b2eee92605`
+- Change request: MR `!2`
+- Pipeline/workflow runs: outer `2694045878` / child `2694046036`; unchanged
+  rerun outer `2694091876` / child `2694091973`
+- Relevant unchanged-rerun jobs: prepare `15455763110`, reviews
+  `15455763111`–`15455763114`, consensus `15455763119`, post `15455763120`,
+  gate `15455763121`.
 - Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-- Template/workflow commit: `<40-char template SHA>`
+- Template/workflow commit: `a10483ef5f662ea250799db107aba7b2eee92605`
 - Base image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
   `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
 - Reviewer image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
@@ -30,7 +32,7 @@ reopen, state persistence, blocking gate. Procedure:
 ## Preconditions
 
 - Both images published from one reviewed RC commit and **digests verified**
-  against publish run `29819592080` (values above). Pull each by digest before
+  against publish run `29834194647` (values above). Pull each by digest before
   starting.
 - Protected/masked variables verified: `OPENROUTER_API_KEY`, `GITLAB_TOKEN`.
 - Required pipeline configuration verified: **Pipelines must succeed** ON for the
@@ -57,21 +59,41 @@ Perform in order on one MR; capture the pipeline/job IDs and platform object IDs
 
 ## Actual result
 
-- Stage outcomes (per step 1–8):
-- Platform objects created/updated/resolved (discussion/note IDs):
-- Consensus/post/gate summary:
-- Blocking-gate outcome (merge actually blocked?):
+- Steps 1–2 passed. The current-image run created discussion
+  `f468894a31baa36a4b1c19e0eb296913ed75b917`; the unchanged rerun updated the
+  same root note `3583823567` (`created_discussions: 0`,
+  `updated_discussions: 1`) rather than creating a duplicate.
+- Direct GitLab API resolve and reopen operations preserved that discussion and
+  root-note identity.
+- The unchanged rerun completed prepare, Claude/Codex/OpenCode review,
+  consensus, and post. Cursor was disabled as configured.
+- Consensus reported a blocking finding. Gate job `15455763121` failed with
+  `block_merge: true`, `reason: blocking_consensus`, and
+  `status: failed_blocking_findings`.
+- Project setting `only_allow_merge_if_pipeline_succeeds` was `true`. With the
+  MR temporarily undrafted, GitLab reported `detailed_merge_status:
+  ci_must_pass` against the failed head pipeline. The draft title was then
+  restored without changing the head or pipeline.
+- Steps 3, 6, and 7 were not exercised; step 8 is therefore strong gate and
+  platform enforcement evidence.
 
 ## Audit
 
-- Artifacts inspected (paths): <inputs/, findings/, consensus/, post/, gate/, state>
-- Logs inspected (job trace URLs):
-- Credential values absent: <yes/no + how confirmed>
-- Sensitive model content omitted from this record:
-- Known unexercised paths:
+- Artifacts inspected: prepared inputs, reviewer statuses/findings, consensus,
+  post result, and gate result from both current-image pipelines.
+- Logs inspected: both outer/child pipeline pairs and the unchanged-rerun jobs
+  listed above.
+- Credential values absent: yes; the operator confirmed a non-disclosing
+  actual-value audit, and a common token-pattern scan was clean.
+- Sensitive model content omitted from this record: yes.
+- Known unexercised paths: body change, unrelated line movement, and summary
+  fallback.
 
 ## Verdict
 
-Pending. Replace with a scoped pass/fail statement naming exactly what this run
-proves (topology, source `963ae5e`, the two image digests above); do not
-generalize beyond the recorded topology, source, and images.
+Partial for the recorded GitLab.com hardened-child topology, source
+`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, template commit, and image
+digests. Inline idempotency, direct resolve/reopen identity, state persistence,
+blocking gate behavior, and the project pipeline requirement passed. The row
+is not a release pass until the known unexercised lifecycle checks are
+completed.

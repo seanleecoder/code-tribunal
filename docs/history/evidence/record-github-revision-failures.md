@@ -1,11 +1,8 @@
-# Evidence record: GITHUB / REVISION-RACE & OVERSIZED-DIFF (SPEC-34) / <DATE>
+# Evidence record: GitHub revision-race and oversized-diff / 2026-07-21
 
-Status: pending
+Status: partial
 
-> Draft prepared against release-candidate `963ae5e`. Fill the `<...>`
-> placeholders and the Actual result / Audit / Verdict sections as you execute.
-> Record only sanitized identifiers, digests, expected/actual outcomes, and
-> audit results. These live smokes **complement** the SPEC-34 regression tests
+> Sanitized partial record. These live smokes **complement** the SPEC-34 regression tests
 > in `ai-review/tests/unit/test_github_platform.py` and `test_input_bundle.py`.
 
 Covers evidence-matrix row **GitHub revision failures**: revision race at
@@ -16,14 +13,16 @@ prepare boundaries and oversized raw-diff failure. Procedure:
 ## Identity
 
 - Platform and version: GitHub.com (Actions)
-- Date/time and timezone:
+- Date/time and timezone: 2026-07-21 14:30–14:31 UTC
 - Deployment topology: same-repository pull request
-- Consumer/template project: <scratch consumer repo> / workflow from `aa3b171ee65e734fb352d933288c4871de406ce2`
-- Change request: PR `#<n>`
-- Pipeline/workflow run: <Actions run URL(s)>
-- Relevant job IDs: prepare `<id>` (+ post/gate as reached)
+- Consumer/template project: `seanleecoder/code-tribunal-demo` / canonical
+  workflow from `d183eab9f56f04588341b651bf16742b46b30fb2`
+- Change request: PR `#2`
+- Pipeline/workflow run: `29839418489`
+- Relevant job ID: prepare `88664156300`; every downstream job was skipped.
 - Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-- Template/workflow commit: `<consumer workflow source SHA>`
+- Template/workflow commit: consumer test-harness commit
+  `d5a2cfda693b96288973b2aa3fbe2aa043b40816`
 - Base image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
   `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
 - Reviewer image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
@@ -32,7 +31,7 @@ prepare boundaries and oversized raw-diff failure. Procedure:
 ## Preconditions
 
 - Both images published from one reviewed RC commit and **digests verified**
-  against publish run `29819592080` (values above).
+  against publish run `29834194647` (values above).
 - Expected behavior: `prepare` binds the diff, snapshot, and manifest to one
   immutable revision; if the head moves during preparation it **fails closed**
   with a stale-input error and emits **no reviewable bundle**; an oversized raw
@@ -58,21 +57,35 @@ a mixed revision is produced.
 
 ## Actual result
 
-- Stage outcomes (per step 1–4):
-- Error messages surfaced (sanitized):
-- Bundle emitted? (must be "no" for each failure case):
-- Manifest revision fields (when written):
+- Step 2 passed using a disposable, clearly labeled 15-second synchronization
+  hook. Prepare selected and checked out `d5a2cfda693b96288973b2aa3fbe2aa043b40816`,
+  then the PR head advanced atomically to
+  `0da1614567f9f3514f8e2f5d0e7fd08bff1dfd52`.
+- Prepare failed before diff collection with a stale-input error stating that
+  selected, checkout, and pull-request heads must match. Review, critique,
+  consensus, post, and gate were all skipped.
+- The artifact upload step was skipped, so no `ai-review-inputs` bundle or
+  manifest was emitted.
+- Two earlier unsynchronized attempts (`29838953853`, `29839182710`) missed the
+  race, prepared successfully, and were cancelled; they are retained as setup
+  attempts, not positive evidence.
+- Steps 1, 3, and 4 were not exercised.
 
 ## Audit
 
-- Artifacts inspected: `ai-review-inputs` (presence/absence), manifest, prepare logs
-- Logs inspected (Actions run URLs):
-- Credential values absent: <yes/no + how confirmed>
-- Sensitive model content omitted from this record:
-- Known unexercised paths (e.g. `/pulls/{number}/files` pagination — out of SPEC-34 scope):
+- Artifacts inspected: run artifact inventory (no artifact uploaded) and full
+  prepare log.
+- Logs inspected: run `29839418489`, prepare job `88664156300`.
+- Credential values absent: yes; non-disclosing actual-value and common
+  token-pattern audits were clean.
+- Sensitive model content omitted from this record: yes.
+- Known unexercised paths: checkout-versus-selected mismatch, manifest final
+  re-read race, oversized raw diff HTTP 406, and `/pulls/{number}/files`
+  pagination (out of SPEC-34 scope).
 
 ## Verdict
 
-Pending. Replace with a scoped pass/fail statement naming exactly what this run
-proves (same-repo PR topology, source `963ae5e`, the two image digests above);
-do not generalize beyond the recorded topology, source, and images.
+Partial for the recorded same-repository topology, source `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`,
+and image digests. The before-diff head re-read failed closed without a mixed or
+reviewable bundle. The row is not a release pass until the other two prepared
+boundaries and oversized-diff behavior are exercised live.

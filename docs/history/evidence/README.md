@@ -10,11 +10,11 @@ model content.
 | Suite | Required coverage | Status |
 |---|---|---|
 | Image publication verification | Anonymous digest pulls, OCI revision labels, and GitHub provenance attestations for both images | **Passed** — [R images](record-image-publication-verification.md) |
-| GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Passed** — [run 29824326048](record-github-default-model-smoke.md) |
-| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Outstanding** |
-| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Outstanding** |
-| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Outstanding** |
-| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Outstanding** |
+| GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Partial** — defaults and execution verified on R images, but five attempts were degraded by one malformed/unresolvable provider response; [record](record-github-default-model-smoke.md) |
+| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Partial** — credential withholding and dangling-symlink rejection passed; remaining attack probes are explicit in the [record](record-gitlab-hostile-mr.md) |
+| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Partial** — create/update, direct resolve/reopen, persistence, and enforced merge blocking passed; body change, line movement, and fallback remain; [record](record-gitlab-current-image.md) |
+| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Partial** — create/update, direct resolve/reopen, persistence, and enforced merge blocking passed; body change, fallback, commands, and stale post/gate remain; [record](record-github-current-image.md) |
+| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Partial** — the before-diff boundary passed; checkout mismatch, final re-read, and 406 remain; [record](record-github-revision-failures.md) |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
@@ -22,7 +22,7 @@ check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
 [legacy acceptance](../acceptance/README.md).
 
-Until every outstanding row is complete against the intended release-candidate
+Until every partial or outstanding row is complete against the intended release-candidate
 source and images, current docs must qualify rather than assert product-wide
 “stable,” “credential isolated,” or equivalent deployment claims.
 
