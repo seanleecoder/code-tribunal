@@ -492,6 +492,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
+        self.assertIn("--model openai/gpt-5.4-mini", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)

@@ -10,15 +10,16 @@ from pathlib import Path
 from check_release_inputs import validate_release_inputs
 from release_common import (
     DIGEST_RE,
-    FULL_SHA_RE,
     RELEASE_INPUTS,
     ROOT,
     ReleaseValidationError,
     disallowed_release_paths,
     git_changed_paths,
+    git_is_ancestor,
     image_ref,
     load_json,
     sha256_bytes,
+    validate_release_coordinates,
 )
 
 
@@ -42,16 +43,17 @@ def validate_manifest(
         raise ReleaseValidationError("release manifest has unexpected or missing keys")
     if manifest["schema_version"] != "code_tribunal.release_manifest.v1":
         raise ReleaseValidationError("unsupported manifest schema version")
-    if manifest["release_version"] != "1.0.0" or manifest["tag"] != "v1.0.0":
-        raise ReleaseValidationError("manifest version/tag must be 1.0.0/v1.0.0")
+    if manifest["release_version"] != "1.0.0":
+        raise ReleaseValidationError("manifest release_version must be 1.0.0")
     runtime_source = manifest["runtime_source"]
     release_commit = manifest["release_commit"]
-    if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
-        raise ReleaseValidationError("manifest runtime_source is malformed")
-    if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
-        raise ReleaseValidationError("manifest release_commit is malformed")
+    validate_release_coordinates(manifest["tag"], runtime_source, release_commit)
+    assert isinstance(runtime_source, str)
+    assert isinstance(release_commit, str)
     inputs = load_json(release_inputs)
     validate_release_inputs(inputs, root)
+    if inputs["status"] != "active":
+        raise ReleaseValidationError("release inputs must be active when validating a manifest")
     if manifest["release_inputs_sha256"] != sha256_bytes(release_inputs.read_bytes()):
         raise ReleaseValidationError("manifest release-input hash does not match")
     if (
@@ -64,8 +66,17 @@ def validate_manifest(
         raise ReleaseValidationError("manifest images must contain base and reviewer")
     for role, input_image in inputs["images"].items():
         expected = {**input_image, "subject": image_ref(input_image, runtime_source)}
-        if images[role] != expected or not DIGEST_RE.fullmatch(images[role]["digest"]):
+        image = images[role]
+        if (
+            not isinstance(image, dict)
+            or set(image) != {"name", "digest", "subject"}
+            or image != expected
+            or not isinstance(image["digest"], str)
+            or not DIGEST_RE.fullmatch(image["digest"])
+        ):
             raise ReleaseValidationError(f"manifest images.{role} does not match release inputs")
+    if not git_is_ancestor(runtime_source, release_commit, root):
+        raise ReleaseValidationError("release commit P must descend from runtime source R")
     expected_paths = git_changed_paths(runtime_source, release_commit, root)
     if manifest["changed_paths"] != expected_paths:
         raise ReleaseValidationError("manifest changed_paths does not match git R..P")

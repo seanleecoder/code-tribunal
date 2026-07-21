@@ -24,12 +24,42 @@ from release_common import (
     load_json,
 )
 
+GITHUB_CONTAINER_ROLES = {
+    "prepare": "base",
+    "review": "reviewer",
+    "critique": "reviewer",
+    "consensus": "base",
+    "post": "base",
+    "gate": "base",
+}
+
 
 def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
     if set(value) != expected:
         raise ReleaseValidationError(
             f"{label} keys must be exactly {sorted(expected)}; got {sorted(value)}"
         )
+
+
+def _github_job_containers(text: str) -> dict[str, str]:
+    """Return job-level containers without coupling validation to raw pin counts."""
+    containers: dict[str, str] = {}
+    current_job: str | None = None
+    in_jobs = False
+    for line in text.splitlines():
+        if line == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        job_match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+        if job_match:
+            current_job = job_match.group(1)
+            continue
+        container_match = re.fullmatch(r"    container:\s+(\S+)", line)
+        if container_match and current_job is not None:
+            containers[current_job] = container_match.group(1)
+    return containers
 
 
 def validate_release_inputs(data: dict[str, Any], root: Path = ROOT) -> None:
@@ -121,12 +151,21 @@ def validate_release_inputs(data: dict[str, Any], root: Path = ROOT) -> None:
     if data["status"] == "active":
         assert isinstance(runtime_source, str)
         expected_refs = {role: image_ref(images[role], runtime_source) for role in images}
-        containers = re.findall(r"^\s+container:\s+(\S+)\s*$", canonical, re.M)
-        if (
-            containers.count(expected_refs["base"]) != 4
-            or containers.count(expected_refs["reviewer"]) != 2
-        ):
-            raise ReleaseValidationError("GitHub template pins do not match release inputs")
+        containers = _github_job_containers(canonical)
+        if set(containers) != set(GITHUB_CONTAINER_ROLES):
+            raise ReleaseValidationError(
+                "GitHub template container jobs do not match the release role registry"
+            )
+        mismatched_jobs = [
+            job
+            for job, role in GITHUB_CONTAINER_ROLES.items()
+            if containers[job] != expected_refs[role]
+        ]
+        if mismatched_jobs:
+            raise ReleaseValidationError(
+                "GitHub template pins do not match release inputs for jobs: "
+                + ", ".join(mismatched_jobs)
+            )
         gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
         expected_lines = (
             f'AI_REVIEW_BASE_IMAGE: "{expected_refs["base"]}"',

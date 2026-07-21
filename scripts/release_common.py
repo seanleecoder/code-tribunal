@@ -18,6 +18,12 @@ HASH_GROUPS = {
         "ai-review/images/python-constraints.txt",
         "requirements-dev.txt",
     ),
+    "image_recipes": (
+        "ai-review/images/base.Dockerfile",
+        "ai-review/images/cursor-agent.pin",
+        "ai-review/images/package.json",
+        "ai-review/images/reviewer.Dockerfile",
+    ),
     "configuration": ("ai-review/config/review.yaml",),
     "schemas": tuple(
         str(path.relative_to(ROOT)) for path in sorted((ROOT / "ai-review/schemas").glob("*.json"))
@@ -69,7 +75,11 @@ def aggregate_hash(root: Path, paths: tuple[str, ...] | list[str]) -> str:
     """Hash sorted path names and bytes with unambiguous length framing."""
     digest = hashlib.sha256()
     for relative in sorted(paths):
-        data = (root / relative).read_bytes()
+        path = root / relative
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ReleaseValidationError(f"cannot hash checked file {relative}: {exc}") from exc
         encoded_path = relative.encode()
         digest.update(len(encoded_path).to_bytes(8, "big"))
         digest.update(encoded_path)
@@ -113,6 +123,34 @@ def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROO
     if completed.returncode:
         raise ReleaseValidationError(completed.stderr.strip() or "git diff failed")
     return sorted(filter(None, completed.stdout.splitlines()))
+
+
+def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT) -> bool:
+    completed = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", runtime_source, release_commit],
+        cwd=root,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+    raise ReleaseValidationError(completed.stderr.strip() or "git merge-base failed")
+
+
+def validate_release_coordinates(
+    tag: object, runtime_source: object, release_commit: object
+) -> None:
+    if tag != "v1.0.0":
+        raise ReleaseValidationError("release tag must be v1.0.0")
+    if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
+        raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
+    if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
+        raise ReleaseValidationError("release commit must be a lowercase full 40-character SHA")
+    if runtime_source == release_commit:
+        raise ReleaseValidationError("release commit P must differ from runtime source R")
 
 
 def disallowed_release_paths(paths: list[str]) -> list[str]:

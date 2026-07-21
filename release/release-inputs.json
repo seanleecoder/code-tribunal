@@ -33,6 +33,15 @@
       ],
       "sha256": "31cef9afdc3dc6cd90eed9b946fac80d23bfa6c433b25a694292459e5e67996a"
     },
+    "image_recipes": {
+      "files": [
+        "ai-review/images/base.Dockerfile",
+        "ai-review/images/cursor-agent.pin",
+        "ai-review/images/package.json",
+        "ai-review/images/reviewer.Dockerfile"
+      ],
+      "sha256": "04bbf53513d3f8938ea4db3048afdfae797866fe364c9e956690352590d9cc8a"
+    },
     "schemas": {
       "files": [
         "ai-review/schemas/adapter_status.schema.json",
