@@ -118,7 +118,16 @@ completed.
   `15460824971` completed against the same head. Post created no discussion and
   updated the same discussion/root-note pair above; the full three-reviewer
   panel and blocking gate result were unchanged.
-- Body-change, genuinely unrelated line movement, summary fallback, and the
+- A body-change probe used commit `503cac565c5535792ec43b93770317f6a7c94073`,
+  outer pipeline `2694801056`, child pipeline `2694801132`, prepare
+  `15461000933`, post `15461000943`, and gate `15461000944`. Post reported
+  `created_discussions: 0`, `updated_discussions: 0`, `resolved_discussions: 1`,
+  and `skipped_unchanged: 0`. Direct MR inspection confirmed the previously
+  active AI discussion/root-note pair `f468894a31baa36a4b1c19e0eb296913ed75b917`
+  / `3583823567` was resolved by the bot and no replacement inline discussion
+  was posted. This is useful lifecycle evidence, but it is not the expected
+  in-place update path for step 3.
+- Genuinely unrelated line movement, summary fallback, and the
   actual-secret-value audit remain pending.
 
 Replacement verdict remains **partial**.

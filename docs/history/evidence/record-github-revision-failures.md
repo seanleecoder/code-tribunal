@@ -101,7 +101,15 @@ boundaries and oversized-diff behavior are exercised live.
   15-second synchronization window; prepare emitted the stale-input message,
   artifact upload was skipped, and review, critique, consensus, post, and gate
   were all skipped.
-- Checkout-versus-selected, manifest-finalization re-read, oversized raw-diff
-  HTTP 406, and the actual-secret-value audit remain pending.
+- PR #2 run `29857996703`, prepare job `88727110199`, exercised a true
+  checkout-versus-selected mismatch against a dispatch-only harness commit
+  `5fe6b80` that intentionally checks out a mutable test branch while preserving
+  normal PR-event behavior. During the synchronization window, the test branch
+  advanced to marker commit `e3859db`; prepare then failed closed with
+  `checkout HEAD differs from the workflow-selected head`. The same log showed
+  `before_diff_stale=false` and `manifest_stale=false`, artifact upload was
+  skipped, and every downstream job was skipped.
+- Manifest-finalization re-read, oversized raw-diff HTTP 406, and the
+  actual-secret-value audit remain pending.
 
 Replacement verdict remains **partial**.
