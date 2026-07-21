@@ -119,6 +119,15 @@ boundaries and oversized-diff behavior are exercised live.
   unnecessary provider work. A non-disclosing common token-pattern scan of the
   downloaded run log was clean. This is retained as a setup attempt, not
   positive stale-finalization evidence.
+- PR #3 run `29866992538`, prepare job `88757599190`, repeated the
+  manifest-finalization attempt with a timed head move from
+  `4ad32c7e39221041c88f9da0fa9ff40d5f2d6eac` to
+  `5030d64d04449374d2b94ccf168acc7cb3da5ba6`. The local watcher observed the
+  prepare job only after it had already completed, so the head move again
+  landed after manifest finalization. `prepare`, review, critique, consensus,
+  post, and gate completed successfully. The follow-up run for the marker
+  commit, `29867063070`, was cancelled. This is retained as a setup attempt,
+  not positive stale-finalization evidence.
 - Manifest-finalization re-read, oversized raw-diff HTTP 406, and the
   actual-secret-value audit remain pending.
 
