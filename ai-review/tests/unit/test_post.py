@@ -2136,7 +2136,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(state_after["records"][0]["remap_status"], "exact")
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_remapped_anchor_creates_at_remapped_position(self) -> None:
+    def test_post_remapped_anchor_updates_existing_discussion_without_duplicate(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
@@ -2153,12 +2153,140 @@ class PostTests(unittest.TestCase):
             diff_text=current_diff,
         )
 
-        self.assertEqual(result["created_discussions"], 1)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(client.created_positions[0]["new_line"], 4)
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(client.created_positions, [])
+        self.assertEqual(client.updated_notes[0]["discussion_id"], "existing-discussion")
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual(state_after["records"][0]["anchor"]["start"]["new_line"], 4)
         self.assertEqual(state_after["records"][0]["remap_status"], "remapped")
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_remapped_anchor_creates_at_new_position_without_root_note(self) -> None:
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        old_diff = self._single_line_diff(2)
+        current_diff = self._single_line_diff(4)
+        anchor = self._anchor_with_context(2, old_diff)
+        record = self._state_record(group, anchor=anchor)
+        record["root_note_id"] = None
+        state = self._state_with_records([record])
+        client = StatePostClient("head", state)
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._state_config(),
+            self._manifest("head"),
+            consensus,
+            diff_text=current_diff,
+        )
+
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(client.created_positions[0]["new_line"], 4)
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_remapped_anchor_dry_run_has_no_platform_mutation(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        old_diff = self._single_line_diff(2)
+        current_diff = self._single_line_diff(4)
+        anchor = self._anchor_with_context(2, old_diff)
+        state = self._state_with_records([self._state_record(group, anchor=anchor)])
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+        client = StatePostClient("head", state)
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+
+        post_inline(
+            client,
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [group],
+            [],
+            MergeRequestVersion("base", "start", "head"),
+            posting_mode="gitlab_discussions",
+            inline_multiline=False,
+            current_diff_text=current_diff,
+            dry_run=True,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(client.created, 0)
+        self.assertEqual(client.updated, 0)
+        self.assertEqual(client.updated_notes, [])
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_remapped_anchor_dry_run_counts_unchanged_without_mutation(self) -> None:
+        consensus = self._consensus()
+        manifest = self._manifest("head")
+        group = consensus["groups"][0]
+        old_diff = self._single_line_diff(2)
+        current_diff = self._single_line_diff(4)
+        anchor = self._anchor_with_context(2, old_diff)
+        _body, body_hash = render_body(
+            group,
+            len(consensus["successful_reviewers"]),
+            consensus["run_id"],
+            posting_mode="gitlab_discussions",
+        )
+        record = self._state_record(group, anchor=anchor)
+        record["last_posted_body_hash"] = body_hash
+        state = self._state_with_records([record])
+        state_plan = plan_state(
+            self._state_config(),
+            manifest,
+            consensus,
+            state,
+            [group],
+            [],
+            [],
+            {},
+        )
+        client = StatePostClient("head", state)
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=manifest,
+            current_head_sha="head",
+        )
+
+        post_inline(
+            client,
+            manifest,
+            consensus,
+            result,
+            state_plan,
+            [group],
+            [],
+            MergeRequestVersion("base", "start", "head"),
+            posting_mode="gitlab_discussions",
+            inline_multiline=False,
+            current_diff_text=current_diff,
+            dry_run=True,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 0)
+        self.assertEqual(result["skipped_unchanged"], 1)
+        self.assertEqual(client.created, 0)
+        self.assertEqual(client.updated, 0)
+        self.assertEqual(client.updated_notes, [])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_missing_remap_falls_back_without_resolving(self) -> None:

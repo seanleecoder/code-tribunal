@@ -9,6 +9,8 @@ model content.
 
 | Suite | Required coverage | Status |
 |---|---|---|
+| Image publication verification | Anonymous digest pulls, OCI revision labels, and GitHub provenance attestations for both images | **Passed** — [R images](record-image-publication-verification.md) |
+| GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Passed** — [run 29824326048](record-github-default-model-smoke.md) |
 | GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Outstanding** |
 | GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Outstanding** |
 | GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Outstanding** |
@@ -20,9 +22,9 @@ check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
 [legacy acceptance](../acceptance/README.md).
 
-Until every row is complete against the intended release-candidate source and
-images, current docs must qualify rather than assert product-wide “stable,”
-“credential isolated,” or equivalent deployment claims.
+Until every outstanding row is complete against the intended release-candidate
+source and images, current docs must qualify rather than assert product-wide
+“stable,” “credential isolated,” or equivalent deployment claims.
 
 ## Record format
 

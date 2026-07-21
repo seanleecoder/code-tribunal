@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "7b8db8b7792381de5c9b1704b47c71e816dafab0d9200f4881cf115afebe64bf"
+      "sha256": "d0aa71e0af1fbc8ee822a17409899ed538bfebc8a394f4fc1fb4bcce56c233e1"
     },
     "configuration": {
       "files": [
@@ -60,11 +60,11 @@
   "images": {
     "base": {
       "digest": null,
-      "name": null
+      "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
       "digest": null,
-      "name": null
+      "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.0",
