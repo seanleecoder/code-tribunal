@@ -113,7 +113,12 @@ completed.
   `reason: blocking_consensus`.
 - Direct resolve then reopen preserved discussion
   `f468894a31baa36a4b1c19e0eb296913ed75b917` and root note `3583823567`.
-- Body-change, genuinely unrelated line movement, summary fallback, a second
-  unchanged P0 rerun, and the actual-secret-value audit remain pending.
+- An unchanged retry used bridge `15460824703` and child pipeline `2694773267`.
+  Prepare `15460824960`, consensus `15460824969`, post `15460824970`, and gate
+  `15460824971` completed against the same head. Post created no discussion and
+  updated the same discussion/root-note pair above; the full three-reviewer
+  panel and blocking gate result were unchanged.
+- Body-change, genuinely unrelated line movement, summary fallback, and the
+  actual-secret-value audit remain pending.
 
 Replacement verdict remains **partial**.
