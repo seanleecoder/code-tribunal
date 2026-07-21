@@ -24,9 +24,9 @@ wins.
 
 1. Keep SPEC-31–36 and SPEC-39 milestone A regression tests green.
 2. Complete SPEC-38 repository documentation/checking changes.
-3. Follow [SPEC-40](spec-40-1.0-finalization-execution-plan.md) to correct final
-   defaults, freeze one runtime source, publish its images, and prepare aligned
-   release inputs.
+3. Follow [SPEC-40](spec-40-1.0-finalization-execution-plan.md) to implement
+   release binding, correct final defaults, freeze one runtime source, publish
+   its images, and prepare aligned release inputs.
 4. Execute the [live evidence matrix](../history/evidence/README.md) against that
    exact source/image/template set.
 5. Close SPEC-38 only when required evidence is recorded and claims link to it.

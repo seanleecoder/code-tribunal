@@ -97,6 +97,12 @@ If another path is necessary, a human must classify it. A runtime-affecting
 path forces a new `R`; a demonstrably documentation-only path may be added to
 the allowlist with an explanation and test.
 
+The automated changed-path check operates at path granularity only. It cannot
+prove that `docs/improvement-specs/**` contains “status only” edits or that an
+allowed template edit changes pins and nothing else. A human must inspect the
+actual `R..P` diff for those semantic claims; a passing allowlist check is not
+sufficient release approval.
+
 ## Phase 0 — Reconcile and protect the worktree
 
 **Owner:** coding agent. **Human gate:** confirm target repository and release
@@ -132,22 +138,7 @@ which local evidence files are authorized for publication.
 
 **Owner:** coding agent. **Human step:** real default-configuration smoke.
 
-### 1A. Correct and pin the shipped reviewer defaults
-
-1. Change the Claude default model to
-   `anthropic/claude-haiku-4.5` in `ai-review/config/review.yaml`.
-2. Add a regression test that loads the shipped configuration with model
-   override variables absent and asserts:
-   - enabled OpenRouter reviewers use provider-qualified model IDs;
-   - blank workflow variables do not erase YAML defaults;
-   - the default panel/quorum remains internally valid.
-3. Update any image-build probe that intentionally uses a native Anthropic
-   alias only if it is also exercising the OpenRouter route. Do not conflate
-   native-Anthropic CLI argument acceptance with an OpenRouter model smoke.
-4. Keep the documented override mechanism; do not hard-code the live operator's
-   stronger or more expensive model choices as product defaults.
-
-### 1B. Implement release binding before the freeze
+### 1A. Implement release binding before the freeze
 
 Add the smallest deterministic release tooling needed by SPEC-37:
 
@@ -192,6 +183,42 @@ Do not put `P` inside a checked file committed at `P`; that creates a commit
 self-reference. `P` belongs in the generated release asset produced from the
 already-created tag/commit.
 
+This work has no credentialed-live-test dependency. Review and merge it as soon
+as it is green so the later `R` freeze does not wait on release-tooling review.
+
+### 1B. Correct and validate the shipped reviewer model routes
+
+This workstream may proceed in parallel with 1A, but both workstreams and the
+1D live acceptance gate must finish before choosing `R`.
+
+1. Select and commit the intended Claude OpenRouter model identifier. The
+   current candidate is `anthropic/claude-haiku-4.5`; update
+   `ai-review/config/review.yaml` and the exact expected value in its regression
+   test together.
+2. Add a keyless every-push drift guard that loads the shipped configuration
+   with model override variables absent and asserts:
+   - each enabled reviewer routed through OpenRouter by the canonical templates
+     has the expected provider-qualified default;
+   - blank workflow variables do not erase YAML defaults;
+   - each adapter forwards or translates that configured value into its
+     adapter-specific CLI argument/config representation exactly as intended;
+   - the default panel/quorum remains internally valid.
+3. The checked exact value is the repository's selected static contract; the
+   1D credentialed smoke is the operational acceptance gate. If the smoke
+   disproves the selected value, change both configuration and regression test
+   before `R`. Do not make a mutable provider response dynamically define the
+   unit-test expectation.
+4. Update any image-build probe that intentionally uses a native Anthropic
+   alias only if it is also exercising the OpenRouter route. Do not conflate
+   native-Anthropic CLI argument acceptance with an OpenRouter model smoke.
+5. Keep the documented override mechanism; do not hard-code the live operator's
+   stronger or more expensive model choices as product defaults.
+
+Before `R`, also update the stable configuration reference to label
+`panel.grouping.semantic.*` experimental, default-off, and outside the 1.0
+compatibility guarantee. The later stabilize-or-remove decision is not a
+release blocker; honest classification of the shipped surface is.
+
 ### 1C. Automated validation
 
 Run at minimum:
@@ -201,7 +228,8 @@ make quality
 ```
 
 Also run the image build/preflight workflow on the PR. A green mock preflight is
-not the real default-model test.
+not the real default-model test. Confirm the keyless shipped-config and
+adapter-forwarding guards run in ordinary CI, not only in a release workflow.
 
 ### 1D. Human default-model smoke
 
@@ -210,12 +238,13 @@ In an operator-controlled same-repository PR or GitLab MR:
 1. Remove/unset all `AI_REVIEW_<REVIEWER>_MODEL` overrides.
 2. Enable the three shipped default OpenRouter reviewers and keep Cursor off.
 3. Run prepare, review, critique, consensus, post, and gate.
-4. Confirm each reviewer artifact records the expected YAML default and has an
-   operational success status.
-5. Record only sanitized run/job identifiers and outcomes.
+4. Confirm each reviewer artifact records the exact expected YAML default and
+   has an operational success status.
+5. Record the accepted model strings with sanitized run/job identifiers and
+   outcomes.
 
 **Restart condition:** any default reviewer requiring code/config/dependency
-changes returns to Phase 1A.
+changes returns to Phase 1B, then repeats 1C and 1D.
 
 **Exit gate:** reviewed changes are green, the real no-overrides smoke passes,
 and there are no other approved runtime changes waiting to merge.
@@ -313,7 +342,12 @@ from `R`.
 - Verify protected/masked provider and GitLab credentials in project settings.
 - Exercise the selected production topology and the trust auditor.
 - Attempt template/job/image/config override, variable forwarding, forged gate
-  artifact, and every required symlink escape.
+  artifact, and the SPEC-31 hostile snapshot cases: relative, absolute,
+  parent-escaping, dangling, file, and directory symlinks, including Linux
+  `/proc/self/environ` where available.
+- Treat the symlink test as positive containment evidence: prepare must fail
+  before producing a usable snapshot, and the sentinel value must be absent
+  from every trace and downloadable artifact.
 - Inspect all traces and downloadable artifacts for the actual secret values
   using a non-disclosing comparison; pattern scans alone are insufficient.
 - Record no secret or proprietary content.
@@ -362,22 +396,28 @@ digests, and a release-allowlisted `P`; known unexercised paths are explicit.
 2. Convert `CHANGELOG.md` from `Unreleased` to `[1.0.0] - YYYY-MM-DD`; include
    migration, rollback, known limitations, and the container/template-only
    distribution decision.
-3. Ensure final release notes link installation, upgrade, security boundaries,
-   evidence, rollback, and the manifest verification command.
-4. Run on final `main`:
+3. Record the exact validated `v0.4.0` rollback baseline: template source commit,
+   base image subject/digest, and reviewer image subject/digest. Release notes
+   must explain that 1.0 rollback means re-pinning to this immutable set, not a
+   nonexistent earlier 1.0 image.
+4. Ensure final release notes link installation, upgrade, security boundaries,
+   evidence, the concrete `v0.4.0` rollback procedure, and the manifest
+   verification command.
+5. Run on final `main`:
    - `make quality`;
    - release-input and changed-path allowlist checks;
    - canonical template parsing/drift checks;
    - anonymous pulls and both attestation verifications.
-5. Record final `main` as `P`. Confirm `R..P` contains no runtime-affecting path.
-6. Create an annotated or signed `v1.0.0` tag at exactly `P`.
-7. Generate `release-manifest.json` from tag `v1.0.0`, `R`, `P`, checked release
+6. Record final `main` as `P`. Confirm `R..P` contains no runtime-affecting path.
+7. Create an annotated or signed `v1.0.0` tag at exactly `P`.
+8. Generate `release-manifest.json` from tag `v1.0.0`, `R`, `P`, checked release
    inputs, run IDs, and evidence records. Validate it, compute its SHA-256, and
    attach both files to the GitHub release.
-8. Publish release notes and mark 0.x prereleases appropriately; do not mutate
+9. Publish release notes and mark 0.x prereleases appropriately; do not mutate
    prior image tags.
-9. From a clean third-party context, repeat the documented installation and
-   manifest verification steps.
+10. From a clean third-party context, repeat the documented installation,
+    manifest verification, and re-pin from 1.0 to the recorded `v0.4.0` rollback
+    set.
 
 Representative publication sequence after approval:
 
@@ -433,9 +473,14 @@ The human operator hands the coding agent:
 - [ ] GitHub lifecycle/state/required-check evidence is a scoped pass.
 - [ ] GitHub revision-race/406 evidence is a scoped pass.
 - [ ] Evidence is sanitized and names all unexercised paths.
+- [ ] The configuration reference marks semantic grouping experimental,
+  default-off, and outside the 1.0 compatibility guarantee.
 - [ ] Changelog, release notes, tag, release inputs, and generated manifest agree
   on `1.0.0`, `R`, `P`, and both digests.
-- [ ] A clean third-party verification of installation and rollback succeeds.
+- [ ] Release notes name the exact validated `v0.4.0` rollback template commit and
+  both immutable image digests.
+- [ ] A clean third-party verification of installation and re-pinning from 1.0
+  to that `v0.4.0` rollback set succeeds.
 
 Only when every item is checked is the verdict **ready for 1.0.0**.
 
@@ -445,7 +490,7 @@ Keep these out of the finalization critical path unless live evidence proves
 they are required for correctness:
 
 - honor bounded `Retry-After` on HTTP 429;
-- decide whether semantic grouping remains experimental or is removed from the
-  stable configuration surface;
+- decide whether to stabilize semantic grouping or remove it from the stable
+  configuration surface after shipping it with the required experimental label;
 - execute SPEC-39 milestone B posting decomposition;
 - improve bot-identity migration only through a separately authenticated design.
