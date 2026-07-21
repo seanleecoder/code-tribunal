@@ -59,24 +59,21 @@
   },
   "images": {
     "base": {
-      "digest": "sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.0",
-  "runtime_source": "963ae5ef8415f6866258ca24c7b5b0b054f58411",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "29819592071",
-    "evidence_record_ids": [
-      "image-publication-verification-963ae5ef",
-      "github-default-model-smoke-29824326048"
-    ],
-    "publication_run_id": "29819592080"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "publication_run_id": null
   }
 }
