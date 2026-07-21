@@ -2,7 +2,7 @@
 
 Status: pending
 
-> Draft prepared against release-candidate `5a24b55`. Fill the `<...>`
+> Draft prepared against release-candidate `963ae5e`. Fill the `<...>`
 > placeholders and the Actual result / Audit / Verdict sections as you execute.
 > Record only sanitized identifiers, digests, expected/actual outcomes, and
 > audit results.
@@ -17,21 +17,21 @@ setup: [`docs/getting-started/github.md`](../../getting-started/github.md).
 - Platform and version: GitHub.com (Actions)
 - Date/time and timezone:
 - Deployment topology: same-repository pull request (external forks are skipped by design)
-- Consumer/template project: <scratch consumer repo> / workflow from `5a24b55`
+- Consumer/template project: <scratch consumer repo> / workflow from `aa3b171ee65e734fb352d933288c4871de406ce2`
 - Change request: PR `#<n>` (small reviewable change on a same-repo branch)
 - Pipeline/workflow run: <Actions run URL> (list one per lifecycle step)
 - Relevant job IDs: prepare/reviewers/consensus/post/gate `<ids per run>`
-- Source commit: `5a24b557e793447fd41b7244c715a134bc1b9592`
+- Source commit: `963ae5ef8415f6866258ca24c7b5b0b054f58411`
 - Template/workflow commit: `<consumer .github/workflows/ai-review.yml source SHA>`
-- Base image tag and digest: `1.0-5a24b557e793447fd41b7244c715a134bc1b9592`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:eb8e5d1e9d611f4056216c88a58e10bcb33b758d2fabb7a93b5ddb567d3271b2`
-- Reviewer image tag and digest: `1.0-5a24b557e793447fd41b7244c715a134bc1b9592`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a`
+- Base image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
+- Reviewer image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
 
 ## Preconditions
 
 - Both images published from one reviewed RC commit and **digests verified**
-  against publish run `29699507298` (values above).
+  against publish run `29819592080` (values above).
 - Secrets configured: `OPENROUTER_API_KEY` (+ optional `AI_REVIEW_GITHUB_RESOLVE_TOKEN`).
 - **Required blocking check verified:** the `gate` job is added as a **required
   status check** in the branch ruleset/protection — not merely
@@ -77,5 +77,5 @@ Perform on one PR; capture run/job IDs and platform object IDs (comment/review I
 ## Verdict
 
 Pending. Replace with a scoped pass/fail statement naming exactly what this run
-proves (same-repo PR topology, source `5a24b55`, the two image digests above);
+proves (same-repo PR topology, source `963ae5e`, the two image digests above);
 do not generalize beyond the recorded topology, source, and images.

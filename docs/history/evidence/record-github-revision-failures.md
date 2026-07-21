@@ -2,7 +2,7 @@
 
 Status: pending
 
-> Draft prepared against release-candidate `5a24b55`. Fill the `<...>`
+> Draft prepared against release-candidate `963ae5e`. Fill the `<...>`
 > placeholders and the Actual result / Audit / Verdict sections as you execute.
 > Record only sanitized identifiers, digests, expected/actual outcomes, and
 > audit results. These live smokes **complement** the SPEC-34 regression tests
@@ -18,21 +18,21 @@ prepare boundaries and oversized raw-diff failure. Procedure:
 - Platform and version: GitHub.com (Actions)
 - Date/time and timezone:
 - Deployment topology: same-repository pull request
-- Consumer/template project: <scratch consumer repo> / workflow from `5a24b55`
+- Consumer/template project: <scratch consumer repo> / workflow from `aa3b171ee65e734fb352d933288c4871de406ce2`
 - Change request: PR `#<n>`
 - Pipeline/workflow run: <Actions run URL(s)>
 - Relevant job IDs: prepare `<id>` (+ post/gate as reached)
-- Source commit: `5a24b557e793447fd41b7244c715a134bc1b9592`
+- Source commit: `963ae5ef8415f6866258ca24c7b5b0b054f58411`
 - Template/workflow commit: `<consumer workflow source SHA>`
-- Base image tag and digest: `1.0-5a24b557e793447fd41b7244c715a134bc1b9592`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:eb8e5d1e9d611f4056216c88a58e10bcb33b758d2fabb7a93b5ddb567d3271b2`
-- Reviewer image tag and digest: `1.0-5a24b557e793447fd41b7244c715a134bc1b9592`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a`
+- Base image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
+- Reviewer image tag and digest: `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`
+  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
 
 ## Preconditions
 
 - Both images published from one reviewed RC commit and **digests verified**
-  against publish run `29699507298` (values above).
+  against publish run `29819592080` (values above).
 - Expected behavior: `prepare` binds the diff, snapshot, and manifest to one
   immutable revision; if the head moves during preparation it **fails closed**
   with a stale-input error and emits **no reviewable bundle**; an oversized raw
@@ -74,5 +74,5 @@ a mixed revision is produced.
 ## Verdict
 
 Pending. Replace with a scoped pass/fail statement naming exactly what this run
-proves (same-repo PR topology, source `5a24b55`, the two image digests above);
+proves (same-repo PR topology, source `963ae5e`, the two image digests above);
 do not generalize beyond the recorded topology, source, and images.

@@ -7,14 +7,17 @@ its record file. This complements — does not replace — the executable tests
 
 ## Release candidate under test
 
-- Source commit: `5a24b557e793447fd41b7244c715a134bc1b9592` (`main` HEAD)
-- Quality gate: CI `make quality` run **29699507327** — success (SPEC-31/34
+- Source commit: `963ae5ef8415f6866258ca24c7b5b0b054f58411` (`main` HEAD)
+- Quality gate: CI `make quality` run **29819592071** — success (SPEC-31/34
   regression tests are inside this run).
-- Publish run: **29699507298** — success
-  (<https://github.com/seanleecoder/code-tribunal/actions/runs/29699507298>)
-- Images (GHCR, tag `1.0-5a24b557e793447fd41b7244c715a134bc1b9592`):
-  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:eb8e5d1e9d611f4056216c88a58e10bcb33b758d2fabb7a93b5ddb567d3271b2`
-  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a`
+- Publish run: **29819592080** — success
+  (<https://github.com/seanleecoder/code-tribunal/actions/runs/29819592080>)
+- Images (GHCR, tag `1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411`):
+  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
+  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
+- Default-model smoke: GitHub Actions run **29824326048** — passed with the
+  three shipped OpenRouter defaults and Cursor disabled; see
+  [the sanitized record](record-github-default-model-smoke.md).
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
@@ -24,10 +27,10 @@ its record file. This complements — does not replace — the executable tests
 From any machine with registry access (anonymous pulls should work — GHCR public):
 
 ```bash
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:eb8e5d1e9d611f4056216c88a58e10bcb33b758d2fabb7a93b5ddb567d3271b2
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae
 # Optional: verify build provenance attestation
-gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:b43f5a14939d76589cfa790a0f54565468b40a411ed9ebd6a4f08844d984863a \
+gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae \
   --repo seanleecoder/code-tribunal
 ```
 
@@ -43,7 +46,8 @@ key. Prerequisites:
   `ai-review/ci/` at a fixed SHA; a runner; protected+masked `OPENROUTER_API_KEY`
   and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled. Setup:
   [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
-- **GitHub:** a scratch consumer repo with the workflow copied from `5a24b55`;
+- **GitHub:** a scratch consumer repo with the workflow copied from
+  `aa3b171ee65e734fb352d933288c4871de406ce2`;
   `OPENROUTER_API_KEY` secret; the `gate` job added as a **required status
   check** in branch protection/ruleset. Setup:
   [`docs/getting-started/github.md`](../../getting-started/github.md).
