@@ -9,7 +9,7 @@ reviewers:
   claude:
     enabled: true # Override: AI_REVIEW_CLAUDE_ENABLED
     adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
-    model: claude-haiku-4.5 # Model identifier passed to CLI adapter (override: AI_REVIEW_CLAUDE_MODEL)
+    model: anthropic/claude-haiku-4.5 # OpenRouter provider-qualified model identifier (override: AI_REVIEW_CLAUDE_MODEL)
     effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — timeout_seconds stays the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
     timeout_seconds: 600 # Execution timeout per reviewer job (10 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~3x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
     # No turn cap: Claude runs its agentic loop to completion, bounded by

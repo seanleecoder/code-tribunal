@@ -633,6 +633,7 @@ PY
         # --bare would break ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
         self.assertNotIn("--bare", cli_args)
         self.assertIn("--safe-mode", cli_args)
+        self.assertIn("--model anthropic/claude-haiku-4.5", cli_args)
         # claude explores a clean copy of the pinned MR snapshot rooted at its
         # working directory (like codex --cd / opencode --dir), not the ambient
         # CI checkout nor the input/snapshot dirs directly.

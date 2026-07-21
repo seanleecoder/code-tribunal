@@ -45,6 +45,9 @@ case "$1" in
     scripts/check_supply_chain_pins.py)
         exit "${STUB_SUPPLY_CHAIN_STATUS:-0}"
         ;;
+    scripts/check_release_inputs.py)
+        exit "${STUB_RELEASE_INPUTS_STATUS:-0}"
+        ;;
 esac
 exit 0
 """,
@@ -138,6 +141,7 @@ exit 0
         self.assertTrue(
             any(call == "scripts/check_supply_chain_pins.py" for call in calls)
         )
+        self.assertIn("scripts/check_release_inputs.py", calls)
 
 
 @unittest.skipUnless(

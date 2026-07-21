@@ -14,7 +14,7 @@ _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 def _base_config() -> dict:
     return {
         "reviewers": {
-            "claude": {"model": "claude-haiku-4.5", "enabled": True},
+            "claude": {"model": "anthropic/claude-haiku-4.5", "enabled": True},
             "codex": {"model": "openai/gpt-5.4-mini", "enabled": True},
             "opencode": {"model": "google/gemini-3.1-flash-lite", "enabled": True},
             "cursor": {"model": "auto", "enabled": False},
@@ -46,13 +46,39 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/other-model")
         self.assertEqual(config["reviewers"]["opencode"]["model"], "google/other-model")
         # Untouched reviewer keeps its config default.
-        self.assertEqual(config["reviewers"]["claude"]["model"], "claude-haiku-4.5")
+        self.assertEqual(
+            config["reviewers"]["claude"]["model"], "anthropic/claude-haiku-4.5"
+        )
 
     def test_blank_model_override_is_ignored(self) -> None:
         config = _base_config()
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "   "}, clear=True):
             apply_env_overrides(config)
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-5.4-mini")
+
+    def test_shipped_openrouter_defaults_survive_blank_workflow_values(self) -> None:
+        blank_overrides = {
+            "AI_REVIEW_CLAUDE_MODEL": "",
+            "AI_REVIEW_CODEX_MODEL": "",
+            "AI_REVIEW_OPENCODE_MODEL": "",
+        }
+        with mock.patch.dict("os.environ", blank_overrides, clear=True):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertEqual(
+            {
+                name: (reviewer["enabled"], reviewer["model"])
+                for name, reviewer in config["reviewers"].items()
+                if name != "cursor"
+            },
+            {
+                "claude": (True, "anthropic/claude-haiku-4.5"),
+                "codex": (True, "openai/gpt-5.4-mini"),
+                "opencode": (True, "google/gemini-3.1-flash-lite"),
+            },
+        )
+        self.assertEqual(config["panel"]["quorum"]["votes_required"], 2)
+        self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 2)
 
     def test_reviewer_enabled_override(self) -> None:
         config = _base_config()

@@ -39,6 +39,22 @@ If current repository or platform state differs, update this spec's execution
 record or the active evidence records before changing code. Do not silently
 apply stale SHAs or digests.
 
+### Execution record — 2026-07-21
+
+- Reconciled `origin/main` at
+  `52c5313928806a565eddc44454e154f11273f075`, which includes this execution
+  plan after the historical `45ec1d3` baseline.
+- GitHub CI run `29816017626` and image-publication run `29816017686` both
+  succeeded for that exact head. These runs are discovery inputs only; the
+  commit has not been approved as runtime source `R`.
+- PR #69, “Add 1.0 RC evidence runbook and test records,” remains open at
+  `3e6535711ccea005e3127d7f565b9681e2c2dac0` and must be reviewed or otherwise
+  dispositioned before the runtime freeze.
+- Existing releases remain prereleases through `v0.4.0`; no `v1.0.0` tag or
+  GitHub release was observed.
+- The local worktree was clean before creating
+  `codex/spec-40-phase1-finalization` for Phase 1 implementation.
+
 ## Roles
 
 | Role | May do | Must not do |
