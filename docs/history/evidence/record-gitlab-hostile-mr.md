@@ -135,9 +135,10 @@ It does not rebind the invalidated evidence above.
   prepare `15460647448`); dangling MR !8 (`2694750420` / `2694750457`, prepare
   `15460672375`); directory-target MR !9 (`2694750370` / `2694750423`, prepare
   `15460672165`). The proc target was not printed in its trace.
-- Generic structural scans were clean. A non-disclosing comparison against the
-  actual current secret values is still required before this replacement suite
-  can pass.
+- Generic structural scans were clean. The operator completed a non-disclosing
+  exact-value audit against the current GitLab secret values on 2026-07-21; no
+  configured secret value appeared in the downloaded GitLab traces or artifacts
+  covered by that audit.
 - Still unexercised against P0: template/job replacement, trusted image/config
   override at a credential-bearing boundary, and forged gate artifact rejection.
 

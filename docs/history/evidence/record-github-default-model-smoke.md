@@ -1,7 +1,6 @@
 # Evidence record: GitHub default-model smoke / 2026-07-21
 
-Status: passed for superseded candidates; replacement candidate technical pass,
-actual-secret-value audit pending
+Status: passed for superseded candidates; replacement candidate scoped pass
 
 ## Identity
 
@@ -84,8 +83,10 @@ and reviewer digest
   fixture produced blocking consensus, so the workflow's failure conclusion is
   the expected gate outcome rather than a default-model failure.
 
-This is a technical replacement-candidate pass. The non-disclosing comparison
-against the actual current secret values remains required before release.
+This is a replacement-candidate scoped pass. The operator completed a
+non-disclosing exact-value audit against the current GitHub secret values on
+2026-07-21; no configured secret value appeared in the downloaded GitHub traces
+covered by that audit.
 
 ## Audit
 
@@ -98,6 +99,8 @@ against the actual current secret values remains required before release.
 - Logs inspected: workflow and per-job conclusions through GitHub Actions run
   metadata.
 - Credential audit scope: no credential values were copied into this record.
+  The replacement-candidate operator exact-value audit covered the current
+  GitHub secret values without disclosing them in this repository.
 - Known unexercised paths: this smoke does not replace the separate GitHub and
   GitLab lifecycle, hostile-MR, revision-race, or oversized-diff live records.
 
@@ -110,4 +113,4 @@ defect, so this pass must be repeated against replacement images; it does not
 authorize release of either superseded candidate.
 
 Replacement run `29848500791` passes the full-panel default-model criterion for
-P0. Its actual-secret-value audit is still pending.
+P0, including the operator-cleared actual-secret-value audit.

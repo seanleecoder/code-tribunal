@@ -164,8 +164,10 @@ remaining lifecycle paths must be repeated against the replacement runtime.
   artifact recorded `created_discussions=4`, `updated_discussions=0`, and
   `resolved_discussions=2`. This satisfies the P0 PR-event blocking
   required-check proof.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitHub
+  secret values and downloaded GitHub traces/logs covered by the audit. Secret
+  values are intentionally not recorded here.
 - Still pending: a positive changed-body in-place update, genuinely unrelated
-  line movement, deliberate summary-fallback mapping, and the actual-secret-value
-  audit.
+  line movement, and deliberate summary-fallback mapping.
 
 Replacement verdict remains **partial**.

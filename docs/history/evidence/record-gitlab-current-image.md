@@ -127,7 +127,10 @@ completed.
   / `3583823567` was resolved by the bot and no replacement inline discussion
   was posted. This is useful lifecycle evidence, but it is not the expected
   in-place update path for step 3.
-- Genuinely unrelated line movement, summary fallback, and the
-  actual-secret-value audit remain pending.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitLab
+  secret values and downloaded GitLab traces/artifacts covered by the audit.
+  Secret values are intentionally not recorded here.
+- Genuinely unrelated line movement and summary fallback remain pending as RC
+  accepted gaps.
 
 Replacement verdict remains **partial**.

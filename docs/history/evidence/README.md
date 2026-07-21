@@ -18,11 +18,11 @@ model content.
 | Suite | Required coverage | Status |
 |---|---|---|
 | Image publication verification | Anonymous digest pulls, OCI revision labels, and GitHub provenance attestations for both images | **Scoped pass** — [15d424f images](record-image-publication-verification.md) |
-| GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Replacement technical pass** — P0 run `29848500791` reached the expected full panel; actual-secret-value audit pending; [record](record-github-default-model-smoke.md) |
-| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Replacement partial** — credential boundary, forwarding attempt, and five isolated symlink classes passed structurally; remaining overrides/forgery and actual-value audit are listed in the [record](record-gitlab-hostile-mr.md) |
-| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Replacement partial** — full-panel blocking run, direct resolve/reopen, and unchanged idempotency passed; a changed-body probe resolved the old thread instead of updating in place; remaining lifecycle steps are listed in the [record](record-gitlab-current-image.md) |
-| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Replacement partial** — classic-token resolve/reopen, owner-command persistence, stale-head no-op, and PR-event required-check blocking passed; the changed-body probe fell back to summary-only behavior, and the remaining lifecycle paths are listed in the [record](record-github-current-image.md) |
-| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Replacement partial** — P0 before-diff and checkout-mismatch races passed fail-closed; remaining boundaries and HTTP 406 are listed in the [record](record-github-revision-failures.md) |
+| GitHub default-model smoke | No model overrides, three shipped OpenRouter defaults operational, Cursor disabled, full panel and gate | **Replacement scoped pass** — P0 run `29848500791` reached the expected full panel; operator exact-value audit passed; [record](record-github-default-model-smoke.md) |
+| GitLab hostile MR | Protected variables, direct/child trust audit, symlink attack, artifact/log inspection, no token exposure | **Replacement partial / RC accepted gap** — credential boundary, forwarding attempt, and five isolated symlink classes passed structurally; remaining overrides/forgery are listed in the [record](record-gitlab-hostile-mr.md) |
+| GitLab current image | Create, update, resolve, reopen, state persistence, blocking gate | **Replacement partial / RC accepted gap** — full-panel blocking run, direct resolve/reopen, unchanged idempotency, and operator exact-value audit passed; a changed-body probe resolved the old thread instead of updating in place; remaining lifecycle steps are listed in the [record](record-gitlab-current-image.md) |
+| GitHub current image | Inline create/update, summary fallback, commands, state persistence, stale head, required blocking check | **Replacement partial / RC accepted gap** — classic-token resolve/reopen, owner-command persistence, stale-head no-op, PR-event required-check blocking, and operator exact-value audit passed; the changed-body probe fell back to summary-only behavior, and the remaining lifecycle paths are listed in the [record](record-github-current-image.md) |
+| GitHub revision failures | Revision race at prepare boundaries and oversized raw-diff failure | **Replacement partial / RC accepted gap** — P0 before-diff and checkout-mismatch races passed fail-closed; manifest-finalization live timing and HTTP 406 are listed in the [record](record-github-revision-failures.md) |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
@@ -30,9 +30,11 @@ check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
 [legacy acceptance](../acceptance/README.md).
 
-Until every partial or outstanding row is complete against the intended release-candidate
-source and images, current docs must qualify rather than assert product-wide
-“stable,” “credential isolated,” or equivalent deployment claims.
+The 1.0.0 RC carries explicit known gaps for remaining live lifecycle variants,
+GitHub manifest-finalization timing, and GitHub oversized raw-diff HTTP 406.
+Until those are completed or explicitly waived for final 1.0.0, current docs
+must qualify rather than assert product-wide “stable,” “credential isolated,”
+or equivalent deployment claims.
 
 ## Record format
 

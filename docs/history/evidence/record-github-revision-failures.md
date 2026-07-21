@@ -128,7 +128,10 @@ boundaries and oversized-diff behavior are exercised live.
   post, and gate completed successfully. The follow-up run for the marker
   commit, `29867063070`, was cancelled. This is retained as a setup attempt,
   not positive stale-finalization evidence.
-- Manifest-finalization re-read, oversized raw-diff HTTP 406, and the
-  actual-secret-value audit remain pending.
+- Operator exact-value audit: passed on 2026-07-21 against the current GitHub
+  secret values and downloaded GitHub traces/logs covered by the audit. Secret
+  values are intentionally not recorded here.
+- Manifest-finalization re-read and oversized raw-diff HTTP 406 remain pending
+  as RC accepted gaps.
 
 Replacement verdict remains **partial**.
