@@ -18,15 +18,19 @@ wins.
 | [SPEC-37](spec-37-final-release-artifacts.md) | Active final gate | Publish/tag exact final source after documentation/evidence and milestone A. |
 | [SPEC-38](spec-38-documentation-evidence-restructure.md) | Active | Task-oriented docs/checks implemented; required live evidence remains open until recorded. |
 | [SPEC-39](spec-39-simplification-deletion.md) | Milestone A complete; B post-1.0 | Container-only contract cleanup landed; posting decomposition may follow in 1.0.x. |
+| [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | Active release handoff | Coordinates the coding-agent and human-operator sequence that closes SPEC-37/38. |
 
 ## Active dependency order
 
 1. Keep SPEC-31–36 and SPEC-39 milestone A regression tests green.
 2. Complete SPEC-38 repository documentation/checking changes.
-3. Publish release-candidate images from one reviewed commit and execute the
-   [live evidence matrix](../history/evidence/README.md).
-4. Close SPEC-38 only when required evidence is recorded and claims link to it.
-5. Execute SPEC-37 to update final pins, version, changelog, tag, and release.
+3. Follow [SPEC-40](spec-40-1.0-finalization-execution-plan.md) to implement
+   release binding, correct final defaults, freeze one runtime source, publish
+   its images, and prepare aligned release inputs.
+4. Execute the [live evidence matrix](../history/evidence/README.md) against that
+   exact source/image/template set.
+5. Close SPEC-38 only when required evidence is recorded and claims link to it.
+6. Execute SPEC-37's final manifest, changelog, tag, and release gates.
 
 ## Historical indexes
 
