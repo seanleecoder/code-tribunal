@@ -16,6 +16,10 @@ def evaluate_gate(
     """Evaluate merge-gate status with fail-closed operational precedence.
 
     Precedence:
+    0. Cross-artifact integrity: a ``post_result`` bound to a different run than
+       the ``consensus`` is rejected fail-closed with exit ``7`` (SPEC-33 — every
+       consumed artifact is bound to one run). A forged or stale post artifact
+       cannot make the gate ignore the current run's blocking consensus.
     1. Post/state operational failures (``failed``, ``partial_failed``,
        ``state_overflow``) always fail closed with exit ``7``, even when
        ``merge_gate.enabled`` is false.
@@ -24,6 +28,17 @@ def evaluate_gate(
        ``summary.block_merge`` and return ``skipped_disabled`` (exit ``0``).
     4. Otherwise enforce consensus ``block_merge``.
     """
+    post_run_id = post_result.get("run_id")
+    if post_run_id is not None and post_run_id != consensus["run_id"]:
+        mismatch_result: GateResult = {
+            "schema_version": "gate_result.v1",
+            "run_id": consensus["run_id"],
+            "status": "failed_post_result",
+            "block_merge": True,
+            "reason": "post_result_run_id_mismatch",
+        }
+        return mismatch_result, 7
+
     if post_result["status"] in {"failed", "partial_failed", "state_overflow"}:
         post_failure_result: GateResult = {
             "schema_version": "gate_result.v1",

@@ -174,6 +174,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
 | `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. |
+| `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
 | `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Prevent missing provider prerequisites from falling back to mock behavior. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |
 | `AI_REVIEW_REQUIRE_REAL_OPENCODE` | Require the real OpenCode CLI. |

@@ -92,9 +92,17 @@ source beyond policy, or unnecessary model-authored content in evidence.
 
 Control cost by selecting models, disabling unused seats, setting reviewer
 timeouts and finding caps, bounding diff/files/prompt size, and optionally
-disabling critique. Validate panel thresholds after changing seats. The product
-does not currently provide the proposed per-reviewer token/cost accounting from
-SPEC-20, so provider billing remains the authoritative cost source.
+disabling critique (critique is a second model pass, so disabling it roughly
+halves reviewer calls). Validate panel thresholds after changing seats. The
+product does not currently provide the proposed per-reviewer token/cost
+accounting from SPEC-20, so provider billing remains the authoritative cost
+source; record it per run when collecting live evidence.
+
+For validation and lifecycle rehearsal without model spend, the deterministic
+mock reviewer (`AI_REVIEW_LOCAL_MOCK=1`, scenario via `AI_REVIEW_MOCK_SCENARIO`)
+drives the real posting/state/gate path with a canned finding set and no provider
+calls. Scope those variables pipeline-wide so prepare, review, critique, and
+consensus agree on the effective-config digest.
 
 ## Image pin rotation
 

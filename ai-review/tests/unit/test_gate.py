@@ -102,6 +102,46 @@ class GateTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "passed_stale_head")
 
+    def test_forged_post_result_from_another_run_fails_closed(self) -> None:
+        # SPEC-33: a post_result bound to a different run than the consensus is
+        # rejected fail-closed. A forged/stale artifact claiming stale_head must
+        # not let the gate ignore the current run's blocking consensus.
+        result, exit_code = evaluate_gate(
+            self._config(),
+            self._consensus(True),
+            {"status": "stale_head", "run_id": "some-other-run"},
+        )
+        self.assertEqual(exit_code, 7)
+        self.assertEqual(result["status"], "failed_post_result")
+        self.assertTrue(result["block_merge"])
+        self.assertEqual(result["reason"], "post_result_run_id_mismatch")
+        validate_instance(result, "gate_result.schema.json")
+
+    def test_forged_post_result_mismatch_fails_closed_even_when_disabled(self) -> None:
+        # The integrity binding is fail-closed regardless of merge_gate.enabled,
+        # matching the operational-failure precedence.
+        result, exit_code = evaluate_gate(
+            self._config(False),
+            self._consensus(False),
+            {"status": "success", "run_id": "mismatched"},
+        )
+        self.assertEqual(exit_code, 7)
+        self.assertEqual(result["status"], "failed_post_result")
+        self.assertTrue(result["block_merge"])
+        self.assertEqual(result["reason"], "post_result_run_id_mismatch")
+
+    def test_matching_run_id_is_accepted(self) -> None:
+        # A post_result whose run_id matches the consensus proceeds to normal
+        # evaluation (regression guard: the binding check must not reject a
+        # legitimately bound artifact).
+        result, exit_code = evaluate_gate(
+            self._config(),
+            self._consensus(False),
+            {"status": "success", "run_id": "run"},
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+
     def test_gate_passes_when_disabled(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(False),
