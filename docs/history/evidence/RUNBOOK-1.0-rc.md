@@ -34,13 +34,20 @@ tests that cover each row.
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
 
-> **Precondition for the deterministic-mock procedure.** The digests pinned above
-> (`15d424f`) predate the `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate
-> `run_id` binding this runbook relies on. Before running the mock-based lifecycle
-> steps, publish an RC reviewer image from a commit that includes those changes
-> (or build the reviewer image locally) and **retarget the digests in this
-> runbook and `release/release-inputs.json` to that image**. Republishing is an
-> operator/CI action; do not run the mock steps against the `15d424f` digests.
+> **Precondition for the deterministic-mock procedure — rebuild the base image
+> first.** The digests pinned above (`15d424f`) predate the
+> `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate `run_id` binding this
+> runbook relies on. Both live in `ai-review/src`, which is copied into the
+> **base** image (`ai-review/images/base.Dockerfile`); the reviewer image is built
+> `FROM` the base and inherits it, and the base runs the `prepare`/`consensus`/
+> `post`/`gate` jobs while the reviewer runs `review`/`critique`. So building only
+> a reviewer image atop the old base contains neither change. Before the mock
+> steps: rebuild the **base** image from a commit that includes them, build the
+> **reviewer** `FROM` that exact base, then update **both** digests,
+> `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
+> the image-pin rotation procedure in [operations](../../operations.md)).
+> Republishing is an operator/CI action; do not run the mock steps against the
+> `15d424f` digests. Chain A (the real smoke below) may still use `15d424f`.
 
 ## Step 0 — Verify the RC images (do this first)
 
@@ -119,22 +126,35 @@ against the real diff exactly like a real reviewer's output.
 > The below-quorum **FYI/summary-comment** path and the **inline-unmappable
 > summary fallback** are not reachable through these uniform mock scenarios (the
 > mock emits identical findings across seats, which always group to quorum, and
-> config validation clamps `votes_required` to the enabled-seat count). Both are
+> config validation rejects a `votes_required`/enabled-seat mismatch). Both are
 > **regression-covered** (`integration/test_post_gate_e2e.py` FYI cases and
 > `test_post.py` summary-fallback cases); do not attempt a single-seat FYI live
 > run.
 
-> **Enable the mock in the scratch consumer, scoped identically across jobs.** The
-> shipped templates hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and
-> `AI_REVIEW_REQUIRE_REAL_*: "1"` in the review/critique step (GitHub) or job
-> (GitLab) `env`, and GitHub step `env` cannot be overridden by repository
-> variables. In the **scratch consumer's copied workflow only**, edit those
-> review and critique steps: set `AI_REVIEW_LOCAL_MOCK: "1"`, remove (or set to
-> `"0"`) every `AI_REVIEW_REQUIRE_REAL_*` line, and add
-> `AI_REVIEW_MOCK_SCENARIO: "<scenario>"`. Keep these identical across the
-> prepare/review/critique/consensus jobs — `prepare` stamps the effective-config
-> digest into the manifest and consensus fails closed on divergence (SPEC-33).
-> Never make these edits to a production template.
+**Enabling the mock in the scratch consumer.** The shipped templates hardcode
+`AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run Chain B you
+must set `AI_REVIEW_LOCAL_MOCK=1`, clear every `AI_REVIEW_REQUIRE_REAL_*`, and set
+`AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. Whatever you use,
+scope these **identically across the prepare/review/critique/consensus jobs** —
+`prepare` stamps the effective-config digest into the manifest and consensus fails
+closed on divergence (SPEC-33). Never edit a production template.
+
+- **GitLab** sets these under job `variables:` in the included template, and
+  **project or manual pipeline CI/CD variables override YAML job variables**. So in
+  the scratch consumer set project variables (or "Run pipeline" variables)
+  `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
+  and `AI_REVIEW_MOCK_SCENARIO=<scenario>`. The protected template SHA is unchanged;
+  flip `AI_REVIEW_MOCK_SCENARIO` as a manual variable between steps.
+- **GitHub** step `env` cannot be overridden by repository variables. Make a
+  **one-time** edit to the scratch consumer's copied workflow that maps the
+  review/critique step env to variables/inputs, e.g.
+  `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
+  drop the `AI_REVIEW_REQUIRE_REAL_*` lines, and
+  `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`. Then flip the
+  Actions **repository variable** between Chain B steps — do **not** commit a
+  per-scenario workflow change, since a new commit on the reviewed branch changes
+  the diff and therefore the mock's selected anchor. (`workflow_dispatch` inputs
+  mapped the same way are an equivalent alternative.)
 
 ## The runs
 
@@ -179,11 +199,18 @@ model quality is irrelevant, so no tokens are spent:
 3. change body (`blocking_alt`) → **same discussion updated in place**,
    `updated_discussions=1`, recorded `body_hash` changes, no new discussion
    (identity is preserved because body is excluded from finding identity);
-4. resolve, then reopen → discussion identity preserved across the real platform
-   resolve/reopen API;
-5. push an unrelated line movement (`blocking`) → anchor/identity maintained;
-6. (GitHub) exercise human disposition commands and the stale-head no-op;
-7. force the blocking gate (`blocking`, ≥2 seats) with enforcement on → the
+4. resolve → post a `/ai-review wontfix` disposition command on the discussion,
+   then rerun `blocking`; expect `resolved_discussions>=1`, the thread marked
+   resolved, and the state note to persist the disposition on a further unchanged
+   `blocking` rerun (same discussion id, `skipped_unchanged>=1`);
+5. reopen → clear the disposition via the platform's native resolve/reopen API (or
+   a `/ai-review reopen` command), then rerun `blocking`; expect the same
+   discussion active again with identity preserved (no new discussion created);
+6. push an unrelated line movement (`blocking`) → anchor/identity maintained;
+7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
+   detect the superseded revision and do not act (disposition commands are already
+   covered by steps 4–5);
+8. force the blocking gate (`blocking`, ≥2 seats) with enforcement on → the
    required check / **Pipelines must succeed** actually blocks merge, and the gate
    agrees with `out/consensus/consensus.json` + `out/post/post_result.json`.
 

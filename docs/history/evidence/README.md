@@ -14,6 +14,13 @@ model content.
 > replacement runtime source is `15d424feea730a04338ed423bf93b8797d807bbc`;
 > every release-gating row below except image publication must be repeated
 > against its two published digests.
+>
+> Digest caveat for the mock-based lifecycle: the real default-model smoke
+> (Chain A in the runbook) may run against the `15d424f` digests, but the
+> deterministic-mock lifecycle (Chain B) needs the `AI_REVIEW_MOCK_SCENARIO`
+> reviewer support and gate `run_id` binding that post-date `15d424f`. Chain B
+> requires a base+reviewer image republished from a commit that includes them
+> (see the runbook precondition); it cannot run against the `15d424f` digests.
 
 Live evidence spends real model tokens and real platform quota, so each row is
 classified by whether a live run proves something the regression suite cannot:

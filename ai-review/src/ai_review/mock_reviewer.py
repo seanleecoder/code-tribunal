@@ -32,8 +32,9 @@ from .anchors import parse_unified_diff
 #                 added line. At quorum it surfaces inline without blocking the
 #                 gate. (It does not reach the below-quorum FYI path: the mock
 #                 emits identical findings across seats, which always group to
-#                 quorum, and config validation clamps votes_required to the
-#                 enabled-seat count. The FYI/summary path is regression-covered.)
+#                 quorum, and config validation rejects a votes_required/enabled-
+#                 seat mismatch rather than allowing a below-quorum single seat.
+#                 The FYI/summary path is regression-covered.)
 # - none:         no findings — drives absence-based resolution / withdrawal, not
 #                 an unchanged rerun (an unchanged rerun re-emits the same finding).
 _SCENARIOS = {"default", "blocking", "blocking_alt", "advisory", "none"}

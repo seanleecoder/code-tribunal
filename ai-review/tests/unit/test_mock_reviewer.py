@@ -120,7 +120,7 @@ class MockScenarioTests(unittest.TestCase):
                 "+    return records[0]",
             ]
         )
-        for scenario in ("blocking", "advisory"):
+        for scenario in ("blocking", "blocking_alt", "advisory"):
             finding = self._review(diff, scenario)[0]
             self.assertEqual(
                 finding["anchor"]["start"]["new_line"], 3, f"scenario={scenario}"
