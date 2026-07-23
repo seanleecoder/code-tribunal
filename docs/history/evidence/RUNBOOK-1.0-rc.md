@@ -135,12 +135,23 @@ instead of calling a model (an adapter still falls back to a real CLI if any
 the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
 anchored to the `records[0]`/`data[0]` indexing marker when the diff contains one
 (via `_find_indexing_candidate`), otherwise the first added line. **Give the
-Chain B diff a stable indexing marker** (the shipped
-`ai-review/tests/fixtures/diffs/simple.diff` has one): the marker pins the anchor
-to the same line across reruns and unrelated line movements, so finding identity
-(`context_hash` → `source_finding_id`) stays stable. The first-added-line fallback
-does **not** — inserting a line above shifts which line is "first added", changing
-the anchor and opening a new discussion. The scenarios:
+Chain B diff a stable indexing marker** so finding identity
+(`context_hash` → `source_finding_id`) survives reruns and the body change; the
+shipped `ai-review/tests/fixtures/diffs/simple.diff` has one and is enough for
+every step *except* the line movement. The first-added-line fallback is not
+stable — inserting a line above shifts which line is "first added", changing the
+anchor and opening a new discussion.
+
+> **Line-movement step needs a padded marker (`simple.diff` is not enough).**
+> `context_hash_from_unified_diff` hashes a ±6 window over the flattened new-side
+> lines, so the marker keeps a stable hash under an insert-above **only if it has
+> ≥6 unchanged new-side lines above and below it**. In `simple.diff` the marker is
+> the *second* new-side line, so any line inserted above it lands inside the window
+> and changes the hash — identity breaks. For step 6, use a diff shaped like the
+> e2e `_marker_diff` helper (8 stable context lines on each side of a
+> `records[0]` marker), not `simple.diff`.
+
+The scenarios:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
@@ -280,11 +291,14 @@ model quality is irrelevant, so no tokens are spent:
 5. reopen → clear the disposition via the platform's native resolve/reopen API (or
    a `/ai-review reopen` command), then rerun `blocking`; expect the same
    discussion active again with identity preserved (no new discussion created);
-6. push an unrelated line movement (`blocking`) **outside the marker's context
+6. push an unrelated line movement (`blocking`) **outside the marker's ±6 context
    window** → the mock re-anchors to the stable `records[0]`/`data[0]` marker, so
    `context_hash`/identity are maintained and post remaps the existing discussion
-   in place (no new discussion). Requires the marker in the diff — see the
-   deterministic-mock section; the first-added-line fallback would not hold;
+   in place (no new discussion). Use a **padded marker diff** (≥6, e.g. 8,
+   unchanged new-side lines above and below the marker, like the e2e `_marker_diff`
+   helper) — `simple.diff` is not sufficient here (its marker sits one line from
+   the top, so an insert-above falls inside the window and breaks identity), and
+   the first-added-line fallback would not hold either;
 7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
    detect the superseded revision and do not act (disposition commands are already
    covered by steps 4–5);
