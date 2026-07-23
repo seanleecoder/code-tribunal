@@ -11,9 +11,10 @@ model content.
 > demonstrated that repository-owner disposition commands were ignored when
 > the workflow token could not inspect collaborator permissions. The scoped
 > results below remain historical evidence for those exact images. The
-> replacement runtime source is `15d424feea730a04338ed423bf93b8797d807bbc`;
-> every release-gating row below except image publication must be repeated
-> against its two published digests.
+> replacement runtime source `15d424feea730a04338ed423bf93b8797d807bbc` is itself
+> now superseded (see the digest note below); **every release-gating row below,
+> including image publication, must be repeated against the final rebuilt
+> base+reviewer pair.**
 >
 > Digest note: the `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate
 > `run_id` binding post-date `15d424f` and ship inside the product image, so the
@@ -35,7 +36,7 @@ classified by whether a live run proves something the regression suite cannot:
 
 | Suite | Tier | Regression coverage (`make quality`) | Status |
 |---|---|---|---|
-| Image publication verification | release-gating | n/a (registry/attestation) | **Scoped pass** — [15d424f images](record-image-publication-verification.md) |
+| Image publication verification | release-gating | n/a (registry/attestation) | **Pending re-verification** against the rebuilt final pair (anonymous digest pull, OCI revision label, provenance attestation). The [`15d424f` scoped pass](record-image-publication-verification.md) is historical only — those images are superseded. |
 | GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Replacement partial** — full three-model panel, classic-token resolve/reopen, owner-command persistence, stale-head no-op, PR-event required-check blocking, and exact-value audit passed; positive changed-body in-place update still pending. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
 | GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Replacement partial** — full-panel blocking run, direct resolve/reopen, unchanged idempotency, and exact-value audit passed; positive changed-body in-place update still pending. [record](record-gitlab-current-image.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Replacement partial** — credential withholding and forwarding isolation passed; trusted image/config override and forged-gate at a credential-bearing boundary still pending live. [record](record-gitlab-hostile-mr.md) |

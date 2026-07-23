@@ -383,10 +383,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertNotEqual(body_after_create, body_after_change)
 
     @staticmethod
-    def _inline_body(client: Any) -> str:
-        inline = [comment for comment in client._comments if "path" in comment]
-        assert len(inline) == 1, f"expected one inline comment, got {len(inline)}"
-        return str(inline[0]["body"])
+    def _inline_body(client: FakeGitHubClient) -> str:
+        bodies = client.inline_comment_bodies()
+        assert len(bodies) == 1, f"expected one inline comment, got {len(bodies)}"
+        return bodies[0]
 
 
 if __name__ == "__main__":

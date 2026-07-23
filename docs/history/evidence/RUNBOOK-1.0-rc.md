@@ -14,9 +14,17 @@ tests that cover each row.
 
 ## Release candidate under test
 
+> **Pending replacement.** The `15d424f` source, run IDs, and image digests below
+> are **historical**: they predate the `AI_REVIEW_MOCK_SCENARIO` reviewer support
+> and the gate `run_id` binding, so the final RC is a **rebuilt** base+reviewer
+> pair (see the precondition after Step 0). Treat every concrete value in this
+> section and in Step 0 as pending replacement — the operator refreshes the
+> source commit, run IDs, digests, and verification status to the rebuilt pair
+> before release, and re-runs Step 0 against it.
+
 > The prior `b674d1e` candidate was invalidated by a GitHub human-command
 > authorization defect. Its partial evidence is historical only; every
-> release-gating probe below must run again against this replacement.
+> release-gating probe below must run again against the rebuilt replacement pair.
 
 - Source commit: `15d424feea730a04338ed423bf93b8797d807bbc` (`main` HEAD)
 - Quality gate: CI `make quality` run **29845398459** — success (the SPEC-31
@@ -55,11 +63,16 @@ tests that cover each row.
 
 ## Step 0 — Verify the RC images (do this first)
 
-Completed for this release candidate: both digest pulls succeeded with an empty
-Docker credential directory, both OCI revision labels equal the runtime source,
-and both GitHub provenance attestations verified. Update the sanitized
-[image-verification record](record-image-publication-verification.md) with this
-candidate before final publication.
+> The verification recorded here is for the historical `15d424f` pair and is
+> **pending replacement**: re-run it against the rebuilt base+reviewer digests
+> (below) once they exist, and update the digests in the commands that follow.
+
+Recorded for the historical `15d424f` pair: both digest pulls succeeded with an
+empty Docker credential directory, both OCI revision labels equal the runtime
+source, and both GitHub provenance attestations verified. Re-verify the **rebuilt**
+pair the same way and update the sanitized
+[image-verification record](record-image-publication-verification.md) before final
+publication.
 
 From any machine with registry access (anonymous pulls should work — GHCR public):
 
@@ -114,9 +127,10 @@ repeated re-runs. This runbook removes almost all of that spend:
 ### The deterministic mock reviewer
 
 `AI_REVIEW_LOCAL_MOCK=1` makes each seat emit a canned, schema-valid finding batch
-instead of calling a model (leave the `AI_REVIEW_REQUIRE_REAL_*` flags unset).
-`AI_REVIEW_MOCK_SCENARIO` selects the finding set, anchored to the first added
-line of the reviewed diff:
+instead of calling a model (an adapter still falls back to a real CLI if any
+`AI_REVIEW_REQUIRE_REAL_*` flag is set, so set every one to `0` for Chain B — see
+the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
+anchored to the first added line of the reviewed diff:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
@@ -154,17 +168,23 @@ closed on divergence (SPEC-33). Never edit a production template.
 > A run. The GitHub mapping below defaults to safe values when the variables are
 > unset.
 
-- **GitLab — depends on topology.**
-  - *Direct mode:* use **manual "Run pipeline" variables** (ephemeral — they do not
-    persist and cannot poison a later run): `AI_REVIEW_LOCAL_MOCK=1`,
-    `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
+- **GitLab — run from a protected source branch, then set toggles by topology.**
+  Any GitLab lifecycle run (Chain A or B) must open its MR from a **protected
+  scratch source branch**: the required `GITLAB_TOKEN` is masked+protected and
+  powers prepare/discussions/state/commands, and protected CI/CD variables inject
+  **only on protected refs**. On an unprotected feature branch the token — and any
+  protected override variable — is silently withheld, so posting fails and Chain B
+  would quietly stay on real reviewers. With the branch protected:
+  - *Direct mode:* set the mock toggles as **manual "Run pipeline" variables**
+    (ephemeral — they do not persist, so they cannot poison a later Chain A):
+    `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
     `AI_REVIEW_MOCK_SCENARIO=<scenario>`.
   - *Hardened-child mode:* the child pipeline disables variable forwarding
     (`inherit.variables: false`, `forward.pipeline_variables: false`), so manual
-    parent variables do **not** reach the review/critique jobs. Use **protected
-    project CI/CD variables** instead — these reach the child. They are sticky, so
-    heed the warning above (Chain A first, or a separate scratch project, or delete
-    them afterward).
+    parent variables do **not** reach the review/critique jobs. Set the mock
+    toggles as **project CI/CD variables** instead — these inject into the child on
+    the protected branch. They are sticky, so heed the warning above (Chain A
+    first, or a separate scratch project, or delete them afterward).
 - **GitHub** step `env` cannot be overridden by repository variables. Make a
   **one-time** edit to the scratch consumer's copied workflow that maps the
   review/critique step env to variables with **safe defaults** — keep the
@@ -278,13 +298,20 @@ timing race that the regression tests already prove fail-closed.
 1. Mark each release-gating record `Status: passed` with a scoped verdict, and
    record the per-run token/cost for the one real panel per platform.
 2. Flip the pending rows in [the evidence matrix](README.md) to scoped passes
-   referencing the new run IDs; leave the regression-covered rows classified as
-   such.
-3. The consumer templates and active release inputs are already pinned in P0.
-   Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
+   referencing the new run IDs, including the re-verified image-publication row for
+   the rebuilt pair; leave the regression-covered rows classified as such.
+3. **Retarget the release inputs to the rebuilt pair (release-blocking).** The
+   active `release/release-inputs.json` still points at `15d424f`. Before the RC is
+   releasable, update `runtime_source`, both image digests, the canonical template
+   pins, the recorded publication and CI run IDs, and the evidence references to the
+   rebuilt pair, then re-run `check_release_inputs.py --write-hashes` and
+   `make quality`. This is an operator/CI action (it needs the published rebuilt
+   digests) and is outside the scope of the repository change that introduced this
+   runbook.
+4. Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
    update the changelog/version record, generate `release-manifest.json`, then tag
    `v1.0.0`.
 
 Do not describe 1.0 as "stable" or "credential isolated" until every
-release-gating row is a scoped pass against this exact RC source and these image
+release-gating row is a scoped pass against the exact rebuilt RC source and image
 digests.
