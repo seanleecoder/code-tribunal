@@ -33,7 +33,7 @@ classified by whether a live run proves something the regression suite cannot:
 | GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Replacement partial** — full-panel blocking run, direct resolve/reopen, unchanged idempotency, and exact-value audit passed; positive changed-body in-place update still pending. [record](record-gitlab-current-image.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Replacement partial** — credential withholding and forwarding isolation passed; trusted image/config override and forged-gate at a credential-bearing boundary still pending live. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
-| Gate/config artifact integrity (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate; confirm opportunistically in the hostile-MR run. |
+| Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
 | GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional. Timing windows are milliseconds wide; do not gate the release on reproducing them. [record](record-github-revision-failures.md) |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
@@ -47,8 +47,9 @@ consumer flow but not the hostile-MR deployment boundary. See
 - **Positive changed-body in-place update** has never been demonstrated live on
   either platform (probes fell back to summary-only or resolved the old thread).
   It is unit-covered (`test_post.py::test_post_existing_marker_updates_changed_body`)
-  and is the clearest remaining lifecycle gap; the deterministic mock now lets it
-  be reproduced without model spend (see the runbook).
+  and is the clearest remaining lifecycle gap; the mock `blocking_alt` scenario
+  (same identity as `blocking`, different body) now reproduces it live without
+  model spend (see the runbook).
 - **Cursor reviewer** is the opt-in substitute with a separate credential and
   egress path. It currently has only a permission smoke and **no evidence row**;
   its data-egress/permission behavior is out of the 1.0 live-evidence scope until
@@ -95,15 +96,17 @@ class.
 
 Publish both images from one reviewed release-candidate commit and verify their
 digests. On each platform, create an inline finding, rerun unchanged, change the
-body, resolve, reopen, push an unrelated line movement, exercise summary
-fallback, and force a blocking finding while platform enforcement is enabled.
-Record post/state/gate artifacts and platform object IDs at every step.
+body, resolve, reopen, push an unrelated line movement, and force a blocking
+finding while platform enforcement is enabled. Record post/state/gate artifacts
+and platform object IDs at every step.
 
-Spend model tokens on the **first real panel only**; drive every remaining step
-with the deterministic mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` +
-`AI_REVIEW_MOCK_SCENARIO`). The exact minimal-token sequence, including how the
-mock scenarios map to each lifecycle step, is in the
-[RC runbook](RUNBOOK-1.0-rc.md).
+Run this as two independent chains: one **real** default-model panel (the smoke),
+and one **deterministic-mock** lifecycle chain on a separate finding identity
+(`AI_REVIEW_LOCAL_MOCK=1` + `AI_REVIEW_MOCK_SCENARIO`, with `blocking_alt` for the
+changed-body step). The below-quorum FYI/summary-comment path and the
+inline-unmappable summary fallback are **regression-covered**
+(`integration/test_post_gate_e2e.py`, `test_post.py`), not part of the live mock
+chain. The exact minimal-token sequence is in the [RC runbook](RUNBOOK-1.0-rc.md).
 
 ## GitHub failure procedure
 

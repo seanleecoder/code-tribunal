@@ -34,6 +34,14 @@ tests that cover each row.
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
 
+> **Precondition for the deterministic-mock procedure.** The digests pinned above
+> (`15d424f`) predate the `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate
+> `run_id` binding this runbook relies on. Before running the mock-based lifecycle
+> steps, publish an RC reviewer image from a commit that includes those changes
+> (or build the reviewer image locally) and **retarget the digests in this
+> runbook and `release/release-inputs.json` to that image**. Republishing is an
+> operator/CI action; do not run the mock steps against the `15d424f` digests.
+
 ## Step 0 — Verify the RC images (do this first)
 
 Completed for this release candidate: both digest pulls succeeded with an empty
@@ -79,11 +87,12 @@ post, and gate are deterministic. The historically expensive procedures ran a
 fresh full panel for *every* lifecycle step, and weak-model nondeterminism forced
 repeated re-runs. This runbook removes almost all of that spend:
 
-1. **One real 3-model panel per platform** proves the default models and adapter
-   wiring. Everything else uses the deterministic mock reviewer.
-2. **Deterministic mock for every other lifecycle/gate step** — zero tokens, no
-   flakiness, and it still drives the *real* platform posting/resolve/reopen/gate
-   APIs, which is what those steps exist to prove.
+1. **One real 3-model panel per platform** (Chain A) proves the default models and
+   adapter wiring. Everything else uses the deterministic mock reviewer.
+2. **Deterministic mock for the whole lifecycle/gate chain** (Chain B) — zero
+   tokens, no flakiness, and it still drives the *real* platform
+   posting/resolve/reopen/gate APIs, which is what those steps exist to prove.
+   The two chains use separate change requests and separate finding identities.
 3. **Single reviewer, critique off, cheapest model, minimal diff** for any live
    step that is not the one 3-model smoke.
 4. **No dual-digest re-runs of token-bearing rows** — only the reviewer image and
@@ -98,19 +107,34 @@ line of the reviewed diff:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
-| `blocking` | one blocker/correctness finding | inline create + blocking gate (with a ≥2 seat quorum, `block_merge=true`, gate exit `7`) |
-| `advisory` | one minor/maintainability finding | non-blocking surface at quorum; **below quorum (a single enabled seat) it becomes an FYI on the summary comment** |
-| `none` | no findings | unchanged / resolved lifecycle states |
+| `blocking` | one blocker/correctness finding | inline create + blocking gate (with a ≥2-seat quorum, `block_merge=true`, gate exit `7`) |
+| `blocking_alt` | same identity as `blocking` (same title, category, anchor), different body | the changed-body in-place update: the existing discussion is updated, `body_hash` changes, no new discussion is created |
+| `advisory` | one minor/maintainability finding | a **non-blocking inline surface** finding at quorum; the gate passes |
+| `none` | no findings | absence-based resolution / withdrawal of a previously posted finding (NOT an unchanged rerun) |
 | `default` | historical `records[0]` heuristic | local `make consensus-local` demo |
 
 The batch is finalized by the normal adapter pipeline, so anchors are re-resolved
 against the real diff exactly like a real reviewer's output.
 
-> **Scope the mock variables identically across all jobs.** `prepare` stamps the
-> effective-config digest into the manifest, and consensus fails closed on
-> divergence (SPEC-33). Set `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_MOCK_SCENARIO`, and
-> any single-seat / critique-off overrides as **pipeline-wide** variables so
-> prepare, review, critique, and consensus all see the same configuration.
+> The below-quorum **FYI/summary-comment** path and the **inline-unmappable
+> summary fallback** are not reachable through these uniform mock scenarios (the
+> mock emits identical findings across seats, which always group to quorum, and
+> config validation clamps `votes_required` to the enabled-seat count). Both are
+> **regression-covered** (`integration/test_post_gate_e2e.py` FYI cases and
+> `test_post.py` summary-fallback cases); do not attempt a single-seat FYI live
+> run.
+
+> **Enable the mock in the scratch consumer, scoped identically across jobs.** The
+> shipped templates hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and
+> `AI_REVIEW_REQUIRE_REAL_*: "1"` in the review/critique step (GitHub) or job
+> (GitLab) `env`, and GitHub step `env` cannot be overridden by repository
+> variables. In the **scratch consumer's copied workflow only**, edit those
+> review and critique steps: set `AI_REVIEW_LOCAL_MOCK: "1"`, remove (or set to
+> `"0"`) every `AI_REVIEW_REQUIRE_REAL_*` line, and add
+> `AI_REVIEW_MOCK_SCENARIO: "<scenario>"`. Keep these identical across the
+> prepare/review/critique/consensus jobs — `prepare` stamps the effective-config
+> digest into the manifest and consensus fails closed on divergence (SPEC-33).
+> Never make these edits to a production template.
 
 ## The runs
 
@@ -119,8 +143,8 @@ Actual result / Audit / Verdict.
 
 | # | Run | Record | Tier | Real tokens |
 |---|---|---|---|---|
-| 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (step 1 only) |
-| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (step 1 only) |
+| 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
+| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../../improvement-specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 
@@ -128,35 +152,44 @@ Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate.
 
-### Runs 1 & 2 — current-image lifecycle (one real panel, then deterministic)
+### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
-Perform on one change request per platform, capturing run/job IDs and platform
-object IDs (comment/discussion IDs) at every step.
+Run two independent chains per platform. They must **not** share a finding
+identity: the real panel emits a model-authored finding whose identity you do not
+control, so continuing it with the mock would open a new discussion rather than
+update the same one. Capture run/job IDs and platform object IDs at every step.
 
-1. **Real default-model panel (the only token spend).** Leave all model overrides
-   unset, keep all three OpenRouter seats enabled, Cursor disabled,
-   `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Create the first inline
-   finding and record: Claude `anthropic/claude-haiku-4.5`, Codex
-   `openai/gpt-5.4-mini`, OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto`
-   skipped, `panel_status: full`. **This one run doubles as the default-model
-   smoke — do not run a separate smoke campaign.** Record the OpenRouter-billed
-   token/cost for the run (see [operations cost controls](../../operations.md)).
-2. **Switch to the deterministic mock for all remaining steps** — set
-   `AI_REVIEW_LOCAL_MOCK=1` pipeline-wide and leave the require-real flags unset.
-   Drive the lifecycle with `AI_REVIEW_MOCK_SCENARIO`:
-   - rerun unchanged (`blocking`) → discussion updated in place, no duplicate;
-   - change the finding body → same discussion updated; body-hash recorded;
-   - resolve, then reopen → identity preserved (real platform API);
-   - push an unrelated line movement (`blocking`) → anchor/identity maintained;
-   - summary fallback: run `advisory` with a **single enabled seat** → FYI routed
-     to the summary comment;
-   - (GitHub) human disposition commands and stale head;
-   - force a blocking finding (`blocking`, ≥2 seats) with enforcement on → the
-     required check / **Pipelines must succeed** actually blocks merge, and the
-     gate agrees with `out/consensus/consensus.json` + `out/post/post_result.json`.
+**Chain A — real default-model smoke (the only token spend).** On its own change
+request, leave all model overrides unset, keep all three OpenRouter seats enabled,
+Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
+panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`,
+OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto` skipped, `panel_status:
+full`, and that a finding was posted. **This doubles as the default-model smoke —
+do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
+(see [operations cost controls](../../operations.md)). This chain ends here.
 
-   Every step above exercises the real platform posting/resolve/reopen/gate and
-   the real merge-blocking enforcement; only step 1 spends model tokens.
+**Chain B — deterministic mock lifecycle (zero tokens).** On a second change
+request, apply the scratch-consumer mock edit above. Every step drives the real
+platform posting/state/resolve/reopen/gate APIs on **one mock finding identity**;
+model quality is irrelevant, so no tokens are spent:
+
+1. create (`blocking`) → one inline discussion at the mapped line;
+2. rerun unchanged (`blocking`, same commit) → same discussion, `post_result`
+   `updated_discussions=0` and `skipped_unchanged>=1`, **no duplicate**;
+3. change body (`blocking_alt`) → **same discussion updated in place**,
+   `updated_discussions=1`, recorded `body_hash` changes, no new discussion
+   (identity is preserved because body is excluded from finding identity);
+4. resolve, then reopen → discussion identity preserved across the real platform
+   resolve/reopen API;
+5. push an unrelated line movement (`blocking`) → anchor/identity maintained;
+6. (GitHub) exercise human disposition commands and the stale-head no-op;
+7. force the blocking gate (`blocking`, ≥2 seats) with enforcement on → the
+   required check / **Pipelines must succeed** actually blocks merge, and the gate
+   agrees with `out/consensus/consensus.json` + `out/post/post_result.json`.
+
+The `advisory` scenario (non-blocking inline surface, passing gate) may be run as
+an extra state; the FYI/summary-comment and inline-unmappable fallback paths are
+regression-covered and are not part of this live chain.
 
 ### Run 3 — GitLab hostile-MR credential & enforcement boundary
 

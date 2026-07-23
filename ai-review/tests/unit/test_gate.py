@@ -87,7 +87,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(),
             self._consensus(True),
-            {"status": "success"},
+            {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 7)
         self.assertEqual(result["status"], "failed_blocking_findings")
@@ -97,7 +97,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(),
             self._consensus(True),
-            {"status": "stale_head"},
+            {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "passed_stale_head")
@@ -130,6 +130,22 @@ class GateTests(unittest.TestCase):
         self.assertTrue(result["block_merge"])
         self.assertEqual(result["reason"], "post_result_run_id_mismatch")
 
+    def test_missing_or_empty_post_run_id_fails_closed(self) -> None:
+        # Defense-in-depth: even a successful post_result must carry a run_id
+        # bound to the consensus. Missing or empty is treated as unbound and fails
+        # closed, so a stripped artifact cannot silence a blocking consensus.
+        for post_result in ({"status": "success"}, {"status": "success", "run_id": ""}):
+            with self.subTest(post_result=post_result):
+                result, exit_code = evaluate_gate(
+                    self._config(),
+                    self._consensus(True),
+                    post_result,
+                )
+                self.assertEqual(exit_code, 7)
+                self.assertEqual(result["status"], "failed_post_result")
+                self.assertEqual(result["reason"], "post_result_run_id_mismatch")
+                validate_instance(result, "gate_result.schema.json")
+
     def test_matching_run_id_is_accepted(self) -> None:
         # A post_result whose run_id matches the consensus proceeds to normal
         # evaluation (regression guard: the binding check must not reject a
@@ -146,7 +162,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(False),
             self._consensus(True),
-            {"status": "success"},
+            {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "skipped_disabled")
@@ -157,7 +173,7 @@ class GateTests(unittest.TestCase):
                 result, exit_code = evaluate_gate(
                     self._config(),
                     self._consensus(False),
-                    {"status": status},
+                    {"status": status, "run_id": "run"},
                 )
                 self.assertEqual(exit_code, 7)
                 self.assertEqual(result["status"], "failed_post_result")
@@ -169,7 +185,7 @@ class GateTests(unittest.TestCase):
                 result, exit_code = evaluate_gate(
                     self._config(False),
                     self._consensus(False),
-                    {"status": status},
+                    {"status": status, "run_id": "run"},
                 )
                 self.assertEqual(exit_code, 7)
                 self.assertEqual(result["status"], "failed_post_result")
@@ -179,7 +195,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(False),
             self._consensus(True),
-            {"status": "success"},
+            {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "skipped_disabled")
@@ -189,7 +205,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(True),
             self._consensus(True),
-            {"status": "stale_head"},
+            {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "passed_stale_head")
@@ -198,7 +214,7 @@ class GateTests(unittest.TestCase):
         result, exit_code = evaluate_gate(
             self._config(False),
             self._consensus(True),
-            {"status": "stale_head"},
+            {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "passed_stale_head")

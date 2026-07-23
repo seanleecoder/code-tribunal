@@ -92,6 +92,40 @@ class MockScenarioTests(unittest.TestCase):
         self.assertEqual(self._review(diff_no_add, "blocking"), [])
         self.assertEqual(self._review(diff_no_add, "advisory"), [])
 
+    def test_blocking_alt_shares_identity_with_blocking_but_differs_in_body(self) -> None:
+        # Identity = title + category + anchor (body is excluded), so blocking_alt
+        # must match blocking on all of those and differ only in body. That is what
+        # makes the changed-body-in-place lifecycle step reproducible.
+        diff = _diff("+    return records[0]")
+        blocking = self._review(diff, "blocking")[0]
+        blocking_alt = self._review(diff, "blocking_alt")[0]
+        self.assertEqual(blocking_alt["title"], blocking["title"])
+        self.assertEqual(blocking_alt["category"], blocking["category"])
+        self.assertEqual(blocking_alt["severity"], blocking["severity"])
+        self.assertEqual(blocking_alt["anchor"], blocking["anchor"])
+        self.assertNotEqual(blocking_alt["body"], blocking["body"])
+
+    def test_scenarios_prefer_indexing_candidate_when_both_markers_exist(self) -> None:
+        # First added line is a plain line; a later added line carries the indexing
+        # marker. blocking/advisory must anchor to the indexing line, not the first
+        # added line, matching the documented candidate precedence.
+        diff = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,1 +1,3 @@",
+                " def f():",
+                "+    x = compute()",
+                "+    return records[0]",
+            ]
+        )
+        for scenario in ("blocking", "advisory"):
+            finding = self._review(diff, scenario)[0]
+            self.assertEqual(
+                finding["anchor"]["start"]["new_line"], 3, f"scenario={scenario}"
+            )
+
     def test_unknown_scenario_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown AI_REVIEW_MOCK_SCENARIO"):
             self._review(_diff("+    return records[0]"), "bogus")

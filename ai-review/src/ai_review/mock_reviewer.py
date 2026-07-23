@@ -18,16 +18,25 @@ from .anchors import parse_unified_diff
 # pipeline, so anchors are re-resolved against the real diff exactly like a real
 # reviewer's output.
 #
-# - default:  historical behavior — one major/correctness finding when the diff
-#             adds an unguarded `records[0]`/`data[0]` index, else no findings.
-# - blocking: one blocker/correctness finding on the first added line. With a
-#             two-reviewer quorum this surfaces and blocks the merge gate.
-# - advisory: one non-blocking (minor/maintainability) finding on the first added
-#             line. Below quorum (e.g. a single enabled reviewer) it becomes an
-#             FYI routed to the summary comment; at quorum it surfaces inline
-#             without blocking.
-# - none:     no findings — drives unchanged/resolved lifecycle states.
-_SCENARIOS = {"default", "blocking", "advisory", "none"}
+# - default:      historical behavior — one major/correctness finding when the
+#                 diff adds an unguarded `records[0]`/`data[0]` index, else none.
+# - blocking:     one blocker/correctness finding on the first added line. At the
+#                 shipped two-vote quorum this surfaces and blocks the merge gate.
+# - blocking_alt: identical identity to `blocking` (same title, category, and
+#                 anchor) but a different finding body. Finding identity excludes
+#                 the body (see anchors.compute_source_finding_id), so re-running a
+#                 lifecycle with `blocking_alt` updates the existing discussion in
+#                 place (changed body_hash) rather than opening a new one — this is
+#                 the deterministic changed-body lifecycle probe.
+# - advisory:     one non-blocking (minor/maintainability) finding on the first
+#                 added line. At quorum it surfaces inline without blocking the
+#                 gate. (It does not reach the below-quorum FYI path: the mock
+#                 emits identical findings across seats, which always group to
+#                 quorum, and config validation clamps votes_required to the
+#                 enabled-seat count. The FYI/summary path is regression-covered.)
+# - none:         no findings — drives absence-based resolution / withdrawal, not
+#                 an unchanged rerun (an unchanged rerun re-emits the same finding).
+_SCENARIOS = {"default", "blocking", "blocking_alt", "advisory", "none"}
 
 
 def _mock_scenario() -> str:
@@ -111,17 +120,31 @@ def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _blocking_finding(candidate: dict[str, Any]) -> dict[str, Any]:
+# Shared identity fields for the blocking scenarios. Finding identity is
+# reviewer + path + category + side + context_hash + title_fingerprint (see
+# anchors.compute_source_finding_id / candidate_issue_signature) — the body is
+# deliberately NOT part of identity, so `blocking` and `blocking_alt` map to the
+# same discussion and differ only in body_hash.
+_BLOCKING_TITLE = "Deterministic mock blocking finding"
+_BLOCKING_BODY = (
+    "Deterministic mock blocker for live-evidence lifecycle validation. "
+    "The added line is reported as a blocking correctness defect so the "
+    "merge gate can be exercised reproducibly."
+)
+_BLOCKING_ALT_BODY = (
+    "Deterministic mock blocker for live-evidence lifecycle validation "
+    "(alternate body). Identity is unchanged from the blocking scenario; only "
+    "the body differs, so re-posting updates the existing discussion in place."
+)
+
+
+def _blocking_finding(candidate: dict[str, Any], *, body: str = _BLOCKING_BODY) -> dict[str, Any]:
     return {
         "anchor": _anchor(candidate, symbol=None),
         "severity": "blocker",
         "category": "correctness",
-        "title": "Deterministic mock blocking finding",
-        "body": (
-            "Deterministic mock blocker for live-evidence lifecycle validation. "
-            "The added line is reported as a blocking correctness defect so the "
-            "merge gate can be exercised reproducibly."
-        ),
+        "title": _BLOCKING_TITLE,
+        "body": body,
         "evidence": ["Deterministic mock finding anchored to an added line."],
         "suggestion": None,
         "confidence": 0.95,
@@ -136,8 +159,8 @@ def _advisory_finding(candidate: dict[str, Any]) -> dict[str, Any]:
         "title": "Deterministic mock advisory finding",
         "body": (
             "Deterministic mock advisory (non-blocking) finding for live-evidence "
-            "lifecycle validation. Below quorum it is routed to the summary "
-            "comment as an FYI."
+            "lifecycle validation. At quorum it surfaces inline without blocking "
+            "the merge gate."
         ),
         "evidence": ["Deterministic mock finding anchored to an added line."],
         "suggestion": None,
@@ -156,14 +179,16 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
             return {"findings": []}
         return {"findings": [_default_finding(candidate)]}
 
-    # blocking / advisory anchor to the indexing candidate when present so the
-    # emitted line matches the historical fixture, otherwise the first added line
-    # so the scenarios work with any minimal diff.
+    # blocking / blocking_alt / advisory anchor to the indexing candidate when
+    # present so the emitted line matches the historical fixture, otherwise the
+    # first added line so the scenarios work with any minimal diff.
     candidate = _find_indexing_candidate(diff_text) or _find_first_added_line(diff_text)
     if candidate is None:
         return {"findings": []}
     if scenario == "blocking":
         return {"findings": [_blocking_finding(candidate)]}
+    if scenario == "blocking_alt":
+        return {"findings": [_blocking_finding(candidate, body=_BLOCKING_ALT_BODY)]}
     return {"findings": [_advisory_finding(candidate)]}
 
 
