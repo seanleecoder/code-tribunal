@@ -135,23 +135,23 @@ instead of calling a model (an adapter still falls back to a real CLI if any
 the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
 anchored to the `records[0]`/`data[0]` indexing marker when the diff contains one
 (via `_find_indexing_candidate`), otherwise the first added line. **Give the
-Chain B diff a stable indexing marker** so finding identity
-(`context_hash` → `source_finding_id`) is one value across every step. The
+Chain B diff a stable indexing marker** (the shipped
+`ai-review/tests/fixtures/diffs/simple.diff` has a `records[0]` one) so finding
+identity (`context_hash` → `source_finding_id`) is stable across the same-diff
+lifecycle steps — create, rerun, body change, resolve, reopen. The
 first-added-line fallback is not stable — inserting a line above shifts which
 line is "first added", changing the anchor and opening a new discussion.
 
-> **Use a padded-marker diff as the Chain B base from step 1 (not `simple.diff`).**
-> Chain B holds a single identity across steps 1–6, and identity is the
-> `context_hash` over the ±6 new-side window around the marker. So the base diff
-> must have **≥6 unchanged new-side lines above and below the marker** — use the
-> shape of the e2e `_marker_diff` helper (a `records[0]`/`data[0]` marker with 8
-> context lines each side). Then the line-movement step (6) only inserts lines
-> *outside* that window, leaving the hash — and the discussion — intact. Do **not**
-> start on `simple.diff` and switch fixtures mid-chain: its marker is the second
-> new-side line (window not padded), and any shape change alters `context_hash` /
-> `source_finding_id` and opens a new discussion instead of remapping.
-> (`simple.diff` is fine for the `make consensus-local` demo and the same-diff
-> unit/e2e tests, which never move lines.)
+> **Unrelated line movement is regression-covered, not a token-free mock live
+> step.** Keeping finding identity across a line movement is cross-revision remap
+> behavior: a real push advances the head SHA and regenerates the served unified
+> diff (with the platform's own limited context), which the mock cannot faithfully
+> reproduce — and identity depends on the `context_hash` ±6 new-side window, which
+> a hand-shaped fixture would only approximate. That remap logic is instead proven
+> by `integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+> (two revisions, advancing head + second manifest) plus the `test_anchors` remap
+> and `test_post.py` run-to-run upsert unit tests. Treat any live line-movement
+> attempt as optional confirmation, not a release-gating token-free step.
 
 The scenarios:
 
@@ -293,12 +293,12 @@ model quality is irrelevant, so no tokens are spent:
 5. reopen → clear the disposition via the platform's native resolve/reopen API (or
    a `/ai-review reopen` command), then rerun `blocking`; expect the same
    discussion active again with identity preserved (no new discussion created);
-6. push an unrelated line movement (`blocking`) that inserts lines **outside the
-   marker's ±6 context window** (the Chain B base is already the padded-marker diff
-   from step 1) → the mock re-anchors to the stable `records[0]`/`data[0]` marker,
-   `context_hash`/identity are unchanged, and post remaps the existing discussion
-   in place (no new discussion). Keep the same base diff throughout — do not switch
-   fixtures for this step;
+6. unrelated line movement — **regression-covered, optional live** (see the note
+   above): the cross-revision remap that keeps identity across a line move is
+   proven by the two-revision e2e and the `test_anchors`/`test_post` remap tests,
+   and a real push's head advance + regenerated served diff is not something the
+   mock reproduces faithfully. Skip it as a token-free step; confirm live only if
+   convenient, and it is not release-gating;
 7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
    detect the superseded revision and do not act (disposition commands are already
    covered by steps 4–5);

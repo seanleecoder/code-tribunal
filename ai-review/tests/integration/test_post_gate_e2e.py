@@ -412,22 +412,28 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # the updated_discussions counter)
         self.assertNotEqual(body_after_create, body_after_change)
 
-    def test_unrelated_line_movement_remaps_to_same_discussion(self) -> None:
-        # An unrelated line movement (a second diff that inserts lines above the
-        # marker, outside its context window) keeps the finding identity because
-        # the mock re-anchors to the stable `records[0]` marker. Posting the moved
-        # diff remaps the existing discussion in place instead of opening a new one.
+    def test_line_movement_across_revisions_remaps_to_same_discussion(self) -> None:
+        # Models a real cross-revision push, not just a diff swap: revision 1 posts
+        # a blocking finding; revision 2 advances the head SHA (a second manifest)
+        # and serves a diff that inserts unrelated lines above the marker, outside
+        # its ±6 context window. The stored anchor remaps to the marker's new line,
+        # so the existing discussion updates in place instead of a second opening.
+        # This exercises the cross-revision remap path; identity is head-independent
+        # (source_finding_id is context_hash-based, not head-based).
         with tempfile.TemporaryDirectory() as tmp:
             tmpp = Path(tmp)
-            config, manifest, _diff, _bundle = self._bundle(tmpp)
+            config, manifest1, _diff, _bundle = self._bundle(tmpp)
+            head2 = "0123456789abcdef0123456789abcdef01234567"
+            self.assertNotEqual(manifest1["head_sha"], head2)
+            manifest2 = dict(manifest1, head_sha=head2, run_id=f"{manifest1['run_id']}-r2")
             diff1 = self._marker_diff(unrelated_lines=0)
             diff2 = self._marker_diff(unrelated_lines=3)
             d1 = self._diff_dir(tmpp, "d1", diff1)
             d2 = self._diff_dir(tmpp, "d2", diff2)
-            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff1)
+            client = FakeGitHubClient(head_sha=manifest1["head_sha"], diff_text=diff1)
 
-            b1 = self._batches("blocking", d1, manifest)
-            b2 = self._batches("blocking", d2, manifest)
+            b1 = self._batches("blocking", d1, manifest1)
+            b2 = self._batches("blocking", d2, manifest2)
             # The marker moved to a different line, but identity is stable.
             self.assertNotEqual(
                 b1[0]["findings"][0]["anchor"]["start"]["new_line"],
@@ -435,16 +441,19 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(self._source_ids(b1[0]), self._source_ids(b2[0]))
 
-            c1 = build_consensus(manifest, b1, config)
-            p1 = post_consensus(client, config, manifest, c1, diff_text=diff1)
-            client.diff_text = diff2  # the platform now serves the moved diff
-            c2 = build_consensus(manifest, b2, config)
-            p2 = post_consensus(client, config, manifest, c2, diff_text=diff2)
+            # revision 1
+            c1 = build_consensus(manifest1, b1, config)
+            p1 = post_consensus(client, config, manifest1, c1, diff_text=diff1)
+            # revision 2: the branch head advanced and the served diff moved the marker
+            client.head_sha = head2
+            client.diff_text = diff2
+            c2 = build_consensus(manifest2, b2, config)
+            p2 = post_consensus(client, config, manifest2, c2, diff_text=diff2)
 
         validate_instance(p1, "post_result.schema.json")
         validate_instance(p2, "post_result.schema.json")
         self.assertEqual(p1["created_discussions"], 1)
-        # remapped onto the existing discussion, not a new one
+        # remapped across the revision onto the existing discussion, not a new one
         self.assertEqual(p2["created_discussions"], 0)
         self.assertEqual(client.review_comment_count(), 1)
 

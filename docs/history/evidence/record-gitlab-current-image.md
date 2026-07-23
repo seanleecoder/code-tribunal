@@ -139,12 +139,13 @@ completed.
 - Operator exact-value audit: passed on 2026-07-21 against the current GitLab
   secret values and downloaded GitLab traces/artifacts covered by the audit.
   Secret values are intentionally not recorded here.
-- Still release-gating: the positive changed-body in-place update and a genuinely
-  unrelated line movement (both reproducible token-free via the mock lifecycle
-  chain, run on a **padded** `records[0]`/`data[0]` marker diff — ≥6 unchanged
-  new-side lines each side, not `simple.diff` — used as the single Chain B base so
-  the mock anchor and finding identity stay stable across the movement; see the
-  runbook). Summary fallback is no longer release-gating — it is
+- Still release-gating: the positive changed-body in-place update (reproducible
+  token-free via the mock `blocking_alt` scenario; see the runbook). Genuinely
+  unrelated line movement is **regression-covered** (cross-revision remap identity
+  is proven by `test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+  plus the `test_anchors`/`test_post` remap tests) — the mock cannot faithfully
+  reproduce a real push's head advance + regenerated served diff. Summary fallback
+  is no longer release-gating — it is
   regression-covered (see the reclassification note above).
 
 Replacement verdict remains **partial** for the release-gating lifecycle paths
