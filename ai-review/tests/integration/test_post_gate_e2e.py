@@ -358,10 +358,12 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
             c_create = build_consensus(manifest, blocking, config)
             p_create = post_consensus(client, config, manifest, c_create, diff_text=diff_text)
+            body_after_create = self._inline_body(client)
             c_unchanged = build_consensus(manifest, blocking, config)
             p_unchanged = post_consensus(client, config, manifest, c_unchanged, diff_text=diff_text)
             c_body = build_consensus(manifest, blocking_alt, config)
             p_body = post_consensus(client, config, manifest, c_body, diff_text=diff_text)
+            body_after_change = self._inline_body(client)
 
         for result in (p_create, p_unchanged, p_body):
             validate_instance(result, "post_result.schema.json")
@@ -376,6 +378,15 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertEqual(p_body["created_discussions"], 0)
         self.assertEqual(p_body["updated_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
+        # the single inline comment's body actually changed (content lock, not just
+        # the updated_discussions counter)
+        self.assertNotEqual(body_after_create, body_after_change)
+
+    @staticmethod
+    def _inline_body(client: Any) -> str:
+        inline = [comment for comment in client._comments if "path" in comment]
+        assert len(inline) == 1, f"expected one inline comment, got {len(inline)}"
+        return str(inline[0]["body"])
 
 
 if __name__ == "__main__":

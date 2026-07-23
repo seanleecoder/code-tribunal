@@ -45,9 +45,13 @@ tests that cover each row.
 > steps: rebuild the **base** image from a commit that includes them, build the
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
-> the image-pin rotation procedure in [operations](../../operations.md)).
-> Republishing is an operator/CI action; do not run the mock steps against the
-> `15d424f` digests. Chain A (the real smoke below) may still use `15d424f`.
+> the image-pin rotation procedure in [operations](../../operations.md)), and
+> re-run Step 0 verification/attestation against the new digests.
+> Republishing is an operator/CI action. This commit's gate/mock code ships in the
+> product image, so the **final RC is this rebuilt pair** and `15d424f` is
+> superseded: run **both** chains (the real smoke and the mock lifecycle) against
+> the rebuilt digests, not `15d424f`, so the evidence matches the exact images that
+> ship.
 
 ## Step 0 — Verify the RC images (do this first)
 
@@ -102,8 +106,10 @@ repeated re-runs. This runbook removes almost all of that spend:
    The two chains use separate change requests and separate finding identities.
 3. **Single reviewer, critique off, cheapest model, minimal diff** for any live
    step that is not the one 3-model smoke.
-4. **No dual-digest re-runs of token-bearing rows** — only the reviewer image and
-   runtime source affect reviewer behavior; the base image does not.
+4. **No dual-digest re-runs of token-bearing rows** — validate the real panel once,
+   against the single final rebuilt pair, rather than repeating it across candidate
+   digests. (The gate/mock code ships in the base image, so both images are rebuilt
+   from one commit and validated together — see the precondition above.)
 
 ### The deterministic mock reviewer
 
@@ -131,30 +137,47 @@ against the real diff exactly like a real reviewer's output.
 > `test_post.py` summary-fallback cases); do not attempt a single-seat FYI live
 > run.
 
-**Enabling the mock in the scratch consumer.** The shipped templates hardcode
-`AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run Chain B you
-must set `AI_REVIEW_LOCAL_MOCK=1`, clear every `AI_REVIEW_REQUIRE_REAL_*`, and set
-`AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. Whatever you use,
-scope these **identically across the prepare/review/critique/consensus jobs** —
+**Enabling the mock in the scratch consumer (Chain B only).** The shipped templates
+hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run
+Chain B you must set `AI_REVIEW_LOCAL_MOCK=1`, set every `AI_REVIEW_REQUIRE_REAL_*=0`,
+and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. Whatever you
+use, scope these **identically across the prepare/review/critique/consensus jobs** —
 `prepare` stamps the effective-config digest into the manifest and consensus fails
 closed on divergence (SPEC-33). Never edit a production template.
 
-- **GitLab** sets these under job `variables:` in the included template, and
-  **project or manual pipeline CI/CD variables override YAML job variables**. So in
-  the scratch consumer set project variables (or "Run pipeline" variables)
-  `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
-  and `AI_REVIEW_MOCK_SCENARIO=<scenario>`. The protected template SHA is unchanged;
-  flip `AI_REVIEW_MOCK_SCENARIO` as a manual variable between steps.
+> **Sticky-variable warning — do not let the mock leak into Chain A.** Chain A is
+> the *real* smoke and must run with the mock off and require-real on. Persisted
+> settings (GitLab project variables, GitHub repository variables) survive between
+> runs, so a mock left enabled would silently turn a later Chain A into a mock run.
+> Run **Chain A first** (before setting any mock variable), or use a **separate
+> scratch project/repo** for Chain B, or delete the mock variables before any Chain
+> A run. The GitHub mapping below defaults to safe values when the variables are
+> unset.
+
+- **GitLab — depends on topology.**
+  - *Direct mode:* use **manual "Run pipeline" variables** (ephemeral — they do not
+    persist and cannot poison a later run): `AI_REVIEW_LOCAL_MOCK=1`,
+    `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
+    `AI_REVIEW_MOCK_SCENARIO=<scenario>`.
+  - *Hardened-child mode:* the child pipeline disables variable forwarding
+    (`inherit.variables: false`, `forward.pipeline_variables: false`), so manual
+    parent variables do **not** reach the review/critique jobs. Use **protected
+    project CI/CD variables** instead — these reach the child. They are sticky, so
+    heed the warning above (Chain A first, or a separate scratch project, or delete
+    them afterward).
 - **GitHub** step `env` cannot be overridden by repository variables. Make a
   **one-time** edit to the scratch consumer's copied workflow that maps the
-  review/critique step env to variables/inputs, e.g.
+  review/critique step env to variables with **safe defaults** — keep the
+  require-real flags, do not delete them:
   `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
-  drop the `AI_REVIEW_REQUIRE_REAL_*` lines, and
-  `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`. Then flip the
-  Actions **repository variable** between Chain B steps — do **not** commit a
-  per-scenario workflow change, since a new commit on the reviewed branch changes
-  the diff and therefore the mock's selected anchor. (`workflow_dispatch` inputs
-  mapped the same way are an equivalent alternative.)
+  `AI_REVIEW_REQUIRE_REAL_OPENROUTER: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENROUTER || '1' }}`
+  (and the same `|| '1'` mapping for `_CLAUDE`/`_OPENCODE`/`_CURSOR`), and
+  `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`. With the variables
+  unset, Chain A runs safely (mock off, require-real on); for Chain B set the repo
+  variables `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_*=0`, and flip
+  `AI_REVIEW_MOCK_SCENARIO` between steps. Do **not** commit a per-scenario workflow
+  change — a new commit on the reviewed branch changes the diff and the mock's
+  selected anchor. (`workflow_dispatch` inputs mapped the same way are equivalent.)
 
 ## The runs
 
@@ -199,10 +222,12 @@ model quality is irrelevant, so no tokens are spent:
 3. change body (`blocking_alt`) → **same discussion updated in place**,
    `updated_discussions=1`, recorded `body_hash` changes, no new discussion
    (identity is preserved because body is excluded from finding identity);
-4. resolve → post a `/ai-review wontfix` disposition command on the discussion,
-   then rerun `blocking`; expect `resolved_discussions>=1`, the thread marked
-   resolved, and the state note to persist the disposition on a further unchanged
-   `blocking` rerun (same discussion id, `skipped_unchanged>=1`);
+4. resolve → drive resolution with a `/ai-review wontfix` disposition command
+   (this is one resolution mechanism — a `/ai-review resolve` command or the native
+   platform resolve API are equivalent alternatives), then rerun `blocking`; expect
+   `resolved_discussions>=1`, the thread marked resolved, and the state note to
+   persist the disposition on a further unchanged `blocking` rerun (same discussion
+   id, `skipped_unchanged>=1`);
 5. reopen → clear the disposition via the platform's native resolve/reopen API (or
    a `/ai-review reopen` command), then rerun `blocking`; expect the same
    discussion active again with identity preserved (no new discussion created);
