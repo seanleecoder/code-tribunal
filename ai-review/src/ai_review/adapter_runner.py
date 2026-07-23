@@ -60,6 +60,9 @@ _ADAPTER_RUNTIME_ENV = {
 
 _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_LOCAL_MOCK",
+    # Selects a deterministic mock-reviewer scenario when the mock path runs
+    # (default|blocking|advisory|none). Ignored by the real reviewer CLIs.
+    "AI_REVIEW_MOCK_SCENARIO",
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",

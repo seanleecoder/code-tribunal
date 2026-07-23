@@ -7,14 +7,16 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
+from ai_review import mock_reviewer
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import load_config
 from ai_review.consensus import build_consensus
 from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.post import post_consensus
-from ai_review.schema import load_json_file, validate_instance
+from ai_review.schema import finalize_finding_batch, load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
@@ -281,6 +283,110 @@ class PostGateEndToEndTests(unittest.TestCase):
                 "symbol": "extract_name",
             },
         }
+
+
+class MockScenarioLifecycleTests(unittest.TestCase):
+    """End-to-end proof that the deterministic mock scenarios drive the real
+    posting path: `blocking` creates one discussion, an unchanged `blocking`
+    rerun is idempotent, and `blocking_alt` (same identity, different body)
+    updates that same discussion in place. This locks the changed-body lifecycle
+    guarantee the `blocking_alt` scenario exists for — token-free, no model."""
+
+    REVIEWERS = ("claude", "codex", "opencode")
+
+    def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
+        repo = tmp / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "foo.py").write_text(
+            "def extract_name(records):\n"
+            "    if not records:\n"
+            "        return None\n"
+            '    return records[0]["name"]\n',
+            encoding="utf-8",
+        )
+        bundle = prepare_local_bundle(
+            AI_REVIEW_ROOT / "config" / "review.yaml",
+            FIXTURE_ROOT / "diffs" / "simple.diff",
+            repo,
+            tmp / "bundle",
+        )
+        config = load_config(bundle / "config.review.yaml")
+        config["posting"]["mode"] = "github_reviews"
+        config["state"]["backend"] = "github_pr_comment"
+        config["critique"]["enabled"] = False
+        manifest = dict(
+            load_json_file(bundle / "manifest.json"),
+            project_id="octo/repo",
+            merge_request_iid="7",
+        )
+        diff_text = (bundle / "mr.diff").read_text(encoding="utf-8")
+        return config, manifest, diff_text, bundle
+
+    def _batches(
+        self, scenario: str, bundle: Path, manifest: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        with mock.patch.dict("os.environ", {"AI_REVIEW_MOCK_SCENARIO": scenario}):
+            batches = []
+            for reviewer in self.REVIEWERS:
+                raw = mock_reviewer.review_batch(reviewer, bundle)
+                batches.append(
+                    finalize_finding_batch(
+                        raw,
+                        reviewer=reviewer,
+                        model="mock",
+                        run_id=manifest["run_id"],
+                        started_at="2026-07-23T00:00:00Z",
+                        effective_config_sha256=manifest["effective_config_sha256"],
+                        input_dir=bundle,
+                    )
+                )
+        return batches
+
+    def _source_ids(self, batch: dict[str, Any]) -> set[str]:
+        return {f["source_finding_id"] for f in batch["findings"]}
+
+    def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config, manifest, diff_text, bundle = self._bundle(Path(tmp))
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+
+            blocking = self._batches("blocking", bundle, manifest)
+            blocking_alt = self._batches("blocking_alt", bundle, manifest)
+
+            # blocking and blocking_alt share finding identity (body is excluded).
+            self.assertEqual(self._source_ids(blocking[0]), self._source_ids(blocking_alt[0]))
+
+            c_create = build_consensus(manifest, blocking, config)
+            p_create = post_consensus(client, config, manifest, c_create, diff_text=diff_text)
+            body_after_create = self._inline_body(client)
+            c_unchanged = build_consensus(manifest, blocking, config)
+            p_unchanged = post_consensus(client, config, manifest, c_unchanged, diff_text=diff_text)
+            c_body = build_consensus(manifest, blocking_alt, config)
+            p_body = post_consensus(client, config, manifest, c_body, diff_text=diff_text)
+            body_after_change = self._inline_body(client)
+
+        for result in (p_create, p_unchanged, p_body):
+            validate_instance(result, "post_result.schema.json")
+        self.assertIs(c_create["summary"]["block_merge"], True)
+        self.assertIs(c_body["summary"]["block_merge"], True)
+        # create
+        self.assertEqual(p_create["created_discussions"], 1)
+        # unchanged rerun: idempotent, no new discussion
+        self.assertEqual(p_unchanged["created_discussions"], 0)
+        self.assertGreaterEqual(p_unchanged["skipped_unchanged"], 1)
+        # changed body: in-place update on the SAME discussion
+        self.assertEqual(p_body["created_discussions"], 0)
+        self.assertEqual(p_body["updated_discussions"], 1)
+        self.assertEqual(client.review_comment_count(), 1)
+        # the single inline comment's body actually changed (content lock, not just
+        # the updated_discussions counter)
+        self.assertNotEqual(body_after_create, body_after_change)
+
+    @staticmethod
+    def _inline_body(client: FakeGitHubClient) -> str:
+        bodies = client.inline_comment_bodies()
+        assert len(bodies) == 1, f"expected one inline comment, got {len(bodies)}"
+        return bodies[0]
 
 
 if __name__ == "__main__":

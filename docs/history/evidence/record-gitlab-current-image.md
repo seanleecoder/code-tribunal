@@ -3,7 +3,16 @@
 Status: partial
 
 > Sanitized partial record. It is not a release pass until the known
-> unexercised paths below are completed.
+> release-gating paths below are completed.
+
+> **Reclassification note (2026-07-23).** Per the revised
+> [evidence matrix](README.md): the **summary-fallback / inline-unmappable** path
+> is now **regression-covered** (`integration/test_post_gate_e2e.py` FYI cases,
+> `test_post.py` summary-fallback cases) and is no longer a release-gating live
+> requirement. The **positive changed-body in-place update** remains the
+> release-gating lifecycle gap, but is now reproducible token-free via the mock
+> `blocking_alt` scenario (see the [runbook](RUNBOOK-1.0-rc.md)). The historical
+> results below are unchanged; only their release-gating scope is narrowed.
 
 Covers evidence-matrix row **GitLab current image**: create, update, resolve,
 reopen, state persistence, blocking gate. Procedure:
@@ -130,7 +139,10 @@ completed.
 - Operator exact-value audit: passed on 2026-07-21 against the current GitLab
   secret values and downloaded GitLab traces/artifacts covered by the audit.
   Secret values are intentionally not recorded here.
-- Genuinely unrelated line movement and summary fallback remain pending as RC
-  accepted gaps.
+- Still release-gating: the positive changed-body in-place update and a genuinely
+  unrelated line movement (both reproducible token-free via the mock lifecycle
+  chain). Summary fallback is no longer release-gating — it is regression-covered
+  (see the reclassification note above).
 
-Replacement verdict remains **partial**.
+Replacement verdict remains **partial** for the release-gating lifecycle paths
+above; the reclassified summary-fallback path no longer blocks the row.

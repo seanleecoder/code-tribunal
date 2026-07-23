@@ -45,6 +45,20 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   keys off failed-seat counts.
 - Gate evaluation fails closed on post/state failures before consulting
   `merge_gate.enabled`. Advisory mode disables finding-based blocking only.
+  As defense-in-depth for the SPEC-33 one-run binding, `evaluate_gate` now also
+  requires the `post_result` to carry the same `run_id` as the consensus and
+  fails closed on a missing, empty, or mismatched value. The gate CLI already
+  schema-validates a required non-empty `run_id`, so this is a redundant
+  in-function guard for direct callers rather than a reachable-bypass fix.
+- The deterministic mock reviewer accepts `AI_REVIEW_MOCK_SCENARIO`
+  (`default`, `blocking`, `blocking_alt`, `advisory`, `none`) to emit a chosen,
+  schema-valid finding set when the mock path runs (`AI_REVIEW_LOCAL_MOCK=1`).
+  `blocking_alt` shares identity with `blocking` (same title, category, and
+  anchor) but a different body, so a lifecycle can exercise the changed-body
+  in-place update deterministically. This lets validation and live-evidence
+  lifecycle runs drive the real posting/state/gate path token-free and
+  reproducibly instead of depending on a weak model to emit a usable finding.
+  Ignored by the real reviewer CLIs and by production templates.
 - Prepare records `effective_config_sha256` (misconfiguration detector for
   cross-job policy/env drift, not tamper-proofing). The digest covers reviewer
   models/toggles/`max_findings`, consequential panel/severity fields, and

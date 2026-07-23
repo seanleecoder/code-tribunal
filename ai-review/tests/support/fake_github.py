@@ -207,6 +207,10 @@ class FakeGitHubClient:
     def review_comment_count(self) -> int:
         return len(self._comments)
 
+    def inline_comment_bodies(self) -> list[str]:
+        """Bodies of the root inline review comments, in creation order."""
+        return [str(comment["body"]) for comment in self._comments if "path" in comment]
+
     def state_comment_count(self) -> int:
         return len(self._issue_comments)
 
