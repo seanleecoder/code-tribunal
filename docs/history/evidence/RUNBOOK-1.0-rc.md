@@ -95,7 +95,10 @@ model smoke) an OpenRouter key. Prerequisites:
 - **GitLab:** a scratch consumer project + a protected template project holding
   `ai-review/ci/` at P0 commit `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
   a runner; protected+masked `OPENROUTER_API_KEY`
-  and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled. Setup:
+  and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled; and a
+  **protected scratch source branch** for the lifecycle MRs (the protected
+  `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
+  it and posting fails). Setup:
   [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
 - **GitHub:** a scratch consumer repo with the workflow copied from P0 commit
   `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
@@ -168,23 +171,30 @@ closed on divergence (SPEC-33). Never edit a production template.
 > A run. The GitHub mapping below defaults to safe values when the variables are
 > unset.
 
-- **GitLab — run from a protected source branch, then set toggles by topology.**
+- **GitLab — protected source branch + project variables.**
   Any GitLab lifecycle run (Chain A or B) must open its MR from a **protected
   scratch source branch**: the required `GITLAB_TOKEN` is masked+protected and
   powers prepare/discussions/state/commands, and protected CI/CD variables inject
   **only on protected refs**. On an unprotected feature branch the token — and any
   protected override variable — is silently withheld, so posting fails and Chain B
-  would quietly stay on real reviewers. With the branch protected:
-  - *Direct mode:* set the mock toggles as **manual "Run pipeline" variables**
-    (ephemeral — they do not persist, so they cannot poison a later Chain A):
-    `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
-    `AI_REVIEW_MOCK_SCENARIO=<scenario>`.
-  - *Hardened-child mode:* the child pipeline disables variable forwarding
-    (`inherit.variables: false`, `forward.pipeline_variables: false`), so manual
-    parent variables do **not** reach the review/critique jobs. Set the mock
-    toggles as **project CI/CD variables** instead — these inject into the child on
-    the protected branch. They are sticky, so heed the warning above (Chain A
-    first, or a separate scratch project, or delete them afterward).
+  would quietly stay on real reviewers. With the branch protected, set the mock
+  toggles (`AI_REVIEW_LOCAL_MOCK=1`,
+  `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
+  `AI_REVIEW_MOCK_SCENARIO=<scenario>`) as **project CI/CD variables** for **both**
+  topologies. Project variables apply to *every* pipeline in the project —
+  including the `merge_request_event` pipelines a `git push` triggers — so the
+  push-driven Chain B steps (change body, unrelated line movement) keep the mock;
+  they also reach the child in hardened-child mode, where forwarding is disabled
+  (`inherit.variables: false`, `forward.pipeline_variables: false`) and manual
+  parent variables would not. Project variables are sticky, so heed the warning
+  above (Chain A first, or a separate scratch project, or delete them afterward).
+  - *Manual "Run pipeline" variables are not sufficient for the full lifecycle.*
+    They apply only to that single web/api run and are **dropped by any
+    push-triggered pipeline**, so the push-driven steps would silently run real.
+    A manual web run also only triggers the DAG when you additionally supply
+    `CI_MERGE_REQUEST_IID=<target MR IID>` and select the MR source branch (the
+    jobs gate on `web/api && $CI_MERGE_REQUEST_IID`). Use them only for the
+    non-push steps if at all; prefer project variables.
 - **GitHub** step `env` cannot be overridden by repository variables. Make a
   **one-time** edit to the scratch consumer's copied workflow that maps the
   review/critique step env to variables with **safe defaults** — keep the
@@ -232,7 +242,8 @@ do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
 (see [operations cost controls](../../operations.md)). This chain ends here.
 
 **Chain B — deterministic mock lifecycle (zero tokens).** On a second change
-request, apply the scratch-consumer mock edit above. Every step drives the real
+request, enable the mock via the platform-specific mock enablement above (GitLab
+project variables / GitHub workflow-variable mapping). Every step drives the real
 platform posting/state/resolve/reopen/gate APIs on **one mock finding identity**;
 model quality is irrelevant, so no tokens are spent:
 
