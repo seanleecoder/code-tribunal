@@ -133,7 +133,14 @@ repeated re-runs. This runbook removes almost all of that spend:
 instead of calling a model (an adapter still falls back to a real CLI if any
 `AI_REVIEW_REQUIRE_REAL_*` flag is set, so set every one to `0` for Chain B — see
 the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
-anchored to the first added line of the reviewed diff:
+anchored to the `records[0]`/`data[0]` indexing marker when the diff contains one
+(via `_find_indexing_candidate`), otherwise the first added line. **Give the
+Chain B diff a stable indexing marker** (the shipped
+`ai-review/tests/fixtures/diffs/simple.diff` has one): the marker pins the anchor
+to the same line across reruns and unrelated line movements, so finding identity
+(`context_hash` → `source_finding_id`) stays stable. The first-added-line fallback
+does **not** — inserting a line above shifts which line is "first added", changing
+the anchor and opening a new discussion. The scenarios:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
@@ -157,10 +164,14 @@ against the real diff exactly like a real reviewer's output.
 **Enabling the mock in the scratch consumer (Chain B only).** The shipped templates
 hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run
 Chain B you must set `AI_REVIEW_LOCAL_MOCK=1`, set every `AI_REVIEW_REQUIRE_REAL_*=0`,
-and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. Whatever you
-use, scope these **identically across the prepare/review/critique/consensus jobs** —
-`prepare` stamps the effective-config digest into the manifest and consensus fails
-closed on divergence (SPEC-33). Never edit a production template.
+and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. These are
+**adapter controls** that only affect review/critique behavior — they are *not*
+part of the prepare-stamped effective-config digest — so set them consistently on
+the **review and critique** jobs (project-wide is simplest). If you also change a
+config-affecting override for Chain B (`AI_REVIEW_CRITIQUE_ENABLED`,
+`AI_REVIEW_<R>_ENABLED/MODEL/EFFORT`), that *does* feed the effective-config digest,
+so scope it identically across **all** jobs or consensus fails closed on divergence
+(SPEC-33). Never edit a production template.
 
 > **Sticky-variable warning — do not let the mock leak into Chain A.** Chain A is
 > the *real* smoke and must run with the mock off and require-real on. Persisted
@@ -269,7 +280,11 @@ model quality is irrelevant, so no tokens are spent:
 5. reopen → clear the disposition via the platform's native resolve/reopen API (or
    a `/ai-review reopen` command), then rerun `blocking`; expect the same
    discussion active again with identity preserved (no new discussion created);
-6. push an unrelated line movement (`blocking`) → anchor/identity maintained;
+6. push an unrelated line movement (`blocking`) **outside the marker's context
+   window** → the mock re-anchors to the stable `records[0]`/`data[0]` marker, so
+   `context_hash`/identity are maintained and post remaps the existing discussion
+   in place (no new discussion). Requires the marker in the diff — see the
+   deterministic-mock section; the first-added-line fallback would not hold;
 7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
    detect the superseded revision and do not act (disposition commands are already
    covered by steps 4–5);
