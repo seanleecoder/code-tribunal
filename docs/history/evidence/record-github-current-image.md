@@ -178,10 +178,10 @@ remaining lifecycle paths must be repeated against the replacement runtime.
   values are intentionally not recorded here.
 - Still release-gating: a positive changed-body in-place update and a genuinely
   unrelated line movement (both reproducible token-free via the mock lifecycle
-  chain; the line-movement step needs a **padded** `records[0]`/`data[0]` marker
-  diff — ≥6 unchanged new-side lines each side, not `simple.diff` — so the mock
-  anchor and finding identity stay stable across the movement; see the runbook).
-  Summary-fallback mapping is no longer
+  chain, run on a **padded** `records[0]`/`data[0]` marker diff — ≥6 unchanged
+  new-side lines each side, not `simple.diff` — used as the single Chain B base so
+  the mock anchor and finding identity stay stable across the movement; see the
+  runbook). Summary-fallback mapping is no longer
   release-gating — it is regression-covered (see the reclassification note above).
 
 Replacement verdict remains **partial** for the release-gating lifecycle paths
