@@ -175,9 +175,12 @@ closed on divergence (SPEC-33). Never edit a production template.
   Any GitLab lifecycle run (Chain A or B) must open its MR from a **protected
   scratch source branch**: the required `GITLAB_TOKEN` is masked+protected and
   powers prepare/discussions/state/commands, and protected CI/CD variables inject
-  **only on protected refs**. On an unprotected feature branch the token — and any
-  protected override variable — is silently withheld, so posting fails and Chain B
-  would quietly stay on real reviewers. With the branch protected, set the mock
+  **only on protected refs**. On an unprotected feature branch the protected
+  `GITLAB_TOKEN` (and any variable you marked Protected) is withheld, so prepare
+  and posting fail outright — credentials are unavailable. (Mock toggles set as
+  *unprotected* project variables would still inject on any branch, but the run
+  fails anyway without the token, so the protected branch is required regardless.)
+  With the branch protected, set the mock
   toggles (`AI_REVIEW_LOCAL_MOCK=1`,
   `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
   `AI_REVIEW_MOCK_SCENARIO=<scenario>`) as **project CI/CD variables** for **both**
@@ -188,6 +191,10 @@ closed on divergence (SPEC-33). Never edit a production template.
   (`inherit.variables: false`, `forward.pipeline_variables: false`) and manual
   parent variables would not. Project variables are sticky, so heed the warning
   above (Chain A first, or a separate scratch project, or delete them afterward).
+  Flip `AI_REVIEW_MOCK_SCENARIO` between Chain B steps by editing the project
+  variable in place and re-triggering the pipeline — no workflow commit is needed
+  — and remember that value applies project-wide, so any other open MR in the
+  scratch project sees the current scenario until you clear it.
   - *Manual "Run pipeline" variables are not sufficient for the full lifecycle.*
     They apply only to that single web/api run and are **dropped by any
     push-triggered pipeline**, so the push-driven steps would silently run real.
