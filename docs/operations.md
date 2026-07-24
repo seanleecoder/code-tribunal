@@ -108,6 +108,10 @@ scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state/gate path
 with a canned finding set and no provider calls. Mock mode is forbidden in
 production consumer projects: GitLab project/pipeline variables can override the
 template's `AI_REVIEW_LOCAL_MOCK: "0"`, so the companion allow flag is required.
+Every adapter fallback—including missing CLI or credential—requires the allow
+flag. It is defense against accidental fallback, not an authorization boundary:
+an actor able to inject both mock variables can enable mock mode. Production
+templates therefore keep `AI_REVIEW_REQUIRE_REAL_*=1` as the fail-closed guard.
 These are adapter controls that affect only review/critique behavior and are not
 part of the effective-config digest, so set them consistently on the review and
 critique jobs. Config-affecting overrides (critique/reviewer/panel) do feed the

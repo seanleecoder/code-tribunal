@@ -20,8 +20,9 @@ it is retitled to `[1.0.0]` when the annotated tag is cut.
   at 512; published `repo_snapshot` directories use mode `0755`. Contained prepare
   requires Linux/macOS `dir_fd` primitives (Windows local prepare fails closed).
 - `AI_REVIEW_LOCAL_MOCK=1` now also requires `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-  so a GitLab project/pipeline variable cannot silently enable the mock path
-  against production templates.
+  including when a reviewer CLI or credential is missing. This prevents silent
+  accidental fallback; production still relies on `AI_REVIEW_REQUIRE_REAL_*=1`
+  because an actor able to inject both mock variables can enable mock mode.
 
 ### Changed
 
@@ -103,7 +104,9 @@ it is retitled to `[1.0.0]` when the annotated tag is cut.
 - Active release inputs now require cited evidence records to be exact
   `Status: passed` against the claimed runtime source and image digests (or an
   explicit `Release-evidence-waived` reason). `release/release-inputs.json`
-  remains `draft` until that gate passes.
+  remains `draft` until that gate passes. Historical Identity prose is not a
+  release binding; records must carry explicit `Release-*` fields, and accepted
+  waiver IDs/reasons are printed by the validator.
 - Cursor is documented as experimental / outside the 1.0 evidence matrix.
   Semantic grouping env overrides are rejected; YAML keys remain disabled and
   outside the 1.0 compatibility guarantee.

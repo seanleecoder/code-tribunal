@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -23,6 +25,7 @@ if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
 ORIGINAL_SYS_PATH = sys.path.copy()
 sys.path.insert(0, str(SCRIPTS))
 try:
+    import check_release_inputs as release_input_checker  # noqa: E402
     from build_release_manifest import build_manifest  # noqa: E402
     from check_release_inputs import (  # noqa: E402
         validate_evidence_records,
@@ -253,6 +256,58 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseValidationError, "runtime source"):
                 validate_release_inputs(data, root)
 
+    def test_active_rejects_historical_identity_only_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            runtime_source = data["runtime_source"]
+            base_digest = data["images"]["base"]["digest"]
+            reviewer_digest = data["images"]["reviewer"]["digest"]
+            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path.write_text(
+                "\n".join(
+                    [
+                        "Status: passed",
+                        "",
+                        "## Identity",
+                        "",
+                        f"- Source commit: `{runtime_source}`",
+                        f"- Base image tag and digest: `1.0-{runtime_source}`",
+                        "  `ghcr.io/example/code-tribunal/ai-review-base@"
+                        f"{base_digest}`",
+                        f"- Reviewer image tag and digest: `1.0-{runtime_source}`",
+                        "  `ghcr.io/example/code-tribunal/ai-review-reviewer@"
+                        f"{reviewer_digest}`",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "must declare Release-runtime-source"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_requires_exact_lowercase_passed_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path.write_text(
+                evidence_path.read_text(encoding="utf-8").replace(
+                    "Status: passed", "Status: Passed", 1
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ReleaseValidationError, "exact 'passed'"):
+                validate_release_inputs(data, root)
+
     def test_active_accepts_explicit_evidence_waiver(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -267,8 +322,39 @@ class ReleaseToolTests(unittest.TestCase):
                 status="partial",
                 waived=True,
             )
-            validate_evidence_records(data, root)
-            validate_release_inputs(data, root)
+            expected_waivers = [
+                (
+                    record_id,
+                    "operator accepted residual risk for this row",
+                )
+                for record_id in data["verification"]["evidence_record_ids"]
+            ]
+            self.assertEqual(validate_evidence_records(data, root), expected_waivers)
+            self.assertEqual(validate_release_inputs(data, root), expected_waivers)
+
+    def test_cli_surfaces_evidence_waiver_reasons(self) -> None:
+        waivers = [("record-github.md", "operator accepted a scoped residual risk")]
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", ["check_release_inputs.py"]),
+            mock.patch.object(
+                release_input_checker,
+                "load_json",
+                return_value={"status": "active"},
+            ),
+            mock.patch.object(
+                release_input_checker,
+                "validate_release_inputs",
+                return_value=waivers,
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.assertEqual(release_input_checker.main(), 0)
+        self.assertIn(
+            "WARNING: evidence waiver record-github.md: "
+            "operator accepted a scoped residual risk",
+            stderr.getvalue(),
+        )
 
     def test_mismatched_github_pin_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

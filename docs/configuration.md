@@ -183,7 +183,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
 | `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
-| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required alongside `AI_REVIEW_LOCAL_MOCK=1`. Image preflight and operator evidence Chain B only; forbidden in production. |
+| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and operator evidence Chain B only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
 | `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Prevent missing provider prerequisites from falling back to mock behavior. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |

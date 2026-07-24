@@ -30,6 +30,8 @@ SHA/digest pair.
 6. Set each release-gating record to `Status: passed` with matching
    `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
    fields (see [`record-template.md`](record-template.md)).
+   Historical Identity-section source/image prose is not parsed as a release
+   binding; re-stamp older records with these explicit fields.
 7. Only then set `release-inputs.status` to `active`, cut release commit `P`,
    build the external manifest, and tag `v1.0.0`.
 

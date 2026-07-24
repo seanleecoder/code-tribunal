@@ -14,6 +14,7 @@ from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
 
 _REVIEWER_OVERRIDE_KEYS = (
     "AI_REVIEW_CLAUDE_MODEL",
@@ -178,6 +179,34 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         batch = self._run_mocked("cursor")
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "cursor")
+
+    def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
+        adapters = {
+            "claude": "claude.sh",
+            "codex": "codex.sh",
+            "opencode": "opencode.sh",
+            "cursor": "cursor.sh",
+        }
+        for reviewer, script_name in adapters.items():
+            with self.subTest(reviewer=reviewer):
+                completed = subprocess.run(
+                    ["/bin/sh", str(_ADAPTERS / script_name)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "AI_REVIEW_MODEL": "provider/test-model",
+                        "AI_REVIEW_REVIEWER": reviewer,
+                        "AI_REVIEW_STAGE": "review",
+                    },
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn(
+                    "mock reviewer fallback requires "
+                    "AI_REVIEW_ALLOW_LOCAL_MOCK=true",
+                    completed.stderr,
+                )
 
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name
