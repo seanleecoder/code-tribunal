@@ -13,6 +13,7 @@ from unittest import mock
 
 from ai_review.adapter_runner import (
     _EXIT_ERROR,
+    _SHELL_MOCK_ALLOW_REFUSAL,
     _build_adapter_env,
     _cli_reviewer_validation_error,
     _load_adapter_json,
@@ -740,8 +741,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 paths["adapter_dir"],
                 "codex",
                 "#!/bin/sh\n"
-                'echo "mock reviewer fallback requires '
-                'AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2\n'
+                f'echo "{_SHELL_MOCK_ALLOW_REFUSAL}" >&2\n'
                 "exit 2\n",
             )
             self._set_env(paths, config_path)

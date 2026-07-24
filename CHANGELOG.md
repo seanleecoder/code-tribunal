@@ -185,6 +185,9 @@ it is retitled to `[1.0.0]` when the annotated tag is cut.
 - Mock-enabled preflight or evidence jobs must set `AI_REVIEW_ALLOW_LOCAL_MOCK=true`
   alongside `AI_REVIEW_LOCAL_MOCK=1`. Never enable either on production consumer
   projects.
+- `verification.evidence_waivers` is now required on
+  `code_tribunal.release_inputs.v1` (use `{}` when unused). The same object is
+  copied into the external release manifest; keep schema_version at `.v1`.
 
 ## [0.4.0] - 2026-07-14
 

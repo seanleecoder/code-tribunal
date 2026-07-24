@@ -5,16 +5,18 @@ import os
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
 
-from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR, _SHELL_MOCK_ALLOW_REFUSAL, run_adapter
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
+_SRC = Path(__file__).resolve().parents[2] / "src"
 
 _REVIEWER_OVERRIDE_KEYS = (
     "AI_REVIEW_CLAUDE_MODEL",
@@ -180,6 +182,12 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "cursor")
 
+    def test_shell_adapters_embed_runner_mock_allow_refusal_string(self) -> None:
+        for script_name in ("claude.sh", "codex.sh", "opencode.sh", "cursor.sh"):
+            with self.subTest(script=script_name):
+                text = (_ADAPTERS / script_name).read_text(encoding="utf-8")
+                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, text)
+
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
         adapters = {
             "claude": "claude.sh",
@@ -204,11 +212,52 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(completed.returncode, 2)
-                self.assertIn(
-                    "mock reviewer fallback requires "
-                    "AI_REVIEW_ALLOW_LOCAL_MOCK=true",
-                    completed.stderr,
+                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+
+    def test_run_reviewer_shell_mock_refusal_is_config_error(self) -> None:
+        """End-to-end: run_reviewer.sh → real adapter shell → config_error."""
+        for reviewer in ("claude", "codex", "opencode", "cursor"):
+            with (
+                self.subTest(reviewer=reviewer),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                root = Path(tmp)
+                input_dir = root / "inputs"
+                output_dir = root / "out"
+                self._write_inputs(input_dir)
+                env = {
+                    "PYTHON": sys.executable,
+                    "PYTHONPATH": str(_SRC),
+                    # Empty PATH: real CLIs are absent; shells refuse mock
+                    # fallback without AI_REVIEW_ALLOW_LOCAL_MOCK=true.
+                    "PATH": "",
+                    "HOME": str(root / "home"),
+                    "AI_REVIEW_INPUT_DIR": str(input_dir),
+                    "AI_REVIEW_OUTPUT_DIR": str(output_dir),
+                    "AI_REVIEW_CONFIG": str(_REPO_CONFIG),
+                    "AI_REVIEW_STAGE": "review",
+                    "AI_REVIEW_REVIEWER": reviewer,
+                }
+                if reviewer == "cursor":
+                    env["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                completed = subprocess.run(
+                    [str(_ADAPTERS / "run_reviewer.sh"), reviewer, "review"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
                 )
+                self.assertEqual(
+                    completed.returncode,
+                    _EXIT_ERROR,
+                    msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
+                )
+                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+                status = load_json_file(output_dir / "status" / f"{reviewer}.json")
+                self.assertEqual(status["status"], "config_error")
+                self.assertEqual(status["error_class"], "ConfigError")
+                batch = load_json_file(output_dir / "findings" / f"{reviewer}.json")
+                self.assertEqual(batch["adapter_status"], "config_error")
 
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name

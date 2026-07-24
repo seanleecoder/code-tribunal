@@ -129,7 +129,7 @@ def validate_evidence_records(
     verification = data["verification"]
     assert isinstance(verification, dict)
     record_ids = verification["evidence_record_ids"]
-    declared_waivers = verification.get("evidence_waivers", {})
+    declared_waivers = verification["evidence_waivers"]
     assert isinstance(record_ids, list)
     if not isinstance(declared_waivers, dict):
         raise ReleaseValidationError("verification.evidence_waivers must be an object")
