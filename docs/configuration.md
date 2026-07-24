@@ -45,10 +45,19 @@ template.
 | `panel.min_successful_reviewers_for_blocking` | integer, `2` | Operational seats required before findings may block. |
 | `panel.min_successful_reviewers_for_resolution` | integer, `2` | Trustworthy empty-or-valid seats required for absence-based resolution. |
 | `panel.quorum.votes_required` | integer, `2` | Agreeing reviewer votes required for quorum; minimum is two unless only one seat is enabled. |
-| `panel.grouping.semantic.enabled` | boolean, `false` | Experimental opt-in deterministic similarity grouping; outside the 1.0 compatibility guarantee. |
-| `panel.grouping.semantic.threshold` | number, `0.5` | Experimental Jaccard threshold from 0.0 through 1.0; outside the 1.0 compatibility guarantee. |
 | `severity_policy.single_reviewer_blocker.categories` | list, `[security, correctness]` | Categories eligible for the single-reviewer blocker policy. |
 | `severity_policy.quorum_blocker.block_merge` | boolean, `true` | Permit quorum-backed blocker groups to set `block_merge`. |
+
+Semantic grouping keys remain in the shipped YAML with `enabled: false` but are
+**outside the 1.0 compatibility guarantee** (experimental). Do not enable them in
+production. Environment overrides
+`AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
+`AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` are rejected.
+
+| Experimental YAML key | Type/default | Meaning |
+|---|---|---|
+| `panel.grouping.semantic.enabled` | boolean, `false` | Opt-in deterministic title/body similarity grouping; unsupported for 1.0. |
+| `panel.grouping.semantic.threshold` | number, `0.5` | Jaccard threshold from 0.0 through 1.0 when experimental grouping is enabled. |
 
 ### Critique
 
@@ -77,7 +86,7 @@ template.
 | `state.backend` | enum, `gitlab_mr_state_note` | GitLab default; GitHub requires `github_pr_comment`. |
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
-| `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. |
+| `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
 | `state.retention.keep_open` | boolean, `true` | Preserve open records. |
 | `state.retention.keep_wontfix` | boolean, `true` | Preserve durable human dismissals. |
 | `state.retention.keep_resolved_records` | integer, `5` | Maximum resolved records retained. |
@@ -121,8 +130,6 @@ artifacts.
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; disables finding blocking only. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_STATE_BACKEND` | YAML | `gitlab_mr_state_note` or `github_pr_comment`; must match posting mode. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | `false` | Exact boolean. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | `0.5` | Number from 0.0 through 1.0. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
 
@@ -156,6 +163,8 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 | `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 
@@ -173,7 +182,8 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
-| `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. |
+| `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
+| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required alongside `AI_REVIEW_LOCAL_MOCK=1`. Image preflight and operator evidence Chain B only; forbidden in production. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
 | `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Prevent missing provider prerequisites from falling back to mock behavior. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |

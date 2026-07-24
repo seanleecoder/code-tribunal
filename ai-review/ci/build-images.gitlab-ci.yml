@@ -72,6 +72,7 @@ preflight_ai_review_reviewer_image:
     AI_REVIEW_INPUT_DIR: /tmp/ai-review-preflight/inputs
     AI_REVIEW_OUTPUT_DIR: /tmp/ai-review-preflight/out
     AI_REVIEW_LOCAL_MOCK: "1"
+    AI_REVIEW_ALLOW_LOCAL_MOCK: "true"
   script:
     - cd /tmp
     - python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'

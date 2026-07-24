@@ -129,7 +129,8 @@ repeated re-runs. This runbook removes almost all of that spend:
 
 ### The deterministic mock reviewer
 
-`AI_REVIEW_LOCAL_MOCK=1` makes each seat emit a canned, schema-valid finding batch
+`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true` makes each seat
+emit a canned, schema-valid finding batch
 instead of calling a model (an adapter still falls back to a real CLI if any
 `AI_REVIEW_REQUIRE_REAL_*` flag is set, so set every one to `0` for Chain B — see
 the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
@@ -184,7 +185,8 @@ against the real diff exactly like a real reviewer's output.
 
 **Enabling the mock in the scratch consumer (Chain B only).** The shipped templates
 hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run
-Chain B you must set `AI_REVIEW_LOCAL_MOCK=1`, set every `AI_REVIEW_REQUIRE_REAL_*=0`,
+Chain B you must set `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
+set every `AI_REVIEW_REQUIRE_REAL_*=0`,
 and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. These are
 **adapter controls** that only affect review/critique behavior — they are *not*
 part of the prepare-stamped effective-config digest — so set them consistently on
@@ -214,6 +216,7 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   fails anyway without the token, so the protected branch is required regardless.)
   With the branch protected, set the mock
   toggles (`AI_REVIEW_LOCAL_MOCK=1`,
+  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
   `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
   `AI_REVIEW_MOCK_SCENARIO=<scenario>`) as **project CI/CD variables** for **both**
   topologies. Project variables apply to *every* pipeline in the project —
@@ -241,11 +244,13 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   review/critique step env to variables with **safe defaults** — keep the
   require-real flags, do not delete them:
   `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
+  `AI_REVIEW_ALLOW_LOCAL_MOCK: ${{ vars.AI_REVIEW_ALLOW_LOCAL_MOCK || 'false' }}`,
   `AI_REVIEW_REQUIRE_REAL_OPENROUTER: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENROUTER || '1' }}`
   (and the same `|| '1'` mapping for `_CLAUDE`/`_OPENCODE`/`_CURSOR`), and
   `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`. With the variables
   unset, Chain A runs safely (mock off, require-real on); for Chain B set the repo
-  variables `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_REQUIRE_REAL_*=0`, and flip
+  variables `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
+  `AI_REVIEW_REQUIRE_REAL_*=0`, and flip
   `AI_REVIEW_MOCK_SCENARIO` between steps. Do **not** commit a per-scenario workflow
   change — a new commit on the reviewed branch changes the diff and the mock's
   selected anchor. (`workflow_dispatch` inputs mapped the same way are equivalent.)

@@ -787,18 +787,14 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_MERGE_GATE_ENABLED": (
                 "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}"
             ),
-            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
-                "${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED || 'false' }}"
-            ),
-            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": (
-                "${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD || '0.5' }}"
-            ),
         }
 
         for name, expression in expected_mappings.items():
             with self.subTest(name=name):
                 self.assertEqual(text.count(f"  {name}: {expression}"), 1)
         self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
+        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
+        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
 
     def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
@@ -817,8 +813,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_OPENCODE_EFFORT",
             "AI_REVIEW_CRITIQUE_ENABLED",
             "AI_REVIEW_MERGE_GATE_ENABLED",
-            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
-            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
             "AI_REVIEW_POSTING_MODE",
             "AI_REVIEW_STATE_BACKEND",
         ]
@@ -827,6 +821,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         for name in expected_overrides:
             with self.subTest(name=name):
                 self.assertIn(name, text)
+        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
+        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
         # Critique enablement remains an explicit top-level variable shared by
         # job rules and apply_env_overrides.
         self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")

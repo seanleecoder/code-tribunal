@@ -30,6 +30,7 @@ _ENV_KEYS = [
     "AI_REVIEW_OUTPUT_DIR",
     "AI_REVIEW_CONFIG",
     "AI_REVIEW_LOCAL_MOCK",
+    "AI_REVIEW_ALLOW_LOCAL_MOCK",
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
     "AI_REVIEW_REQUIRE_REAL_CODEX",
@@ -148,6 +149,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
+            os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = "true"
             if reviewer == "cursor":
                 os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
             os.environ.pop("AI_REVIEW_REQUIRE_REAL_OPENROUTER", None)

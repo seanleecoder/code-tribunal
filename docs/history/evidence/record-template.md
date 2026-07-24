@@ -2,6 +2,14 @@
 
 Status: pending
 
+<!-- For release-inputs status=active, Status must be exactly "passed" and the
+     three Release-* fields below must match release/release-inputs.json, OR
+     set Release-evidence-waived: <reason>. -->
+
+Release-runtime-source: `0000000000000000000000000000000000000000`
+Release-base-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+Release-reviewer-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
 ## Identity
 
 - Platform and version:

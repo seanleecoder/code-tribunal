@@ -702,6 +702,36 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
 
+    def test_local_mock_without_allow_flag_is_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                '#!/bin/sh\necho \'{"findings":[]}\'\n',
+            )
+            self._set_env(paths, config_path)
+            previous_mock = os.environ.get("AI_REVIEW_LOCAL_MOCK")
+            previous_allow = os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK")
+            os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
+            os.environ.pop("AI_REVIEW_ALLOW_LOCAL_MOCK", None)
+            try:
+                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            finally:
+                if previous_mock is None:
+                    os.environ.pop("AI_REVIEW_LOCAL_MOCK", None)
+                else:
+                    os.environ["AI_REVIEW_LOCAL_MOCK"] = previous_mock
+                if previous_allow is None:
+                    os.environ.pop("AI_REVIEW_ALLOW_LOCAL_MOCK", None)
+                else:
+                    os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = previous_allow
+
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
+
     def test_opencode_stream_error_status_is_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))

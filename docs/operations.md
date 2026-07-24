@@ -13,9 +13,12 @@ state migration.
 3. Rename `keep_resolved_runs` and `keep_stale_runs` to
    `keep_resolved_records` and `keep_stale_records`. Replace legacy
    `state.overflow_behavior: fail_closed` with the explicit
-   `state.fail_closed_on_load_error` choice.
+   `state.fail_closed_on_load_error` choice. For enforcing installs prefer
+   `state.fail_closed_on_load_error: true`.
 4. Configure one protected `GITLAB_TOKEN`. Verify panel blocking, resolution,
-   and quorum thresholds against the enabled reviewer count.
+   and quorum thresholds against the enabled reviewer count. Do not set
+   `AI_REVIEW_LOCAL_MOCK` or `AI_REVIEW_ALLOW_LOCAL_MOCK` on the consumer
+   project.
 5. Update the complete canonical workflow or the protected GitLab template SHA;
    keep base image, reviewer image, and trusted source SHA together.
 6. Start a fresh run at prepare. Old finding/critique batches lack required
@@ -24,7 +27,8 @@ state migration.
 7. Expect a one-time update of existing bot-authored bodies when the render-body
    version changes. This should update existing identities, not duplicate them.
 8. Verify state ownership, posting, commands, and the gate before enforcing it.
-
+9. Leave Cursor disabled unless you deliberately accept its separate egress path;
+   it is experimental and outside the 1.0 evidence matrix.
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
 `needs`, overrides, dashboards, and scripts that refer to the old job names:
 
@@ -99,13 +103,16 @@ accounting from SPEC-20, so provider billing remains the authoritative cost
 source; record it per run when collecting live evidence.
 
 For validation and lifecycle rehearsal without model spend, the deterministic
-mock reviewer (`AI_REVIEW_LOCAL_MOCK=1`, scenario via `AI_REVIEW_MOCK_SCENARIO`)
-drives the real posting/state/gate path with a canned finding set and no provider
-calls. These are adapter controls that affect only review/critique behavior and
-are not part of the effective-config digest, so set them consistently on the
-review and critique jobs. Config-affecting overrides (critique/reviewer/panel) do
-feed the digest, so scope any of those consistently across all jobs or consensus
-fails closed on divergence.
+mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
+scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state/gate path
+with a canned finding set and no provider calls. Mock mode is forbidden in
+production consumer projects: GitLab project/pipeline variables can override the
+template's `AI_REVIEW_LOCAL_MOCK: "0"`, so the companion allow flag is required.
+These are adapter controls that affect only review/critique behavior and are not
+part of the effective-config digest, so set them consistently on the review and
+critique jobs. Config-affecting overrides (critique/reviewer/panel) do feed the
+digest, so scope any of those consistently across all jobs or consensus fails
+closed on divergence.
 
 ## Image pin rotation
 
