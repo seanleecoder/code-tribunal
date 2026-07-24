@@ -695,6 +695,11 @@ def _run_adapter_process(
     )
 
 
+_SHELL_MOCK_ALLOW_REFUSAL = (
+    "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true"
+)
+
+
 def _local_mock_unauthorized() -> str | None:
     """Return an error when mock mode is requested without an explicit allow.
 
@@ -711,6 +716,11 @@ def _local_mock_unauthorized() -> str | None:
         "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
         "(forbidden in production; image preflight and Chain B evidence only)"
     )
+
+
+def _adapter_exit_is_mock_allow_refusal(stderr: str) -> bool:
+    """Shell adapters refuse all mock paths without the allow flag (exit 2)."""
+    return _SHELL_MOCK_ALLOW_REFUSAL in stderr
 
 
 def run_adapter(reviewer: str, stage: str) -> int:
@@ -870,12 +880,21 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if prompt_tmp is not None:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
+            stderr_text = result.stderr or f"adapter exited {result.returncode}"
+            # Shell adapters refuse mock fallback without the allow flag; that is
+            # misconfiguration, not a model failure.
+            if _adapter_exit_is_mock_allow_refusal(stderr_text):
+                exit_status = "config_error"
+                error_class = "ConfigError"
+            else:
+                exit_status = "model_error"
+                error_class = "AdapterExit"
             _write_empty(
                 output_dir,
                 output_file,
                 reviewer,
                 stage,
-                "model_error",
+                exit_status,
                 run_id,
                 model,
                 started_at,
@@ -885,12 +904,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 output_dir,
                 reviewer,
                 stage,
-                "model_error",
+                exit_status,
                 started_at,
                 started_monotonic,
                 output_file,
-                error_class="AdapterExit",
-                error_message=result.stderr or f"adapter exited {result.returncode}",
+                error_class=error_class,
+                error_message=stderr_text,
                 run_id=run_id,
                 effective_config_sha256=config_digest,
                 raw_finding_count=0,

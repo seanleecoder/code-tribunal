@@ -10,9 +10,11 @@ model content.
 `release/release-inputs.json` is **`draft`** until every release-gating row below
 is a scoped `Status: passed` against one frozen runtime source `R` and its
 attested base/reviewer digests (or carries an explicit
-`Release-evidence-waived: <reason>` line). `scripts/check_release_inputs.py`
-rejects `status: active` when cited records are partial or bind a different
-SHA/digest pair.
+`Release-evidence-waived: <reason>` line also registered under
+`verification.evidence_waivers` in the hashed release-inputs artifact).
+`scripts/check_release_inputs.py` rejects `status: active` when cited records
+are partial, bind a different SHA/digest pair, or waive without that registry
+entry.
 
 ## Operator checklist (final image pair)
 

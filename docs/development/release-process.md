@@ -25,10 +25,11 @@ creating a commit self-reference.
    `docs/history/evidence/` must either declare exact `Status: passed` with
    matching `Release-runtime-source` / `Release-base-digest` /
    `Release-reviewer-digest` fields, or an explicit
-   `Release-evidence-waived: <reason>` line. Only then set
-   `release-inputs.status` to `active` and re-run
-   `python scripts/check_release_inputs.py` (active status rejects partial or
-   SHA/digest-mismatched evidence).
+   `Release-evidence-waived: <reason>` line whose reason is also registered
+   under `verification.evidence_waivers` in `release/release-inputs.json`.
+   Only then set `release-inputs.status` to `active` and re-run
+   `python scripts/check_release_inputs.py` (active status rejects partial,
+   SHA/digest-mismatched, or undeclared-waiver evidence).
 6. After final release commit `P` and tag `v1.0.0` exist, move
    `CHANGELOG` `[Unreleased]` to `[1.0.0]`, finalize
    [`release/1.0.0.md`](../../release/1.0.0.md), and build/validate the external

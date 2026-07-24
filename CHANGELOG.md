@@ -103,13 +103,17 @@ it is retitled to `[1.0.0]` when the annotated tag is cut.
   on overflow.
 - Active release inputs now require cited evidence records to be exact
   `Status: passed` against the claimed runtime source and image digests (or an
-  explicit `Release-evidence-waived` reason). `release/release-inputs.json`
-  remains `draft` until that gate passes. Historical Identity prose is not a
-  release binding; records must carry explicit `Release-*` fields, and accepted
-  waiver IDs/reasons are printed by the validator.
+  explicit `Release-evidence-waived` reason also registered under
+  `verification.evidence_waivers` in the hashed release-inputs artifact).
+  `release/release-inputs.json` remains `draft` until that gate passes.
+  Historical Identity prose is not a release binding; records must carry
+  explicit `Release-*` fields, HTML comments are ignored when parsing evidence
+  fields, and accepted waiver IDs/reasons are printed by the validator.
 - Cursor is documented as experimental / outside the 1.0 evidence matrix.
   Semantic grouping env overrides are rejected; YAML keys remain disabled and
   outside the 1.0 compatibility guarantee.
+- Adapter shell refusals that require `AI_REVIEW_ALLOW_LOCAL_MOCK=true` now
+  surface as `config_error` rather than `model_error`.
 
 ### Fixed
 

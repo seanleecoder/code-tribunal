@@ -81,6 +81,7 @@
       "record-github-revision-failures.md",
       "record-github-default-model-smoke.md"
     ],
+    "evidence_waivers": {},
     "publication_run_id": null
   }
 }

@@ -195,7 +195,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     env={
-                        "PATH": "/usr/bin:/bin",
+                        # Empty PATH so no host CLI can satisfy the adapter;
+                        # mock fallback must still refuse without the allow flag.
+                        "PATH": "",
                         "AI_REVIEW_MODEL": "provider/test-model",
                         "AI_REVIEW_REVIEWER": reviewer,
                         "AI_REVIEW_STAGE": "review",

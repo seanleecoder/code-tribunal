@@ -4,11 +4,12 @@ Status: pending
 
 <!-- For release-inputs status=active, Status must be exactly "passed" and the
      three Release-* fields below must match release/release-inputs.json, OR
-     set Release-evidence-waived: <reason>. -->
+     set Release-evidence-waived: <reason> and register the same reason under
+     verification.evidence_waivers in release/release-inputs.json. -->
 
-Release-runtime-source: `0000000000000000000000000000000000000000`
-Release-base-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
-Release-reviewer-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+Release-runtime-source: `REPLACE-ME-40-CHAR-COMMIT-SHA-GOES-HERE!!`
+Release-base-digest: sha256:replace-me
+Release-reviewer-digest: sha256:replace-me
 
 ## Identity
 

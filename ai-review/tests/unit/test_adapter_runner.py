@@ -732,6 +732,29 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "config_error")
             self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
+    def test_shell_mock_allow_refusal_is_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                "#!/bin/sh\n"
+                'echo "mock reviewer fallback requires '
+                'AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2\n'
+                "exit 2\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "config_error")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["error_class"], "ConfigError")
+            self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
+
     def test_opencode_stream_error_status_is_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))

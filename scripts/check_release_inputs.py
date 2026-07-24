@@ -34,6 +34,7 @@ GITHUB_CONTAINER_ROLES = {
 }
 
 EVIDENCE_DIR = Path("docs/history/evidence")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
 _RUNTIME_SOURCE_RE = re.compile(
     r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$"
@@ -44,7 +45,7 @@ _BASE_DIGEST_RE = re.compile(
 _REVIEWER_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-reviewer-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
-_WAIVED_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.+?)\s*$")
+_WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.*?)\s*$")
 
 
 def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -80,6 +81,24 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _strip_html_comments(text: str) -> str:
+    """Remove HTML comments so template examples cannot become live bindings."""
+    return _HTML_COMMENT_RE.sub("", text)
+
+
+def _parse_waiver_reason(text: str, record_id: str) -> str | None:
+    match = _WAIVED_LINE_RE.search(text)
+    if match is None:
+        return None
+    reason = match.group(1).strip()
+    if not reason:
+        raise ReleaseValidationError(
+            f"evidence record {record_id} has an empty Release-evidence-waived "
+            "reason; provide a non-empty reason or remove the line"
+        )
+    return reason
+
+
 def validate_evidence_records(
     data: dict[str, Any],
     root: Path = ROOT,
@@ -90,7 +109,9 @@ def validate_evidence_records(
 
     - declare ``Status: passed`` (exact) and bind the claimed runtime source plus
       both image digests; or
-    - declare ``Release-evidence-waived: <reason>`` with a non-empty reason.
+    - declare ``Release-evidence-waived: <reason>`` with a non-empty reason that
+      is also registered under ``verification.evidence_waivers`` in the hashed
+      release-inputs artifact.
 
     Non-waived records must use the explicit ``Release-runtime-source`` and
     ``Release-*-digest`` fields. Historical Identity-section prose is not a
@@ -108,13 +129,34 @@ def validate_evidence_records(
     verification = data["verification"]
     assert isinstance(verification, dict)
     record_ids = verification["evidence_record_ids"]
+    declared_waivers = verification.get("evidence_waivers", {})
     assert isinstance(record_ids, list)
+    if not isinstance(declared_waivers, dict):
+        raise ReleaseValidationError("verification.evidence_waivers must be an object")
     if not record_ids:
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
 
+    for key, reason in declared_waivers.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ReleaseValidationError(
+                "verification.evidence_waivers keys must be non-empty strings"
+            )
+        if not isinstance(reason, str) or not reason.strip():
+            raise ReleaseValidationError(
+                f"verification.evidence_waivers[{key!r}] must be a non-empty string"
+            )
+        if key not in record_ids:
+            raise ReleaseValidationError(
+                f"verification.evidence_waivers key {key!r} is not listed in "
+                "evidence_record_ids"
+            )
+
     waivers: list[tuple[str, str]] = []
     for record_id in record_ids:
-        assert isinstance(record_id, str)
+        if not isinstance(record_id, str) or not record_id.strip():
+            raise ReleaseValidationError(
+                "verification.evidence_record_ids must be non-empty strings"
+            )
         if Path(record_id).name != record_id or "/" in record_id or "\\" in record_id:
             raise ReleaseValidationError(
                 f"evidence record id {record_id!r} must be a bare filename under "
@@ -122,14 +164,34 @@ def validate_evidence_records(
             )
         path = root / EVIDENCE_DIR / record_id
         try:
-            text = path.read_text(encoding="utf-8")
+            text = _strip_html_comments(path.read_text(encoding="utf-8"))
         except OSError as exc:
             raise ReleaseValidationError(
                 f"cannot read evidence record {record_id}: {exc}"
             ) from exc
 
-        waiver = _first_match(_WAIVED_RE, text)
-        if waiver:
+        waiver = _parse_waiver_reason(text, record_id)
+        declared_reason = declared_waivers.get(record_id)
+        declared_reason = (
+            declared_reason.strip() if isinstance(declared_reason, str) else None
+        )
+
+        if waiver is not None and declared_reason is None:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} has Release-evidence-waived but is "
+                "not declared in verification.evidence_waivers"
+            )
+        if declared_reason is not None and waiver is None:
+            raise ReleaseValidationError(
+                f"verification.evidence_waivers declares {record_id} but the "
+                "evidence record has no Release-evidence-waived line"
+            )
+        if waiver is not None and declared_reason is not None:
+            if waiver != declared_reason:
+                raise ReleaseValidationError(
+                    f"evidence record {record_id} waiver reason {waiver!r} does "
+                    f"not match verification.evidence_waivers ({declared_reason!r})"
+                )
             waivers.append((record_id, waiver))
             continue
 
@@ -245,7 +307,7 @@ def validate_release_inputs(
         raise ReleaseValidationError("verification must be an object")
     _require_keys(
         verification,
-        {"ci_run_id", "publication_run_id", "evidence_record_ids"},
+        {"ci_run_id", "publication_run_id", "evidence_record_ids", "evidence_waivers"},
         "verification",
     )
     if not isinstance(verification["evidence_record_ids"], list) or not all(
@@ -254,6 +316,8 @@ def validate_release_inputs(
         raise ReleaseValidationError(
             "verification.evidence_record_ids must be non-empty strings"
         )
+    if not isinstance(verification["evidence_waivers"], dict):
+        raise ReleaseValidationError("verification.evidence_waivers must be an object")
     for key in ("ci_run_id", "publication_run_id"):
         value = verification[key]
         if value is not None and (not isinstance(value, str) or not value.strip()):
