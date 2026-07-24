@@ -6,13 +6,13 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "8434687cdcdab689145fa47b7c148a4136a11b95782831b1cb46b039b118133d"
+      "sha256": "0b4a6bb129f2ce6db2793cf6a385b7fcaa75bcc6e4c3b7dc7ecfe8100d1852d3"
     },
     "configuration": {
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "0b016668a6d97a2cff1071354fc95fee6952276a9a5e5d891801ab2a8cc26445"
+      "sha256": "95e599b693e1ad6ceebbc20f6417423daa63487f1f19713b49de5ca9ed4e0f54"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "94c5cb7f9030f2739f566cc7a34f5db36e78146290f6c85f59acbdb41fb43aa6"
+      "sha256": "afcc5b963005e4f63ceb99613546863d125e224a4453282d544a16e73a30314c"
     },
     "image_recipes": {
       "files": [
@@ -70,9 +70,9 @@
   "release_version": "1.0.0",
   "runtime_source": "15d424feea730a04338ed423bf93b8797d807bbc",
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "29845398459",
+    "ci_run_id": null,
     "evidence_record_ids": [
       "record-image-publication-verification.md",
       "record-gitlab-hostile-mr.md",
@@ -81,6 +81,6 @@
       "record-github-revision-failures.md",
       "record-github-default-model-smoke.md"
     ],
-    "publication_run_id": "29845398524"
+    "publication_run_id": null
   }
 }

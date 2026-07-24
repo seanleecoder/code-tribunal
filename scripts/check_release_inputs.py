@@ -33,6 +33,24 @@ GITHUB_CONTAINER_ROLES = {
     "gate": "base",
 }
 
+EVIDENCE_DIR = Path("docs/history/evidence")
+_STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
+_RUNTIME_SOURCE_RE = re.compile(
+    r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$"
+)
+_SOURCE_COMMIT_RE = re.compile(
+    r"(?im)^- (?:Source commit|Runtime source commit):\s*`?([0-9a-f]{40})`?\s*$"
+)
+_BASE_DIGEST_RE = re.compile(
+    r"(?im)^(?:- )?(?:Release-base-digest|Base image(?: tag and)? digest):\s*"
+    r".*?(sha256:[0-9a-f]{64})\s*$"
+)
+_REVIEWER_DIGEST_RE = re.compile(
+    r"(?im)^(?:- )?(?:Release-reviewer-digest|Reviewer image(?: tag and)? digest):\s*"
+    r".*?(sha256:[0-9a-f]{64})\s*$"
+)
+_WAIVED_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.+?)\s*$")
+
 
 def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
     if set(value) != expected:
@@ -60,6 +78,99 @@ def _github_job_containers(text: str) -> dict[str, str]:
         if container_match and current_job is not None:
             containers[current_job] = container_match.group(1)
     return containers
+
+
+def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
+    match = pattern.search(text)
+    return match.group(1).strip() if match else None
+
+
+def validate_evidence_records(
+    data: dict[str, Any],
+    root: Path = ROOT,
+) -> None:
+    """Require active release inputs to cite fresh, matching evidence records.
+
+    Each cited record under ``docs/history/evidence/`` must either:
+
+    - declare ``Status: passed`` (exact) and bind the claimed runtime source plus
+      both image digests; or
+    - declare ``Release-evidence-waived: <reason>`` with a non-empty reason.
+
+    Prefer the explicit ``Release-runtime-source`` / ``Release-*-digest`` fields.
+    The Identity-section ``Source commit`` / image digest lines are accepted as
+    a compatibility fallback for older record shapes.
+    """
+    if data.get("status") != "active":
+        return
+    runtime_source = data["runtime_source"]
+    images = data["images"]
+    assert isinstance(runtime_source, str)
+    assert isinstance(images, dict)
+    verification = data["verification"]
+    assert isinstance(verification, dict)
+    record_ids = verification["evidence_record_ids"]
+    assert isinstance(record_ids, list)
+    if not record_ids:
+        raise ReleaseValidationError("active release inputs require evidence record identifiers")
+
+    for record_id in record_ids:
+        if not isinstance(record_id, str) or not record_id.strip():
+            raise ReleaseValidationError(
+                "verification.evidence_record_ids must be non-empty strings"
+            )
+        if Path(record_id).name != record_id or "/" in record_id or "\\" in record_id:
+            raise ReleaseValidationError(
+                f"evidence record id {record_id!r} must be a bare filename under "
+                f"{EVIDENCE_DIR.as_posix()}"
+            )
+        path = root / EVIDENCE_DIR / record_id
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ReleaseValidationError(
+                f"cannot read evidence record {record_id}: {exc}"
+            ) from exc
+
+        waiver = _first_match(_WAIVED_RE, text)
+        if waiver:
+            continue
+
+        status = _first_match(_STATUS_RE, text)
+        if status is None:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} is missing a Status: line"
+            )
+        if status.casefold() != "passed":
+            raise ReleaseValidationError(
+                f"evidence record {record_id} status must be exact 'passed' for "
+                f"active release inputs (got {status!r}); use "
+                f"Release-evidence-waived: <reason> to waive"
+            )
+
+        record_source = _first_match(_RUNTIME_SOURCE_RE, text) or _first_match(
+            _SOURCE_COMMIT_RE, text
+        )
+        if record_source != runtime_source:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} runtime source "
+                f"{record_source!r} does not match release inputs"
+            )
+
+        base_digest = _first_match(_BASE_DIGEST_RE, text)
+        reviewer_digest = _first_match(_REVIEWER_DIGEST_RE, text)
+        expected_base = images["base"]["digest"]
+        expected_reviewer = images["reviewer"]["digest"]
+        if base_digest != expected_base:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} base digest {base_digest!r} does not "
+                f"match release inputs"
+            )
+        if reviewer_digest != expected_reviewer:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} reviewer digest {reviewer_digest!r} "
+                f"does not match release inputs"
+            )
 
 
 def validate_release_inputs(data: dict[str, Any], root: Path = ROOT) -> None:
@@ -130,7 +241,9 @@ def validate_release_inputs(data: dict[str, Any], root: Path = ROOT) -> None:
     if not isinstance(verification["evidence_record_ids"], list) or not all(
         isinstance(item, str) and item.strip() for item in verification["evidence_record_ids"]
     ):
-        raise ReleaseValidationError("verification.evidence_record_ids must be non-empty strings")
+        raise ReleaseValidationError(
+                "verification.evidence_record_ids must be non-empty strings"
+            )
     for key in ("ci_run_id", "publication_run_id"):
         value = verification[key]
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -143,6 +256,7 @@ def validate_release_inputs(data: dict[str, Any], root: Path = ROOT) -> None:
         )
     if data["status"] == "active" and not verification["evidence_record_ids"]:
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
+    validate_evidence_records(data, root)
 
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     installed = (root / ".github/workflows/ai-review.yml").read_text(encoding="utf-8")

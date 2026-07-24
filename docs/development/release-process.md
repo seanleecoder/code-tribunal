@@ -7,23 +7,32 @@ allowlist; the generated external manifest records both commits without
 creating a commit self-reference.
 
 1. Land behavior, schema, migration, release tooling, and documentation changes
-   on reviewed runtime source commit `R`.
+   on reviewed runtime source commit `R`. Keep
+   `release/release-inputs.json` at `status: draft` until live evidence passes.
 2. Run `make quality` and the required hostile/local regression suites.
 3. Build base and reviewer images from exactly `R`; record the immutable image
    subjects, digests, publication run, attestations, and anonymous pulls.
 4. Update both GitHub workflow copies, the three GitLab pin variables, and
-   `release/release-inputs.json` together. Change its status to `active`, then
-   refresh and validate the checked file-set hashes:
+   `release/release-inputs.json` together. Keep status `draft` until step 5
+   completes; refresh and validate the checked file-set hashes:
 
    ```bash
    python scripts/check_release_inputs.py --write-hashes
    make quality
    ```
 
-5. Run the GitHub and GitLab live evidence matrix and record only sanitized
-   identifiers in the active release inputs and evidence records.
-6. After final release commit `P` and tag `v1.0.0` exist, build and validate the
-   external asset:
+5. Run the GitHub and GitLab live evidence matrix. Each cited record under
+   `docs/history/evidence/` must either declare exact `Status: passed` with
+   matching `Release-runtime-source` / `Release-base-digest` /
+   `Release-reviewer-digest` fields, or an explicit
+   `Release-evidence-waived: <reason>` line. Only then set
+   `release-inputs.status` to `active` and re-run
+   `python scripts/check_release_inputs.py` (active status rejects partial or
+   SHA/digest-mismatched evidence).
+6. After final release commit `P` and tag `v1.0.0` exist, move
+   `CHANGELOG` `[Unreleased]` to `[1.0.0]`, finalize
+   [`release/1.0.0.md`](../../release/1.0.0.md), and build/validate the external
+   asset:
 
    ```bash
    python scripts/build_release_manifest.py \

@@ -5,23 +5,44 @@ only sanitized identifiers, digests, expected/actual outcomes, and audit results
 Never store credentials, CLI session material, proprietary source, or sensitive
 model content.
 
+## Release readiness gate
+
+`release/release-inputs.json` is **`draft`** until every release-gating row below
+is a scoped `Status: passed` against one frozen runtime source `R` and its
+attested base/reviewer digests (or carries an explicit
+`Release-evidence-waived: <reason>` line). `scripts/check_release_inputs.py`
+rejects `status: active` when cited records are partial or bind a different
+SHA/digest pair.
+
+## Operator checklist (final image pair)
+
+1. Freeze runtime commit `R` that includes the intended mock/gate code.
+2. Publish attested base+reviewer images from exactly `R`; record anonymous
+   pull, OCI revision label, and provenance in
+   [`record-image-publication-verification.md`](record-image-publication-verification.md).
+3. Repin both GitHub workflow copies and the three GitLab pin variables together;
+   refresh `release/release-inputs.json` hashes.
+4. Run Chain A (real default-model smoke) and Chain B (mock lifecycle, including
+   `blocking_alt` changed-body update) on GitHub and GitLab per
+   [`RUNBOOK-1.0-rc.md`](RUNBOOK-1.0-rc.md). Chain B requires
+   `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
+5. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
+6. Set each release-gating record to `Status: passed` with matching
+   `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
+   fields (see [`record-template.md`](record-template.md)).
+7. Only then set `release-inputs.status` to `active`, cut release commit `P`,
+   build the external manifest, and tag `v1.0.0`.
+
 ## 1.0 evidence matrix
 
-> The `b674d1e` candidate was invalidated after live run `29842017448`
-> demonstrated that repository-owner disposition commands were ignored when
-> the workflow token could not inspect collaborator permissions. The scoped
-> results below remain historical evidence for those exact images. The
-> replacement runtime source `15d424feea730a04338ed423bf93b8797d807bbc` is itself
-> now superseded (see the digest note below); **every release-gating row below,
-> including image publication, must be repeated against the final rebuilt
-> base+reviewer pair.**
+> Historical candidates (`b674d1e`, `15d424f`, and earlier) remain useful
+> provenance only. **Every release-gating row below, including image
+> publication, must be repeated against the final rebuilt base+reviewer pair
+> for the frozen runtime source `R`.**
 >
-> Digest note: the `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate
-> `run_id` binding post-date `15d424f` and ship inside the product image, so the
-> final RC is a rebuilt base+reviewer pair and `15d424f` is superseded. **Both**
-> the real default-model smoke (Chain A) and the deterministic-mock lifecycle
-> (Chain B) run against that final rebuilt pair, so the evidence matches the exact
-> images that ship (see the runbook precondition).
+> Digest note: `AI_REVIEW_MOCK_SCENARIO` and the gate `run_id` binding ship
+> inside the product image. Both the real default-model smoke (Chain A) and the
+> deterministic-mock lifecycle (Chain B) must run against that final pair.
 
 Live evidence spends real model tokens and real platform quota, so each row is
 classified by whether a live run proves something the regression suite cannot:
@@ -36,10 +57,10 @@ classified by whether a live run proves something the regression suite cannot:
 
 | Suite | Tier | Regression coverage (`make quality`) | Status |
 |---|---|---|---|
-| Image publication verification | release-gating | n/a (registry/attestation) | **Pending re-verification** against the rebuilt final pair (anonymous digest pull, OCI revision label, provenance attestation). The [`15d424f` scoped pass](record-image-publication-verification.md) is historical only — those images are superseded. |
-| GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Replacement partial** — full three-model panel, classic-token resolve/reopen, owner-command persistence, stale-head no-op, PR-event required-check blocking, and exact-value audit passed; positive changed-body in-place update still pending. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
-| GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Replacement partial** — full-panel blocking run, direct resolve/reopen, unchanged idempotency, and exact-value audit passed; positive changed-body in-place update still pending. [record](record-gitlab-current-image.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Replacement partial** — credential withholding and forwarding isolation passed; trusted image/config override and forged-gate at a credential-bearing boundary still pending live. [record](record-gitlab-hostile-mr.md) |
+| Image publication verification | release-gating | n/a (registry/attestation) | **Pending** against the final rebuilt pair (anonymous digest pull, OCI revision label, provenance attestation). Prior scoped passes are historical only. |
+| GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Pending** against final digests — prior replacement candidate was partial (changed-body in-place update still required). [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
+| GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Pending** against final digests — prior replacement candidate was partial (changed-body in-place update still required). [record](record-gitlab-current-image.md) |
+| GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Pending** against final digests — prior partial covered credential withholding/forwarding isolation; trusted image/config override and forged-gate at a credential-bearing boundary still required. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
 | GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional. Timing windows are milliseconds wide; do not gate the release on reproducing them. [record](record-github-revision-failures.md) |
@@ -58,14 +79,13 @@ consumer flow but not the hostile-MR deployment boundary. See
   and is the clearest remaining lifecycle gap; the mock `blocking_alt` scenario
   (same identity as `blocking`, different body) now reproduces it live without
   model spend (see the runbook).
-- **Cursor reviewer** is the opt-in substitute with a separate credential and
-  egress path. It currently has only a permission smoke and **no evidence row**;
-  its data-egress/permission behavior is out of the 1.0 live-evidence scope until
-  a dedicated record exists. Do not advertise Cursor as evidence-backed.
-- Until the release-gating rows are scoped passes against this exact RC source and
-  image digests, current docs must qualify rather than assert product-wide
-  "stable," "credential isolated," or equivalent deployment claims. The
-  regression-covered rows do not block the release.
+- **Cursor reviewer** is an experimental opt-in substitute with a separate
+  credential and egress path. It currently has only a permission smoke and **no
+  evidence row**; do not advertise Cursor as evidence-backed.
+- Until the release-gating rows are scoped passes against the final `R` and image
+  digests, docs must qualify rather than assert product-wide "stable,"
+  "credential isolated," or equivalent deployment claims. The regression-covered
+  rows do not block the release.
 
 ## Record format
 

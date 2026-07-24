@@ -60,6 +60,10 @@ _ADAPTER_RUNTIME_ENV = {
 
 _AI_REVIEW_ADAPTER_CONTROLS = {
     "AI_REVIEW_LOCAL_MOCK",
+    # Exact lowercase "true" is required alongside AI_REVIEW_LOCAL_MOCK=1 so a
+    # GitLab project/pipeline variable cannot silently enable the mock path in
+    # production templates (YAML job defaults lose to higher-precedence CI vars).
+    "AI_REVIEW_ALLOW_LOCAL_MOCK",
     # Selects a deterministic mock-reviewer scenario when the mock path runs
     # (default|blocking|advisory|none). Ignored by the real reviewer CLIs.
     "AI_REVIEW_MOCK_SCENARIO",
@@ -691,6 +695,24 @@ def _run_adapter_process(
     )
 
 
+def _local_mock_unauthorized() -> str | None:
+    """Return an error when mock mode is requested without an explicit allow.
+
+    Production templates set ``AI_REVIEW_LOCAL_MOCK=0``. On GitLab, project or
+    pipeline variables can override that YAML default. Require the exact
+    companion allow flag so mock findings cannot silently replace real
+    reviewers in a consumer project.
+    """
+    if os.environ.get("AI_REVIEW_LOCAL_MOCK") != "1":
+        return None
+    if os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") == "true":
+        return None
+    return (
+        "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
+        "(forbidden in production; image preflight and Chain B evidence only)"
+    )
+
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -702,6 +724,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
     config_digest = _manifest_effective_config_sha256(input_dir)
 
     try:
+        if mock_error := _local_mock_unauthorized():
+            raise ConfigError(mock_error)
         config = load_config(config_path)
         config_digest = _resolve_config_digest(input_dir, config)
         reviewer_config = config["reviewers"].get(reviewer)

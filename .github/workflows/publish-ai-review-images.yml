@@ -147,6 +147,7 @@ jobs:
             export AI_REVIEW_INPUT_DIR=/tmp/ai-review-preflight/inputs
             export AI_REVIEW_OUTPUT_DIR=/tmp/ai-review-preflight/out
             export AI_REVIEW_LOCAL_MOCK=1
+            export AI_REVIEW_ALLOW_LOCAL_MOCK=true
             python -m ai_review.input_bundle local \
               --config "$AI_REVIEW_CONFIG" \
               --diff /opt/ai-review/tests/fixtures/diffs/simple.diff \
