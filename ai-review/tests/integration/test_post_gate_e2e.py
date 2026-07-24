@@ -12,7 +12,7 @@ from unittest import mock
 from ai_review import mock_reviewer
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import load_config
-from ai_review.consensus import build_consensus
+from ai_review.consensus import build_consensus, validate_consensus_inputs
 from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
@@ -295,6 +295,19 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
     REVIEWERS = ("claude", "codex", "opencode")
 
+    # Posting/state/critique are driven through the documented AI_REVIEW_* env
+    # overrides so `prepare` stamps them into the manifest's effective_config. That
+    # keeps the manifest and the consensus-time config in agreement, so
+    # `validate_consensus_inputs` passes on inputs that could actually come from a
+    # real prepare→consensus pipeline — rather than mutating the config after prepare
+    # (which diverges the effective_config digest and only survives because
+    # build_consensus is called directly).
+    CONSENSUS_ENV = {
+        "AI_REVIEW_POSTING_MODE": "github_reviews",
+        "AI_REVIEW_STATE_BACKEND": "github_pr_comment",
+        "AI_REVIEW_CRITIQUE_ENABLED": "false",
+    }
+
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         repo = tmp / "repo"
         (repo / "src").mkdir(parents=True)
@@ -312,9 +325,6 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             tmp / "bundle",
         )
         config = load_config(bundle / "config.review.yaml")
-        config["posting"]["mode"] = "github_reviews"
-        config["state"]["backend"] = "github_pr_comment"
-        config["critique"]["enabled"] = False
         manifest = dict(
             load_json_file(bundle / "manifest.json"),
             project_id="octo/repo",
@@ -324,8 +334,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         return config, manifest, diff_text, bundle
 
     def _batches(
-        self, scenario: str, input_dir: Path, manifest: dict[str, Any]
+        self, scenario: str, input_dir: Path, manifest: dict[str, Any], config: dict[str, Any]
     ) -> list[dict[str, Any]]:
+        reviewers_cfg = config["reviewers"]
         with mock.patch.dict("os.environ", {"AI_REVIEW_MOCK_SCENARIO": scenario}):
             batches = []
             for reviewer in self.REVIEWERS:
@@ -334,7 +345,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
                     finalize_finding_batch(
                         raw,
                         reviewer=reviewer,
-                        model="mock",
+                        # Stamp the seat's configured model so the batch matches the
+                        # effective config validate_consensus_inputs checks against.
+                        model=str(reviewers_cfg[reviewer]["model"]),
                         run_id=manifest["run_id"],
                         started_at="2026-07-23T00:00:00Z",
                         effective_config_sha256=manifest["effective_config_sha256"],
@@ -399,15 +412,25 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         return {f["source_finding_id"] for f in batch["findings"]}
 
     def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CONSENSUS_ENV
+        ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
 
-            blocking = self._batches("blocking", bundle, manifest)
-            blocking_alt = self._batches("blocking_alt", bundle, manifest)
+            blocking = self._batches("blocking", bundle, manifest, config)
+            blocking_alt = self._batches("blocking_alt", bundle, manifest, config)
 
             # blocking and blocking_alt share finding identity (body is excluded).
             self.assertEqual(self._source_ids(blocking[0]), self._source_ids(blocking_alt[0]))
+
+            # Inputs satisfy the real prepare→consensus integrity contract.
+            validate_consensus_inputs(
+                config=config, manifest=manifest, finding_batches=blocking, critique_batches=[]
+            )
+            validate_consensus_inputs(
+                config=config, manifest=manifest, finding_batches=blocking_alt, critique_batches=[]
+            )
 
             c_create = build_consensus(manifest, blocking, config)
             p_create = post_consensus(client, config, manifest, c_create, diff_text=diff_text)
@@ -460,16 +483,15 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # visible placement as requiring separate live validation. That visible
         # placement remains a documented, live-optional confirmation, not something
         # this test asserts.
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CONSENSUS_ENV
+        ):
             tmpp = Path(tmp)
             diff1 = self._marker_diff(unrelated_lines=0)
             diff2 = self._marker_diff(unrelated_lines=3)
             bundle1, manifest1 = self._marker_bundle(tmpp, "r1", diff1)
             bundle2, manifest2_raw = self._marker_bundle(tmpp, "r2", diff2)
             config = load_config(bundle1 / "config.review.yaml")
-            config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
-            config["critique"]["enabled"] = False
             head2 = "0123456789abcdef0123456789abcdef01234567"
             manifest2 = dict(manifest2_raw, head_sha=head2)
             # A genuine second revision: new head SHA, and — because each bundle was
@@ -479,13 +501,22 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             self.assertNotEqual(manifest1["run_id"], manifest2["run_id"])
             client = FakeGitHubClient(head_sha=manifest1["head_sha"], diff_text=diff1)
 
-            b1 = self._batches("blocking", bundle1, manifest1)
-            b2 = self._batches("blocking_alt", bundle2, manifest2)
+            b1 = self._batches("blocking", bundle1, manifest1, config)
+            b2 = self._batches("blocking_alt", bundle2, manifest2, config)
             marker_line_1 = b1[0]["findings"][0]["anchor"]["start"]["new_line"]
             marker_line_2 = b2[0]["findings"][0]["anchor"]["start"]["new_line"]
             # The marker moved to a different line, but identity is stable.
             self.assertNotEqual(marker_line_1, marker_line_2)
             self.assertEqual(self._source_ids(b1[0]), self._source_ids(b2[0]))
+
+            # Both revisions satisfy the real prepare→consensus integrity contract
+            # (effective_config, run_id, per-seat model) before we build consensus.
+            validate_consensus_inputs(
+                config=config, manifest=manifest1, finding_batches=b1, critique_batches=[]
+            )
+            validate_consensus_inputs(
+                config=config, manifest=manifest2, finding_batches=b2, critique_batches=[]
+            )
 
             # revision 1
             c1 = build_consensus(manifest1, b1, config)

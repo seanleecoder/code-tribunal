@@ -123,9 +123,13 @@ Perform on one PR; capture run/job IDs and platform object IDs (comment/review I
   non-disclosing actual-value audit; a separate common token-pattern scan was
   also clean across the final PR-event download.
 - Sensitive model content omitted from this record: yes.
-- Known unexercised paths: changed finding body, a genuinely unrelated line
-  movement outside the finding context, successful resolve/wontfix/reopen
-  command transitions, and stale post/gate no-op.
+- Known unexercised paths (this historical run): changed finding body, a genuinely
+  unrelated line movement outside the finding context, successful
+  resolve/wontfix/reopen command transitions, and stale post/gate no-op. Per the
+  reclassification note above, unrelated line movement is no longer release-gating —
+  its internal remap is regression-covered and only visible re-anchoring stays
+  live-optional; only the positive changed-body in-place update remains a
+  release-gating gap (reproducible token-free via `blocking_alt`).
 
 ## Verdict
 
