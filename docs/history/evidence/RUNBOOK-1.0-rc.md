@@ -147,11 +147,19 @@ line is "first added", changing the anchor and opening a new discussion.
 > behavior: a real push advances the head SHA and regenerates the served unified
 > diff (with the platform's own limited context), which the mock cannot faithfully
 > reproduce — and identity depends on the `context_hash` ±6 new-side window, which
-> a hand-shaped fixture would only approximate. That remap logic is instead proven
-> by `integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-> (two revisions, advancing head + second manifest) plus the `test_anchors` remap
-> and `test_post.py` run-to-run upsert unit tests. Treat any live line-movement
-> attempt as optional confirmation, not a release-gating token-free step.
+> a hand-shaped fixture would only approximate. The **internal** remap contract —
+> finding identity is preserved and the persisted state anchor follows the marker,
+> so the run updates the one existing discussion instead of opening a duplicate — is
+> proven by
+> `integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+> (two independently prepared revisions, each with its own head SHA, diff digest, and
+> run_id) plus the `test_anchors` remap and `test_post.py` run-to-run upsert unit
+> tests. What that test does **not** prove is *platform-visible* re-anchoring:
+> updating an existing GitHub/GitLab comment rewrites its body, not its original diff
+> position, and `post.py` marks visible placement as requiring separate live
+> validation. So the visible re-anchoring of a moved comment stays a documented,
+> **live-optional** confirmation (not release-gating); the internal remap is
+> regression-covered.
 
 The scenarios:
 
@@ -209,9 +217,10 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
   `AI_REVIEW_MOCK_SCENARIO=<scenario>`) as **project CI/CD variables** for **both**
   topologies. Project variables apply to *every* pipeline in the project —
-  including the `merge_request_event` pipelines a `git push` triggers — so the
-  push-driven Chain B steps (change body, unrelated line movement) keep the mock;
-  they also reach the child in hardened-child mode, where forwarding is disabled
+  including the `merge_request_event` pipelines a `git push` triggers (opening the
+  MR, and any commit pushed for a lifecycle step) — so the mock stays active across
+  the whole chain no matter how a pipeline is triggered; they also reach the child
+  in hardened-child mode, where forwarding is disabled
   (`inherit.variables: false`, `forward.pipeline_variables: false`) and manual
   parent variables would not. Project variables are sticky, so heed the warning
   above (Chain A first, or a separate scratch project, or delete them afterward).
@@ -221,7 +230,8 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   scratch project sees the current scenario until you clear it.
   - *Manual "Run pipeline" variables are not sufficient for the full lifecycle.*
     They apply only to that single web/api run and are **dropped by any
-    push-triggered pipeline**, so the push-driven steps would silently run real.
+    push-triggered pipeline**, so any pipeline triggered by a push (the MR's own
+    commits, or a re-trigger by push) would silently run real.
     A manual web run also only triggers the DAG when you additionally supply
     `CI_MERGE_REQUEST_IID=<target MR IID>` and select the MR source branch (the
     jobs gate on `web/api && $CI_MERGE_REQUEST_IID`). Use them only for the
@@ -293,12 +303,14 @@ model quality is irrelevant, so no tokens are spent:
 5. reopen → clear the disposition via the platform's native resolve/reopen API (or
    a `/ai-review reopen` command), then rerun `blocking`; expect the same
    discussion active again with identity preserved (no new discussion created);
-6. unrelated line movement — **regression-covered, optional live** (see the note
-   above): the cross-revision remap that keeps identity across a line move is
-   proven by the two-revision e2e and the `test_anchors`/`test_post` remap tests,
-   and a real push's head advance + regenerated served diff is not something the
-   mock reproduces faithfully. Skip it as a token-free step; confirm live only if
-   convenient, and it is not release-gating;
+6. unrelated line movement — **internal remap regression-covered; visible
+   placement optional live** (see the note above): the cross-revision remap that
+   keeps finding identity and moves the persisted state anchor (so the one existing
+   discussion is updated, not duplicated) is proven by the two-revision e2e and the
+   `test_anchors`/`test_post` remap tests. The *platform-visible* re-anchoring of the
+   moved comment is not reproduced by the mock and remains a live-optional
+   confirmation, not release-gating; skip it as a token-free step and confirm live
+   only if convenient;
 7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
    detect the superseded revision and do not act (disposition commands are already
    covered by steps 4–5);

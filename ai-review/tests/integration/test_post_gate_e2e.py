@@ -367,11 +367,33 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         lines += ctx_above + [marker] + ctx_below
         return "\n".join(lines) + "\n"
 
-    def _diff_dir(self, tmp: Path, name: str, diff_text: str) -> Path:
-        d = tmp / name
-        d.mkdir()
-        (d / "mr.diff").write_text(diff_text, encoding="utf-8")
-        return d
+    def _marker_bundle(
+        self, tmp: Path, name: str, diff_text: str
+    ) -> tuple[Path, dict[str, Any]]:
+        """Build a full input bundle from `diff_text` via prepare_local_bundle so the
+        manifest carries provenance (diff_sha256, run_id) consistent with the served
+        diff — modelling a distinct revision rather than reusing one manifest with a
+        swapped diff. Returns the bundle dir and its manifest (project/MR patched to
+        the GitHub fake's coordinates)."""
+        repo = tmp / f"{name}-repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "foo.py").write_text(
+            "def extract_name(records):\n    return records[0]\n", encoding="utf-8"
+        )
+        diff_file = tmp / f"{name}.diff"
+        diff_file.write_text(diff_text, encoding="utf-8")
+        bundle = prepare_local_bundle(
+            AI_REVIEW_ROOT / "config" / "review.yaml",
+            diff_file,
+            repo,
+            tmp / f"{name}-bundle",
+        )
+        manifest = dict(
+            load_json_file(bundle / "manifest.json"),
+            project_id="octo/repo",
+            merge_request_iid="7",
+        )
+        return bundle, manifest
 
     def _source_ids(self, batch: dict[str, Any]) -> set[str]:
         return {f["source_finding_id"] for f in batch["findings"]}
@@ -414,13 +436,14 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertNotEqual(body_after_create, body_after_change)
 
     def test_line_movement_across_revisions_remaps_to_same_discussion(self) -> None:
-        # Models a real cross-revision push, not just a diff swap: revision 1 posts
-        # a blocking finding; revision 2 advances the head SHA (a second manifest)
-        # and serves a diff that inserts unrelated lines above the marker, outside
-        # its ±6 context window. The stored anchor remaps to the marker's new line,
-        # so the existing discussion updates in place instead of a second opening.
-        # This exercises the cross-revision remap path; identity is head-independent
-        # (source_finding_id is context_hash-based, not head-based).
+        # Models a real cross-revision push, not just a diff swap: two INDEPENDENT
+        # bundles are prepared (one per revision) so each manifest carries its own
+        # provenance — distinct diff_sha256 and run_id — matching the diff it serves.
+        # Revision 1 posts a blocking finding; revision 2 advances the head SHA and
+        # serves a diff that inserts unrelated lines above the marker, outside its ±6
+        # context window. Identity is head/diff-digest-independent (source_finding_id
+        # is context_hash-based), so the stored anchor remaps to the marker's new line
+        # and the existing discussion updates in place instead of a second opening.
         #
         # Revision 2 uses `blocking_alt` (same identity, different body) so the second
         # post is an OBSERVABLE update, not a same-body skip: without a body change the
@@ -428,20 +451,36 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # skipping it, never re-persisting the anchor. Forcing updated_discussions=1
         # exercises the update path and lets us assert the stored anchor actually moved
         # to revision 2's marker line via a "remapped" remap.
+        #
+        # SCOPE: this proves the *internal* remap contract — finding identity is
+        # preserved and the persisted state anchor follows the marker, so the run
+        # updates the one existing discussion rather than opening a duplicate. It does
+        # NOT prove *platform-visible* re-anchoring: updating an existing GitHub/GitLab
+        # comment rewrites its body, not its original diff position, and post.py marks
+        # visible placement as requiring separate live validation. That visible
+        # placement remains a documented, live-optional confirmation, not something
+        # this test asserts.
         with tempfile.TemporaryDirectory() as tmp:
             tmpp = Path(tmp)
-            config, manifest1, _diff, _bundle = self._bundle(tmpp)
-            head2 = "0123456789abcdef0123456789abcdef01234567"
-            self.assertNotEqual(manifest1["head_sha"], head2)
-            manifest2 = dict(manifest1, head_sha=head2, run_id=f"{manifest1['run_id']}-r2")
             diff1 = self._marker_diff(unrelated_lines=0)
             diff2 = self._marker_diff(unrelated_lines=3)
-            d1 = self._diff_dir(tmpp, "d1", diff1)
-            d2 = self._diff_dir(tmpp, "d2", diff2)
+            bundle1, manifest1 = self._marker_bundle(tmpp, "r1", diff1)
+            bundle2, manifest2_raw = self._marker_bundle(tmpp, "r2", diff2)
+            config = load_config(bundle1 / "config.review.yaml")
+            config["posting"]["mode"] = "github_reviews"
+            config["state"]["backend"] = "github_pr_comment"
+            config["critique"]["enabled"] = False
+            head2 = "0123456789abcdef0123456789abcdef01234567"
+            manifest2 = dict(manifest2_raw, head_sha=head2)
+            # A genuine second revision: new head SHA, and — because each bundle was
+            # prepared from its own diff — a different input digest and run_id too.
+            self.assertNotEqual(manifest1["head_sha"], manifest2["head_sha"])
+            self.assertNotEqual(manifest1["diff_sha256"], manifest2["diff_sha256"])
+            self.assertNotEqual(manifest1["run_id"], manifest2["run_id"])
             client = FakeGitHubClient(head_sha=manifest1["head_sha"], diff_text=diff1)
 
-            b1 = self._batches("blocking", d1, manifest1)
-            b2 = self._batches("blocking_alt", d2, manifest2)
+            b1 = self._batches("blocking", bundle1, manifest1)
+            b2 = self._batches("blocking_alt", bundle2, manifest2)
             marker_line_1 = b1[0]["findings"][0]["anchor"]["start"]["new_line"]
             marker_line_2 = b2[0]["findings"][0]["anchor"]["start"]["new_line"]
             # The marker moved to a different line, but identity is stable.
