@@ -180,6 +180,8 @@ class DocumentationContractTests(unittest.TestCase):
             {},
             "## Environment variables\n"
             "| `AI_REVIEW_CURSOR_EFFORT` | rejected |\n"
+            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | rejected |\n"
+            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | rejected |\n"
             "| `GITLAB_READ_TOKEN` | rejected |\n"
             "| `GITLAB_WRITE_TOKEN` | rejected |\n",
             set(),

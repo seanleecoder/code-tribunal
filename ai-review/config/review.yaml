@@ -3,8 +3,8 @@ schema_version: review_config.v1 # Schema version for config compatibility valid
 # Configured LLM reviewer backends.
 # Per-reviewer `model` and `enabled` can be overridden at runtime without a
 # rebuild via AI_REVIEW_<REVIEWER>_MODEL / AI_REVIEW_<REVIEWER>_ENABLED
-# (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See README "Runtime
-# Environment Overrides".
+# (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See
+# docs/configuration.md#environment-variables.
 reviewers:
   claude:
     enabled: true # Override: AI_REVIEW_CLAUDE_ENABLED
@@ -40,7 +40,8 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
-  # Cursor is an opt-in substitute reviewer. Cursor CLI cannot route through
+  # Cursor is an experimental opt-in substitute reviewer outside the 1.0
+  # live-evidence matrix. Cursor CLI cannot route through
   # OpenRouter/BYOK/custom-base-URL; enabling it sends review prompts, diffs,
   # and any repo snapshot content it reads to Cursor's backend as a deliberate
   # second egress destination. Substitute opencode with:
@@ -65,7 +66,7 @@ panel:
     votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
   grouping:
     semantic:
-      enabled: false # Deterministic title/body similarity grouping; kept opt-in until calibrated on fixtures
+      enabled: false # Experimental YAML-only similarity grouping; outside the 1.0 compatibility guarantee. Env overrides are rejected.
       threshold: 0.5 # Jaccard threshold over normalized word and 3-word shingles
 
 # Severity rules governing MR merge blocking and consensus requirements
@@ -102,7 +103,7 @@ state:
   backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR); use github_pr_comment with posting.mode=github_reviews
   recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
   checksum_required: true # Require SHA256 integrity check on state note content
-  fail_closed_on_load_error: false # If true, prepare fails instead of starting with empty state when persisted state cannot be loaded
+  fail_closed_on_load_error: false # If true, prepare fails instead of starting with empty state when persisted state cannot be loaded. Enforcing installs should set true (see getting-started).
   retention:
     keep_open: true # Preserve state records for open findings
     keep_wontfix: true # Preserve state records marked as won't fix

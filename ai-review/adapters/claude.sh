@@ -1,8 +1,16 @@
 #!/bin/sh
 set -eu
 
-if [ "${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
+run_mock() {
+  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
+    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
+    exit 2
+  fi
   exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+}
+
+if [ "${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
+  run_mock
 fi
 
 if ! command -v claude >/dev/null 2>&1; then
@@ -10,7 +18,7 @@ if ! command -v claude >/dev/null 2>&1; then
     echo "claude CLI is required for this AI review job but was not found" >&2
     exit 127
   fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+  run_mock
 fi
 
 if [ "${ANTHROPIC_BASE_URL:-}" = "https://openrouter.ai/api" ]; then

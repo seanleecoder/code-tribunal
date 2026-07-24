@@ -3,8 +3,16 @@ set -eu
 
 REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENCODE:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
 
-if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
+run_mock() {
+  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
+    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
+    exit 2
+  fi
   exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+}
+
+if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
+  run_mock
 fi
 
 if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
@@ -24,7 +32,7 @@ if ! command -v opencode >/dev/null 2>&1; then
     echo "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
     exit 127
   fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+  run_mock
 fi
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
@@ -32,7 +40,7 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
     exit 2
   fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+  run_mock
 fi
 
 if [ -z "${AI_REVIEW_RENDERED_PROMPT:-}" ] || [ ! -f "$AI_REVIEW_RENDERED_PROMPT" ]; then

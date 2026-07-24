@@ -147,14 +147,25 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
     - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``
     - ``AI_REVIEW_STATE_BACKEND`` -> ``state.backend``
-    - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` ->
-      ``panel.grouping.semantic.enabled``
-    - ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` ->
-      ``panel.grouping.semantic.threshold``
+
+    Semantic grouping is YAML-only and outside the 1.0 compatibility guarantee.
+    ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` /
+    ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` are rejected if set.
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
     """
+    for rejected in (
+        "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
+        "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
+    ):
+        if os.environ.get(rejected) is not None:
+            raise ConfigError(
+                f"{rejected} is not a supported 1.0 operator control; set "
+                "panel.grouping.semantic in YAML only (experimental, outside "
+                "the 1.0 compatibility guarantee)"
+            )
+
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
         for name, reviewer in reviewers.items():
@@ -196,28 +207,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         state = config.setdefault("state", {})
         if isinstance(state, dict):
             state["backend"] = state_backend_env.strip()
-
-    semantic_enabled_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED")
-    semantic_threshold_env = os.environ.get("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD")
-    if semantic_enabled_env is not None or semantic_threshold_env is not None:
-        panel = config.setdefault("panel", {})
-        if isinstance(panel, dict):
-            grouping = panel.setdefault("grouping", {})
-            if isinstance(grouping, dict):
-                semantic = grouping.setdefault("semantic", {})
-                if isinstance(semantic, dict):
-                    if semantic_enabled_env is not None:
-                        semantic["enabled"] = _env_flag(
-                            "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
-                            semantic_enabled_env,
-                        )
-                    if semantic_threshold_env is not None:
-                        try:
-                            semantic["threshold"] = float(semantic_threshold_env.strip())
-                        except ValueError as exc:
-                            raise ConfigError(
-                                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD must be a number"
-                            ) from exc
 
 
 def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:

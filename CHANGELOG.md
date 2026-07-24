@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on Keep a Changelog, and this project follows semantic versioning while it remains pre-1.0.
+The format is based on Keep a Changelog, and this project follows semantic
+versioning. The `[Unreleased]` section below is the candidate 1.0.0 change set;
+it is retitled to `[1.0.0]` when the annotated tag is cut.
 
 ## [Unreleased]
 
@@ -17,6 +19,10 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   non-followed link representation exists. Snapshot directory depth is capped
   at 512; published `repo_snapshot` directories use mode `0755`. Contained prepare
   requires Linux/macOS `dir_fd` primitives (Windows local prepare fails closed).
+- `AI_REVIEW_LOCAL_MOCK=1` now also requires `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
+  including when a reviewer CLI or credential is missing. This prevents silent
+  accidental fallback; production still relies on `AI_REVIEW_REQUIRE_REAL_*=1`
+  because an actor able to inject both mock variables can enable mock mode.
 
 ### Changed
 
@@ -52,7 +58,8 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   in-function guard for direct callers rather than a reachable-bypass fix.
 - The deterministic mock reviewer accepts `AI_REVIEW_MOCK_SCENARIO`
   (`default`, `blocking`, `blocking_alt`, `advisory`, `none`) to emit a chosen,
-  schema-valid finding set when the mock path runs (`AI_REVIEW_LOCAL_MOCK=1`).
+  schema-valid finding set when the mock path runs (`AI_REVIEW_LOCAL_MOCK=1`
+  with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`).
   `blocking_alt` shares identity with `blocking` (same title, category, and
   anchor) but a different body, so a lifecycle can exercise the changed-body
   in-place update deterministically. This lets validation and live-evidence
@@ -94,6 +101,19 @@ The format is based on Keep a Changelog, and this project follows semantic versi
 - State-load failure policy is now the explicit boolean
   `state.fail_closed_on_load_error`; state writes remain unconditionally fail-closed
   on overflow.
+- Active release inputs now require cited evidence records to be exact
+  `Status: passed` against the claimed runtime source and image digests (or an
+  explicit `Release-evidence-waived` reason also registered under
+  `verification.evidence_waivers` in the hashed release-inputs artifact).
+  `release/release-inputs.json` remains `draft` until that gate passes.
+  Historical Identity prose is not a release binding; records must carry
+  explicit `Release-*` fields, HTML comments are ignored when parsing evidence
+  fields, and accepted waiver IDs/reasons are printed by the validator.
+- Cursor is documented as experimental / outside the 1.0 evidence matrix.
+  Semantic grouping env overrides are rejected; YAML keys remain disabled and
+  outside the 1.0 compatibility guarantee.
+- Adapter shell refusals that require `AI_REVIEW_ALLOW_LOCAL_MOCK=true` now
+  surface as `config_error` rather than `model_error`.
 
 ### Fixed
 
@@ -160,6 +180,14 @@ The format is based on Keep a Changelog, and this project follows semantic versi
   to `1`.
 - Consumers of the JSON schemas or Python types must remove the retired `respond`,
   `skipped_advisory`, `unanchored`, and `superseded` values before upgrading.
+- Remove any `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` environment overrides; semantic
+  grouping is experimental YAML-only and those env names are rejected.
+- Mock-enabled preflight or evidence jobs must set `AI_REVIEW_ALLOW_LOCAL_MOCK=true`
+  alongside `AI_REVIEW_LOCAL_MOCK=1`. Never enable either on production consumer
+  projects.
+- `verification.evidence_waivers` is now required on
+  `code_tribunal.release_inputs.v1` (use `{}` when unused). The same object is
+  copied into the external release manifest; keep schema_version at `.v1`.
 
 ## [0.4.0] - 2026-07-14
 

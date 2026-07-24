@@ -42,6 +42,7 @@ explicitly not implemented.
 
 ## Supported versions
 
-Until the 1.0 release evidence gate is complete, security fixes are applied to
-`main`. Downstream users should use the latest reviewed release or immutable
-commit and keep template/image pins from one publication run.
+Until `v1.0.0` is tagged with `release/release-inputs.json` at `status: active`
+and matching live evidence, security fixes are applied to `main`. Downstream
+users should use the latest reviewed release or immutable commit and keep
+template/image pins from one publication run.

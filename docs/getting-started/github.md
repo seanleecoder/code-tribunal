@@ -30,7 +30,7 @@ In **Settings → Secrets and variables → Actions**, create:
 | Kind | Name | Required | Purpose |
 |---|---|---:|---|
 | Secret | `OPENROUTER_API_KEY` | yes | Claude, Codex, and OpenCode model calls |
-| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Cursor reviewer calls |
+| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Experimental Cursor substitute; not 1.0 evidence-backed |
 | Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | conditional | Fine-grained token for resolve/unresolve; configure it for organization-repository command authorization or whenever the built-in token is rejected |
 | Variable | `AI_REVIEW_MANUAL` | optional | Exact `true` disables automatic review jobs; use manual dispatch |
 
@@ -46,9 +46,24 @@ normally report authorized users as `MEMBER` or `COLLABORATOR`, so configure the
 resolve token there for command authorization. Ordinary comments and state
 continue to use `GITHUB_TOKEN`.
 
+### Enforcing installs
+
+For an enforcing gate, set `state.fail_closed_on_load_error: true` in a custom
+config mounted into the trusted image, or accept the shipped default only during
+advisory rollout. The shipped default is `false` so a transient state-load error
+starts from empty recoverable state (conservative repost risk) rather than
+failing prepare.
+
+### Cursor (experimental)
+
+Cursor is disabled by default. Enabling it sends review prompts, diffs, and any
+snapshot content the Cursor CLI reads to Cursor's backend as a second egress
+destination. Leave it disabled unless you deliberately accept that path; it is
+outside the 1.0 live-evidence scope.
+
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
-unset for shipped defaults.
+unset for shipped defaults. Never set `AI_REVIEW_LOCAL_MOCK` in production.
 
 ## Require the gate
 

@@ -46,12 +46,30 @@ In **Settings → CI/CD → Variables**, configure:
 |---|---:|---:|---:|---|
 | `OPENROUTER_API_KEY` | yes | yes | yes | Reviewer provider calls |
 | `GITLAB_TOKEN` | yes | yes | yes | Prepare, discussions, state, and commands |
-| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Cursor reviewer calls |
+| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Experimental Cursor substitute; not 1.0 evidence-backed |
 
 Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
 Configure runtime overrides as protected project/group variables so every stage
 sees the same effective configuration. Child mode deliberately rejects general
 variable forwarding.
+
+Never set `AI_REVIEW_LOCAL_MOCK` (or `AI_REVIEW_ALLOW_LOCAL_MOCK`) as a
+project/pipeline variable in production. GitLab variable precedence can override
+the template's `AI_REVIEW_LOCAL_MOCK: "0"`; mock mode additionally requires
+`AI_REVIEW_ALLOW_LOCAL_MOCK=true` and is reserved for image preflight and
+operator evidence Chain B.
+
+### Enforcing installs
+
+For an enforcing gate, prefer a trusted config with
+`state.fail_closed_on_load_error: true`. The shipped default is `false` so a
+transient state-load error starts from empty recoverable state rather than
+failing prepare.
+
+### Cursor (experimental)
+
+Cursor is disabled by default and outside the 1.0 live-evidence scope. Enabling
+it is a deliberate second egress destination to Cursor's backend.
 
 ## Require the gate
 

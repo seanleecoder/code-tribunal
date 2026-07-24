@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -23,8 +25,12 @@ if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
 ORIGINAL_SYS_PATH = sys.path.copy()
 sys.path.insert(0, str(SCRIPTS))
 try:
+    import check_release_inputs as release_input_checker  # noqa: E402
     from build_release_manifest import build_manifest  # noqa: E402
-    from check_release_inputs import validate_release_inputs  # noqa: E402
+    from check_release_inputs import (  # noqa: E402
+        validate_evidence_records,
+        validate_release_inputs,
+    )
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         HASH_GROUPS,
@@ -62,6 +68,51 @@ class ReleaseToolTests(unittest.TestCase):
         )
         data["hashes"] = computed_hashes(root)
         return data
+
+    def _write_matching_evidence(
+        self,
+        root: Path,
+        *,
+        runtime_source: str,
+        base_digest: str,
+        reviewer_digest: str,
+        record_ids: list[str],
+        status: str = "passed",
+        waived: bool = False,
+    ) -> None:
+        evidence_dir = root / "docs/history/evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        for record_id in record_ids:
+            lines = [f"Status: {status}", ""]
+            if waived:
+                lines.append(
+                    "Release-evidence-waived: operator accepted residual risk for this row"
+                )
+                lines.append("")
+            else:
+                lines.extend(
+                    [
+                        f"Release-runtime-source: `{runtime_source}`",
+                        f"Release-base-digest: {base_digest}",
+                        f"Release-reviewer-digest: {reviewer_digest}",
+                        "",
+                    ]
+                )
+            lines.extend(
+                [
+                    "## Identity",
+                    "",
+                    f"- Source commit: `{runtime_source}`",
+                    f"- Base image tag and digest: `1.0-{runtime_source}` `{base_digest}`",
+                    f"- Reviewer image tag and digest: `1.0-{runtime_source}` `{reviewer_digest}`",
+                    "",
+                    "## Verdict",
+                    "",
+                    "Scoped pass for release-tooling fixtures.",
+                    "",
+                ]
+            )
+            (evidence_dir / record_id).write_text("\n".join(lines), encoding="utf-8")
 
     def _active(self, root: Path) -> dict[str, object]:
         runtime_source = "a" * 40
@@ -110,6 +161,15 @@ class ReleaseToolTests(unittest.TestCase):
         )
         gitlab.write_text(text, encoding="utf-8")
 
+        evidence_ids = ["gitlab-boundary-A.md", "github-lifecycle-A.md"]
+        self._write_matching_evidence(
+            root,
+            runtime_source=runtime_source,
+            base_digest=base_digest,
+            reviewer_digest=reviewer_digest,
+            record_ids=evidence_ids,
+        )
+
         data = self._draft(root)
         data["status"] = "active"
         data["runtime_source"] = runtime_source
@@ -120,7 +180,8 @@ class ReleaseToolTests(unittest.TestCase):
         data["verification"] = {
             "ci_run_id": "github-ci-123",
             "publication_run_id": "github-images-456",
-            "evidence_record_ids": ["gitlab-boundary-A", "github-lifecycle-A"],
+            "evidence_record_ids": evidence_ids,
+            "evidence_waivers": {},
         }
         return data
 
@@ -162,6 +223,230 @@ class ReleaseToolTests(unittest.TestCase):
             root = Path(temporary)
             self._tree(root)
             validate_release_inputs(self._active(root), root)
+
+    def test_active_rejects_partial_or_mismatched_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            evidence_path = root / "docs/history/evidence" / record_id
+
+            evidence_path.write_text(
+                evidence_path.read_text(encoding="utf-8").replace(
+                    "Status: passed", "Status: partial", 1
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ReleaseValidationError, "exact 'passed'"):
+                validate_release_inputs(data, root)
+
+            self._write_matching_evidence(
+                root,
+                runtime_source=data["runtime_source"],
+                base_digest=data["images"]["base"]["digest"],
+                reviewer_digest=data["images"]["reviewer"]["digest"],
+                record_ids=data["verification"]["evidence_record_ids"],
+            )
+            evidence_path.write_text(
+                evidence_path.read_text(encoding="utf-8").replace(
+                    data["runtime_source"], "f" * 40, 1
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ReleaseValidationError, "runtime source"):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_historical_identity_only_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            runtime_source = data["runtime_source"]
+            base_digest = data["images"]["base"]["digest"]
+            reviewer_digest = data["images"]["reviewer"]["digest"]
+            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path.write_text(
+                "\n".join(
+                    [
+                        "Status: passed",
+                        "",
+                        "## Identity",
+                        "",
+                        f"- Source commit: `{runtime_source}`",
+                        f"- Base image tag and digest: `1.0-{runtime_source}`",
+                        "  `ghcr.io/example/code-tribunal/ai-review-base@"
+                        f"{base_digest}`",
+                        f"- Reviewer image tag and digest: `1.0-{runtime_source}`",
+                        "  `ghcr.io/example/code-tribunal/ai-review-reviewer@"
+                        f"{reviewer_digest}`",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "must declare Release-runtime-source"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_requires_exact_lowercase_passed_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path.write_text(
+                evidence_path.read_text(encoding="utf-8").replace(
+                    "Status: passed", "Status: Passed", 1
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ReleaseValidationError, "exact 'passed'"):
+                validate_release_inputs(data, root)
+
+    def test_active_accepts_explicit_evidence_waiver(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            reason = "operator accepted residual risk for this row"
+            self._write_matching_evidence(
+                root,
+                runtime_source=data["runtime_source"],
+                base_digest=data["images"]["base"]["digest"],
+                reviewer_digest=data["images"]["reviewer"]["digest"],
+                record_ids=data["verification"]["evidence_record_ids"],
+                status="partial",
+                waived=True,
+            )
+            data["verification"]["evidence_waivers"] = {
+                record_id: reason
+                for record_id in data["verification"]["evidence_record_ids"]
+            }
+            expected_waivers = [
+                (record_id, reason)
+                for record_id in data["verification"]["evidence_record_ids"]
+            ]
+            self.assertEqual(validate_evidence_records(data, root), expected_waivers)
+            self.assertEqual(validate_release_inputs(data, root), expected_waivers)
+
+    def test_active_rejects_undeclared_markdown_waiver(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            self._write_matching_evidence(
+                root,
+                runtime_source=data["runtime_source"],
+                base_digest=data["images"]["base"]["digest"],
+                reviewer_digest=data["images"]["reviewer"]["digest"],
+                record_ids=data["verification"]["evidence_record_ids"],
+                status="partial",
+                waived=True,
+            )
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "not declared in verification.evidence_waivers"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_declared_waiver_missing_from_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            data["verification"]["evidence_waivers"] = {
+                record_id: "operator accepted residual risk for this row"
+            }
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "has no Release-evidence-waived line"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_mismatched_waiver_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_ids = data["verification"]["evidence_record_ids"]
+            self._write_matching_evidence(
+                root,
+                runtime_source=data["runtime_source"],
+                base_digest=data["images"]["base"]["digest"],
+                reviewer_digest=data["images"]["reviewer"]["digest"],
+                record_ids=record_ids,
+                status="partial",
+                waived=True,
+            )
+            data["verification"]["evidence_waivers"] = {
+                record_id: "different declared reason" for record_id in record_ids
+            }
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "does not match verification.evidence_waivers"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_empty_waiver_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path.write_text(
+                "Status: partial\n\nRelease-evidence-waived:\n",
+                encoding="utf-8",
+            )
+            data["verification"]["evidence_waivers"] = {
+                record_id: "operator accepted residual risk for this row"
+            }
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "empty Release-evidence-waived reason"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_ignores_html_commented_waiver_example(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            evidence_path = root / "docs/history/evidence" / record_id
+            body = evidence_path.read_text(encoding="utf-8")
+            evidence_path.write_text(
+                "<!--\nRelease-evidence-waived: do not treat this as live\n-->\n" + body,
+                encoding="utf-8",
+            )
+            validate_release_inputs(data, root)
+
+    def test_cli_surfaces_evidence_waiver_reasons(self) -> None:
+        waivers = [("record-github.md", "operator accepted a scoped residual risk")]
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", ["check_release_inputs.py"]),
+            mock.patch.object(
+                release_input_checker,
+                "load_json",
+                return_value={"status": "active"},
+            ),
+            mock.patch.object(
+                release_input_checker,
+                "validate_release_inputs",
+                return_value=waivers,
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.assertEqual(release_input_checker.main(), 0)
+        self.assertIn(
+            "WARNING: evidence waiver record-github.md: "
+            "operator accepted a scoped residual risk",
+            stderr.getvalue(),
+        )
 
     def test_mismatched_github_pin_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

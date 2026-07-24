@@ -21,8 +21,7 @@ internal container implementation, not a supported Python package or API.
   hardened mirrored child pipeline.
 - GitHub pull-request workflows for same-repository branches. External-fork
   reviews are skipped because provider secrets are deliberately withheld.
-- Claude, Codex, and OpenCode reviewers through the shipped adapters; Cursor is
-  an opt-in substitute reviewer with a separate credential and egress path.
+- Claude, Codex, and OpenCode reviewers through the shipped adapters.
 - Deterministic consensus, persistent finding state, inline and summary
   posting, human disposition commands, and advisory or enforcing gates.
 
@@ -35,10 +34,14 @@ internal container implementation, not a supported Python package or API.
   it does not make findings authoritative.
 - A GitHub gate blocks merging only when the gate job is configured as a
   required check. GitLab requires **Pipelines must succeed**.
+- Cursor is an experimental opt-in substitute reviewer with a separate credential
+  and egress path. It is **not** covered by the 1.0 live-evidence matrix and must
+  not be treated as evidence-backed.
 - The complete 1.0 live-evidence matrix is still being collected. Current
   evidence and unexercised paths are recorded under
   [documentation history](docs/history/README.md); maturity claims must be read
-  with those scopes.
+  with those scopes. `release/release-inputs.json` remains `draft` until that
+  matrix passes against one frozen runtime source and image pair.
 
 ## Five-minute start
 
