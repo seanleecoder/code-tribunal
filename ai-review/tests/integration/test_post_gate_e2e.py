@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from ai_review import mock_reviewer
@@ -15,6 +15,7 @@ from ai_review.config import load_config
 from ai_review.consensus import build_consensus
 from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
+from ai_review.memory import decode_state_note_body
 from ai_review.post import post_consensus
 from ai_review.schema import finalize_finding_batch, load_json_file, validate_instance
 
@@ -420,6 +421,13 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # so the existing discussion updates in place instead of a second opening.
         # This exercises the cross-revision remap path; identity is head-independent
         # (source_finding_id is context_hash-based, not head-based).
+        #
+        # Revision 2 uses `blocking_alt` (same identity, different body) so the second
+        # post is an OBSERVABLE update, not a same-body skip: without a body change the
+        # run could report created=0 merely by recognising the existing discussion and
+        # skipping it, never re-persisting the anchor. Forcing updated_discussions=1
+        # exercises the update path and lets us assert the stored anchor actually moved
+        # to revision 2's marker line via a "remapped" remap.
         with tempfile.TemporaryDirectory() as tmp:
             tmpp = Path(tmp)
             config, manifest1, _diff, _bundle = self._bundle(tmpp)
@@ -433,12 +441,11 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             client = FakeGitHubClient(head_sha=manifest1["head_sha"], diff_text=diff1)
 
             b1 = self._batches("blocking", d1, manifest1)
-            b2 = self._batches("blocking", d2, manifest2)
+            b2 = self._batches("blocking_alt", d2, manifest2)
+            marker_line_1 = b1[0]["findings"][0]["anchor"]["start"]["new_line"]
+            marker_line_2 = b2[0]["findings"][0]["anchor"]["start"]["new_line"]
             # The marker moved to a different line, but identity is stable.
-            self.assertNotEqual(
-                b1[0]["findings"][0]["anchor"]["start"]["new_line"],
-                b2[0]["findings"][0]["anchor"]["start"]["new_line"],
-            )
+            self.assertNotEqual(marker_line_1, marker_line_2)
             self.assertEqual(self._source_ids(b1[0]), self._source_ids(b2[0]))
 
             # revision 1
@@ -449,19 +456,36 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             client.diff_text = diff2
             c2 = build_consensus(manifest2, b2, config)
             p2 = post_consensus(client, config, manifest2, c2, diff_text=diff2)
+            record = self._sole_state_record(client)
 
         validate_instance(p1, "post_result.schema.json")
         validate_instance(p2, "post_result.schema.json")
         self.assertEqual(p1["created_discussions"], 1)
         # remapped across the revision onto the existing discussion, not a new one
         self.assertEqual(p2["created_discussions"], 0)
+        # blocking_alt's body change makes rev 2 an observable in-place update
+        self.assertEqual(p2["updated_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
+        # the persisted anchor actually followed the marker to revision 2's line,
+        # and the move was recorded as a deterministic remap (not an exact match)
+        self.assertEqual(record["remap_status"], "remapped")
+        self.assertEqual(record["anchor"]["start"]["new_line"], marker_line_2)
+        self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
 
     @staticmethod
     def _inline_body(client: FakeGitHubClient) -> str:
         bodies = client.inline_comment_bodies()
         assert len(bodies) == 1, f"expected one inline comment, got {len(bodies)}"
         return bodies[0]
+
+    @staticmethod
+    def _sole_state_record(client: FakeGitHubClient) -> dict[str, Any]:
+        notes = client.list_state_notes("octo/repo", "7")
+        assert len(notes) == 1, f"expected one state note, got {len(notes)}"
+        state = decode_state_note_body(notes[0]["body"])
+        records = state["records"]
+        assert len(records) == 1, f"expected one state record, got {len(records)}"
+        return cast(dict[str, Any], records[0])
 
 
 if __name__ == "__main__":
