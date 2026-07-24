@@ -101,8 +101,11 @@ source; record it per run when collecting live evidence.
 For validation and lifecycle rehearsal without model spend, the deterministic
 mock reviewer (`AI_REVIEW_LOCAL_MOCK=1`, scenario via `AI_REVIEW_MOCK_SCENARIO`)
 drives the real posting/state/gate path with a canned finding set and no provider
-calls. Scope those variables pipeline-wide so prepare, review, critique, and
-consensus agree on the effective-config digest.
+calls. These are adapter controls that affect only review/critique behavior and
+are not part of the effective-config digest, so set them consistently on the
+review and critique jobs. Config-affecting overrides (critique/reviewer/panel) do
+feed the digest, so scope any of those consistently across all jobs or consensus
+fails closed on divergence.
 
 ## Image pin rotation
 

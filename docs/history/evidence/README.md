@@ -104,9 +104,12 @@ class.
 
 Publish both images from one reviewed release-candidate commit and verify their
 digests. On each platform, create an inline finding, rerun unchanged, change the
-body, resolve, reopen, push an unrelated line movement, and force a blocking
-finding while platform enforcement is enabled. Record post/state/gate artifacts
-and platform object IDs at every step.
+body, resolve, reopen, and force a blocking finding while platform enforcement is
+enabled. Record post/state/gate artifacts and platform object IDs at every step.
+Unrelated line movement is **not** in the required live sequence: its internal
+remap (finding identity + persisted anchor moved, existing discussion updated not
+duplicated) is regression-covered, and only the *platform-visible* re-anchoring of
+a moved comment is a live-optional confirmation — see the runbook.
 
 Run this as two independent chains: one **real** default-model panel (the smoke),
 and one **deterministic-mock** lifecycle chain on a separate finding identity

@@ -7,12 +7,21 @@ Status: partial
 
 > **Reclassification note (2026-07-23).** Per the revised
 > [evidence matrix](README.md): the **summary-fallback / inline-unmappable** path
-> is now **regression-covered** (`integration/test_post_gate_e2e.py` FYI cases,
-> `test_post.py` summary-fallback cases) and is no longer a release-gating live
-> requirement. The **positive changed-body in-place update** remains the
-> release-gating lifecycle gap, but is now reproducible token-free via the mock
-> `blocking_alt` scenario (see the [runbook](RUNBOOK-1.0-rc.md)). The historical
-> results below are unchanged; only their release-gating scope is narrowed.
+> and the **unrelated line movement** path (step 6 below) are now
+> **regression-covered** and are no longer release-gating live requirements. Summary
+> fallback is covered by `integration/test_post_gate_e2e.py` FYI cases and
+> `test_post.py` summary-fallback cases; the **internal** cross-revision remap —
+> finding identity preserved and the persisted state anchor moved to the new line,
+> so the one existing discussion is updated rather than duplicated — is covered by
+> `test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+> plus the `test_anchors`/`test_post` remap tests. What remains a **live-optional**
+> confirmation (not release-gating) is the *platform-visible* re-anchoring of a moved
+> comment: updating an existing comment rewrites its body, not its diff position, and
+> `post.py` marks visible placement as requiring separate live validation. The
+> **positive changed-body in-place update** remains the release-gating lifecycle
+> gap, but is now reproducible token-free via the mock `blocking_alt` scenario (see
+> the [runbook](RUNBOOK-1.0-rc.md)). The historical results below are unchanged;
+> only their release-gating scope is narrowed.
 
 Covers evidence-matrix row **GitHub current image**: inline create/update,
 summary fallback, commands, state persistence, stale head, **required blocking
@@ -63,6 +72,9 @@ Perform on one PR; capture run/job IDs and platform object IDs (comment/review I
 4. Resolve → expected: thread resolved (via `GITHUB_TOKEN` or resolve token).
 5. Reopen → expected: thread reopened; identity preserved.
 6. Push an unrelated line movement → expected: finding anchor/identity maintained.
+   (Internal remap **now regression-covered, not release-gating** — see
+   `test_line_movement_across_revisions_remaps_to_same_discussion` and the
+   reclassification note above; only visible re-anchoring stays live-optional.)
 7. Exercise **summary fallback** (finding not inline-mappable) → expected: summary comment path used.
 8. Exercise **human disposition commands** (thread commands) → expected: state updated per command.
 9. **Stale head:** push a new head while a run is in flight → expected: post/gate
@@ -111,9 +123,13 @@ Perform on one PR; capture run/job IDs and platform object IDs (comment/review I
   non-disclosing actual-value audit; a separate common token-pattern scan was
   also clean across the final PR-event download.
 - Sensitive model content omitted from this record: yes.
-- Known unexercised paths: changed finding body, a genuinely unrelated line
-  movement outside the finding context, successful resolve/wontfix/reopen
-  command transitions, and stale post/gate no-op.
+- Known unexercised paths (this historical run): changed finding body, a genuinely
+  unrelated line movement outside the finding context, successful
+  resolve/wontfix/reopen command transitions, and stale post/gate no-op. Per the
+  reclassification note above, unrelated line movement is no longer release-gating —
+  its internal remap is regression-covered and only visible re-anchoring stays
+  live-optional; only the positive changed-body in-place update remains a
+  release-gating gap (reproducible token-free via `blocking_alt`).
 
 ## Verdict
 
@@ -176,10 +192,18 @@ remaining lifecycle paths must be repeated against the replacement runtime.
 - Operator exact-value audit: passed on 2026-07-21 against the current GitHub
   secret values and downloaded GitHub traces/logs covered by the audit. Secret
   values are intentionally not recorded here.
-- Still release-gating: a positive changed-body in-place update and a genuinely
-  unrelated line movement (both reproducible token-free via the mock lifecycle
-  chain). Summary-fallback mapping is no longer release-gating — it is
-  regression-covered (see the reclassification note above).
+- Still release-gating: a positive changed-body in-place update (reproducible
+  token-free via the mock `blocking_alt` scenario; see the runbook). For genuinely
+  unrelated line movement the **internal** cross-revision remap (identity preserved,
+  persisted anchor moved, existing discussion updated not duplicated) is
+  **regression-covered** by
+  `test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+  plus the `test_anchors`/`test_post` remap tests; only the *platform-visible*
+  re-anchoring of the moved comment stays a **live-optional** confirmation (post.py
+  marks visible placement as requiring live validation), and the mock cannot
+  faithfully reproduce a real push's head advance + regenerated served diff.
+  Summary-fallback mapping is no longer release-gating — it is regression-covered
+  (see the reclassification note above).
 
 Replacement verdict remains **partial** for the release-gating lifecycle paths
 above; the reclassified summary-fallback path no longer blocks the row.
