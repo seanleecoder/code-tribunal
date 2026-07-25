@@ -146,6 +146,15 @@ def candidate_issue_signature_hash(signature: dict[str, Any]) -> str:
     )
 
 
+def _parse_side_path(path: str) -> str | None:
+    # `/dev/null` is git's sentinel for "this side does not exist" (added or
+    # deleted file). It is not a repo path, and keeping it would make every
+    # downstream normalize_path() call reject the anchor as absolute.
+    if path == "/dev/null":
+        return None
+    return strip_diff_prefix(path)
+
+
 def _parse_diff_paths(line: str) -> tuple[str, str] | None:
     parts = line.split()
     if len(parts) >= 4 and parts[0] == "diff" and parts[1] == "--git":
@@ -189,11 +198,11 @@ def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
             saw_file = True
             continue
         if raw_line.startswith("--- "):
-            old_path = strip_diff_prefix(raw_line[4:].strip())
+            old_path = _parse_side_path(raw_line[4:].strip())
             saw_file = True
             continue
         if raw_line.startswith("+++ "):
-            new_path = strip_diff_prefix(raw_line[4:].strip())
+            new_path = _parse_side_path(raw_line[4:].strip())
             saw_file = True
             continue
         hunk_match = HUNK_RE.match(raw_line)

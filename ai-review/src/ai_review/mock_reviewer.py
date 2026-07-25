@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -52,18 +53,37 @@ def _mock_scenario() -> str:
     return scenario
 
 
+def _usable_path(path: str | None, fallback: str | None) -> str:
+    """Return a repo-relative anchor path, falling back when git gave us none.
+
+    A newly added file's diff carries ``--- /dev/null`` (and a deleted file's
+    ``+++ /dev/null``), so the parsed path is absolute. Anchor finalization
+    rejects absolute paths and drops the finding, so substitute the other side's
+    path — for an added file both anchor sides are the new file anyway.
+    """
+
+    for value in (path, fallback):
+        if value and not value.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", value):
+            return value
+    return ""
+
+
+def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
+    return {
+        "old_path": _usable_path(diff_file.old_path, diff_file.new_path),
+        "new_path": _usable_path(diff_file.new_path, diff_file.old_path),
+        "new_line": line.new_line,
+        "hunk_header": line.hunk_header,
+    }
+
+
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
     for diff_file in parse_unified_diff(diff_text):
         for line in diff_file.lines:
             if line.kind != "added":
                 continue
             if "records[0]" in line.text or "data[0]" in line.text:
-                return {
-                    "old_path": diff_file.old_path or "",
-                    "new_path": diff_file.new_path or "",
-                    "new_line": line.new_line,
-                    "hunk_header": line.hunk_header,
-                }
+                return _candidate(diff_file, line)
     return None
 
 
@@ -71,12 +91,7 @@ def _find_first_added_line(diff_text: str) -> dict[str, Any] | None:
     for diff_file in parse_unified_diff(diff_text):
         for line in diff_file.lines:
             if line.kind == "added":
-                return {
-                    "old_path": diff_file.old_path or "",
-                    "new_path": diff_file.new_path or "",
-                    "new_line": line.new_line,
-                    "hunk_header": line.hunk_header,
-                }
+                return _candidate(diff_file, line)
     return None
 
 

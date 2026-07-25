@@ -79,6 +79,33 @@ class AnchorRemapTests(unittest.TestCase):
         self.assertEqual(files[1].new_path, "src/empty.py")
         self.assertEqual(files[1].lines, ())
 
+    def test_parse_unified_diff_maps_dev_null_sides_to_none(self) -> None:
+        # `/dev/null` is git's "this side does not exist" sentinel, not a repo
+        # path; keeping it would make normalize_path reject the file as absolute.
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/added.py b/src/added.py",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/added.py",
+                "@@ -0,0 +1,1 @@",
+                "+new",
+                "diff --git a/src/gone.py b/src/gone.py",
+                "deleted file mode 100644",
+                "--- a/src/gone.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-old",
+            ]
+        )
+
+        added, deleted = list(parse_unified_diff(diff_text))
+
+        self.assertIsNone(added.old_path)
+        self.assertEqual(added.new_path, "src/added.py")
+        self.assertEqual(deleted.old_path, "src/gone.py")
+        self.assertIsNone(deleted.new_path)
+
     def test_diff_line_side_helpers_use_explicit_kind(self) -> None:
         added = DiffLine(
             old_line=None,
