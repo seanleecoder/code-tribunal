@@ -2,6 +2,31 @@
 
 Status: partial
 
+Release-evidence-waived: SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix.
+
+> **Reading this record: `Status: partial` here is not a release blocker.** The
+> status line stays `partial` because the live probes genuinely are partial; the
+> row is released under the waiver below, which `scripts/check_release_inputs.py`
+> honors in place of a `passed` status. Partial + registered waiver = non-gating.
+>
+> **Release waiver (2026-07-25).** This row is **not** release-gating for 1.0.0.
+> It is waived against runtime source `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
+> with the reason recorded above and registered under
+> `verification.evidence_waivers` in `release/release-inputs.json`. The waiver
+> rests on the regression suite being authoritative for SPEC-34, per the
+> [evidence matrix](README.md) classification.
+>
+> One of the three boundaries **was** in fact reproduced live during the 1.0.0
+> lifecycle chain, though not under this record: the **stale-head no-op** at the
+> post boundary, in GitHub run `30173073036` attempt 7 — a new head
+> (`00f78023a1975101c3c431c40037fbe7e00748a1`) was pushed after `prepare` had
+> selected `9cdd2b67b1cc2ab36f9f64fed8283880384f2c44`, `post` recorded
+> `status: stale_head` and performed no writes, and `gate` returned
+> `passed_stale_head` with exit 0. See the
+> [GitHub lifecycle record](record-github-current-image.md). The
+> checkout-vs-selected and before-diff boundaries and the HTTP 406 path remain
+> covered by the regression suite only.
+
 > Sanitized partial record. These live smokes **complement** the SPEC-34 regression tests
 > in `ai-review/tests/unit/test_github_platform.py` and `test_input_bundle.py`.
 

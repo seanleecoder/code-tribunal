@@ -46,24 +46,21 @@ tests that cover each row.
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
 
-> **Precondition for the deterministic-mock procedure — rebuild the base image
-> first.** The digests pinned above (`15d424f`) predate the
-> `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate `run_id` binding this
-> runbook relies on. Both live in `ai-review/src`, which is copied into the
-> **base** image (`ai-review/images/base.Dockerfile`); the reviewer image is built
-> `FROM` the base and inherits it, and the base runs the `prepare`/`consensus`/
-> `post`/`gate` jobs while the reviewer runs `review`/`critique`. So building only
-> a reviewer image atop the old base contains neither change. Before the mock
-> steps: rebuild the **base** image from a commit that includes them, build the
+> **Satisfied by the pair above — kept as the procedure for any future rebuild.**
+> The `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate `run_id` binding both
+> live in `ai-review/src`, which is copied into the **base** image
+> (`ai-review/images/base.Dockerfile`); the reviewer image is built `FROM` the base
+> and inherits it, and the base runs the `prepare`/`consensus`/`post`/`gate` jobs
+> while the reviewer runs `review`/`critique`. So building only a reviewer image
+> atop an older base contains neither change. Whenever the pair is rebuilt: rebuild
+> the **base** from a commit that includes the code under test, build the
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
-> the image-pin rotation procedure in [operations](../../operations.md)), and
-> re-run Step 0 verification/attestation against the new digests.
-> Republishing is an operator/CI action. This commit's gate/mock code ships in the
-> product image, so the **final RC is this rebuilt pair** and `15d424f` is
-> superseded: run **both** chains (the real smoke and the mock lifecycle) against
-> the rebuilt digests, not `15d424f`, so the evidence matches the exact images that
-> ship.
+> the image-pin rotation procedure in [operations](../../operations.md)), and re-run
+> Step 0 verification/attestation against the new digests. Republishing is an
+> operator/CI action. Because the gate/mock code ships inside the product image,
+> **both** chains must run against the digests named above, so the evidence matches
+> the exact images that ship.
 
 ## Step 0 — Verify the RC images (do this first)
 
@@ -98,17 +95,23 @@ scratch consumer projects, runners, protected credentials, and (for the one
 model smoke) an OpenRouter key. Prerequisites:
 
 - **GitLab:** a scratch consumer project + a protected template project holding
-  `ai-review/ci/` at P0 commit `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
+  `ai-review/ci/` at the templates repinned to `R` (for the 1.0.0 runs this is
+  `seanleecoder/code-tribunal-ci-template` at
+  `97e05fddf9f5466ccee385344a7aaeac500e4aa2`; the consumer's `.gitlab-ci.yml` must
+  reference that same SHA for **both** includes);
   a runner; protected+masked `OPENROUTER_API_KEY`
   and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled; and a
   **protected scratch source branch** for the lifecycle MRs (the protected
   `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
   it and posting fails). Setup:
   [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
-- **GitHub:** a scratch consumer repo with the workflow copied from P0 commit
-  `e1146612b4a86057d145ac14dc532c6a5afde5b7`;
+- **GitHub:** a scratch consumer repo with the workflow copied from `R` and
+  repinned to the pair above (copying an older template can carry env keys that `R`
+  rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
   `OPENROUTER_API_KEY` secret; the `gate` job added as a **required status
-  check** in branch protection/ruleset. Setup:
+  check** in branch protection/ruleset. Note that a required-check ruleset also
+  blocks direct pushes to the default branch, so adopting the workflow itself has
+  to go through a PR — run that PR in mock mode so it costs nothing. Setup:
   [`docs/getting-started/github.md`](../../getting-started/github.md).
 
 ## Cost model: where the tokens go
@@ -147,6 +150,24 @@ identity (`context_hash` → `source_finding_id`) is stable across the same-diff
 lifecycle steps — create, rerun, body change, resolve, reopen. The
 first-added-line fallback is not stable — inserting a line above shifts which
 line is "first added", changing the anchor and opening a new discussion.
+
+> **On GitHub, the Chain B fixture must MODIFY an existing file, not add one** —
+> and this is a product limitation at this runtime source, not merely a fixture
+> convention. GitHub's prepared `mr.diff` renders an added file with
+> `--- /dev/null`; `parse_unified_diff` keeps that verbatim, and
+> `context_hash_from_unified_diff` normalizes the parsed path while scanning, so it
+> raises `absolute paths are not allowed: /dev/null`. Finalization catches that and
+> **drops the finding**, so every seat reports
+> `raw_finding_count=1, accepted_finding_count=0, usable_for_resolution=false`,
+> consensus exits 3, and `post`/`gate` are skipped. Observed live in GitHub run
+> `30172413739`.
+>
+> This affects **real reviewers too**, not just the mock: the raise happens while
+> scanning the diff, before the anchor's own paths are compared. It triggers when a
+> finding is on an added or deleted file, or on a file that appears *after* one in
+> the diff. GitLab is unaffected because its prepared diff emits
+> `--- a/<path>` for added files rather than the sentinel. See the 1.0.0 release
+> notes; a fix is queued for 1.0.1 on `fix/devnull-diff-sides`.
 
 > **Unrelated line movement is regression-covered, not a token-free mock live
 > step.** Keeping finding identity across a line movement is cross-revision remap

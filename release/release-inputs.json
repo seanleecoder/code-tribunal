@@ -70,7 +70,7 @@
   "release_version": "1.0.0",
   "runtime_source": "88bc9412b283d4a44328ab3ffd9f9708b0290f8e",
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "draft",
+  "status": "active",
   "verification": {
     "ci_run_id": "30125523924",
     "evidence_record_ids": [
@@ -81,7 +81,9 @@
       "record-github-revision-failures.md",
       "record-github-default-model-smoke.md"
     ],
-    "evidence_waivers": {},
+    "evidence_waivers": {
+      "record-github-revision-failures.md": "SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix."
+    },
     "publication_run_id": "30125524008"
   }
 }
