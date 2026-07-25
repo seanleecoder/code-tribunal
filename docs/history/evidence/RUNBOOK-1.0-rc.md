@@ -14,30 +14,34 @@ tests that cover each row.
 
 ## Release candidate under test
 
-> **Pending replacement.** The `15d424f` source, run IDs, and image digests below
-> are **historical**: they predate the `AI_REVIEW_MOCK_SCENARIO` reviewer support
-> and the gate `run_id` binding, so the final RC is a **rebuilt** base+reviewer
-> pair (see the precondition after Step 0). Treat every concrete value in this
-> section and in Step 0 as pending replacement — the operator refreshes the
-> source commit, run IDs, digests, and verification status to the rebuilt pair
-> before release, and re-runs Step 0 against it.
+> **This is the final RC pair.** The base and reviewer images below are the
+> rebuilt pair described in the precondition after Step 0: they are built from a
+> runtime source that includes the `AI_REVIEW_MOCK_SCENARIO` reviewer support, the
+> gate `run_id` binding, and the readiness-hardening work. Step 0 has been
+> verified against them (see the
+> [image-verification record](record-image-publication-verification.md)). Run
+> **both** chains against these digests.
 
-> The prior `b674d1e` candidate was invalidated by a GitHub human-command
-> authorization defect. Its partial evidence is historical only; every
-> release-gating probe below must run again against the rebuilt replacement pair.
+> The prior `b674d1e` and `15d424f` candidates are historical provenance only —
+> `b674d1e` was invalidated by a GitHub human-command authorization defect and
+> `15d424f` predates the mock/gate code. Their partial evidence does not bind the
+> release; every release-gating probe below must run against the pair named here.
 
-- Source commit: `15d424feea730a04338ed423bf93b8797d807bbc` (`main` HEAD)
-- Quality gate: CI `make quality` run **29845398459** — success (the SPEC-31
+- Runtime source `R`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e` (`main` HEAD)
+- Quality gate: CI `make quality` run **30125523924** — success (the SPEC-31
   symlink and SPEC-34 revision/406 regression tests are inside this run and are
   the authoritative coverage for those rows).
-- Publish run: **29845398524** — success
-  (<https://github.com/seanleecoder/code-tribunal/actions/runs/29845398524>)
-- Images (GHCR, tag `1.0-15d424feea730a04338ed423bf93b8797d807bbc`):
-  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`
-  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`
-- All existing evidence records are superseded partial evidence. Repeat the
-  release-gating probes with the command-authorization fix and record the new
-  run IDs before release.
+- Publish run: **30125524008** — success
+  (<https://github.com/seanleecoder/code-tribunal/actions/runs/30125524008>)
+- Images (GHCR, tag `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e`):
+  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
+  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
+- The three canonical templates and `release/release-inputs.json` are already
+  repinned to this pair, so a consumer copied from `R` (plus the repin commit)
+  runs exactly these images.
+- Every evidence record other than the image-publication row is still superseded
+  partial evidence. Repeat the release-gating probes against this pair and record
+  the new run IDs before release.
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
@@ -63,26 +67,27 @@ tests that cover each row.
 
 ## Step 0 — Verify the RC images (do this first)
 
-> The verification recorded here is for the historical `15d424f` pair and is
-> **pending replacement**: re-run it against the rebuilt base+reviewer digests
-> (below) once they exist, and update the digests in the commands that follow.
-
-Recorded for the historical `15d424f` pair: both digest pulls succeeded with an
-empty Docker credential directory, both OCI revision labels equal the runtime
-source, and both GitHub provenance attestations verified. Re-verify the **rebuilt**
-pair the same way and update the sanitized
-[image-verification record](record-image-publication-verification.md) before final
-publication.
+> **Done for the final pair** on 2026-07-25. Both subjects resolved anonymously to
+> the pinned digests, both OCI revision labels equal `R`, and both provenance
+> attestations verified against publication run `30125524008`. Full detail is in
+> the [image-verification record](record-image-publication-verification.md). Re-run
+> this step only if the pair is rebuilt.
 
 From any machine with registry access (anonymous pulls should work — GHCR public):
 
 ```bash
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d
-# Optional: verify build provenance attestation
-gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d \
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
+docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
+# Verify build provenance attestation (both subjects)
+gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe \
   --repo seanleecoder/code-tribunal
 ```
+
+To confirm anonymous resolution without touching stored credentials, point
+`DOCKER_CONFIG` at a fresh directory containing only `{}` and use
+`docker manifest inspect --verbose <ref>` — note that an empty `DOCKER_CONFIG`
+also hides CLI plugins, so read the revision labels with the normal config via
+`docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
 
 Confirm the digests match the values above before running any smoke.
 
