@@ -378,8 +378,8 @@ update the same one. Capture run/job IDs and platform object IDs at every step.
 **Chain A — real default-model smoke (the only token spend).** On its own change
 request, leave all model overrides unset, keep all three OpenRouter seats enabled,
 Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
-panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`,
-OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto` skipped, `panel_status:
+panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.6-luna`,
+OpenCode `google/gemini-3.5-flash-lite`, Cursor `auto` skipped, `panel_status:
 full`, and that a finding was posted. **This doubles as the default-model smoke —
 do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
 (see [operations cost controls](../operations.md)). This chain ends here.

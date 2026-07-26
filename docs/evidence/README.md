@@ -28,13 +28,16 @@ entry.
    `blocking_alt` changed-body update) on GitHub and GitLab per
    [`RUNBOOK.md`](RUNBOOK.md). Chain B requires
    `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
-5. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
-6. Set each release-gating record to `Status: passed` with matching
+5. Before activation, run and record the first real Codex `max` and OpenCode
+   `xhigh` route checks against the rebuilt images. Provider rejection is a
+   failed validation, not a reason to omit or coerce the effort level.
+6. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
+7. Set each release-gating record to `Status: passed` with matching
    `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
    binding; re-stamp older records with these explicit fields.
-7. Only then set `release-inputs.status` to `active`, cut release commit `P`,
+8. Only then set `release-inputs.status` to `active`, cut release commit `P`,
    build the external manifest, and tag `v1.0.0`.
 
 ## 1.0 evidence matrix

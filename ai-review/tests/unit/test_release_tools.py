@@ -222,6 +222,9 @@ class ReleaseToolTests(unittest.TestCase):
         data = json.loads(
             (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
         )
+        # Draft inputs may retain populated verification metadata: status is the
+        # activation switch, while preserving the fields keeps historical evidence
+        # inspectable without rebinding it to a new runtime or image pair.
         data["verification"] = {
             "ci_run_id": "30125523924",
             "publication_run_id": "30125524008",
