@@ -9,7 +9,7 @@ Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2
 Covers evidence-matrix row **GitLab current image**: inline create/update, human
 commands, state persistence, and the real merge block. Procedure:
 [evidence README, "Current-image lifecycle procedure"](README.md); runbook:
-[Chain B](RUNBOOK-1.0-rc.md).
+[Chain B](RUNBOOK.md).
 
 ## Identity
 

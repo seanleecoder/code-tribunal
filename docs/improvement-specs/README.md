@@ -39,7 +39,7 @@ completed for `v1.0.0`. Remaining order:
 ## Historical indexes
 
 - [Completion audit](completion-audit.md)
-- [Completed specification index](../history/completed-specs/README.md)
+- [Completed specification history](../history/README.md#completed-specification-history)
 - [Paused plans](../archived-improvement-plans/README.md)
 - [Live and legacy evidence](../history/README.md)
 

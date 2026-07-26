@@ -26,7 +26,7 @@ entry.
    refresh `release/release-inputs.json` hashes.
 4. Run Chain A (real default-model smoke) and Chain B (mock lifecycle, including
    `blocking_alt` changed-body update) on GitHub and GitLab per
-   [`RUNBOOK-1.0-rc.md`](RUNBOOK-1.0-rc.md). Chain B requires
+   [`RUNBOOK.md`](RUNBOOK.md). Chain B requires
    `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
 5. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
 6. Set each release-gating record to `Status: passed` with matching
@@ -73,7 +73,7 @@ Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
 check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
-[legacy acceptance](../acceptance/README.md).
+[legacy acceptance](../README.md#legacy-milestone-acceptance).
 
 ### Known gaps and missing evidence
 
@@ -94,7 +94,7 @@ consumer flow but not the hostile-MR deployment boundary. See
   file. Shipping the fix does not by itself close this — a Chain B run with an
   **adding** fixture is required, asserting
   `accepted_finding_count == raw_finding_count`. See the coverage-gap table in the
-  [runbook](RUNBOOK-1.0-rc.md).
+  [runbook](RUNBOOK.md).
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable
@@ -159,7 +159,7 @@ and one **deterministic-mock** lifecycle chain on a separate finding identity
 changed-body step). The below-quorum FYI/summary-comment path and the
 inline-unmappable summary fallback are **regression-covered**
 (`integration/test_post_gate_e2e.py`, `test_post.py`), not part of the live mock
-chain. The exact minimal-token sequence is in the [RC runbook](RUNBOOK-1.0-rc.md).
+chain. The exact minimal-token sequence is in the [RC runbook](RUNBOOK.md).
 
 ## GitHub failure procedure
 

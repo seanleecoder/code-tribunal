@@ -1,9 +1,16 @@
-# 1.0 RC live-evidence runbook
+# Live-evidence runbook
 
-Operator runbook for the outstanding evidence-matrix rows, pinned to the
-release-candidate below. It sequences the manual live runs and points each to
-its record file. This complements — does not replace — the executable tests
-(`make quality`) and the [evidence index](README.md).
+Operator runbook for the release-gating evidence-matrix rows. It sequences the
+manual live runs and points each to its record file. This complements — does not
+replace — the executable tests (`make quality`) and the
+[evidence index](README.md).
+
+**This is the durable procedure, not a one-release artifact.** It was executed in
+full for 1.0.0 against the pair named below, and it is the sequence to follow for
+the next release: replace the identity block with the new runtime source, images,
+and run IDs, then work through the same steps. Sections that record what 1.0.0
+actually observed are marked as such, so a future operator can tell the procedure
+apart from the results.
 
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
