@@ -35,7 +35,7 @@ _EXPECTED_OUTER_TIMEOUT_COUNT = 4  # GitLab/GitHub review and critique ceilings.
 _GITLAB_DURATION_UNIT_PATTERN = r"(?:seconds?|minutes?|hours?|days?|weeks?|s|m|h|d|w)"
 _GITLAB_TIMEOUT_RE = re.compile(
     rf"^\d+\s*{_GITLAB_DURATION_UNIT_PATTERN}"
-    rf"(?:\s+\d+\s*{_GITLAB_DURATION_UNIT_PATTERN})*$",
+    rf"(?:\s*\d+\s*{_GITLAB_DURATION_UNIT_PATTERN})*$",
     re.IGNORECASE,
 )
 _GITLAB_DURATION_COMPONENT_RE = re.compile(
@@ -217,6 +217,7 @@ class TimeoutInvariantTests(unittest.TestCase):
             "1200s": 1200,
             "20m": 20 * 60,
             "3h 30m": 3 * 60 * 60 + 30 * 60,
+            "3h30m": 3 * 60 * 60 + 30 * 60,
         }
         for raw_timeout, expected_seconds in cases.items():
             with self.subTest(raw_timeout=raw_timeout):
@@ -226,7 +227,14 @@ class TimeoutInvariantTests(unittest.TestCase):
                 )
 
     def test_gitlab_timeout_parser_rejects_malformed_values_with_context(self) -> None:
-        for raw_timeout in (20, "20", "20 minutez", "3h30m", "three hours"):
+        for raw_timeout in (
+            20,
+            "20",
+            "20 minutez",
+            "3h30",
+            "3h extra",
+            "three hours",
+        ):
             with (
                 self.subTest(raw_timeout=raw_timeout),
                 self.assertRaisesRegex(AssertionError, r"\.review_template.*GitLab timeout"),

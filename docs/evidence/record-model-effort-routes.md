@@ -8,9 +8,9 @@ Status: pending
      complete every platform row below. This record is not a release binding
      until live validation is complete. -->
 
-Release-runtime-source: `REPLACE-ME-40-CHAR-COMMIT-SHA-GOES-HERE!!`
-Release-base-digest: sha256:replace-me
-Release-reviewer-digest: sha256:replace-me
+Release-runtime-source: `<40-character-runtime-source-sha>`
+Release-base-digest: `sha256:<64-character-base-image-digest>`
+Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
 
 This record covers the first real-provider route checks for the non-default
 effort settings: Codex with requested effort `max` and OpenCode with requested
