@@ -61,13 +61,13 @@ classified by whether a live run proves something the regression suite cannot:
 
 | Suite | Tier | Regression coverage (`make quality`) | Status |
 |---|---|---|---|
-| Image publication verification | release-gating | n/a (registry/attestation) | **Pending** against the final rebuilt pair (anonymous digest pull, OCI revision label, provenance attestation). Prior scoped passes are historical only. |
-| GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Pending** against final digests — prior replacement candidate was partial (changed-body in-place update still required). [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
-| GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Pending** against final digests — prior replacement candidate was partial (changed-body in-place update still required). [record](record-gitlab-current-image.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Pending** against final digests — prior partial covered credential withholding/forwarding isolation; trusted image/config override and forged-gate at a credential-bearing boundary still required. [record](record-gitlab-hostile-mr.md) |
+| Image publication verification | release-gating | n/a (registry/attestation) | **Passed** 2026-07-25 against the final pair for `R = 88bc941` — anonymous digest resolution, OCI revision label equal to `R`, and provenance attestations bound to publication run `30125524008` on both subjects. [record](record-image-publication-verification.md) |
+| GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Passed** 2026-07-25 for `R = 88bc941`. Smoke: real 3-seat panel, `panel_status: full`, 4 security findings posted (run `30174011868`). Lifecycle: create → unchanged rerun → **changed-body in-place update** → resolve → persistence → reopen → stale-head no-op, with the required `gate` check genuinely blocking (`mergeable_state=blocked`), run `30173073036` attempts 1–7. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
+| GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Passed** 2026-07-25 for `R = 88bc941` (MR !11, hardened child): create → unchanged rerun → **changed-body in-place update** → resolve → reopen on one identity, with `detailed_merge_status: ci_must_pass` withholding the merge throughout. [record](record-gitlab-current-image.md) |
+| GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
-| GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional. Timing windows are milliseconds wide; do not gate the release on reproducing them. [record](record-github-revision-failures.md) |
+| GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional; **waived** for 1.0.0 with a reason registered under `verification.evidence_waivers`. The **stale-head** boundary was nonetheless reproduced live in run `30173073036` attempt 7 (`post` returned `status: stale_head` and wrote nothing; `gate` returned `passed_stale_head`). The other two boundaries and the 406 path rest on the regression suite. [record](record-github-revision-failures.md) |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
@@ -77,19 +77,30 @@ consumer flow but not the hostile-MR deployment boundary. See
 
 ### Known gaps and missing evidence
 
-- **Positive changed-body in-place update** has never been demonstrated live on
-  either platform (probes fell back to summary-only or resolved the old thread).
-  It is unit-covered (`test_post.py::test_post_existing_marker_updates_changed_body`)
-  and is the clearest remaining lifecycle gap; the mock `blocking_alt` scenario
-  (same identity as `blocking`, different body) now reproduces it live without
-  model spend (see the runbook).
+- **Positive changed-body in-place update — closed 2026-07-25.** Demonstrated live
+  on **both** platforms against `R = 88bc941` using the mock `blocking_alt`
+  scenario, with platform confirmation that the existing comment was rewritten
+  rather than duplicated: GitHub comment `3650942127` (`created 20:13:42` →
+  `updated 20:20:37`) and GitLab note `3601861614` (`created 20:47:29` →
+  `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
+  same `issue_id` across both platforms. Also unit-covered by
+  `test_post.py::test_post_existing_marker_updates_changed_body`.
 - **Cursor reviewer** is an experimental opt-in substitute with a separate
   credential and egress path. It currently has only a permission smoke and **no
   evidence row**; do not advertise Cursor as evidence-backed.
-- Until the release-gating rows are scoped passes against the final `R` and image
-  digests, docs must qualify rather than assert product-wide "stable,"
-  "credential isolated," or equivalent deployment claims. The regression-covered
-  rows do not block the release.
+- **Trusted-image enforcement is not established.** The hostile-MR probe showed a
+  consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
+  declaring them in its own top-level `variables:` and enabling variable
+  forwarding; nothing in the pipeline verifies the running image. Credential
+  withholding and the operator-run trust auditor are what contain it. Docs must not
+  assert in-pipeline trusted-image or trusted-composition enforcement.
+- With the release-gating rows now scoped passes against the final `R` and image
+  digests, "credential isolated" may be claimed **only** in the specific, recorded
+  sense — protected credentials withheld from an unprotected-ref MR in the
+  hardened child topology — and not as a product-wide property. Network egress is
+  still unenforced at the container/runner boundary, forks are untested on GitLab,
+  and Cursor remains unevidenced. The regression-covered rows do not block the
+  release.
 
 ## Record format
 

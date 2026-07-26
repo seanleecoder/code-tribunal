@@ -1,173 +1,136 @@
-# Evidence record: GitLab current-image lifecycle / 2026-07-21
+# Evidence record: GitLab current-image lifecycle / 2026-07-25
 
-Status: partial
+Status: passed
 
-> Sanitized partial record. It is not a release pass until the known
-> release-gating paths below are completed.
+Release-runtime-source: 88bc9412b283d4a44328ab3ffd9f9708b0290f8e
+Release-base-digest: sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
+Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
 
-> **Reclassification note (2026-07-23).** Per the revised
-> [evidence matrix](README.md): the **summary-fallback / inline-unmappable** path
-> and the **unrelated line movement** path (step 6 below) are now
-> **regression-covered** and are no longer release-gating live requirements. Summary
-> fallback is covered by `integration/test_post_gate_e2e.py` FYI cases and
-> `test_post.py` summary-fallback cases; the **internal** cross-revision remap —
-> finding identity preserved and the persisted state anchor moved to the new line,
-> so the one existing discussion is updated rather than duplicated — is covered by
-> `test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-> plus the `test_anchors`/`test_post` remap tests. What remains a **live-optional**
-> confirmation (not release-gating) is the *platform-visible* re-anchoring of a moved
-> comment: updating an existing comment rewrites its body, not its diff position, and
-> `post.py` marks visible placement as requiring separate live validation. The
-> **positive changed-body in-place update** remains the release-gating lifecycle
-> gap, but is now reproducible token-free via the mock `blocking_alt` scenario (see
-> the [runbook](RUNBOOK-1.0-rc.md)). The historical results below are unchanged;
-> only their release-gating scope is narrowed.
-
-Covers evidence-matrix row **GitLab current image**: create, update, resolve,
-reopen, state persistence, blocking gate. Procedure:
-[evidence README, "Current-image lifecycle procedure"](README.md).
+Covers evidence-matrix row **GitLab current image**: inline create/update, human
+commands, state persistence, and the real merge block. Procedure:
+[evidence README, "Current-image lifecycle procedure"](README.md); runbook:
+[Chain B](RUNBOOK-1.0-rc.md).
 
 ## Identity
 
-- Platform and version: GitLab.com SaaS
-- Date/time and timezone: 2026-07-21 14:01–14:15 UTC
-- Deployment topology: hardened mirrored child
-- Consumer/template project: `seanleecoder/code-tribunal-demo` /
-  `seanleecoder/code-tribunal-ci-template@a10483ef5f662ea250799db107aba7b2eee92605`
-- Change request: MR `!2`
-- Pipeline/workflow runs: outer `2694045878` / child `2694046036`; unchanged
-  rerun outer `2694091876` / child `2694091973`
-- Relevant unchanged-rerun jobs: prepare `15455763110`, reviews
-  `15455763111`–`15455763114`, consensus `15455763119`, post `15455763120`,
-  gate `15455763121`.
-- Source commit: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-- Template/workflow commit: `a10483ef5f662ea250799db107aba7b2eee92605`
-- Base image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
-- Reviewer image tag and digest: `1.0-b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
-  `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
+- Platform: GitLab.com SaaS, shared runners
+- Date/time: 2026-07-25, ~20:44–21:07 UTC
+- Deployment topology: hardened mirrored child — exactly two same-project,
+  same-SHA includes with `inherit.variables: false` and both
+  `trigger.forward` flags disabled
+- Consumer project: `seanleecoder/code-tribunal-demo` (project id `84667714`),
+  default-branch config at `fba6e1ebc96f43a50ea71825759a8d0c5b456ca4`
+- Template project: `seanleecoder/code-tribunal-ci-template@97e05fddf9f5466ccee385344a7aaeac500e4aa2`
+- Change request: MR !11, from **protected** source branch
+  `evidence/chain-b-88bc941`
+- Source commit under review: `67d85137cd74324cf303da5b1612b88c864e6c45`
+  (a **modification** of `src/access.py` adding a `records[0]` indexing marker, so
+  the mock anchor is stable and resolvable — see the runbook note on added files)
+- Runtime source: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
+- Publication run: `30125524008`
+- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
+- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
 
 ## Preconditions
 
-- Both images published from one reviewed RC commit and **digests verified**
-  against publish run `29834194647` (values above). Pull each by digest before
-  starting.
-- Protected/masked variables verified: `OPENROUTER_API_KEY`, `GITLAB_TOKEN`.
-- Required pipeline configuration verified: **Pipelines must succeed** ON for the
-  blocking-gate step.
-- Expected behavior: each lifecycle operation posts/updates the correct
-  discussion, state persists across reruns, and the gate blocks only when a
-  blocking finding exists with enforcement on.
-
-## Lifecycle steps (operation → expected result)
-
-Perform in order on one MR; capture the pipeline/job IDs and platform object IDs
-(discussion/note IDs) at each step.
-
-1. Create inline finding → expected: one inline discussion posted at the mapped line.
-2. Rerun unchanged → expected: existing discussion updated in place, **no duplicate**.
-3. Change the finding body → expected: same discussion updated; body-hash change recorded.
-4. Resolve → expected: discussion resolved; state reflects resolved.
-5. Reopen → expected: discussion reopened; identity preserved across the transition.
-6. Push an unrelated line movement → expected: finding identity/anchor maintained.
-   (Internal remap **now regression-covered, not release-gating** — see
-   `test_line_movement_across_revisions_remaps_to_same_discussion` and the
-   reclassification note above; only visible re-anchoring stays live-optional.)
-7. Exercise summary fallback (finding not inline-mappable) → expected: summary comment path used.
-8. Force a blocking finding with enforcement on → expected: `gate` job fails and
-   **Pipelines must succeed** blocks the merge; gate agrees with
-   `out/consensus/consensus.json` + `out/post/post_result.json`.
+- `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope) configured as
+  **protected + masked** project variables; no secret value recorded here. The
+  source branch is protected so `GITLAB_TOKEN` injects and posting can occur.
+- **Pipelines must succeed** enabled (`only_allow_merge_if_pipeline_succeeds: true`).
+- Deterministic mock enabled for the whole chain: `AI_REVIEW_LOCAL_MOCK=1`,
+  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, all four `AI_REVIEW_REQUIRE_REAL_*=0`, and
+  `AI_REVIEW_MOCK_SCENARIO` set per step — supplied as **project** CI/CD variables
+  so they reach the hardened child. **Zero model tokens spent.**
+- Critique enabled; Cursor disabled; merge gate enabled.
+- Expected behavior: one finding identity created once, untouched on an unchanged
+  rerun, updated in place on a body-only change, resolved and kept resolved by a
+  human command, reopened by a human command, and blocking the merge throughout.
 
 ## Actual result
 
-- Steps 1–2 passed. The current-image run created discussion
-  `f468894a31baa36a4b1c19e0eb296913ed75b917`; the unchanged rerun updated the
-  same root note `3583823567` (`created_discussions: 0`,
-  `updated_discussions: 1`) rather than creating a duplicate.
-- Direct GitLab API resolve and reopen operations preserved that discussion and
-  root-note identity.
-- The unchanged rerun completed prepare, Claude/Codex/OpenCode review,
-  consensus, and post. Cursor was disabled as configured.
-- Consensus reported a blocking finding. Gate job `15455763121` failed with
-  `block_merge: true`, `reason: blocking_consensus`, and
-  `status: failed_blocking_findings`.
-- Project setting `only_allow_merge_if_pipeline_succeeds` was `true`. With the
-  MR temporarily undrafted, GitLab reported `detailed_merge_status:
-  ci_must_pass` against the failed head pipeline. The draft title was then
-  restored without changing the head or pipeline.
-- Steps 3, 6, and 7 were not exercised; step 8 is therefore strong gate and
-  platform enforcement evidence.
+All steps ran on one finding identity — issue id
+`4f51a7af75ec457a69f687be2e15363c9c59b047290f8efdcda8784aa2fa9ff9`, GitLab
+discussion `903db1c64759208baeaa1776a1d8114392dbb8f4`, root note `3601861614`,
+anchored to `src/access.py` line 15. Note the issue id is **identical** to the
+GitHub lifecycle record's: finding identity is platform-independent, derived from
+reviewer, path, category, side, `context_hash`, and title fingerprint.
+
+| Step | Scenario | Parent / child pipeline | `post_result` | Platform observation |
+|---|---|---|---|---|
+| 1. create | `blocking` | `2705746042` / `2705746053` | `created: 1` | discussion created, root note `3601861614` at 20:47:29 |
+| 2. unchanged rerun | `blocking` | `2705748310` / `2705748321` | `created: 0, updated: 0, skipped_unchanged: 1` | no duplicate discussion |
+| 3. changed body | `blocking_alt` | `2705753334` / `2705753349` | `created: 0, **updated: 1**` | same note `3601861614`, `updated_at` 20:59:24, body now the alternate text, still unresolved |
+| 4. resolve | `blocking` | `2705756061` / `2705756078` | `resolved: 1, skipped_unchanged: 1, warnings: []` | root note `resolved: true` |
+| 5. reopen | `blocking` | `2705757736` / `2705757749` | `skipped_unchanged: 1` | root note `resolved: false`, same note id, identity preserved |
+
+Run identifiers, in order: `gl-2705746053-15534925484`,
+`gl-2705748321-15534938056`, `gl-2705753349-15534963611`,
+`gl-2705756078-15534977601`, `gl-2705757749-15534986644`.
+
+- Consensus on every step: `panel_status: full`, `panel_convergence: 1.0`,
+  `surface_count: 1`, `drop_count: 0`, `fyi_count: 0`, `block_merge: true`.
+- `ai_review_gate` failed (`script_failure`) on every step, as intended for a
+  blocking consensus, and MR !11 reported
+  `detailed_merge_status: ci_must_pass` throughout — a genuine platform merge
+  block under "Pipelines must succeed", not an advisory signal.
+- **Step 3 is the positive changed-body in-place update**, the path the evidence
+  index recorded as never demonstrated live on either platform. `blocking_alt`
+  keeps identity and changes only the body; `post_result` reported
+  `updated_discussions: 1` with `action: "updated"` on the same
+  `discussion_id`/`issue_id`, and the platform confirmed the existing note was
+  rewritten (`created 20:47:29` → `updated 20:59:24`) rather than duplicated.
+- **Step 4 human command authorization:** `/ai-review wontfix` was posted as a
+  note on the discussion by a Developer-or-higher author and accepted —
+  `post_result.warnings` was empty, so it was not rejected for access. As on
+  GitHub, the dismissal did not clear the gate: consensus still reported
+  `block_merge: true`, matching the documented gate precedence and the documented
+  meaning of `wontfix` as a durable dismissal rather than a gate override.
 
 ## Audit
 
-- Artifacts inspected: prepared inputs, reviewer statuses/findings, consensus,
-  post result, and gate result from both current-image pipelines.
-- Logs inspected: both outer/child pipeline pairs and the unchanged-rerun jobs
-  listed above.
-- Credential values absent: yes; the operator confirmed a non-disclosing
-  actual-value audit, and a common token-pattern scan was clean.
-- Sensitive model content omitted from this record: yes.
-- Known unexercised paths (this historical run): body change, unrelated line
-  movement, and summary fallback. Per the reclassification note above, unrelated
-  line movement and summary fallback are now regression-covered and no longer
-  release-gating; only the positive changed-body in-place update remains a
-  release-gating gap (reproducible token-free via `blocking_alt`).
+- Artifacts inspected per step: `out/consensus/consensus.json` and
+  `out/post/post_result.json` downloaded from the child pipelines' consensus and
+  post jobs.
+- Logs inspected: child job statuses for every pipeline above; the hostile-boundary
+  traces are audited in the [hostile-MR record](record-gitlab-hostile-mr.md).
+- Platform objects verified directly through the GitLab API: discussion
+  `903db1c6…` root note id, `created_at`, `updated_at`, `resolved`, and
+  `position` (`src/access.py` line 15), plus MR `detailed_merge_status` at each
+  step.
+- Credential values absent: no credential value is reproduced in this record, and
+  the credential-withholding audit is covered by the hostile-MR record.
+- Sensitive model content omitted: this chain is deterministic mock output, so no
+  real model content is involved.
+- Known unexercised paths:
+  - Step 6 (unrelated line movement) deliberately not run live; the internal remap
+    is regression-covered and only platform-visible re-anchoring is live-optional.
+  - The stale-head no-op is a GitHub-specific step and was exercised there
+    ([GitHub lifecycle record](record-github-current-image.md)), not here.
+  - The below-quorum FYI/summary-comment path and the inline-unmappable summary
+    fallback are unreachable from the mock and remain regression-covered.
+  - This chain used the deterministic mock, so it proves posting/state/gate
+    behavior only. A real-model panel was additionally run on this platform
+    (MR !10, child pipeline `2705723423`) and is recorded as supporting evidence in
+    the [default-model smoke record](record-github-default-model-smoke.md); that
+    panel was `degraded`, not `full`, because the OpenCode seat omitted a required
+    `confidence` field.
 
 ## Verdict
 
-Partial for the recorded GitLab.com hardened-child topology, source
-`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`, template commit, and image
-digests. Inline idempotency, direct resolve/reopen identity, state persistence,
-blocking gate behavior, and the project pipeline requirement passed. This
-historical run remains partial; the current release-gating scope is narrowed by
-the reclassification note above and superseded by the replacement verdict below —
-of the paths unexercised here, only the positive changed-body in-place update is
-still release-gating.
+Scoped pass for GitLab.com on `seanleecoder/code-tribunal-demo` at runtime source
+`88bc9412b283d4a44328ab3ffd9f9708b0290f8e` with the release-pinned image pair, in
+the hardened mirrored-child topology: a single finding identity was created once,
+skipped unchanged, **updated in place on a body-only change**, resolved by an
+authorized human command, and reopened — while "Pipelines must succeed" genuinely
+withheld the merge throughout. This closes the changed-body in-place update gap
+for GitLab. It proves posting, state, command authorization, and gate behavior for
+this topology only, and makes no claim about real-model behavior or about the
+hostile-MR boundary, which are recorded separately.
 
-## Replacement candidate P0 progress / 2026-07-21
+## Superseded candidates
 
-- Identity: runtime source `15d424feea730a04338ed423bf93b8797d807bbc`,
-  template project commit `18f9ea165bec211a8345fe38b894e0e0bb8a6ebd`,
-  base digest `sha256:28ddb7ed1c4e0986606011793c31955751df61ce2d25a0def0f47e1eecf97eee`,
-  reviewer digest `sha256:cba20164abaaad10a37ec6d27f17bf55662b70d32339830fba3092117dbe7a8d`.
-- MR !2 outer pipeline `2694536017`, child `2694536079`; prepare
-  `15459144480`, consensus `15459144489`, post `15459144490`, gate
-  `15459144491`.
-- Claude, Codex, and OpenCode succeeded and were resolution-eligible; consensus
-  reported a full panel with no failed reviewers. Post succeeded and updated one
-  existing discussion. Gate failed closed with `block_merge: true`,
-  `reason: blocking_consensus`.
-- Direct resolve then reopen preserved discussion
-  `f468894a31baa36a4b1c19e0eb296913ed75b917` and root note `3583823567`.
-- An unchanged retry used bridge `15460824703` and child pipeline `2694773267`.
-  Prepare `15460824960`, consensus `15460824969`, post `15460824970`, and gate
-  `15460824971` completed against the same head. Post created no discussion and
-  updated the same discussion/root-note pair above; the full three-reviewer
-  panel and blocking gate result were unchanged.
-- A body-change probe used commit `503cac565c5535792ec43b93770317f6a7c94073`,
-  outer pipeline `2694801056`, child pipeline `2694801132`, prepare
-  `15461000933`, post `15461000943`, and gate `15461000944`. Post reported
-  `created_discussions: 0`, `updated_discussions: 0`, `resolved_discussions: 1`,
-  and `skipped_unchanged: 0`. Direct MR inspection confirmed the previously
-  active AI discussion/root-note pair `f468894a31baa36a4b1c19e0eb296913ed75b917`
-  / `3583823567` was resolved by the bot and no replacement inline discussion
-  was posted. This is useful lifecycle evidence, but it is not the expected
-  in-place update path for step 3.
-- Operator exact-value audit: passed on 2026-07-21 against the current GitLab
-  secret values and downloaded GitLab traces/artifacts covered by the audit.
-  Secret values are intentionally not recorded here.
-- Still release-gating: the positive changed-body in-place update (reproducible
-  token-free via the mock `blocking_alt` scenario; see the runbook). For genuinely
-  unrelated line movement the **internal** cross-revision remap (identity preserved,
-  persisted anchor moved, existing discussion updated not duplicated) is
-  **regression-covered** by
-  `test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-  plus the `test_anchors`/`test_post` remap tests; only the *platform-visible*
-  re-anchoring of the moved comment stays a **live-optional** confirmation (post.py
-  marks visible placement as requiring live validation), and the mock cannot
-  faithfully reproduce a real push's head advance + regenerated served diff. Summary
-  fallback is no longer release-gating — it is regression-covered (see the
-  reclassification note above).
-
-Replacement verdict remains **partial** for the release-gating lifecycle paths
-above; the reclassified summary-fallback path no longer blocks the row.
+Historical provenance only, not a release binding: partial lifecycle evidence at
+runtime sources `15d424feea730a04338ed423bf93b8797d807bbc` and
+`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` (the latter invalidated by the GitHub
+human-command authorization defect), which proved a real consumer flow but never
+the positive changed-body in-place update.

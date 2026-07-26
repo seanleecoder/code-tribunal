@@ -3,10 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows semantic
-versioning. The `[Unreleased]` section below is the candidate 1.0.0 change set;
-it is retitled to `[1.0.0]` when the annotated tag is cut.
+versioning. The `[1.0.0]` heading below is dated for the intended tag date; if the
+annotated `v1.0.0` tag is cut on a different day, correct the date in the tagging
+commit. The section is not a claim that the tag already exists.
 
-## [Unreleased]
+## [1.0.0] - 2026-07-25
 
 ### Security
 
@@ -188,6 +189,20 @@ it is retitled to `[1.0.0]` when the annotated tag is cut.
 - `verification.evidence_waivers` is now required on
   `code_tribunal.release_inputs.v1` (use `{}` when unused). The same object is
   copied into the external release manifest; keep schema_version at `.v1`.
+
+### Known issues
+
+- **GitHub: pull requests that add or delete files can lose findings and fail the
+  review.** GitHub renders an added file's diff with `--- /dev/null`, which anchor
+  resolution rejects as an absolute path while scanning for the anchor's file. The
+  affected findings are dropped; when every seat is affected, `consensus` exits 3,
+  `post`/`gate` are skipped, and the required `gate` check cannot succeed. It
+  triggers for a finding on an added or deleted file, or on a file ordered after one
+  in the diff, and it affects real reviewers as well as the deterministic mock.
+  GitLab is unaffected (its prepared diff uses `--- a/<path>`). No state is
+  corrupted. Workaround: split file additions into a separate change request, or
+  re-run once the added file has merged. Fix scheduled for 1.0.1. See
+  [`release/1.0.0.md`](release/1.0.0.md) for detection details.
 
 ## [0.4.0] - 2026-07-14
 
