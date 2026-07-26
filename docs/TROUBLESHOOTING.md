@@ -23,6 +23,7 @@ credentials or sensitive model content into issues.
 | Runtime override appears ignored | Pinned image predates it or variable scope differs | Template image source SHA and manifest effective config | Rotate all image pins together or move override to shared project/repository scope |
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
 | Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Status artifact, job duration, optional streamed adapter log | Temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`; unset it after diagnosis |
+| GitHub: every seat drops its findings and consensus exits 3 | Known 1.0.0 defect: the PR adds or deletes a file, so anchor resolution rejects `/dev/null` | Reviewer log line `absolute paths are not allowed: /dev/null`; `dropped_finding_count` equals `raw_finding_count` | Land file additions in a separate change request, or re-run after they merge; fixed in 1.0.1 |
 | Local provider call rejects an endpoint | Developer shell exported a non-canonical provider URL | Redacted `model_error` naming `ANTHROPIC_BASE_URL` or `OPENROUTER_BASE_URL` | Run with `env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL make review-local ...` |
 
 ## Reviewer status meanings
@@ -61,6 +62,27 @@ The command must appear alone on a line:
 
 GitLab requires Developer access or higher. GitHub accepts Write, Maintain, or
 Admin. UI-only thread resolution is not the same as durable `wontfix`.
+
+## GitHub: every finding dropped and consensus exits 3 (added or deleted files)
+
+Known defect in 1.0.0, fixed in 1.0.1. Symptoms, in order:
+
+1. A reviewer job log contains `absolute paths are not allowed: /dev/null` followed
+   by `kept 0 finding(s), dropped N malformed/unresolvable finding(s)`.
+2. `out/status/<reviewer>.json` shows `dropped_finding_count` equal to
+   `raw_finding_count` with `usable_for_resolution: false` — often on every seat.
+3. The `consensus` job exits 3, so `post` and `gate` never run and the required
+   `gate` check cannot succeed.
+
+Cause: GitHub renders an added file's diff with `--- /dev/null`, which anchor
+resolution rejects as an absolute path while scanning for the anchor's file. It
+triggers when a finding is on an added or deleted file, or on a file ordered after
+one in the diff. It affects real reviewers, not only the deterministic mock. GitLab
+is unaffected, because its prepared diff uses `--- a/<path>` for added files.
+
+Workaround: split file additions into a separate change request from the code you
+want reviewed, or re-run the review once the added file has merged. Disabling
+`merge_gate.enabled` unblocks the merge but does not recover the dropped findings.
 
 ## Configuration drift
 
