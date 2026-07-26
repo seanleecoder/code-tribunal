@@ -23,7 +23,7 @@ disabled-by-default `cursor` seat.
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; adapters forward only supported levels. Cursor rejects this key. |
-| `reviewers.<name>.timeout_seconds` | integer, `600` | Whole reviewer/critique process-group timeout. |
+| `reviewers.<name>.timeout_seconds` | integer, `900` | Whole reviewer/critique process-group timeout. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
@@ -44,12 +44,15 @@ For production deployments, the following model and reasoning effort combination
 
 | Profile | Reviewer | Recommended Model | Effort |
 |---|---|---|---|
-| **Value** | Codex | `openai/gpt-5.6-luna` | `max` |
+| **Value** | Codex | `openai/gpt-5.6-luna` | `xhigh` |
 | **Value** | Claude | `anthropic/claude-opus-5` | `low` |
-| **Value** | OpenCode | `meta/muse-spark-1.1` | `xhigh` |
-| **Balance** | Codex | `openai/gpt-5.6-terra` | `max` |
+| **Value** | OpenCode | `meta/muse-spark-1.1` | `high` |
+| **Balance** | Codex | `openai/gpt-5.6-terra` | `xhigh` |
 | **Balance** | Claude | `anthropic/claude-opus-5` | `medium` |
 | **Balance** | OpenCode | `x-ai/grok-4.5` | `high` |
+
+> [!NOTE]
+> These profiles are operator guidance for production environments based on performance and cost trade-offs, distinct from the shipped candidate defaults (`anthropic/claude-haiku-4.5`, `openai/gpt-5.4-mini`, `google/gemini-3.1-flash-lite`). CLI adapters forward supported reasoning effort levels (`codex.sh` forwards `low`–`xhigh`; `opencode.sh` forwards `low`–`high`). CI validates custom model identifiers for string safety; operators should verify that configured API credentials and provider routes support their selected models.
 
 ### Panel and severity
 
