@@ -119,7 +119,7 @@ needed.**
     enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
     model: composer # Cursor Composer model id (verify current id via `cursor-agent models`); override: AI_REVIEW_CURSOR_MODEL
-    timeout_seconds: 600
+    timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
 ```

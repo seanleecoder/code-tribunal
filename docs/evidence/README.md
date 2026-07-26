@@ -28,13 +28,18 @@ entry.
    `blocking_alt` changed-body update) on GitHub and GitLab per
    [`RUNBOOK.md`](RUNBOOK.md). Chain B requires
    `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
-5. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
-6. Set each release-gating record to `Status: passed` with matching
+5. Before activation, run and record the first real Codex `max` and OpenCode
+   `xhigh` route checks against the rebuilt images in the separate
+   [`record-model-effort-routes.md`](record-model-effort-routes.md) record.
+   Provider rejection is a failed validation, not a reason to omit or coerce
+   the effort level.
+6. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
+7. Set each release-gating record to `Status: passed` with matching
    `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
    binding; re-stamp older records with these explicit fields.
-7. Only then set `release-inputs.status` to `active`, cut release commit `P`,
+8. Only then set `release-inputs.status` to `active`, cut release commit `P`,
    build the external manifest, and tag `v1.0.0`.
 
 ## 1.0 evidence matrix
@@ -64,6 +69,7 @@ classified by whether a live run proves something the regression suite cannot:
 | Image publication verification | release-gating | n/a (registry/attestation) | **Passed** 2026-07-25 against the final pair for `R = 88bc941` — anonymous digest resolution, OCI revision label equal to `R`, and provenance attestations bound to publication run `30125524008` on both subjects. [record](record-image-publication-verification.md) |
 | GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Passed** 2026-07-25 for `R = 88bc941`. Smoke: real 3-seat panel, `panel_status: full`, 4 security findings posted (run `30174011868`). Lifecycle: create → unchanged rerun → **changed-body in-place update** → resolve → persistence → reopen → stale-head no-op, with the required `gate` check genuinely blocking (`mergeable_state=blocked`), run `30173073036` attempts 1–7. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
 | GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Passed** 2026-07-25 for `R = 88bc941` (MR !11, hardened child): create → unchanged rerun → **changed-body in-place update** → resolve → reopen on one identity, with `detailed_merge_status: ci_must_pass` withholding the merge throughout. [record](record-gitlab-current-image.md) |
+| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | **Pending** — [record](record-model-effort-routes.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |

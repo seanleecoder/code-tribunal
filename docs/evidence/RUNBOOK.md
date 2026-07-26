@@ -12,6 +12,11 @@ and run IDs, then work through the same steps. Sections that record what 1.0.0
 actually observed are marked as such, so a future operator can tell the procedure
 apart from the results.
 
+The identity block below is the last activated 1.0.0 pair. The current source
+branch is a draft release candidate: `release/release-inputs.json` is back to
+`status: draft` with its runtime source and image digests unset pending rebuild,
+so these values remain historical until a new pair is published.
+
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
 regression suite inside `make quality`; those rows are confirmed here at most as
@@ -43,13 +48,13 @@ tests that cover each row.
 - Images (GHCR, tag `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e`):
   - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
   - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
-- The three canonical templates and `release/release-inputs.json` are already
-  repinned to this pair, so a consumer copied from `R` (plus the repin commit)
-  runs exactly these images.
-- **All release-gating rows passed against this pair for `v1.0.0`** and are recorded
-  with binding `Release-runtime-source` / digest fields; the non-gating SPEC-34
-  revision-failures row is released under a registered waiver, and
-  `release/release-inputs.json` is `status: active`. See the
+- For **v1.0.0**, the three canonical templates and
+  `release/release-inputs.json` were repinned to this pair, so a consumer copied
+  from `R` (plus the repin commit) ran exactly these images.
+- **All release-gating rows passed against this pair for `v1.0.0`** and are
+  recorded with binding `Release-runtime-source` / digest fields; the non-gating
+  SPEC-34 revision-failures row was released under a registered waiver, and
+  `release/release-inputs.json` was `status: active` for that release. See the
   [evidence matrix](README.md) for the per-row result. For the *next* release,
   replace this identity block and repeat the release-gating probes against the new
   pair — a record bound to `88bc941` does not certify a later runtime source.
@@ -373,8 +378,8 @@ update the same one. Capture run/job IDs and platform object IDs at every step.
 **Chain A — real default-model smoke (the only token spend).** On its own change
 request, leave all model overrides unset, keep all three OpenRouter seats enabled,
 Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
-panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-mini`,
-OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto` skipped, `panel_status:
+panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.6-luna`,
+OpenCode `google/gemini-3.5-flash-lite`, Cursor `auto` skipped, `panel_status:
 full`, and that a finding was posted. **This doubles as the default-model smoke —
 do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
 (see [operations cost controls](../operations.md)). This chain ends here.

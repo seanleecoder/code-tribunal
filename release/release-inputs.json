@@ -6,13 +6,13 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "4c38cfc8df5d3de32066bed0e67a56b299b88b7cd470c785465e49a5ecd61990"
+      "sha256": "ac98a7f6cf3cd8ef9b24c1203ebc55c7b3acba57321f7271500a970ec080f434"
     },
     "configuration": {
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "95e599b693e1ad6ceebbc20f6417423daa63487f1f19713b49de5ca9ed4e0f54"
+      "sha256": "e53200dd8edf950a50b54c1c0cc0434b03aa470bed5de3bae4c2e841378d6947"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "01732a73dd38c7b170ac24348609ccc5fe45f956d3106690cd6316cdb5179794"
+      "sha256": "546b7183d708acdc8ced21e45db426d1f10074e3a2a411aabbcd8df8edc6197a"
     },
     "image_recipes": {
       "files": [
@@ -59,18 +59,18 @@
   },
   "images": {
     "base": {
-      "digest": "sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.0",
-  "runtime_source": "88bc9412b283d4a44328ab3ffd9f9708b0290f8e",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "active",
+  "status": "draft",
   "verification": {
     "ci_run_id": "30125523924",
     "evidence_record_ids": [

@@ -15,8 +15,8 @@ def _base_config() -> dict:
     return {
         "reviewers": {
             "claude": {"model": "anthropic/claude-haiku-4.5", "enabled": True},
-            "codex": {"model": "openai/gpt-5.4-mini", "enabled": True},
-            "opencode": {"model": "google/gemini-3.1-flash-lite", "enabled": True},
+            "codex": {"model": "openai/gpt-5.6-luna", "enabled": True},
+            "opencode": {"model": "google/gemini-3.5-flash-lite", "enabled": True},
             "cursor": {"model": "auto", "enabled": False},
         },
         "critique": {"enabled": True, "rounds": 1},
@@ -54,7 +54,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         config = _base_config()
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "   "}, clear=True):
             apply_env_overrides(config)
-        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-5.4-mini")
+        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-5.6-luna")
 
     def test_shipped_openrouter_defaults_survive_blank_workflow_values(self) -> None:
         blank_overrides = {
@@ -73,12 +73,21 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             },
             {
                 "claude": (True, "anthropic/claude-haiku-4.5"),
-                "codex": (True, "openai/gpt-5.4-mini"),
-                "opencode": (True, "google/gemini-3.1-flash-lite"),
+                "codex": (True, "openai/gpt-5.6-luna"),
+                "opencode": (True, "google/gemini-3.5-flash-lite"),
             },
         )
         self.assertEqual(config["panel"]["quorum"]["votes_required"], 2)
         self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 2)
+
+    def test_shipped_reviewer_timeout_defaults_are_900_seconds(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertEqual(
+            {name: reviewer["timeout_seconds"] for name, reviewer in config["reviewers"].items()},
+            {"claude": 900, "codex": 900, "opencode": 900, "cursor": 900},
+        )
 
     def test_reviewer_enabled_override(self) -> None:
         config = _base_config()

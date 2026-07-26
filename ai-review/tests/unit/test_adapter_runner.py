@@ -74,7 +74,7 @@ class AdapterEndpointValidationTests(unittest.TestCase):
                 model="auto",
                 input_dir=Path("inputs"),
                 output_dir=Path("out"),
-                reviewer_config={"credential_variable": "CURSOR_API_KEY", "timeout_seconds": 600},
+                reviewer_config={"credential_variable": "CURSOR_API_KEY", "timeout_seconds": 900},
                 prompt_tmp=Path("prompt.md"),
             )
 
