@@ -235,12 +235,38 @@ class GitLabCiTemplateTests(unittest.TestCase):
         )
 
     def test_reviewer_and_critique_templates_have_outer_timeout(self) -> None:
+        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+        config_text = config_path.read_text(encoding="utf-8")
+        process_timeouts = [
+            int(value)
+            for value in re.findall(r"(?m)^    timeout_seconds: (\d+)$", config_text)
+        ]
+        self.assertEqual(process_timeouts, [900, 900, 900, 900])
+
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        outer_minutes: list[int] = []
         for block_name in (".review_template", ".critique_template"):
             match = re.search(rf"(?ms)^{re.escape(block_name)}:\n(.*?)(?=^\S)", text)
             self.assertIsNotNone(match, f"{block_name} block not found")
             assert match is not None
-            self.assertIn("  timeout: 20 minutes\n", match.group(1))
+            timeout_match = re.search(r"(?m)^  timeout: (\d+) minutes$", match.group(1))
+            self.assertIsNotNone(timeout_match, f"{block_name} timeout missing")
+            assert timeout_match is not None
+            outer_minutes.append(int(timeout_match.group(1)))
+
+        github_template = (
+            Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ai-review.yml"
+        )
+        github_text = github_template.read_text(encoding="utf-8")
+        for job_name in ("review", "critique"):
+            job = _workflow_job(github_text, job_name)
+            timeout_match = re.search(r"(?m)^    timeout-minutes: (\d+)$", job)
+            self.assertIsNotNone(timeout_match, f"GitHub {job_name} timeout missing")
+            assert timeout_match is not None
+            outer_minutes.append(int(timeout_match.group(1)))
+
+        self.assertEqual(outer_minutes, [20, 20, 20, 20])
+        self.assertTrue(all(value < outer_minutes[0] * 60 for value in process_timeouts))
 
     def test_web_and_api_rules_require_merge_request_iid(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -745,8 +771,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
-        self.assertIn("timeout-minutes: 20", review)
-        self.assertIn("timeout-minutes: 20", critique)
+        self.assertRegex(review, r"(?m)^    timeout-minutes: 20$")
+        self.assertRegex(critique, r"(?m)^    timeout-minutes: 20$")
         self.assertIn(
             "AI_REVIEW_MERGE_GATE_ENABLED: "
             "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}",

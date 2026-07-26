@@ -218,6 +218,35 @@ class ReleaseToolTests(unittest.TestCase):
         )
         validate_release_inputs(data, REPO_ROOT)
 
+    def test_draft_preserves_populated_verification_metadata(self) -> None:
+        data = json.loads(
+            (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
+        )
+        data["verification"] = {
+            "ci_run_id": "30125523924",
+            "publication_run_id": "30125524008",
+            "evidence_record_ids": [
+                "record-image-publication-verification.md",
+                "record-gitlab-hostile-mr.md",
+                "record-gitlab-current-image.md",
+                "record-github-current-image.md",
+                "record-github-revision-failures.md",
+                "record-github-default-model-smoke.md",
+            ],
+            "evidence_waivers": {
+                "record-github-revision-failures.md": (
+                    "SPEC-34 revision races and oversized-diff HTTP 406 are "
+                    "regression-covered by test_input_bundle.py and "
+                    "test_github_platform.py across all three prepare boundaries "
+                    "plus the 406 path; the live windows are milliseconds wide "
+                    "and two were never reproducible live, and this row is "
+                    "classified live-optional and non-gating in the evidence "
+                    "matrix."
+                )
+            },
+        }
+        self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
+
     def test_active_happy_path_matches_every_template(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

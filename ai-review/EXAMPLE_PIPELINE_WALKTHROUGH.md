@@ -3,6 +3,9 @@
 > **Historical example.** Image/configuration details may be obsolete and are
 > non-normative; see the [history index](../docs/history/README.md).
 
+This transcript reflects the 1.0.0 run; its model rows are historical and may
+differ from the current defaults in the [configuration reference](../docs/configuration.md).
+
 This is a concrete, artifact-backed walkthrough of one real GitLab CI pipeline
 run, showing how the [pipeline stages](../README.md#pipeline-at-a-glance) turned
 three independent model opinions into a single merge-gate decision. All data

@@ -22,14 +22,19 @@
 - **2026-07-26 — production profiles updated.** The shipped Codex route now
   accepts `max` as `model_reasoning_effort`, and the shipped OpenCode route now
   accepts `xhigh` as `reasoningEffort`, so the documented Value production
-  profile reaches the requested adapters without dropping either effort.
+  profile reaches the requested adapters without dropping either effort. The
+  shipped reviewer process timeout also increased from 600 to 900 seconds, with
+  a 20-minute CI outer ceiling for wrapper and artifact overhead.
 
 ## Why
 
-Real runs show the `opencode` reviewer is the slowest and most expensive seat on
-the panel: it sometimes hits its 600s `timeout_seconds`, and on
-`google/gemini-3.1-flash-lite` it costs more per review than the `claude`
-(Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models.
+Real runs showed the `opencode` reviewer was the slowest and most expensive seat
+on the panel: it sometimes hit its 600s `timeout_seconds` (the then-shipped
+default), and on `google/gemini-3.1-flash-lite` it cost more per review than the
+`claude` (Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models.
+
+This rationale records the pre-change 1.0.0 baseline; current defaults are
+documented in the [configuration reference](../configuration.md).
 
 All three reviewers receive the identical rendered prompt
 (`ai-review/prompts/review.md` + manifest + diff) and the same read-only

@@ -128,6 +128,7 @@ jobs:
     # succeeds, so this does not turn a total panel failure into a green gate.
     continue-on-error: true
     runs-on: ubuntu-latest
+    # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
     timeout-minutes: 20
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
     strategy:
@@ -166,6 +167,7 @@ jobs:
     # over otherwise valid reviewer findings.
     continue-on-error: true
     runs-on: ubuntu-latest
+    # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
     timeout-minutes: 20
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
     strategy:

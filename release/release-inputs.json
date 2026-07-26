@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "c9a822649621f271ba9f700b0900dcc807c3e5856c0d23917ee9672b0021394f"
+      "sha256": "ac98a7f6cf3cd8ef9b24c1203ebc55c7b3acba57321f7271500a970ec080f434"
     },
     "configuration": {
       "files": [
@@ -72,9 +72,18 @@
   "schema_version": "code_tribunal.release_inputs.v1",
   "status": "draft",
   "verification": {
-    "ci_run_id": null,
-    "evidence_record_ids": [],
-    "evidence_waivers": {},
-    "publication_run_id": null
+    "ci_run_id": "30125523924",
+    "evidence_record_ids": [
+      "record-image-publication-verification.md",
+      "record-gitlab-hostile-mr.md",
+      "record-gitlab-current-image.md",
+      "record-github-current-image.md",
+      "record-github-revision-failures.md",
+      "record-github-default-model-smoke.md"
+    ],
+    "evidence_waivers": {
+      "record-github-revision-failures.md": "SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix."
+    },
+    "publication_run_id": "30125524008"
   }
 }

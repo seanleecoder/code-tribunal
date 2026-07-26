@@ -69,6 +69,7 @@ prepare_ai_review:
 .review_template:
   stage: ai_review
   extends: .ai_review_rules
+  # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
   timeout: 20 minutes
   # Secret-bearing reviewer jobs must run adapter code and reviewer config from
   # the trusted review image/repository, not from MR-controlled code. Runtime
@@ -120,6 +121,7 @@ prepare_ai_review:
 
 .critique_template:
   stage: ai_review
+  # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
   timeout: 20 minutes
   image: "$AI_REVIEW_REVIEWER_IMAGE"
   interruptible: true
