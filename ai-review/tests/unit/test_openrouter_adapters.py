@@ -574,7 +574,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
-        self.assertIn("--model openai/gpt-5.4-mini", cli_args)
+        self.assertIn("--model openai/gpt-5.6-luna", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
@@ -628,7 +628,7 @@ PY
         )
 
     def test_codex_effort_reaches_model_reasoning_effort_without_coercion(self) -> None:
-        for configured in ("low", "medium", "high", "xhigh"):
+        for configured in ("low", "medium", "high", "xhigh", "max"):
             with self.subTest(configured=configured):
                 batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
                     "codex",
@@ -638,14 +638,6 @@ PY
 
                 self.assertEqual(batch["adapter_status"], "success")
                 self.assertIn(f'model_reasoning_effort="{configured}"', cli_args)
-
-    def test_codex_unsupported_effort_uses_provider_default(self) -> None:
-        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
-            "codex", "codex", extra_env={"AI_REVIEW_CODEX_EFFORT": "max"}
-        )
-
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertNotIn("model_reasoning_effort", cli_args)
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -835,7 +827,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
         self.assertIn("/opencode --pure run", cli_args)
-        self.assertIn("--model openrouter/google/gemini-3.1-flash-lite", cli_args)
+        self.assertIn("--model openrouter/google/gemini-3.5-flash-lite", cli_args)
         self.assertIn("--agent ai-reviewer", cli_args)
         self.assertIn("--format json", cli_args)
         self.assertIn("--dir ", cli_args)
@@ -887,7 +879,7 @@ PY
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
         self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
         self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn('"google/gemini-3.1-flash-lite"', cli_env)
+        self.assertIn('"google/gemini-3.5-flash-lite"', cli_env)
         self.assertIn('"*": "deny"', cli_env)
         self.assertIn('"read": "allow"', cli_env)
         self.assertIn('"glob": "allow"', cli_env)
@@ -934,7 +926,7 @@ PY
         self.assertEqual(agent["permission"]["skill"], "deny")
 
     def test_opencode_effort_reaches_reasoning_effort(self) -> None:
-        for configured in ("low", "medium", "high"):
+        for configured in ("low", "medium", "high", "xhigh"):
             with self.subTest(configured=configured):
                 batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
                     "opencode",
@@ -948,21 +940,17 @@ PY
                 agent = config["agent"]["ai-reviewer"]
                 self.assertEqual(agent["reasoningEffort"], configured)
 
-    def test_opencode_unsupported_effort_uses_provider_default(self) -> None:
-        # xhigh/max are valid Claude effort levels but not OpenRouter
-        # reasoningEffort values. Do not silently coerce them to high.
-        for configured in ("xhigh", "max"):
-            with self.subTest(configured=configured):
-                batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
-                    "opencode",
-                    "opencode",
-                    extra_env={"AI_REVIEW_OPENCODE_EFFORT": configured},
-                )
+    def test_opencode_max_effort_uses_provider_default(self) -> None:
+        batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "opencode",
+            "opencode",
+            extra_env={"AI_REVIEW_OPENCODE_EFFORT": "max"},
+        )
 
-                self.assertEqual(batch["adapter_status"], "success")
-                config = meta["opencode_config"]
-                assert isinstance(config, dict)
-                self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
+        self.assertEqual(batch["adapter_status"], "success")
+        config = meta["opencode_config"]
+        assert isinstance(config, dict)
+        self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
@@ -1152,7 +1140,7 @@ PY
         # and the override flows through to the CLI's --model flag.
         self.assertEqual(batch["adapter_status"], "success")
         self.assertIn("--model openai/custom-model", cli_args)
-        self.assertNotIn("openai/gpt-5.4-mini", cli_args)
+        self.assertNotIn("openai/gpt-5.6-luna", cli_args)
 
     def test_opencode_model_override_reaches_cli_and_config(self) -> None:
         batch, cli_args, cli_env, _meta = self._run_with_fake_cli(
@@ -1166,18 +1154,18 @@ PY
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
-        self.assertNotIn("gemini-3.1-flash-lite", cli_env)
+        self.assertNotIn("gemini-3.5-flash-lite", cli_env)
 
     def test_openrouter_variant_model_is_accepted(self) -> None:
         # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.
         batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
             "codex",
             "codex",
-            extra_env={"AI_REVIEW_CODEX_MODEL": "openai/gpt-5.4-mini:free"},
+            extra_env={"AI_REVIEW_CODEX_MODEL": "openai/gpt-5.6-luna:free"},
         )
 
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertIn("--model openai/gpt-5.4-mini:free", cli_args)
+        self.assertIn("--model openai/gpt-5.6-luna:free", cli_args)
 
     def test_invalid_model_format_is_model_error_without_cli_invocation(self) -> None:
         # A model override with shell/JSON-unsafe characters (quote + space) must be

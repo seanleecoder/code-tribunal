@@ -19,13 +19,18 @@
   `low`/`medium`/`high`; its unsupported `xhigh`/`max` values leave the provider
   default unchanged. This avoids silently applying a different effort than the
   operator selected.
+- **2026-07-26 — production profiles updated.** The shipped Codex route now
+  accepts `max` as `model_reasoning_effort`, and the shipped OpenCode route now
+  accepts `xhigh` as `reasoningEffort`, so the documented Value production
+  profile reaches the requested adapters without dropping either effort.
 
 ## Why
 
-Real runs show the `opencode` reviewer is the slowest and most expensive seat on
-the panel: it sometimes hits its 600s `timeout_seconds`, and on
-`google/gemini-3.1-flash-lite` it costs more per review than the `claude`
-(Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models.
+Real runs showed the `opencode` reviewer was the slowest and most expensive seat
+on the panel: it sometimes hit the shipped timeout, and on the former
+`google/gemini-3.1-flash-lite` route it cost more per review than the `claude`
+(Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models. The shipped
+default timeout is now 900 seconds.
 
 All three reviewers receive the identical rendered prompt
 (`ai-review/prompts/review.md` + manifest + diff) and the same read-only
@@ -92,9 +97,9 @@ runs its agent loop. Root-cause chain, verified against the pinned
   adopted once SPEC-20 makes the trade-off measurable.
 - **Per-adapter effort mappings are explicit and non-coercing.** Claude passes
   every validated level through as `--effort`; Codex passes
-  `low`/`medium`/`high`/`xhigh` as `model_reasoning_effort`; OpenCode passes
-  `low`/`medium`/`high` as `reasoningEffort`. A level unsupported by an adapter
-  leaves that adapter's provider default unchanged.
+  `low`/`medium`/`high`/`xhigh`/`max` as `model_reasoning_effort`; OpenCode
+  passes `low`/`medium`/`high`/`xhigh` as `reasoningEffort`. A level unsupported
+  by an adapter leaves that adapter's provider default unchanged.
 - **Prompt parity.** `ai-review/prompts/review.md` stays byte-identical across
   reviewers. Replacing OpenCode's built-in system prompt (agent `prompt` key)
   is explicitly out of scope: each CLI keeps its native scaffolding.
@@ -107,7 +112,8 @@ runs its agent loop. Root-cause chain, verified against the pinned
   `ai-review/adapters/claude.sh` (remove `--max-turns`); the turn-cap paths in
   `ai-review/src/ai_review/adapter_runner.py` and
   `ai-review/src/ai_review/config.py`; `ai-review/config/review.yaml`
-  **comments only**; and unit tests in `test_openrouter_adapters.py`,
+  defaults/comments; production profile documentation; and unit tests in
+  `test_openrouter_adapters.py`,
   `test_adapter_runner.py`, and `test_config_env_overrides.py`.
 - **Out:** `ai-review/prompts/*` (parity); any default `effort` value in
   `review.yaml`; OpenCode agent `prompt` replacement; other Codex adapter
@@ -130,11 +136,11 @@ be injection-safe (see each item).
    Before the heredoc:
 
    ```sh
-   # OpenRouter accepts only low|medium|high. Higher Claude-specific values
-   # deliberately leave the provider default in place; do not clamp them.
+   # OpenCode accepts low|medium|high|xhigh. Claude/Codex-only max deliberately
+   # leaves the provider default in place; do not clamp it.
    case "${AI_REVIEW_EFFORT:-}" in
-     low|medium|high) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
-     *)               OPENCODE_REASONING_EFFORT="" ;;
+     low|medium|high|xhigh) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
+     *)                     OPENCODE_REASONING_EFFORT="" ;;
    esac
    ```
 
@@ -143,18 +149,17 @@ be injection-safe (see each item).
    agent keys through to the provider as model options (documented behavior:
    https://opencode.ai/docs/agents/). Injection safety: the value comes from a
    closed set validated in `config.py` (`EFFORT_LEVELS`), and the shell `case`
-   both re-guards it and omits Claude-only `xhigh`/`max` instead of coercing
-   them.
+   both re-guards it and omits only the OpenCode-unsupported `max` instead of
+   coercing it.
 
    Build the optional JSON fragment into a variable (e.g.
    `OPENCODE_AGENT_EXTRA_JSON`) and interpolate that into the heredoc, so the
    emitted config contains no dangling keys when the option is absent.
 
 3. **Wire supported `AI_REVIEW_EFFORT` values → Codex
-   `model_reasoning_effort`.** Pass `low`/`medium`/`high`/`xhigh` unchanged via
-   Codex's `--config` option. Omit `max`, which the configured
-   `gpt-5.4-mini` route does not support, so Codex retains its provider default
-   rather than coercing it.
+   `model_reasoning_effort`.** Pass `low`/`medium`/`high`/`xhigh`/`max`
+   unchanged via Codex's `--config` option so the production profiles do not
+   silently drop `max`.
 
 4. **Trim denied tools from the request schema.** Add to the
    `agent.ai-reviewer` block (and keep the existing `permission` maps exactly
@@ -187,15 +192,17 @@ be injection-safe (see each item).
    `OPENCODE_DISABLE_LSP_DOWNLOAD=1` env var (belt and braces; it only prevents
    downloads, not startup).
 
-6. **`config/review.yaml` comment updates only** (no value changes):
+6. **Update the active configuration contract and production guidance:**
    - On `reviewers.opencode`: document that `effort` /
      `AI_REVIEW_OPENCODE_EFFORT` now reaches opencode as `reasoningEffort`
-     (previously claude-only), that it accepts only `low`/`medium`/`high`, and
+     (previously claude-only), that it accepts `low`/`medium`/`high`/`xhigh`, and
      that `low` is the recommended starting point for flash-class models once
      usage numbers (SPEC-20) are available.
    - On `reviewers.codex`: document that `effort` /
      `AI_REVIEW_CODEX_EFFORT` reaches Codex as `model_reasoning_effort` for
-     `low`/`medium`/`high`/`xhigh`, while `max` retains the provider default.
+     `low`/`medium`/`high`/`xhigh`/`max`.
+   - Set the shipped Codex/OpenCode models and all reviewer timeouts to their
+     current defaults, and document the Value and Balance production profiles.
 
 ## Acceptance criteria
 
@@ -204,10 +211,10 @@ be injection-safe (see each item).
   default: the `tools` map above, `"lsp": false`, `"formatter": false`, and
   **no** `"reasoningEffort"` key.
 - With `AI_REVIEW_OPENCODE_EFFORT=low`: config contains
-  `"reasoningEffort": "low"`; with `xhigh` or `max`: the key is absent and
-  OpenCode uses its provider default.
+  `"reasoningEffort": "low"`; `xhigh` is also forwarded and `max` leaves the
+  provider default unchanged.
 - With `AI_REVIEW_CODEX_EFFORT=xhigh`: Codex receives
-  `model_reasoning_effort="xhigh"`; with `max`: the setting is absent.
+  `model_reasoning_effort="xhigh"`; `max` is also forwarded unchanged.
 - A `max_turns` key in `review.yaml` fails config validation.
 - **Manual, credential-gated acceptance (not exercised by this PR):** one real
   OpenCode review (`AI_REVIEW_REQUIRE_REAL_OPENCODE=1`, real
@@ -231,11 +238,11 @@ config is recoverable from the `OPENCODE_CONFIG_CONTENT` env var it records):
   `OPENCODE_CONFIG_CONTENT` as JSON and assert the default shape (tools map
   entries false, `lsp` false, `formatter` false, `reasoningEffort` absent,
   existing `permission` map unchanged).
-- New: `AI_REVIEW_OPENCODE_EFFORT=low` (via `extra_env`) → `reasoningEffort ==
-  "low"`; `AI_REVIEW_OPENCODE_EFFORT=xhigh` or `max` → `reasoningEffort`
-  absent.
-- New: `AI_REVIEW_CODEX_EFFORT=low|medium|high|xhigh` reaches the fake Codex
-  CLI unchanged as `model_reasoning_effort`; `max` leaves it absent.
+- New: `AI_REVIEW_OPENCODE_EFFORT=low|medium|high|xhigh` (via `extra_env`)
+  reaches the fake OpenCode config as the same `reasoningEffort`; `max` leaves
+  it absent.
+- New: `AI_REVIEW_CODEX_EFFORT=low|medium|high|xhigh|max` reaches the fake Codex
+  CLI unchanged as `model_reasoning_effort`.
 - New: a `max_turns` reviewer key fails config validation, preventing accidental
   restoration of the removed turn-cap contract.
 - Assert the emitted config is valid JSON in every case (guards the optional
