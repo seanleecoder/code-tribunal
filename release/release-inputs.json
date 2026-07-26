@@ -12,7 +12,7 @@
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "95e599b693e1ad6ceebbc20f6417423daa63487f1f19713b49de5ca9ed4e0f54"
+      "sha256": "e071b6320932195f96bef60eecf6d19b8f7aada38cda932df49b14baaa383131"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "01732a73dd38c7b170ac24348609ccc5fe45f956d3106690cd6316cdb5179794"
+      "sha256": "b406a6baee0f1cc5307be2a4d1108b17f8d4af6eb9e26ef4640b7119b0fe7090"
     },
     "image_recipes": {
       "files": [

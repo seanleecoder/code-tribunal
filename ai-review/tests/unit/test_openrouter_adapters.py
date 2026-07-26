@@ -574,7 +574,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
-        self.assertIn("--model openai/gpt-5.4-mini", cli_args)
+        self.assertIn("--model openai/gpt-5.6-luna", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
@@ -835,7 +835,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
         self.assertIn("/opencode --pure run", cli_args)
-        self.assertIn("--model openrouter/google/gemini-3.1-flash-lite", cli_args)
+        self.assertIn("--model openrouter/google/gemini-3.5-flash-lite", cli_args)
         self.assertIn("--agent ai-reviewer", cli_args)
         self.assertIn("--format json", cli_args)
         self.assertIn("--dir ", cli_args)
@@ -887,7 +887,7 @@ PY
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
         self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
         self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn('"google/gemini-3.1-flash-lite"', cli_env)
+        self.assertIn('"google/gemini-3.5-flash-lite"', cli_env)
         self.assertIn('"*": "deny"', cli_env)
         self.assertIn('"read": "allow"', cli_env)
         self.assertIn('"glob": "allow"', cli_env)
@@ -1152,7 +1152,7 @@ PY
         # and the override flows through to the CLI's --model flag.
         self.assertEqual(batch["adapter_status"], "success")
         self.assertIn("--model openai/custom-model", cli_args)
-        self.assertNotIn("openai/gpt-5.4-mini", cli_args)
+        self.assertNotIn("openai/gpt-5.6-luna", cli_args)
 
     def test_opencode_model_override_reaches_cli_and_config(self) -> None:
         batch, cli_args, cli_env, _meta = self._run_with_fake_cli(
@@ -1166,7 +1166,7 @@ PY
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
-        self.assertNotIn("gemini-3.1-flash-lite", cli_env)
+        self.assertNotIn("gemini-3.5-flash-lite", cli_env)
 
     def test_openrouter_variant_model_is_accepted(self) -> None:
         # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.

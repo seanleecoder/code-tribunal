@@ -38,6 +38,19 @@ skipped artifacts. If the consumer is still including an older template ref,
 setting the enablement variable cannot create jobs that are absent from that
 template.
 
+#### Recommended production configurations
+
+For production deployments, the following model and reasoning effort combinations are recommended based on operational trade-offs:
+
+| Profile | Reviewer | Recommended Model | Effort |
+|---|---|---|---|
+| **Value** | Codex | `openai/gpt-5.6-luna` | `max` |
+| **Value** | Claude | `anthropic/claude-opus-5` | `low` |
+| **Value** | OpenCode | `meta/muse-spark-1.1` | `xhigh` |
+| **Balance** | Codex | `openai/gpt-5.6-terra` | `max` |
+| **Balance** | Claude | `anthropic/claude-opus-5` | `medium` |
+| **Balance** | OpenCode | `x-ai/grok-4.5` | `high` |
+
 ### Panel and severity
 
 | Key | Type/default | Meaning |

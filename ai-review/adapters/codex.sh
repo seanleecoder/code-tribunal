@@ -92,7 +92,7 @@ else
   :
 fi
 
-# Codex's configured gpt-5.4-mini route accepts low|medium|high|xhigh for
+# Codex's configured gpt-5.6-luna route accepts low|medium|high|xhigh for
 # model_reasoning_effort. Keep Claude-only max at the provider default rather
 # than silently coercing it to a lower supported value.
 case "${AI_REVIEW_EFFORT:-}" in

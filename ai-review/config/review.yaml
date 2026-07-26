@@ -20,7 +20,7 @@ reviewers:
   codex:
     enabled: true # Override: AI_REVIEW_CODEX_ENABLED
     adapter: adapters/codex.sh # Shell wrapper script executing the reviewer CLI
-    model: openai/gpt-5.4-mini # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
+    model: openai/gpt-5.6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
     # Optional reasoning effort: low|medium|high|xhigh reaches Codex unchanged
     # as model_reasoning_effort. Claude-only max leaves the Codex provider
     # default unchanged. Override: AI_REVIEW_CODEX_EFFORT
@@ -30,7 +30,7 @@ reviewers:
   opencode:
     enabled: true # Override: AI_REVIEW_OPENCODE_ENABLED
     adapter: adapters/opencode.sh # Shell wrapper script executing the reviewer CLI
-    model: google/gemini-3.1-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
+    model: google/gemini-3.5-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
     # Optional effort/reasoning depth: low|medium|high reaches opencode as
     # reasoningEffort. Leave it (or use Claude-only xhigh/max) unset here for
     # the provider default; once SPEC-20 usage data is available, low is the
