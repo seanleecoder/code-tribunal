@@ -234,6 +234,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text,
         )
 
+    def test_reviewer_and_critique_templates_have_outer_timeout(self) -> None:
+        text = _CI_TEMPLATE.read_text(encoding="utf-8")
+        for block_name in (".review_template", ".critique_template"):
+            match = re.search(rf"(?ms)^{re.escape(block_name)}:\n(.*?)(?=^\S)", text)
+            self.assertIsNotNone(match, f"{block_name} block not found")
+            assert match is not None
+            self.assertIn("  timeout: 20 minutes\n", match.group(1))
+
     def test_web_and_api_rules_require_merge_request_iid(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
         for block_name in (".ai_review_rules", "prepare_ai_review", ".critique_template"):
@@ -737,6 +745,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
+        self.assertIn("timeout-minutes: 20", review)
+        self.assertIn("timeout-minutes: 20", critique)
         self.assertIn(
             "AI_REVIEW_MERGE_GATE_ENABLED: "
             "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}",

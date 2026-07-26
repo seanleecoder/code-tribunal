@@ -48,8 +48,8 @@ def multi_issue_probe(request, records, db):
 | Job | Reviewer | Model | Findings emitted |
 |---|---|---|---|
 | `2529361` | claude | `claude-haiku-4.5` | SQL injection (line 6, `blocker`, confidence 0.99) — explicitly noted line 3's `safe_name` escape and that line 9 uses it correctly, but line 6 reuses the unescaped `name`. Repeated `db.fetch_user(name)` in a 1000-iteration list comprehension (line 19, `minor`, confidence 0.75). |
-| `2529362` | codex | `openai/gpt-5.6-luna` | SQL string concatenation with untrusted request data (line 6, `blocker`, confidence 0.99). Full sort of `records` just to read the first element (lines 12-13, `minor`, confidence 0.83). |
-| `2529363` | opencode | `google/gemini-3.5-flash-lite` | SQL injection vulnerability (line 7, `blocker`, confidence 1.0). Unused variable `unused_debug_label` (line 17, `minor`, confidence 1.0). |
+| `2529362` | codex | `openai/gpt-5.4-mini` | SQL string concatenation with untrusted request data (line 6, `blocker`, confidence 0.99). Full sort of `records` just to read the first element (lines 12-13, `minor`, confidence 0.83). |
+| `2529363` | opencode | `google/gemini-3.1-flash-lite` | SQL injection vulnerability (line 7, `blocker`, confidence 1.0). Unused variable `unused_debug_label` (line 17, `minor`, confidence 1.0). |
 
 All three reviewers independently caught the real blocker. **None flagged the escaped `audit` query** — the false-positive trap held. Each reviewer's *second* finding covered a different one of the three remaining traps, so the union of all three raw batches (6 findings total) covers every trap in the file except the false positive.
 

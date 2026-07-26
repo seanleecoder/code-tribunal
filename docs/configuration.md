@@ -22,7 +22,7 @@ disabled-by-default `cursor` seat.
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. |
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
-| `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude forwards all levels, Codex forwards all levels, and OpenCode forwards `low` through `xhigh`. Unsupported levels leave the provider default unchanged. Cursor rejects this key. |
+| `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude forwards all levels, Codex forwards all levels, and OpenCode forwards `low` through `xhigh`. Adapter-unsupported levels leave the provider default unchanged. Cursor rejects this key. |
 | `reviewers.<name>.timeout_seconds` | integer, `900` | Whole reviewer/critique process-group timeout. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
@@ -45,7 +45,11 @@ stages see the same effective configuration. Each cell is `model` / `effort`.
 Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
 below. `max` reaches Codex as `model_reasoning_effort=max`; OpenCode's `xhigh`
-reaches its generated config as `reasoningEffort=xhigh`.
+reaches its generated config as `reasoningEffort=xhigh`. These profiles cover
+Claude, Codex, and OpenCode; Cursor is an opt-in substitute with effort encoded
+in its model variant. The shipped OpenCode guidance favors low or unset effort
+for flash-class models, while these profiles intentionally use higher effort on
+their listed non-flash routes.
 
 GitLab creates jobs from the included YAML, so the static graph always contains
 `AI review: [cursor]` and `AI critique: [cursor]` alongside the three default
@@ -141,8 +145,8 @@ artifacts.
 | `AI_REVIEW_OPENCODE_ENABLED` | `true` | Exact lowercase `true` or `false`. |
 | `AI_REVIEW_CURSOR_ENABLED` | `false` | Exact lowercase `true` or `false`; requires `CURSOR_API_KEY`. |
 | `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum. |
-| `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. |
-| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, and `xhigh` reach OpenCode as `reasoningEffort`; `max` leaves the provider default. |
+| `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
+| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, and `xhigh` reach OpenCode as `reasoningEffort`; `max` leaves the provider default. The selected model route must accept forwarded levels; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; disables finding blocking only. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |

@@ -26,11 +26,10 @@
 
 ## Why
 
-Real runs showed the `opencode` reviewer was the slowest and most expensive seat
-on the panel: it sometimes hit the shipped timeout, and on the former
-`google/gemini-3.5-flash` route it cost more per review than the `claude`
-(Sonnet 5) and `codex` (gpt-5.6-sol) reviewers on stronger models. The shipped
-default timeout is now 900 seconds.
+Real runs show the `opencode` reviewer is the slowest and most expensive seat on
+the panel: it sometimes hits its 600s `timeout_seconds`, and on
+`google/gemini-3.1-flash-lite` it costs more per review than the `claude`
+(Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models.
 
 All three reviewers receive the identical rendered prompt
 (`ai-review/prompts/review.md` + manifest + diff) and the same read-only
@@ -54,7 +53,7 @@ runs its agent loop. Root-cause chain, verified against the pinned
    the 2026-07-15 policy deliberately keeps voluntary completion and relies on
    `timeout_seconds` as the hang-catch instead of reintroducing a turn cap.
 3. **Tool-schema overhead on every request.** The adapter denies most tools via
-   the `permission` map, but a `permission: deny` entry only blocks _execution_
+   the `permission` map, but a `permission: deny` entry only blocks *execution*
    — the tool's JSON schema/description is still sent with every request.
    Upstream measurement puts the full built-in tool description set at roughly
    3,000–4,000 tokens per request (anomalyco/opencode issue #11995). Removing a

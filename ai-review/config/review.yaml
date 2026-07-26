@@ -1,6 +1,8 @@
 schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
 
-# Configured LLM reviewer backends.
+# Configured LLM reviewer backends. All reviewer and critique process groups
+# use a 900-second (15-minute) timeout; the CI review and critique jobs add a
+# 20-minute outer ceiling for wrapper and artifact overhead.
 # Per-reviewer `model` and `enabled` can be overridden at runtime without a
 # rebuild via AI_REVIEW_<REVIEWER>_MODEL / AI_REVIEW_<REVIEWER>_ENABLED
 # (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See
@@ -11,7 +13,7 @@ reviewers:
     adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
     model: anthropic/claude-haiku-4.5 # OpenRouter provider-qualified model identifier (override: AI_REVIEW_CLAUDE_MODEL)
     effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — timeout_seconds stays the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
-    timeout_seconds: 900 # Execution timeout per reviewer job (15 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~2x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
+    timeout_seconds: 900
     # No turn cap: Claude runs its agentic loop to completion, bounded by
     # timeout_seconds as the hang-catch. A hard-coded low cap made stronger,
     # more exploratory models stop before emitting findings.
@@ -23,7 +25,7 @@ reviewers:
     model: openai/gpt-5.6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
     # Optional reasoning effort: low|medium|high|xhigh|max reaches Codex
     # unchanged as model_reasoning_effort. Override: AI_REVIEW_CODEX_EFFORT
-    timeout_seconds: 900 # Execution timeout per reviewer job (15 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~2x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
+    timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
   opencode:
@@ -34,7 +36,7 @@ reviewers:
     # as reasoningEffort. Leave it (or use max) unset here for the provider
     # default; once SPEC-20 usage data is available, low is the recommended
     # starting point for flash-class models. Override: AI_REVIEW_OPENCODE_EFFORT
-    timeout_seconds: 900 # Execution timeout per reviewer job (15 min: rooted agentic exploration converges in ~5 min, so this is headroom that still catches a hang ~2x faster than the old 1800; review and critique are separate jobs, so worst-case wall-clock is ~2x this per reviewer)
+    timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
