@@ -1,6 +1,9 @@
 # Improvement specification completion audit
 
-Audit refreshed: 2026-07-19.
+Audit refreshed: 2026-07-19. **Post-release note (2026-07-25):** SPEC-37, SPEC-38,
+and SPEC-40 closed at `v1.0.0`, and SPEC-06's outstanding deployment evidence was
+recorded — see the [evidence matrix](../history/evidence/README.md). Findings below
+predate the release and are not re-audited here.
 
 ## Repository-backed result
 

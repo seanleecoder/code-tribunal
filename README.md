@@ -37,11 +37,23 @@ internal container implementation, not a supported Python package or API.
 - Cursor is an experimental opt-in substitute reviewer with a separate credential
   and egress path. It is **not** covered by the 1.0 live-evidence matrix and must
   not be treated as evidence-backed.
-- The complete 1.0 live-evidence matrix is still being collected. Current
-  evidence and unexercised paths are recorded under
-  [documentation history](docs/history/README.md); maturity claims must be read
-  with those scopes. `release/release-inputs.json` remains `draft` until that
-  matrix passes against one frozen runtime source and image pair.
+- **Known defect on GitHub:** a pull request that **adds or deletes a file** can
+  lose findings and fail the review — anchor resolution rejects the `/dev/null`
+  path GitHub uses for added files, so affected findings are dropped and the
+  review can stop before the gate runs. GitLab is unaffected. Land file
+  additions separately, or re-run once they merge. Fixed in 1.0.1; see
+  [`release/1.0.0.md`](release/1.0.0.md) and
+  [troubleshooting](docs/TROUBLESHOOTING.md).
+- The trusted image pin is **not enforced inside the pipeline**: a consumer CI
+  config can substitute the reviewer images. Containment relies on protected
+  credentials being withheld from untrusted refs and on running
+  `scripts/verify_pipeline_trust.py` against your consumer config.
+- The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
+  attested image pair, and `release/release-inputs.json` is `active`. Each row is
+  a **scoped** pass with its own recorded limits, and some paths remain
+  regression-covered only — read
+  [documentation history](docs/history/README.md) before making a maturity or
+  security claim.
 
 ## Five-minute start
 

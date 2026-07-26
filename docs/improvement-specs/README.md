@@ -10,26 +10,30 @@ wins.
 | Specs | Status | Evidence or remaining work |
 |---|---|---|
 | SPEC-01–05 | Complete | Initial quality, security, and documentation foundations shipped before Phase 1. |
-| SPEC-06 | Implementation complete; deployment evidence outstanding | Trust auditor/template tests exist; hostile-MR scratch evidence remains open. |
+| SPEC-06 | Complete | Trust auditor/template tests plus the recorded 1.0.0 [hostile-MR evidence](../history/evidence/record-gitlab-hostile-mr.md) (scoped: unprotected-ref MR in the hardened child). |
 | SPEC-07–19 | Complete | State, consensus, correctness, platform, supply-chain, and reviewer optimization changes are represented by tests/changelog. |
 | SPEC-20–22 | Proposed | Usage accounting, Cursor-as-generalized feature work, and project learning/rules are not advertised product features. Cursor reviewer support that exists is documented independently of the old proposal. |
 | SPEC-23–30 | Complete history | Implemented on `main`; requirements retained for provenance. |
 | SPEC-31–36 | Complete on `main` | Snapshot containment, reviewer validity, artifact/config integrity, revision binding, distribution contract, and quality/type gates landed. |
-| [SPEC-37](spec-37-final-release-artifacts.md) | Active final gate | Publish/tag exact final source after documentation/evidence and milestone A. |
-| [SPEC-38](spec-38-documentation-evidence-restructure.md) | Active | Task-oriented docs/checks implemented; required live evidence remains open until recorded. |
+| [SPEC-37](spec-37-final-release-artifacts.md) | Complete at `v1.0.0` | Runtime source `88bc941` frozen, images published and attested, release commit `3ad443e` tagged with a validated external manifest. |
+| [SPEC-38](spec-38-documentation-evidence-restructure.md) | Complete at `v1.0.0` | Docs/checks implemented and the required live evidence is recorded in the [evidence matrix](../history/evidence/README.md). |
 | [SPEC-39](spec-39-simplification-deletion.md) | Milestone A complete; B post-1.0 | Container-only contract cleanup landed; posting decomposition may follow in 1.0.x. |
-| [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | Active release handoff | Coordinates the coding-agent and human-operator sequence that closes SPEC-37/38. |
+| [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel; observed live with a weak default model. |
+| [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
+| [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies the running image. |
+| [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
 ## Active dependency order
 
+Steps 1–5 of the pre-1.0 order (regression gates, documentation/checking changes,
+release binding, the live evidence matrix, and linking claims to evidence) were
+completed for `v1.0.0`. Remaining order:
+
 1. Keep SPEC-31–36 and SPEC-39 milestone A regression tests green.
-2. Complete SPEC-38 repository documentation/checking changes.
-3. Follow [SPEC-40](spec-40-1.0-finalization-execution-plan.md) to implement
-   release binding, correct final defaults, freeze one runtime source, publish
-   its images, and prepare aligned release inputs.
-4. Execute the [live evidence matrix](../history/evidence/README.md) against that
-   exact source/image/template set.
-5. Close SPEC-38 only when required evidence is recorded and claims link to it.
+2. Ship the `/dev/null` anchor fix and prove the added-file path live (see the
+   1.0.1 follow-ups in [`release/1.0.0.md`](../../release/1.0.0.md)).
+3. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
+   in-pipeline trusted-image enforcement).
 6. Execute SPEC-37's final manifest, changelog, tag, and release gates.
 
 ## Historical indexes

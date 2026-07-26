@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -272,6 +273,120 @@ class DocumentationContractTests(unittest.TestCase):
                 checker.GITHUB_GUIDE = original_github_guide
         self.assertEqual(len(issues), 2)
         self.assertTrue(all("cannot parse YAML" in issue for issue in issues))
+
+    def _release_state_issues_for(
+        self,
+        checker: object,
+        *,
+        status: str,
+        readme_body: str,
+        evidence_body: str = "| row | **Passed** |\n",
+        notes_body: str | None = None,
+        runtime_source: str = "a" * 40,
+    ) -> list[str]:
+        """Run ``_release_state_issues`` against a synthetic release state."""
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            (root / "release").mkdir()
+            (root / "docs/history/evidence").mkdir(parents=True)
+            (root / "release/release-inputs.json").write_text(
+                json.dumps({"status": status, "runtime_source": runtime_source}),
+                encoding="utf-8",
+            )
+            readme = root / "README.md"
+            readme.write_text(readme_body, encoding="utf-8")
+            notes = root / "release/1.0.0.md"
+            notes.write_text(
+                runtime_source if notes_body is None else notes_body, encoding="utf-8"
+            )
+            evidence = root / "docs/history/evidence/README.md"
+            evidence.write_text(evidence_body, encoding="utf-8")
+
+            saved = (
+                checker.ROOT,
+                checker.RELEASE_INPUTS,
+                checker.RELEASE_NOTES,
+                checker.EVIDENCE_INDEX,
+                checker.RELEASE_STATE_DOCS,
+            )
+            checker.ROOT = root
+            checker.RELEASE_INPUTS = root / "release/release-inputs.json"
+            checker.RELEASE_NOTES = notes
+            checker.EVIDENCE_INDEX = evidence
+            checker.RELEASE_STATE_DOCS = (readme, notes)
+            try:
+                return checker._release_state_issues()
+            finally:
+                (
+                    checker.ROOT,
+                    checker.RELEASE_INPUTS,
+                    checker.RELEASE_NOTES,
+                    checker.EVIDENCE_INDEX,
+                    checker.RELEASE_STATE_DOCS,
+                ) = saved
+
+    def test_active_release_rejects_draft_state_claims(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Release inputs remain `draft` until that matrix passes.\n",
+        )
+        self.assertTrue(issues)
+        self.assertTrue(any("draft/incomplete release state" in issue for issue in issues))
+
+    def test_active_release_accepts_released_prose(self) -> None:
+        checker = _load_docs_checker()
+        self.assertEqual(
+            self._release_state_issues_for(
+                checker,
+                status="active",
+                readme_body="The matrix passed and release inputs are active.\n",
+            ),
+            [],
+        )
+
+    def test_draft_release_tolerates_draft_state_claims(self) -> None:
+        checker = _load_docs_checker()
+        self.assertEqual(
+            self._release_state_issues_for(
+                checker,
+                status="draft",
+                readme_body="The matrix is still being collected.\n",
+            ),
+            [],
+        )
+
+    def test_draft_claim_inside_fenced_code_is_not_flagged(self) -> None:
+        checker = _load_docs_checker()
+        self.assertEqual(
+            self._release_state_issues_for(
+                checker,
+                status="active",
+                readme_body='Example output:\n\n```text\nstatus remains draft\n```\n',
+            ),
+            [],
+        )
+
+    def test_active_release_rejects_pending_evidence_rows(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Released.\n",
+            evidence_body="| image publication | **Pending** |\n",
+        )
+        self.assertTrue(any("still marked **Pending**" in issue for issue in issues))
+
+    def test_active_release_requires_notes_to_name_runtime_source(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Released.\n",
+            notes_body="No runtime source here.\n",
+        )
+        self.assertTrue(any("must name the active runtime_source" in issue for issue in issues))
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

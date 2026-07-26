@@ -113,15 +113,16 @@ created, `block_merge: false`, and `gate` success.
   thread `isResolved` before and after each command, and PR `mergeable_state`.
 - Image binding: run logs reference only `ai-review-base@sha256:f2a433ac1094…` and
   `ai-review-reviewer@sha256:2fd84c43fc45…`, matching the release-pinned digests.
-- Credential values: the run log yields no match for a 13-pattern credential scan
-  (`sk-or-v1-`, `sk-ant-`, generic `sk-`, `ghp_`/`gho_`/`ghs_`/`ghu_`,
-  `github_pat_`, `glpat-`/`glrt-`/`gldt-`, `Authorization:` bearer/token/basic,
-  `PRIVATE-TOKEN:`, `X-API-KEY:`) nor to a Shannon-entropy heuristic for opaque
-  tokens, applied across all 1.0.0 evidence artifacts and traces (438 files,
-  5.7 MB, zero matches). GitHub's own redaction is observable as 98 `***`
-  occurrences, i.e. secrets were referenced and masked. No secret value is
-  reproduced in this record. **This is a pattern/entropy scan, not an exact-value
-  comparison against the configured secrets** — see the audit limitation in the
+- Credential values: `scripts/scan_evidence_leaks.py` reports
+  `OK: no credential material detected (scanned 438 files, 5.7 MB, 10 detectors)`
+  over all retained 1.0.0 evidence artifacts and traces — nine credential-shape
+  patterns (provider and forge token prefixes plus `Authorization:`,
+  `PRIVATE-TOKEN:` and `X-API-KEY:` header forms) and a Shannon-entropy detector
+  for opaque tokens. The scan is rerunnable, so this claim is verifiable rather
+  than transcribed. GitHub's own redaction is observable as 98 `***` occurrences,
+  i.e. secrets were referenced and masked. No secret value is reproduced in this
+  record. **This is a pattern/entropy scan, not an exact-value comparison against
+  the configured secrets** — see the audit limitation in the
   [hostile-MR record](record-gitlab-hostile-mr.md).
 - Sensitive model content omitted: findings in this chain are deterministic mock
   output, so no real model content is involved.

@@ -88,6 +88,13 @@ consumer flow but not the hostile-MR deployment boundary. See
 - **Cursor reviewer** is an experimental opt-in substitute with a separate
   credential and egress path. It currently has only a permission smoke and **no
   evidence row**; do not advertise Cursor as evidence-backed.
+- **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
+  1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
+  defect, so no live run has ever exercised a finding on a newly added or deleted
+  file. Shipping the fix does not by itself close this — a Chain B run with an
+  **adding** fixture is required, asserting
+  `accepted_finding_count == raw_finding_count`. See the coverage-gap table in the
+  [runbook](RUNBOOK-1.0-rc.md).
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable
