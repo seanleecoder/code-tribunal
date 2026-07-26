@@ -32,6 +32,10 @@ RELEASE_STATE_DOCS = (
     ROOT / "docs/SECURITY_MODEL.md",
     RELEASE_NOTES,
 )
+# A tripwire for the exact wording that survived the 1.0.0 release, not a general
+# proof that prose cannot contradict release state. A re-introduced draft claim worded
+# differently will pass; treat a green run as "these known phrasings are gone", and add
+# a pattern whenever a new one is found in review.
 DRAFT_CLAIM_PATTERNS = (
     r"remains?\s+`?draft`?",
     r"still being collected",
@@ -376,6 +380,11 @@ def _release_state_issues() -> list[str]:
     release because nothing tied documentation to the release artifact. This binds
     them: once inputs are ``active``, a doc that still describes an unreleased,
     draft state is a documentation failure rather than a stale sentence.
+
+    Scope limit, deliberately: ``DRAFT_CLAIM_PATTERNS`` is a phrase blocklist. It
+    catches regressions of the specific sentences that shipped, and the positive
+    ``runtime_source`` assertion below is the only structural check here. It does not
+    and cannot verify that all prose agrees with the release state.
     """
     issues: list[str] = []
     try:

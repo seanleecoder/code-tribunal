@@ -34,7 +34,6 @@ completed for `v1.0.0`. Remaining order:
    1.0.1 follow-ups in [`release/1.0.0.md`](../../release/1.0.0.md)).
 3. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
    in-pipeline trusted-image enforcement).
-6. Execute SPEC-37's final manifest, changelog, tag, and release gates.
 
 ## Historical indexes
 
@@ -43,6 +42,9 @@ completed for `v1.0.0`. Remaining order:
 - [Paused plans](../archived-improvement-plans/README.md)
 - [Live and legacy evidence](../history/README.md)
 
-Completed plans remain at their old paths for one compatibility release so
-external links continue to resolve. Their implementation sequencing and image
-examples are historical.
+Completed plans remain at their own paths under this directory; their
+implementation sequencing and image examples are historical. The temporary
+redirect stubs that held `docs/history/acceptance/` and
+`docs/history/completed-specs/` open for one compatibility release were retired
+after `v1.0.0`, and their content now lives in
+[documentation history](../history/README.md).

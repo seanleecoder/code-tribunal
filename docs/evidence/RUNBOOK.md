@@ -46,9 +46,13 @@ tests that cover each row.
 - The three canonical templates and `release/release-inputs.json` are already
   repinned to this pair, so a consumer copied from `R` (plus the repin commit)
   runs exactly these images.
-- Every evidence record other than the image-publication row is still superseded
-  partial evidence. Repeat the release-gating probes against this pair and record
-  the new run IDs before release.
+- **All release-gating rows passed against this pair for `v1.0.0`** and are recorded
+  with binding `Release-runtime-source` / digest fields; the non-gating SPEC-34
+  revision-failures row is released under a registered waiver, and
+  `release/release-inputs.json` is `status: active`. See the
+  [evidence matrix](README.md) for the per-row result. For the *next* release,
+  replace this identity block and repeat the release-gating probes against the new
+  pair — a record bound to `88bc941` does not certify a later runtime source.
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.

@@ -41,7 +41,8 @@ internal container implementation, not a supported Python package or API.
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the
   review can stop before the gate runs. GitLab is unaffected. Land file
-  additions separately, or re-run once they merge. Fixed in 1.0.1; see
+  additions separately, or re-run once they merge. **Present in the shipped
+  1.0.0 runtime; a fix is queued for 1.0.1 and is not released yet.** See
   [`release/1.0.0.md`](release/1.0.0.md) and
   [troubleshooting](docs/TROUBLESHOOTING.md).
 - The trusted image pin is **not enforced inside the pipeline**: a consumer CI
