@@ -29,8 +29,10 @@ entry.
    [`RUNBOOK.md`](RUNBOOK.md). Chain B requires
    `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
 5. Before activation, run and record the first real Codex `max` and OpenCode
-   `xhigh` route checks against the rebuilt images. Provider rejection is a
-   failed validation, not a reason to omit or coerce the effort level.
+   `xhigh` route checks against the rebuilt images in the separate
+   [`record-model-effort-routes.md`](record-model-effort-routes.md) record.
+   Provider rejection is a failed validation, not a reason to omit or coerce
+   the effort level.
 6. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
 7. Set each release-gating record to `Status: passed` with matching
    `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
