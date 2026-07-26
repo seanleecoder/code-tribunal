@@ -33,7 +33,7 @@ Release-evidence-waived: SPEC-34 revision races and oversized-diff HTTP 406 are 
 Covers evidence-matrix row **GitHub revision failures**: revision race at
 prepare boundaries and oversized raw-diff failure. Procedure:
 [evidence README, "GitHub failure procedure"](README.md); spec:
-[SPEC-34](../../improvement-specs/spec-34-github-revision-bound-input.md).
+[SPEC-34](../improvement-specs/spec-34-github-revision-bound-input.md).
 
 ## Identity
 

@@ -1,5 +1,10 @@
 # SPEC-37 — Cut reproducible 1.0 artifacts from one exact release commit
 
+> **Historical completed requirement.** Closed at `v1.0.0` (runtime source
+> `88bc941`, release commit `3ad443e`). Statements below describe the state at
+> authoring time and are non-normative; current behavior is defined by code,
+> schemas, tests, and the task-oriented docs.
+
 - **Severity:** High (templates currently execute older code) · **Effort:** M · **ROI rank:** 7 (final pre-1.0 gate)
 - **Depends on:** SPEC-31, SPEC-32, SPEC-33, SPEC-34, SPEC-35, SPEC-36,
   SPEC-38, and SPEC-39 milestone A.

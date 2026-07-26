@@ -11,7 +11,7 @@ Tests are organized by the boundary they protect:
 Repository CI runs `make quality`. Live platform checks are recorded separately
 because local fakes cannot prove protected-variable behavior, platform token
 scope, required-check configuration, or real container registry pulls. See the
-[evidence runbook](../history/evidence/README.md).
+[evidence runbook](../evidence/README.md).
 
 When behavior changes, update the smallest relevant test and any schema-backed
 golden file. Run `make update-golden` only for an intentional reducer contract

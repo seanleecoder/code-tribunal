@@ -3,9 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows semantic
-versioning. The `[1.0.0]` heading below is dated for the intended tag date; if the
-annotated `v1.0.0` tag is cut on a different day, correct the date in the tagging
-commit. The section is not a claim that the tag already exists.
+versioning.
 
 ## [1.0.0] - 2026-07-25
 
@@ -106,7 +104,7 @@ commit. The section is not a claim that the tag already exists.
   `Status: passed` against the claimed runtime source and image digests (or an
   explicit `Release-evidence-waived` reason also registered under
   `verification.evidence_waivers` in the hashed release-inputs artifact).
-  `release/release-inputs.json` remains `draft` until that gate passes.
+  Release inputs are rejected at `status: active` unless that gate passes.
   Historical Identity prose is not a release binding; records must carry
   explicit `Release-*` fields, HTML comments are ignored when parsing evidence
   fields, and accepted waiver IDs/reasons are printed by the validator.

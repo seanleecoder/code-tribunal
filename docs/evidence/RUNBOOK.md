@@ -1,9 +1,16 @@
-# 1.0 RC live-evidence runbook
+# Live-evidence runbook
 
-Operator runbook for the outstanding evidence-matrix rows, pinned to the
-release-candidate below. It sequences the manual live runs and points each to
-its record file. This complements — does not replace — the executable tests
-(`make quality`) and the [evidence index](README.md).
+Operator runbook for the release-gating evidence-matrix rows. It sequences the
+manual live runs and points each to its record file. This complements — does not
+replace — the executable tests (`make quality`) and the
+[evidence index](README.md).
+
+**This is the durable procedure, not a one-release artifact.** It was executed in
+full for 1.0.0 against the pair named below, and it is the sequence to follow for
+the next release: replace the identity block with the new runtime source, images,
+and run IDs, then work through the same steps. Sections that record what 1.0.0
+actually observed are marked as such, so a future operator can tell the procedure
+apart from the results.
 
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
@@ -39,9 +46,13 @@ tests that cover each row.
 - The three canonical templates and `release/release-inputs.json` are already
   repinned to this pair, so a consumer copied from `R` (plus the repin commit)
   runs exactly these images.
-- Every evidence record other than the image-publication row is still superseded
-  partial evidence. Repeat the release-gating probes against this pair and record
-  the new run IDs before release.
+- **All release-gating rows passed against this pair for `v1.0.0`** and are recorded
+  with binding `Release-runtime-source` / digest fields; the non-gating SPEC-34
+  revision-failures row is released under a registered waiver, and
+  `release/release-inputs.json` is `status: active`. See the
+  [evidence matrix](README.md) for the per-row result. For the *next* release,
+  replace this identity block and repeat the release-gating probes against the new
+  pair — a record bound to `88bc941` does not certify a later runtime source.
 
 > The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
 > consumer templates and when verifying an image.
@@ -56,7 +67,7 @@ tests that cover each row.
 > the **base** from a commit that includes the code under test, build the
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
-> the image-pin rotation procedure in [operations](../../operations.md)), and re-run
+> the image-pin rotation procedure in [operations](../operations.md)), and re-run
 > Step 0 verification/attestation against the new digests. Republishing is an
 > operator/CI action. Because the gate/mock code ships inside the product image,
 > **both** chains must run against the digests named above, so the evidence matches
@@ -104,7 +115,7 @@ model smoke) an OpenRouter key. Prerequisites:
   **protected scratch source branch** for the lifecycle MRs (the protected
   `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
   it and posting fails). Setup:
-  [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
+  [`docs/getting-started/gitlab.md`](../getting-started/gitlab.md).
 - **GitHub:** a scratch consumer repo with the workflow copied from `R` and
   repinned to the pair above (copying an older template can carry env keys that `R`
   rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
@@ -112,7 +123,7 @@ model smoke) an OpenRouter key. Prerequisites:
   check** in branch protection/ruleset. Note that a required-check ruleset also
   blocks direct pushes to the default branch, so adopting the workflow itself has
   to go through a PR — run that PR in mock mode so it costs nothing. Setup:
-  [`docs/getting-started/github.md`](../../getting-started/github.md).
+  [`docs/getting-started/github.md`](../getting-started/github.md).
 
 ## Cost model: where the tokens go
 
@@ -281,6 +292,61 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   change — a new commit on the reviewed branch changes the diff and the mock's
   selected anchor. (`workflow_dispatch` inputs mapped the same way are equivalent.)
 
+## Mechanics learned in the 1.0.0 runs
+
+Read this before driving a chain; each item cost real time to discover.
+
+**Re-drive a step without a new change request.** This is the biggest efficiency win.
+
+- **GitHub:** `gh run rerun <run-id>` re-runs the *same* commit as a new attempt, and
+  a repository-variable change is picked up because variables are read at job start.
+  One pull request therefore covers the whole lifecycle — 1.0.0 used attempts 1–7 of
+  run `30173073036`, changing only `AI_REVIEW_MOCK_SCENARIO` between them. Fetch a
+  specific attempt's artifacts/jobs with
+  `gh api repos/<repo>/actions/runs/<id>/attempts/<n>/jobs`.
+- **GitLab:** `POST /projects/:id/merge_requests/:iid/pipelines` creates a fresh MR
+  pipeline on the same head. Do **not** use pipeline *retry* — it only re-runs failed
+  jobs, so it re-runs the gate rather than re-driving prepare→post.
+
+**Added-file diffs differ by platform.** GitHub renders an added file as
+`--- /dev/null`; GitLab renders `--- a/<path>`. A fixture that behaves one way on one
+platform can behave differently on the other, and at this runtime source the GitHub
+form triggers the anchor defect described above. Choose fixtures per platform
+deliberately rather than assuming symmetry.
+
+**Do not force-update a source branch to its base.** Doing so leaves the pull request
+with zero commits, GitHub auto-closes it, and subsequent pushes then fire no
+`pull_request` event — so no pipeline starts and the chain appears to hang. Open a
+fresh change request instead of rewinding one.
+
+**Deleting the mock variables is a safety mechanism, not tidiness.** With them absent,
+the workflow defaults restore `AI_REVIEW_REQUIRE_REAL_*=1`, so a run that somehow
+still reached the mock adapter **fails closed** instead of quietly producing fake
+"real" evidence. Delete them before any Chain A run and confirm they are gone.
+
+**Audit with the committed scanner, not an ad-hoc grep:**
+
+```bash
+python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
+# operator-only, compares against configured secret values without exposing them in argv:
+python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
+```
+
+### Coverage gaps carried out of 1.0.0
+
+Start the next release from this list rather than rediscovering it.
+
+| Gap | Why it was unproven at 1.0.0 | How to close it |
+|---|---|---|
+| Added-file lifecycle | blocked by the `/dev/null` anchor defect, so every fixture was modify-only | after the fix lands, run Chain B with an **adding** fixture and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion |
+| Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
+| Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
+| Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
+| GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
+| Protected-ref insider | not attempted | out of scope unless the threat model changes |
+| Cursor reviewer | no evidence row at all | out of scope while experimental |
+| OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
+
 ## The runs
 
 Two tiers. Copy each record, fill Identity/Preconditions, execute, then complete
@@ -291,7 +357,7 @@ Actual result / Audit / Verdict.
 | 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../../improvement-specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../improvement-specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
@@ -311,7 +377,7 @@ panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-min
 OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto` skipped, `panel_status:
 full`, and that a finding was posted. **This doubles as the default-model smoke —
 do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
-(see [operations cost controls](../../operations.md)). This chain ends here.
+(see [operations cost controls](../operations.md)). This chain ends here.
 
 **Chain B — deterministic mock lifecycle (zero tokens).** On a second change
 request, enable the mock via the platform-specific mock enablement above (GitLab
@@ -385,22 +451,38 @@ timing race that the regression tests already prove fail-closed.
 
 ## After the release-gating runs pass
 
+> **Completed for 1.0.0** on 2026-07-25 against `R = 88bc941` (release commit
+> `3ad443e`, tag `v1.0.0`). The steps below are retained as the reusable sequence
+> for the next release; the parenthetical notes record how 1.0.0 satisfied each.
+
 1. Mark each release-gating record `Status: passed` with a scoped verdict, and
-   record the per-run token/cost for the one real panel per platform.
+   record the per-run token/cost for the one real panel per platform. (1.0.0: all
+   six cited records stamped with `Release-runtime-source` and both digests; the
+   non-gating SPEC-34 row carries a registered `Release-evidence-waived` reason
+   instead. Token/cost is **not** in any artifact — read it from the OpenRouter
+   dashboard or leave it unasserted, as 1.0.0 did.)
 2. Flip the pending rows in [the evidence matrix](README.md) to scoped passes
    referencing the new run IDs, including the re-verified image-publication row for
    the rebuilt pair; leave the regression-covered rows classified as such.
-3. **Retarget the release inputs to the rebuilt pair (release-blocking).** The
-   active `release/release-inputs.json` still points at `15d424f`. Before the RC is
-   releasable, update `runtime_source`, both image digests, the canonical template
-   pins, the recorded publication and CI run IDs, and the evidence references to the
-   rebuilt pair, then re-run `check_release_inputs.py --write-hashes` and
-   `make quality`. This is an operator/CI action (it needs the published rebuilt
-   digests) and is outside the scope of the repository change that introduced this
-   runbook.
-4. Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
-   update the changelog/version record, generate `release-manifest.json`, then tag
-   `v1.0.0`.
+3. **Retarget the release inputs to the pair under test (release-blocking).**
+   Update `runtime_source`, both image digests, the canonical template pins, the
+   recorded publication and CI run IDs, and the evidence references together, then
+   re-run `check_release_inputs.py --write-hashes` and `make quality`. This is an
+   operator/CI action because it needs the published digests. (1.0.0: publication
+   run `30125524008`, CI run `30125523924`, base `sha256:f2a433ac…`, reviewer
+   `sha256:2fd84c43…`. Remember the **three** GitLab pin variables and **both**
+   byte-identical GitHub workflow copies, plus the consumer/template projects used
+   for evidence — a stale template pin means the evidence exercised the wrong
+   images.)
+4. Audit for credential leakage across every retained artifact and trace with
+   `python scripts/scan_evidence_leaks.py <dirs…>` and record its exact scope and
+   limitations in the records. (1.0.0: 438 files / 5.7 MB, zero hits; the
+   exact-value scan was left as an operator sign-off item.)
+5. Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
+   update the changelog/version record, generate and validate the external
+   manifest, then tag. **The tag target is constrained** — do not squash-merge the
+   release commit, and either tag `P` exactly or rebuild the manifest against the
+   merge commit; see the tagging section of the release notes.
 
 Do not describe 1.0 as "stable" or "credential isolated" until every
 release-gating row is a scoped pass against the exact rebuilt RC source and image

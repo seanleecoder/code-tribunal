@@ -140,14 +140,23 @@ It is an operator-run static check, not an in-pipeline gate.
   this project — child pipelines `2705723423`, `2705746053`, `2705748321`,
   `2705753349`, `2705756078`, `2705757749`, and the hostile child `2705749557` (84
   job traces) — plus all GitHub attempt logs.
-- **Leak scan (pattern-based, non-disclosing).** 438 files / 5.7 MB — every
-  downloaded artifact (inputs bundles, per-seat findings/status, consensus, post,
-  and the forged gate artifact) and every trace above — scanned for 13 credential
-  patterns (`sk-or-v1-`, `sk-ant-`, generic `sk-`, `ghp_`/`gho_`/`ghs_`/`ghu_`,
-  `github_pat_`, `glpat-`/`glrt-`/`gldt-`, `Authorization:` bearer/token/basic,
-  `PRIVATE-TOKEN:`, `X-API-KEY:`) **and** a Shannon-entropy heuristic for opaque
-  high-entropy tokens (≥28 chars, mixed case + digits, entropy ≥ 4.0, excluding
-  pure-hex digests). **Result: zero matches of either kind.**
+- **Leak scan (pattern-based, non-disclosing, rerunnable).** Performed with
+  `scripts/scan_evidence_leaks.py`, which is committed precisely so this claim can
+  be re-verified instead of trusted:
+
+  ```text
+  OK: no credential material detected (scanned 438 files, 5.7 MB, 10 detectors)
+  ```
+
+  Scope: every downloaded artifact (inputs bundles, per-seat findings/status,
+  consensus, post, and the forged gate artifact) and every trace above. Detectors:
+  nine credential-shape patterns (provider and forge token prefixes plus
+  `Authorization:` bearer/token/basic, `PRIVATE-TOKEN:` and `X-API-KEY:` header
+  forms) **and** a Shannon-entropy detector for opaque tokens (≥28 chars, mixed
+  case + digits, entropy ≥ 4.0, excluding pure-hex runs so the many legitimate
+  64-hex digests in these artifacts do not register). **Result: zero hits.** The
+  tool prints counts and paths only, never matched text, so its output is safe to
+  quote here.
 - Platform redaction observed working: GitHub job logs contain 98 `***`
   redactions, i.e. secrets were referenced and masked. GitLab traces contain zero
   `[MASKED]` markers, i.e. no masked value ever reached a trace at all.
@@ -161,9 +170,10 @@ It is an operator-run static check, not an in-pipeline gate.
   an operator **non-disclosing exact-value** scan against the live secret values;
   that scan has **not** been repeated for this pair, because it requires handling
   the raw secret values. It is listed as an operator sign-off item in
-  [`release/1.0.0.md`](../../../release/1.0.0.md). The scoped pass below rests on
-  the direct absence proof plus the pattern/entropy scan, not on an exact-value
-  comparison.
+  [`release/1.0.0.md`](../../release/1.0.0.md), and
+  `scan_evidence_leaks.py --exact-value-file <path>` performs it without the values
+  passing through argv. The scoped pass below rests on the direct absence proof plus
+  the pattern/entropy scan, not on an exact-value comparison.
 - Sensitive model content omitted: no model ran in this probe.
 - Known unexercised paths:
   - **No live symlink variant was run.** The GitLab commits API cannot create a

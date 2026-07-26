@@ -91,7 +91,7 @@ Open a small merge request and verify:
 5. Job traces and downloaded artifacts contain no credential values.
 
 Before a production rollout, execute the hostile-MR checklist in the
-[evidence runbook](../history/evidence/README.md). Repository-only tests do not
+[evidence runbook](../evidence/README.md). Repository-only tests do not
 prove protected-variable behavior in a particular GitLab deployment.
 
 ## Update or roll back

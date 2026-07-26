@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from collections import Counter
@@ -20,6 +21,28 @@ EXAMPLES = ROOT / "docs/getting-started/examples"
 GITHUB_GUIDE = ROOT / "docs/getting-started/github.md"
 GITHUB_INSTALL_SOURCE = "../../ai-review/ci/review.github-actions.yml"
 GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
+
+RELEASE_INPUTS = ROOT / "release/release-inputs.json"
+RELEASE_NOTES = ROOT / "release/1.0.0.md"
+EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
+# Docs that describe the *current* release state. A historical RC note or the
+# changelog may legitimately say "draft"; these may not, once inputs are active.
+RELEASE_STATE_DOCS = (
+    ROOT_README,
+    ROOT / "docs/SECURITY_MODEL.md",
+    RELEASE_NOTES,
+)
+# A tripwire for the exact wording that survived the 1.0.0 release, not a general
+# proof that prose cannot contradict release state. A re-introduced draft claim worded
+# differently will pass; treat a green run as "these known phrasings are gone", and add
+# a pattern whenever a new one is found in review.
+DRAFT_CLAIM_PATTERNS = (
+    r"remains?\s+`?draft`?",
+    r"still being collected",
+    r"is not yet complete",
+    r"until that matrix passes",
+)
+DRAFT_CLAIM_RE = re.compile("|".join(DRAFT_CLAIM_PATTERNS), re.IGNORECASE)
 
 CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
 
@@ -349,6 +372,61 @@ def _example_issues() -> list[str]:
     return issues
 
 
+def _release_state_issues() -> list[str]:
+    """Keep prose from contradicting ``release-inputs.status``.
+
+    Before 1.0.0 the README told readers the evidence matrix was "still being
+    collected" and that release inputs "remain draft". Both statements survived the
+    release because nothing tied documentation to the release artifact. This binds
+    them: once inputs are ``active``, a doc that still describes an unreleased,
+    draft state is a documentation failure rather than a stale sentence.
+
+    Scope limit, deliberately: ``DRAFT_CLAIM_PATTERNS`` is a phrase blocklist. It
+    catches regressions of the specific sentences that shipped, and the positive
+    ``runtime_source`` assertion below is the only structural check here. It does not
+    and cannot verify that all prose agrees with the release state.
+    """
+    issues: list[str] = []
+    try:
+        inputs = json.loads(RELEASE_INPUTS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"release/release-inputs.json: cannot read release state: {exc}"]
+
+    if inputs.get("status") != "active":
+        return issues
+
+    for path in RELEASE_STATE_DOCS:
+        if not path.exists():
+            issues.append(f"{path.relative_to(ROOT)}: expected release-state document is missing")
+            continue
+        body = _without_fenced_code(path.read_text(encoding="utf-8"))
+        for match in DRAFT_CLAIM_RE.finditer(body):
+            issues.append(
+                f"{path.relative_to(ROOT)}: release inputs are active but the text still "
+                f"claims a draft/incomplete release state ({match.group(0)!r})"
+            )
+
+    if EVIDENCE_INDEX.exists():
+        index = _without_fenced_code(EVIDENCE_INDEX.read_text(encoding="utf-8"))
+        pending = index.count("**Pending**")
+        if pending:
+            issues.append(
+                f"docs/evidence/README.md: release inputs are active but "
+                f"{pending} evidence row(s) are still marked **Pending**"
+            )
+
+    runtime_source = inputs.get("runtime_source")
+    if (
+        runtime_source
+        and RELEASE_NOTES.exists()
+        and runtime_source not in RELEASE_NOTES.read_text(encoding="utf-8")
+    ):
+        issues.append(
+            f"release/1.0.0.md: must name the active runtime_source {runtime_source[:12]}…"
+        )
+    return issues
+
+
 def find_issues() -> list[str]:
     issues: list[str] = []
     seen: set[Path] = set()
@@ -370,6 +448,7 @@ def find_issues() -> list[str]:
     issues.extend(_inventory_issues(config, config_doc, source_environment_names))
 
     issues.extend(_example_issues())
+    issues.extend(_release_state_issues())
     return issues
 
 
