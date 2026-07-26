@@ -109,7 +109,7 @@ change in `P`:
 - `ai-review/ci/review.github-actions.yml`
 - the three pin variables at the top of `ai-review/ci/review.gitlab-ci.yml`
 - `CHANGELOG.md`
-- `docs/history/evidence/**`
+- `docs/evidence/**`
 - `docs/improvement-specs/**` status only
 - a release-input file under `release/`
 - release notes under `release/`
@@ -354,7 +354,7 @@ the images from `R`; no runtime path changed in `R..P0`.
 inspect sanitized artifacts, and update records after the operator supplies
 results.
 
-Use the procedures and record templates under `docs/history/evidence/`. Run all
+Use the procedures and record templates under `docs/evidence/`. Run all
 four suites against templates from `P0` (or a later evidence-only `P`) and images
 from `R`.
 

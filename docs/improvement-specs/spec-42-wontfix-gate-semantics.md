@@ -32,9 +32,9 @@ into the same run's consensus. The documentation is honest about what `wontfix` 
 [`docs/TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) describes it as a durable
 dismissal and never claims it overrides the gate. So this is a **design decision to
 confirm or change**, not a defect to fix. It is recorded as observed behaviour in
-[`record-github-current-image.md`](../history/evidence/record-github-current-image.md)
+[`record-github-current-image.md`](../evidence/record-github-current-image.md)
 and reproduced on GitLab in
-[`record-gitlab-current-image.md`](../history/evidence/record-gitlab-current-image.md).
+[`record-gitlab-current-image.md`](../evidence/record-gitlab-current-image.md).
 
 ## Decision to make
 

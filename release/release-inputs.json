@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "4e9d33fe2fb9a4ef8d71226b64e42e26fe9f6c88f8bac9a03e7b8910231fa7ea"
+      "sha256": "a29c5a55994e84790eabf95beedbcf594e9aa76b126edf609f626f73294df6e2"
     },
     "image_recipes": {
       "files": [

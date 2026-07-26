@@ -48,7 +48,7 @@ ALLOWED_RELEASE_PATHS = (
     "ai-review/ci/review.github-actions.yml",
     "ai-review/ci/review.gitlab-ci.yml",
     "CHANGELOG.md",
-    "docs/history/evidence/",
+    "docs/evidence/",
     "docs/improvement-specs/",
     "release/",
 )

@@ -33,7 +33,7 @@ topology — a merge request from an **unprotected** ref in the hardened mirrore
 child, where GitLab withheld both protected credentials, prepare failed closed
 with an empty input bundle, and no credential value appeared in any trace or
 artifact (see the
-[hostile-MR record](history/evidence/record-gitlab-hostile-mr.md)). So
+[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). So
 “credential isolated” means that recorded scope plus the tested subprocess
 allowlist and template design — not a completed claim about every installation.
 Fork-based merge requests and protected-ref insiders are untested.
@@ -103,7 +103,7 @@ disables finding-based blocking only; post/state loss still fails the gate.
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
 integrity, and gate unit/integration tests. Deployment evidence and unexercised
-paths are indexed under [history/evidence](history/evidence/README.md).
+paths are indexed under [docs/evidence](evidence/README.md).
 
 Evidence must record source and image digests, expected/actual outcomes, and a
 secret audit without storing credential values or sensitive model content.

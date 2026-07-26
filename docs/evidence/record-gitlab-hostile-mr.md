@@ -170,7 +170,7 @@ It is an operator-run static check, not an in-pipeline gate.
   an operator **non-disclosing exact-value** scan against the live secret values;
   that scan has **not** been repeated for this pair, because it requires handling
   the raw secret values. It is listed as an operator sign-off item in
-  [`release/1.0.0.md`](../../../release/1.0.0.md), and
+  [`release/1.0.0.md`](../../release/1.0.0.md), and
   `scan_evidence_leaks.py --exact-value-file <path>` performs it without the values
   passing through argv. The scoped pass below rests on the direct absence proof plus
   the pattern/entropy scan, not on an exact-value comparison.

@@ -24,7 +24,7 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 RELEASE_NOTES = ROOT / "release/1.0.0.md"
-EVIDENCE_INDEX = ROOT / "docs/history/evidence/README.md"
+EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 # Docs that describe the *current* release state. A historical RC note or the
 # changelog may legitimately say "draft"; these may not, once inputs are active.
 RELEASE_STATE_DOCS = (
@@ -402,7 +402,7 @@ def _release_state_issues() -> list[str]:
         pending = index.count("**Pending**")
         if pending:
             issues.append(
-                f"docs/history/evidence/README.md: release inputs are active but "
+                f"docs/evidence/README.md: release inputs are active but "
                 f"{pending} evidence row(s) are still marked **Pending**"
             )
 

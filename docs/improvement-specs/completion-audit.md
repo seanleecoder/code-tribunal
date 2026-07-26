@@ -2,7 +2,7 @@
 
 Audit refreshed: 2026-07-19. **Post-release note (2026-07-25):** SPEC-37, SPEC-38,
 and SPEC-40 closed at `v1.0.0`, and SPEC-06's outstanding deployment evidence was
-recorded — see the [evidence matrix](../history/evidence/README.md). Findings below
+recorded — see the [evidence matrix](../evidence/README.md). Findings below
 predate the release and are not re-audited here.
 
 ## Repository-backed result
@@ -35,7 +35,7 @@ Repository inspection cannot close:
 4. Live GitHub revision-race and oversized raw-diff smoke.
 
 The sanitized procedures and status are in the
-[live evidence index](../history/evidence/README.md). Until those rows pass,
+[live evidence index](../evidence/README.md). Until those rows pass,
 documentation must scope maturity and credential-boundary claims to executable
 tests or the older recorded runs rather than claiming complete 1.0 acceptance.
 

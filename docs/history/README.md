@@ -1,19 +1,20 @@
 # Documentation history
 
-This directory is **non-normative with one exception**. It explains how the
-product was designed or previously accepted; current behavior is defined by code,
-schemas, tests, canonical templates, and the task-oriented documentation linked
-from the root README.
+Everything in this directory is non-normative. It explains how the product was
+designed or previously accepted; current behavior is defined by code, schemas,
+tests, canonical templates, and the task-oriented documentation linked from the
+root README.
 
-> **Exception — [`evidence/`](evidence/README.md) is normative input to release
-> validation.** `scripts/check_release_inputs.py` parses the records under
-> `evidence/` and refuses `status: active` release inputs unless every cited record
-> is an exact `Status: passed` bound to the claimed runtime source and image
-> digests, or carries a registered `Release-evidence-waived` reason. Editing a
-> cited record can therefore break the release gate. Treat those records as
-> release artifacts, not as prose.
+> **Live evidence is no longer filed here.** The release-gating evidence matrix,
+> records, and operator runbook moved to [`docs/evidence/`](../evidence/README.md)
+> because they are **normative input to release validation**, not history:
+> `scripts/check_release_inputs.py` parses those records and refuses
+> `status: active` release inputs unless every cited record is an exact
+> `Status: passed` bound to the claimed runtime source and image digests, or carries
+> a registered `Release-evidence-waived` reason. Editing a cited record can break the
+> release gate — treat them as release artifacts.
 
-- [Live evidence index and runbook](evidence/README.md) — **normative**, see above
+- [Live evidence index and runbook](../evidence/README.md) — **normative**, now outside this directory
 - [Archived/paused improvement plans](../archived-improvement-plans/README.md)
 - [Current improvement status](../improvement-specs/README.md)
 - [Historical pipeline walkthrough](../../ai-review/EXAMPLE_PIPELINE_WALKTHROUGH.md)
@@ -30,7 +31,7 @@ implementation history, not operator guidance. Current state:
 
 - SPEC-01–05 and SPEC-07–19 are implemented. SPEC-06 is complete; its deployment
   evidence was recorded for 1.0.0 in the
-  [hostile-MR record](evidence/record-gitlab-hostile-mr.md).
+  [hostile-MR record](../evidence/record-gitlab-hostile-mr.md).
 - SPEC-23–36 are implemented on `main`, represented by changelog entries and
   regression tests.
 - SPEC-37 (final release artifacts), SPEC-38 (documentation/live evidence), and
@@ -52,5 +53,5 @@ current images. Useful provenance:
 - [Public image publication acceptance](../../ai-review/docs/acceptance/PHASE_5_5_ACCEPTANCE.md)
 - [Phase 3 GitLab acceptance](../../ai-review/docs/acceptance/PHASE_3_ACCEPTANCE.md)
 
-Use the [current evidence matrix](evidence/README.md) before making any maturity
+Use the [current evidence matrix](../evidence/README.md) before making any maturity
 or security claim.

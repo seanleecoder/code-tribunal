@@ -33,7 +33,7 @@ GITHUB_CONTAINER_ROLES = {
     "gate": "base",
 }
 
-EVIDENCE_DIR = Path("docs/history/evidence")
+EVIDENCE_DIR = Path("docs/evidence")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
 _RUNTIME_SOURCE_RE = re.compile(
@@ -105,7 +105,7 @@ def validate_evidence_records(
 ) -> list[tuple[str, str]]:
     """Require active release inputs to cite fresh, matching evidence records.
 
-    Each cited record under ``docs/history/evidence/`` must either:
+    Each cited record under ``docs/evidence/`` must either:
 
     - declare ``Status: passed`` (exact) and bind the claimed runtime source plus
       both image digests; or

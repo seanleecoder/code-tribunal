@@ -23,7 +23,7 @@ seats complied and posted normally.
 
 This is not new and not a one-off: the same seat and the same missing field degraded
 two earlier candidate runs, `29837070046` and `29840867952`, as recorded in
-[`record-github-default-model-smoke.md`](../history/evidence/record-github-default-model-smoke.md).
+[`record-github-default-model-smoke.md`](../evidence/record-github-default-model-smoke.md).
 It is weak-model non-compliance rather than a missing instruction — the prompt does
 ask for the field, at `ai-review/prompts/review.md` line 8, which includes
 `"confidence":0.0` in the required JSON shape.

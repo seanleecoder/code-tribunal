@@ -80,7 +80,7 @@ class ReleaseToolTests(unittest.TestCase):
         status: str = "passed",
         waived: bool = False,
     ) -> None:
-        evidence_dir = root / "docs/history/evidence"
+        evidence_dir = root / "docs/evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         for record_id in record_ids:
             lines = [f"Status: {status}", ""]
@@ -230,7 +230,7 @@ class ReleaseToolTests(unittest.TestCase):
             self._tree(root)
             data = self._active(root)
             record_id = data["verification"]["evidence_record_ids"][0]
-            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path = root / "docs/evidence" / record_id
 
             evidence_path.write_text(
                 evidence_path.read_text(encoding="utf-8").replace(
@@ -266,7 +266,7 @@ class ReleaseToolTests(unittest.TestCase):
             runtime_source = data["runtime_source"]
             base_digest = data["images"]["base"]["digest"]
             reviewer_digest = data["images"]["reviewer"]["digest"]
-            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path = root / "docs/evidence" / record_id
             evidence_path.write_text(
                 "\n".join(
                     [
@@ -298,7 +298,7 @@ class ReleaseToolTests(unittest.TestCase):
             self._tree(root)
             data = self._active(root)
             record_id = data["verification"]["evidence_record_ids"][0]
-            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path = root / "docs/evidence" / record_id
             evidence_path.write_text(
                 evidence_path.read_text(encoding="utf-8").replace(
                     "Status: passed", "Status: Passed", 1
@@ -397,7 +397,7 @@ class ReleaseToolTests(unittest.TestCase):
             self._tree(root)
             data = self._active(root)
             record_id = data["verification"]["evidence_record_ids"][0]
-            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path = root / "docs/evidence" / record_id
             evidence_path.write_text(
                 "Status: partial\n\nRelease-evidence-waived:\n",
                 encoding="utf-8",
@@ -416,7 +416,7 @@ class ReleaseToolTests(unittest.TestCase):
             self._tree(root)
             data = self._active(root)
             record_id = data["verification"]["evidence_record_ids"][0]
-            evidence_path = root / "docs/history/evidence" / record_id
+            evidence_path = root / "docs/evidence" / record_id
             body = evidence_path.read_text(encoding="utf-8")
             evidence_path.write_text(
                 "<!--\nRelease-evidence-waived: do not treat this as live\n-->\n" + body,
@@ -599,7 +599,7 @@ class ReleaseToolTests(unittest.TestCase):
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
             "release/1.0.0.md",
-            "docs/history/evidence/github.md",
+            "docs/evidence/github.md",
             "ai-review/src/ai_review/config.py",
         ]
         self.assertEqual(

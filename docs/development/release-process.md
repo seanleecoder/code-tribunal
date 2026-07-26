@@ -22,7 +22,7 @@ creating a commit self-reference.
    ```
 
 5. Run the GitHub and GitLab live evidence matrix. Each cited record under
-   `docs/history/evidence/` must either declare exact `Status: passed` with
+   `docs/evidence/` must either declare exact `Status: passed` with
    matching `Release-runtime-source` / `Release-base-digest` /
    `Release-reviewer-digest` fields, or an explicit
    `Release-evidence-waived: <reason>` line whose reason is also registered

@@ -288,7 +288,7 @@ class DocumentationContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_root:
             root = Path(raw_root)
             (root / "release").mkdir()
-            (root / "docs/history/evidence").mkdir(parents=True)
+            (root / "docs/evidence").mkdir(parents=True)
             (root / "release/release-inputs.json").write_text(
                 json.dumps({"status": status, "runtime_source": runtime_source}),
                 encoding="utf-8",
@@ -299,7 +299,7 @@ class DocumentationContractTests(unittest.TestCase):
             notes.write_text(
                 runtime_source if notes_body is None else notes_body, encoding="utf-8"
             )
-            evidence = root / "docs/history/evidence/README.md"
+            evidence = root / "docs/evidence/README.md"
             evidence.write_text(evidence_body, encoding="utf-8")
 
             saved = (

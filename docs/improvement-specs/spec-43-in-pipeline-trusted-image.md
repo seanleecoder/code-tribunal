@@ -43,7 +43,7 @@ What actually contained it, and why 1.0.0 shipped anyway:
   failing.
 
 Full detail in
-[`record-gitlab-hostile-mr.md`](../history/evidence/record-gitlab-hostile-mr.md) §3.
+[`record-gitlab-hostile-mr.md`](../evidence/record-gitlab-hostile-mr.md) §3.
 For a product whose purpose is reviewing code for security, "an attacker who picks an
 image containing Python is not stopped by the pipeline" is a posture worth closing
 rather than only documenting.

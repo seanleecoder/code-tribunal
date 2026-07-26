@@ -63,7 +63,7 @@ tests that cover each row.
 > the **base** from a commit that includes the code under test, build the
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
-> the image-pin rotation procedure in [operations](../../operations.md)), and re-run
+> the image-pin rotation procedure in [operations](../operations.md)), and re-run
 > Step 0 verification/attestation against the new digests. Republishing is an
 > operator/CI action. Because the gate/mock code ships inside the product image,
 > **both** chains must run against the digests named above, so the evidence matches
@@ -111,7 +111,7 @@ model smoke) an OpenRouter key. Prerequisites:
   **protected scratch source branch** for the lifecycle MRs (the protected
   `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
   it and posting fails). Setup:
-  [`docs/getting-started/gitlab.md`](../../getting-started/gitlab.md).
+  [`docs/getting-started/gitlab.md`](../getting-started/gitlab.md).
 - **GitHub:** a scratch consumer repo with the workflow copied from `R` and
   repinned to the pair above (copying an older template can carry env keys that `R`
   rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
@@ -119,7 +119,7 @@ model smoke) an OpenRouter key. Prerequisites:
   check** in branch protection/ruleset. Note that a required-check ruleset also
   blocks direct pushes to the default branch, so adopting the workflow itself has
   to go through a PR — run that PR in mock mode so it costs nothing. Setup:
-  [`docs/getting-started/github.md`](../../getting-started/github.md).
+  [`docs/getting-started/github.md`](../getting-started/github.md).
 
 ## Cost model: where the tokens go
 
@@ -353,7 +353,7 @@ Actual result / Audit / Verdict.
 | 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../../improvement-specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../improvement-specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
@@ -373,7 +373,7 @@ panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.4-min
 OpenCode `google/gemini-3.1-flash-lite`, Cursor `auto` skipped, `panel_status:
 full`, and that a finding was posted. **This doubles as the default-model smoke —
 do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
-(see [operations cost controls](../../operations.md)). This chain ends here.
+(see [operations cost controls](../operations.md)). This chain ends here.
 
 **Chain B — deterministic mock lifecycle (zero tokens).** On a second change
 request, enable the mock via the platform-specific mock enablement above (GitLab

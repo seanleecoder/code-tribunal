@@ -73,7 +73,7 @@ Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
 check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
-[legacy acceptance](../README.md#legacy-milestone-acceptance).
+[legacy acceptance](../history/README.md#legacy-milestone-acceptance).
 
 ### Known gaps and missing evidence
 
