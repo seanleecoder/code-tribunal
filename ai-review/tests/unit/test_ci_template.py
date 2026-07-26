@@ -254,9 +254,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             assert timeout_match is not None
             outer_minutes.append(int(timeout_match.group(1)))
 
-        github_template = (
-            Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ai-review.yml"
-        )
+        github_template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
         github_text = github_template.read_text(encoding="utf-8")
         for job_name in ("review", "critique"):
             job = _workflow_job(github_text, job_name)
