@@ -50,9 +50,9 @@ completed for `v1.0.0`. Remaining order:
    Product-policy decisions for this sequence — critique display tiering, the opt-in
    disposition audit, the advisory cap default, invalid-scope handling, and the SPEC-44
    rendering boundary — are ratified in
-   [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). SPEC-45 and SPEC-46
-   cite it from their "Deviations from the original draft" sections; SPEC-44 cites it
-   from its rendering-boundary statement.
+   [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
+   cite it from their "Deviations from the original draft" sections, which also record the
+   SPEC-44 and SPEC-46 effort re-estimates from M to L.
 
 ## Historical indexes
 

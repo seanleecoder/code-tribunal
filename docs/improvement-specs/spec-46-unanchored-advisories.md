@@ -1,6 +1,6 @@
 # SPEC-46 — Non-line-anchored review advisories
 
-- **Severity:** Medium (useful review concerns are either lost or forced onto misleading lines) · **Effort:** L · **ROI rank:** post-1.0
+- **Severity:** Medium (useful review concerns are either lost or forced onto misleading lines) · **Effort:** L (raised from M — see [Deviations](#deviations-from-the-original-draft)) · **ROI rank:** post-1.0
 - **Depends on:** SPEC-44 literal-safe rendering of model output.
 
 ## Rationale
@@ -456,6 +456,7 @@ quorum, state, resolution, or merge-gate power.
 | Sort `(reviewer, scope_paths, category, -severity_rank, …)` | Severity first, `scope_paths` joined to a string for the key | A `MAJOR` must not sort below every `INFO` from an alphabetically earlier reviewer. Equally deterministic. | n/a — readability fix |
 | Panel-failure behavior unstated | Advisories dropped on the `panel_status == "failed"` branch | A failed panel must not post advisory content through a path anchored findings cannot use. | n/a — gap fill |
 | Environment override `AI_REVIEW_<REVIEWER>_MAX_ADVISORIES` must be rejected | Ignored, not rejected | Matches the `max_findings` precedent; newly failing pipelines on a variable that never did anything is a gratuitous break. | n/a — consistency fix |
+| **Effort: M** | **Effort: L** | Scope grew with the rows above — a required field, a degrade counter, split scope handling, the `usable_for_panel` / `usable_for_resolution` split with its `batch_quality_fields` and `_require_quality_invariants` extensions, panel-failure gating, and drift observability — across five schemas and eight test files. | n/a — estimate follows scope |
 
 Also considered and **not** adopted: a merge-request-level `max_summary_advisories` cap,
 and byte-exact advisory merging. Both are noted at their respective sections with the

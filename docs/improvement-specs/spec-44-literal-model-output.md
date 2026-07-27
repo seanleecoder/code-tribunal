@@ -1,6 +1,6 @@
 # SPEC-44 — Literal-safe rendering of model output
 
-- **Severity:** High (untrusted model output can alter the review that a maintainer sees) · **Effort:** L · **ROI rank:** post-1.0
+- **Severity:** High (untrusted model output can alter the review that a maintainer sees) · **Effort:** L (raised from M — see [Deviations](#deviations-from-the-original-draft)) · **ROI rank:** post-1.0
 - **Depends on:** none.
 
 ## Rationale
@@ -324,6 +324,20 @@ posting-stage validation are a single decision. A rollback that restores the loo
 `{"type": "string"}` constraint, or that removes the posting-stage validation, must also
 restore `literal_span` rendering for `category`, `decision`, and `final_severity`.
 Reverting one without the others reopens the injection surface.
+
+## Deviations from the original draft
+
+These requirements changed after the first committed draft of this specification. The
+rendering-boundary decision was ratified in
+[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md); the rest are defect fixes
+or the scope consequences that follow from them.
+
+| Original requirement | Now | Reason | Decided in |
+| --- | --- | --- | --- |
+| "Every dynamic value must be literal data" | Every free-text or path-shaped value; closed enumerations exempt, and only where a validation boundary enforces the vocabulary | An unqualified rule would either be violated by the existing severity header or force closed enums through an API that buys no safety. The exemption is earned per field rather than assumed. | ADR-0002 §1 |
+| No schema changes | Tightens `consensus.schema.json` `$defs.group.properties.category` to the finding-batch enum | The exemption depends on it. `consensus.v1` left `category` an unconstrained string, so the exemption was unearned at the boundary the renderer reads. | ADR-0002 §1 |
+| Posting-stage input trust unexamined | Posting stage must validate the consensus artifact before constructing a platform client | `post.py`'s `cli` casts the loaded artifact with no runtime check, unlike the consensus and gate stages. Without this the schema tightening buys nothing on the rendering path. | n/a — closes a pre-existing gap |
+| **Effort: M** | **Effort: L** | Scope grew with the three rows above plus two items absent from the draft: converting the platform-limit API to renderer-owned fragments, and restructuring `render_summary_body` into section descriptors so SPEC-45 and SPEC-46 add sections as data. With the goldens, body-hash, marker-parser, schema, and zero-network posting regressions, this is no longer an M. | n/a — estimate follows scope |
 
 ## Acceptance criteria
 
