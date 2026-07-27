@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import parse_unified_diff
+from .anchors import parse_unified_diff, resolve_side_paths
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting/state/gate behavior with
@@ -52,18 +52,23 @@ def _mock_scenario() -> str:
     return scenario
 
 
+def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
+    old_path, new_path = resolve_side_paths(diff_file.old_path, diff_file.new_path)
+    return {
+        "old_path": old_path,
+        "new_path": new_path,
+        "new_line": line.new_line,
+        "hunk_header": line.hunk_header,
+    }
+
+
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
     for diff_file in parse_unified_diff(diff_text):
         for line in diff_file.lines:
             if line.kind != "added":
                 continue
             if "records[0]" in line.text or "data[0]" in line.text:
-                return {
-                    "old_path": diff_file.old_path or "",
-                    "new_path": diff_file.new_path or "",
-                    "new_line": line.new_line,
-                    "hunk_header": line.hunk_header,
-                }
+                return _candidate(diff_file, line)
     return None
 
 
@@ -71,12 +76,7 @@ def _find_first_added_line(diff_text: str) -> dict[str, Any] | None:
     for diff_file in parse_unified_diff(diff_text):
         for line in diff_file.lines:
             if line.kind == "added":
-                return {
-                    "old_path": diff_file.old_path or "",
-                    "new_path": diff_file.new_path or "",
-                    "new_line": line.new_line,
-                    "hunk_header": line.hunk_header,
-                }
+                return _candidate(diff_file, line)
     return None
 
 

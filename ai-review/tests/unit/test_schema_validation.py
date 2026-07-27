@@ -39,10 +39,7 @@ class SchemaValidationTests(unittest.TestCase):
         self,
     ) -> None:
         fixture = load_json_file(
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "golden"
-            / "semantic_consensus.json"
+            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
         )
         invalid_values = [
             ("empty evidence", {"evidence_by_reviewer": {"claude": ""}}),
@@ -83,6 +80,83 @@ class SchemaValidationTests(unittest.TestCase):
                 consensus["groups"][0].update(replacement)
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
+
+    def test_finalize_finding_batch_resolves_dev_null_anchor_sides(self) -> None:
+        # Any reviewer reading the raw diff can echo git's `/dev/null` sentinel
+        # for an added or deleted file's absent side. Normalizing centrally keeps
+        # that finding inline instead of dropping it as an absolute path. The
+        # sentinel is matched leniently because reviewer output is not parser
+        # output — a stray timestamp or surrounding space must still resolve.
+        sentinels = ["/dev/null", "/dev/null\t2026-07-27 10:00:00 +0200", " /dev/null "]
+        for added in (True, False):
+            for sentinel in sentinels:
+                with self.subTest(added=added, sentinel=sentinel):
+                    path = "src/new.py" if added else "src/gone.py"
+                    diff_text = "\n".join(
+                        [
+                            f"diff --git a/{path} b/{path}",
+                            "new file mode 100644" if added else "deleted file mode 100644",
+                            "--- /dev/null" if added else f"--- a/{path}",
+                            f"+++ b/{path}" if added else "+++ /dev/null",
+                            "@@ -0,0 +1,2 @@" if added else "@@ -1,2 +0,0 @@",
+                            ("+" if added else "-") + "def f():",
+                            ("+" if added else "-") + "    return records[0]",
+                            "",
+                        ]
+                    )
+                    line = {
+                        "old_line": None if added else 2,
+                        "new_line": 2 if added else None,
+                        "line_code": None,
+                    }
+                    batch = {
+                        "schema_version": "finding_batch.v1",
+                        "run_id": "local",
+                        "reviewer": "claude",
+                        "adapter_status": "success",
+                        "model": "model",
+                        "started_at": "2026-06-29T00:00:00Z",
+                        "completed_at": "2026-06-29T00:00:01Z",
+                        "findings": [
+                            {
+                                "anchor": {
+                                    "old_path": sentinel if added else path,
+                                    "new_path": path if added else sentinel,
+                                    "side": "new" if added else "old",
+                                    "start": dict(line),
+                                    "end": dict(line),
+                                    "hunk_header": (
+                                        "@@ -0,0 +1,2 @@" if added else "@@ -1,2 +0,0 @@"
+                                    ),
+                                    "context_hash": "",
+                                    "symbol": None,
+                                },
+                                "severity": "major",
+                                "category": "correctness",
+                                "title": "Unguarded index",
+                                "body": "records[0] can raise IndexError.",
+                                "evidence": ["    return records[0]"],
+                                "suggestion": None,
+                                "confidence": 0.6,
+                            }
+                        ],
+                    }
+                    with tempfile.TemporaryDirectory() as tmp:
+                        (Path(tmp) / "mr.diff").write_text(diff_text, encoding="utf-8")
+                        finalized = finalize_finding_batch(
+                            batch,
+                            reviewer="claude",
+                            model="model",
+                            run_id="local",
+                            started_at="2026-06-29T00:00:00Z",
+                            input_dir=tmp,
+                            effective_config_sha256="0" * 64,
+                        )
+
+                    self.assertEqual(finalized["accepted_finding_count"], 1)
+                    anchor = finalized["findings"][0]["anchor"]
+                    self.assertEqual(anchor["old_path"], path)
+                    self.assertEqual(anchor["new_path"], path)
 
     def test_critique_batch_rejects_whitespace_only_identity_and_rationale(self) -> None:
         batch = empty_critique_batch(

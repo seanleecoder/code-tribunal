@@ -79,6 +79,33 @@ class AnchorRemapTests(unittest.TestCase):
         self.assertEqual(files[1].new_path, "src/empty.py")
         self.assertEqual(files[1].lines, ())
 
+    def test_parse_unified_diff_maps_dev_null_sides_to_none(self) -> None:
+        # `/dev/null` is git's "this side does not exist" sentinel, not a repo
+        # path; keeping it would make normalize_path reject the file as absolute.
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/added.py b/src/added.py",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/added.py",
+                "@@ -0,0 +1,1 @@",
+                "+new",
+                "diff --git a/src/gone.py b/src/gone.py",
+                "deleted file mode 100644",
+                "--- a/src/gone.py",
+                "+++ /dev/null",
+                "@@ -1,1 +0,0 @@",
+                "-old",
+            ]
+        )
+
+        added, deleted = list(parse_unified_diff(diff_text))
+
+        self.assertIsNone(added.old_path)
+        self.assertEqual(added.new_path, "src/added.py")
+        self.assertEqual(deleted.old_path, "src/gone.py")
+        self.assertIsNone(deleted.new_path)
+
     def test_diff_line_side_helpers_use_explicit_kind(self) -> None:
         added = DiffLine(
             old_line=None,
@@ -173,6 +200,115 @@ class AnchorRemapTests(unittest.TestCase):
         ambiguous = remap_anchor(ambiguous_diff, block_anchor)
         self.assertEqual(ambiguous["status"], "ambiguous")
         self.assertIsNone(ambiguous["anchor"])
+
+    def test_remap_anchor_follows_drift_in_added_and_deleted_files(self) -> None:
+        def one_sided(*, added: bool, line: str, start: int) -> str:
+            path = "src/new.py" if added else "src/gone.py"
+            header = f"@@ -0,0 +{start},1 @@" if added else f"@@ -{start},1 +0,0 @@"
+            return "\n".join(
+                [
+                    f"diff --git a/{path} b/{path}",
+                    "--- /dev/null" if added else f"--- a/{path}",
+                    f"+++ b/{path}" if added else "+++ /dev/null",
+                    header,
+                    line,
+                ]
+            )
+
+        added_anchor = _anchor("new", old_line=None, new_line=2, path="src/new.py")
+        added_anchor["context_hash"] = context_hash_from_unified_diff(
+            one_sided(added=True, line="+target", start=2), added_anchor
+        )
+        added = remap_anchor(one_sided(added=True, line="+target", start=9), added_anchor)
+        self.assertEqual(added["status"], "remapped")
+        self.assertEqual(added["anchor"]["start"]["new_line"], 9)
+        # The absent old side borrows the new path so finalization keeps the anchor.
+        self.assertEqual(added["anchor"]["old_path"], "src/new.py")
+        self.assertEqual(added["anchor"]["new_path"], "src/new.py")
+
+        deleted_anchor = _anchor("old", old_line=2, new_line=None, path="src/gone.py")
+        deleted_anchor["context_hash"] = context_hash_from_unified_diff(
+            one_sided(added=False, line="-target", start=2), deleted_anchor
+        )
+        deleted = remap_anchor(one_sided(added=False, line="-target", start=5), deleted_anchor)
+        self.assertEqual(deleted["status"], "remapped")
+        self.assertEqual(deleted["anchor"]["start"]["old_line"], 5)
+        self.assertEqual(deleted["anchor"]["new_path"], "src/gone.py")
+
+        self.assertEqual(deleted["anchor"]["old_path"], "src/gone.py")
+
+    def test_remap_anchor_missing_and_ambiguous_on_one_sided_files(self) -> None:
+        def one_sided(*, added: bool, body: list[str], starts: list[int]) -> str:
+            path = "src/new.py" if added else "src/gone.py"
+            chunks = [
+                f"diff --git a/{path} b/{path}",
+                "--- /dev/null" if added else f"--- a/{path}",
+                f"+++ b/{path}" if added else "+++ /dev/null",
+            ]
+            for start in starts:
+                header = f"@@ -0,0 +{start},7 @@" if added else f"@@ -{start},7 +0,0 @@"
+                chunks.extend([header, *body])
+            return "\n".join(chunks)
+
+        for added in (True, False):
+            with self.subTest(added=added):
+                marker = "+" if added else "-"
+                path = "src/new.py" if added else "src/gone.py"
+                block = [f"{marker}ctx-{index}" for index in range(6)] + [f"{marker}target"]
+                anchor = (
+                    _anchor("new", old_line=None, new_line=7, path=path)
+                    if added
+                    else _anchor("old", old_line=7, new_line=None, path=path)
+                )
+                anchor["context_hash"] = context_hash_from_unified_diff(
+                    one_sided(added=added, body=block, starts=[1]), anchor
+                )
+
+                other = [f"{marker}other-{index}" for index in range(7)]
+                missing = remap_anchor(one_sided(added=added, body=other, starts=[1]), anchor)
+                self.assertEqual(missing["status"], "missing")
+                self.assertIsNone(missing["anchor"])
+
+                ambiguous = remap_anchor(
+                    one_sided(added=added, body=block, starts=[1, 40]), anchor
+                )
+                self.assertEqual(ambiguous["status"], "ambiguous")
+                self.assertIsNone(ambiguous["anchor"])
+
+    def test_parse_side_path_strips_timestamp_suffix_on_both_sides(self) -> None:
+        stamp = "\t2026-07-27 10:00:00.000000000 +0200"
+        added = list(
+            parse_unified_diff(
+                "\n".join(
+                    [
+                        f"--- /dev/null{stamp}",
+                        f"+++ b/src/new.py{stamp}",
+                        "@@ -0,0 +1,1 @@",
+                        "+target",
+                    ]
+                )
+            )
+        )
+        self.assertEqual(len(added), 1)
+        self.assertIsNone(added[0].old_path)
+        # The surviving side must lose the timestamp too, or it is not a repo path.
+        self.assertEqual(added[0].new_path, "src/new.py")
+
+        deleted = list(
+            parse_unified_diff(
+                "\n".join(
+                    [
+                        f"--- a/src/gone.py{stamp}",
+                        f"+++ /dev/null{stamp}",
+                        "@@ -1,1 +0,0 @@",
+                        "-target",
+                    ]
+                )
+            )
+        )
+        self.assertEqual(len(deleted), 1)
+        self.assertIsNone(deleted[0].new_path)
+        self.assertEqual(deleted[0].old_path, "src/gone.py")
 
     def test_remap_anchor_renamed_file_with_unique_context(self) -> None:
         old_diff = _diff("+target", new_line=2, path="src/foo.py")

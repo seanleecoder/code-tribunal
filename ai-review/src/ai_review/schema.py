@@ -15,6 +15,7 @@ from .anchors import (
     evidence_fingerprint,
     first_evidence_or_body,
     is_sha256,
+    resolve_side_paths,
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
@@ -391,8 +392,12 @@ def finalize_finding_batch(
             normalized.setdefault("evidence", [])
             normalized.setdefault("suggestion", None)
             anchor = dict(normalized["anchor"])
-            anchor["new_path"] = str(anchor["new_path"])
-            anchor["old_path"] = str(anchor["old_path"])
+            # Reviewers that read the raw diff can echo git's `/dev/null`
+            # sentinel for an added/deleted file's absent side; that is not a
+            # repo path and would drop the finding as absolute.
+            anchor["old_path"], anchor["new_path"] = resolve_side_paths(
+                str(anchor["old_path"]), str(anchor["new_path"])
+            )
             anchor = add_line_codes(anchor)
             if diff_text is not None:
                 anchor["context_hash"] = context_hash_from_unified_diff(diff_text, anchor)

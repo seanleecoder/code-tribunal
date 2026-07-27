@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_review.mock_reviewer import _find_indexing_candidate, review_batch
+from ai_review.schema import finalize_finding_batch
 
 
 def _diff(last_line: str) -> str:
@@ -125,6 +126,46 @@ class MockScenarioTests(unittest.TestCase):
             self.assertEqual(
                 finding["anchor"]["start"]["new_line"], 3, f"scenario={scenario}"
             )
+
+    def test_scenarios_survive_finalization_on_an_added_file_diff(self) -> None:
+        # A newly added file's diff carries `--- /dev/null`. Anchoring on that
+        # verbatim yields an absolute path, which finalization rejects — every
+        # seat then reports zero accepted findings and consensus fails, with the
+        # mock's own anchor (not the diff) as the real cause.
+        added_file_diff = "\n".join(
+            [
+                "diff --git a/src/new.py b/src/new.py",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/new.py",
+                "@@ -0,0 +1,2 @@",
+                "+def f():",
+                "+    return records[0]",
+            ]
+        )
+        for scenario in ("blocking", "blocking_alt", "advisory"):
+            with self.subTest(scenario=scenario):
+                with tempfile.TemporaryDirectory() as tmp:
+                    (Path(tmp) / "mr.diff").write_text(added_file_diff, encoding="utf-8")
+                    with mock.patch.dict(
+                        "os.environ", {"AI_REVIEW_MOCK_SCENARIO": scenario}, clear=False
+                    ):
+                        batch = review_batch("claude", Path(tmp))
+                    anchor = batch["findings"][0]["anchor"]
+                    self.assertEqual(anchor["new_path"], "src/new.py")
+                    self.assertEqual(anchor["old_path"], "src/new.py")
+                    finalized = finalize_finding_batch(
+                        batch,
+                        reviewer="claude",
+                        model="mock",
+                        run_id="run-1",
+                        started_at="2026-01-01T00:00:00Z",
+                        effective_config_sha256="0" * 64,
+                        input_dir=tmp,
+                    )
+                self.assertEqual(finalized["raw_finding_count"], 1)
+                self.assertEqual(finalized["accepted_finding_count"], 1)
+                self.assertTrue(finalized["usable_for_resolution"])
 
     def test_unknown_scenario_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown AI_REVIEW_MOCK_SCENARIO"):

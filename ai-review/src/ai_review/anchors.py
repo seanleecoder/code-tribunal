@@ -146,6 +146,48 @@ def candidate_issue_signature_hash(signature: dict[str, Any]) -> str:
     )
 
 
+DEV_NULL = "/dev/null"
+
+
+def _strip_side_timestamp(path: str) -> str:
+    # Git never appends a timestamp to a `---`/`+++` path, but other unified-diff
+    # producers do, after a tab. Drop it so both the sentinel check and the real
+    # path survive such a diff.
+    return path.split("\t", 1)[0].strip()
+
+
+def _is_dev_null(path: str | None) -> bool:
+    # `/dev/null` is git's sentinel for "this side does not exist" (added or
+    # deleted file). It is not a repo path, and keeping it would make every
+    # downstream normalize_path() call reject the anchor as absolute.
+    return path is not None and _strip_side_timestamp(path) == DEV_NULL
+
+
+def _parse_side_path(path: str) -> str | None:
+    if _is_dev_null(path):
+        return None
+    return strip_diff_prefix(_strip_side_timestamp(path))
+
+
+def resolve_side_paths(old_path: str | None, new_path: str | None) -> tuple[str, str]:
+    """Give both anchor sides a repo-relative path, tolerating absent sides.
+
+    An added file has no old side and a deleted file has no new side (git spells
+    that ``/dev/null``). Anchors carry both paths, and finalization rejects
+    ``/dev/null`` as absolute, so each side falls back to the other — for an
+    added file both sides are the new file anyway. Callers reading a single side
+    must therefore not treat a populated path as proof the side exists; use
+    ``anchor["side"]`` for that.
+
+    Accepts raw reviewer output as well as parser output, so the sentinel check
+    is the same lenient one the parser uses.
+    """
+
+    old = None if not old_path or _is_dev_null(old_path) else old_path
+    new = None if not new_path or _is_dev_null(new_path) else new_path
+    return (old or new or ""), (new or old or "")
+
+
 def _parse_diff_paths(line: str) -> tuple[str, str] | None:
     parts = line.split()
     if len(parts) >= 4 and parts[0] == "diff" and parts[1] == "--git":
@@ -189,11 +231,11 @@ def parse_unified_diff(diff_text: str) -> Iterator[DiffFile]:
             saw_file = True
             continue
         if raw_line.startswith("--- "):
-            old_path = strip_diff_prefix(raw_line[4:].strip())
+            old_path = _parse_side_path(raw_line[4:].strip())
             saw_file = True
             continue
         if raw_line.startswith("+++ "):
-            new_path = strip_diff_prefix(raw_line[4:].strip())
+            new_path = _parse_side_path(raw_line[4:].strip())
             saw_file = True
             continue
         hunk_match = HUNK_RE.match(raw_line)
@@ -313,8 +355,14 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
     side = str(anchor.get("side"))
     matches: list[dict[str, Any]] = []
     for diff_file in parse_unified_diff(diff_text):
-        if not diff_file.old_path or not diff_file.new_path:
+        # Added/deleted files have exactly one usable side; only a file with
+        # neither is unanchorable.
+        if not diff_file.old_path and not diff_file.new_path:
             continue
+        # A one-sided file borrows its path into the absent side so the remapped
+        # anchor stays postable. `side` remains the source of truth for which
+        # side actually exists.
+        remap_old, remap_new = resolve_side_paths(diff_file.old_path, diff_file.new_path)
         side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
         for index, line in enumerate(side_lines):
             start = max(index - window, 0)
@@ -325,8 +373,8 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
             if compute_context_hash(anchor_path_key(anchor), side, line_texts) != expected_hash:
                 continue
             remapped = dict(anchor)
-            remapped["old_path"] = diff_file.old_path
-            remapped["new_path"] = diff_file.new_path
+            remapped["old_path"] = remap_old
+            remapped["new_path"] = remap_new
             remapped["hunk_header"] = line.hunk_header
             remapped["start"] = {
                 "old_line": line.old_line,
