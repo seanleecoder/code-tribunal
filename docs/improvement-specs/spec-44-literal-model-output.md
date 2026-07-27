@@ -209,11 +209,11 @@ safe.
 ### Suggestions are data, not executable Markdown
 
 Retire the posting decision that suppresses a suggestion because its
-model-supplied triple-backtick count is unbalanced. `validate_suggestion` may be
-removed or narrowed to a legacy parsing helper, but it must no longer gate whether a
-suggestion is shown. A suggestion is rendered through `literal_block` exactly like a
-body; malformed inner fences, HTML-comment-like text, and Markdown directives are
-visible as text rather than interpreted as syntax.
+model-supplied triple-backtick count is unbalanced. The obsolete
+`validate_suggestion` helper is removed; malformed suggestions are never filtered by
+fence balance. A suggestion is rendered through `literal_block` exactly like a body;
+malformed inner fences, HTML-comment-like text, and Markdown directives are visible as
+text rather than interpreted as syntax.
 
 ### Limits, hashes, and markers
 
@@ -237,9 +237,12 @@ Summary comments continue to drop whole rendered entries and append their existi
 size-limit trailer; they never cut an entry, a span, or a literal fence in half.
 
 `body_hash` and the summary hash are calculated from the final redacted,
-normalized, literal-rendered, size-limited body. Equal inputs must therefore produce
-identical bytes and hashes on both platforms. Redaction, newline normalization,
-marker parsing, source hashes, and idempotent upsert behavior remain unchanged.
+normalized, literal-rendered, size-limited body. Inline `body_hash` additionally
+includes the canonical source-finding hash as a renderer/marker identity input, not
+raw model text. Equal inputs must therefore produce identical bytes and hashes on both
+platforms, while a same-looking group with a different source set still refreshes its
+existing discussion. Redaction, newline normalization, marker parsing, source hashes,
+and idempotent upsert behavior remain unchanged.
 
 ## Exact implementation surface
 

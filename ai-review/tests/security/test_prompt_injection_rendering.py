@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ai_review.render import render_body
+from ai_review.render import RenderFragment, details_fragment, literal_block, render_body
 
 
 class PromptInjectionRenderingTests(unittest.TestCase):
@@ -81,12 +81,29 @@ class PromptInjectionRenderingTests(unittest.TestCase):
 
         rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
 
-        self.assertIn("Title: ``# title with `ticks```", rendered)
+        self.assertIn("Title: `` # title with `ticks` ``", rendered)
         self.assertIn("Body:\n````text\n# not a heading", rendered)
         self.assertIn("< !-- not a marker -- >", rendered)
         self.assertIn("`reviewer\\nname`", rendered)
         self.assertEqual(rendered.count("<!--"), 1)
         self.assertEqual(rendered.count("-->"), 1)
+
+    def test_renderer_owned_details_block_keeps_fenced_model_text_literal(self) -> None:
+        model_text = "</summary>\n</details>\n```python\nprint('still data')\n````"
+        literal = literal_block(model_text, required=True)
+        self.assertIsNotNone(literal)
+        assert literal is not None
+
+        rendered = details_fragment(
+            "Show hostile model text",
+            [RenderFragment(text=literal, kind="text")],
+        ).text
+
+        self.assertIn("</summary>\n\n", rendered)
+        self.assertIn("```text\n</summary>\n</details>", rendered)
+        self.assertTrue(rendered.endswith("\n</details>"))
+        self.assertEqual(rendered.rfind("</details>"), len(rendered) - len("</details>"))
+        self.assertNotIn("<summary><", rendered)
 
 
 if __name__ == "__main__":

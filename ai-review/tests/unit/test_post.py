@@ -29,6 +29,7 @@ from ai_review.post import (
     finalize_state,
     index_ai_review_discussions,
     load_persisted_state,
+    parse_marker,
     parse_review_note,
     plan_state,
     post_consensus,
@@ -1366,6 +1367,42 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_existing_marker_updates_when_only_source_identity_changes(self) -> None:
+        client = FakePostClient("head")
+        old_consensus = self._consensus()
+        old_group = old_consensus["groups"][0]
+        old_body, old_hash = render_body(
+            old_group, 1, "run", posting_mode="gitlab_discussions"
+        )
+        client.discussions = [
+            {
+                "id": "existing-discussion",
+                "notes": [
+                    {
+                        "id": 123,
+                        "author": {"id": 10},
+                        "body": old_body,
+                    }
+                ],
+            }
+        ]
+        new_consensus = copy.deepcopy(old_consensus)
+        new_consensus["groups"][0]["source_finding_ids"] = ["c" * 64]
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._manifest("head"),
+            new_consensus,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(result["skipped_unchanged"], 0)
+        self.assertEqual(client.updated, 1)
+        self.assertNotEqual(old_hash, parse_marker(client.updated_notes[0]["body"])["body_hash"])
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_existing_marker_updates_changed_body(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
@@ -1709,7 +1746,7 @@ class PostTests(unittest.TestCase):
         )
 
         self.assertIn("- **MAJOR** correctness", body)
-        self.assertIn("Body:\n```text\nFirst line\n\nSecond line\n```", body)
+        self.assertIn("  Body:\n  ```text\n  First line\n  \n  Second line\n  ```", body)
 
     def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
         group = self._consensus()["groups"][0]
@@ -1724,9 +1761,8 @@ class PostTests(unittest.TestCase):
 
         self.assertIn("`src/# > $file$.py:2`", body)
         self.assertIn("``# title `with` math $x$``", body)
-        self.assertIn("Body:\n```text\n- body\n> quote", body)
-        self.assertIn("< !-- not a marker -- >", body)
-        self.assertNotIn("  > ", body)
+        self.assertIn("  Body:\n  ```text\n  - body\n  > quote", body)
+        self.assertIn("  < !-- not a marker -- >", body)
         self.assertEqual(body.count("<!--"), 1)
 
     def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
@@ -1737,6 +1773,7 @@ class PostTests(unittest.TestCase):
         self.assertIsNotNone(parsed_v3)
         assert parsed_v3 is not None
         self.assertEqual(parsed_v3["title"], "Title")
+        self.assertEqual(parsed_v3["summary"], "Body")
 
         v2_marker = (
             "<!-- ai-review:v1 issue_id="
@@ -1748,25 +1785,90 @@ class PostTests(unittest.TestCase):
         self.assertIsNotNone(parsed_v2)
         assert parsed_v2 is not None
         self.assertEqual(parsed_v2["title"], "Legacy title")
+        self.assertEqual(parsed_v2["summary"], "Legacy body")
+
+    def test_review_note_parser_recovers_v3_body_and_stops_at_bot_sections(self) -> None:
+        body = "\n".join(
+            [
+                "**AI review: MAJOR correctness**",
+                "",
+                "Title: `` `starts with ticks` ``",
+                "",
+                "Body:",
+                "",
+                "````text",
+                "first line",
+                "Evidence: still body data",
+                "```python",
+                "second line",
+                "````",
+                "",
+                "Dissent:",
+                "- `critic`:",
+                "```text",
+                "ignored rationale",
+                "```",
+                "",
+                "Consensus:",
+                "- Decision: surface",
+            ]
+        )
+
+        parsed = parse_review_note(body)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["title"], "`starts with ticks`")
+        self.assertEqual(
+            parsed["summary"], "first line\nEvidence: still body data\n```python\nsecond line"
+        )
+        self.assertNotIn("Dissent:", parsed["summary"])
+
+    def test_review_note_parser_handles_blank_lines_and_malformed_title_fallback(self) -> None:
+        body = "\n".join(
+            [
+                "**AI review: MINOR style**",
+                "",
+                "",
+                "Title: malformed title from an older note",
+                "",
+                "Body:",
+                "",
+                "legacy body",
+                "",
+                "Evidence:",
+            ]
+        )
+
+        parsed = parse_review_note(body)
+
+        self.assertEqual(
+            parsed,
+            {
+                "category": "style",
+                "title": "malformed title from an older note",
+                "summary": "legacy body",
+            },
+        )
 
     def test_summary_section_descriptors_drop_by_declared_priority(self) -> None:
         sections = [
             SummarySectionDescriptor(
-                header_factory=lambda shown, total: f"first:{shown}/{total}",
+                header_factory=lambda shown: f"first:{shown}/1",
                 entries=["first-entry"],
                 trailer_factory=lambda omitted: [],
                 drop_priority=20,
                 retained_count=1,
             ),
             SummarySectionDescriptor(
-                header_factory=lambda shown, total: f"second:{shown}/{total}",
+                header_factory=lambda shown: f"second:{shown}/1",
                 entries=["second-entry"],
                 trailer_factory=lambda omitted: [],
                 drop_priority=5,
                 retained_count=1,
             ),
             SummarySectionDescriptor(
-                header_factory=lambda shown, total: f"third:{shown}/{total}",
+                header_factory=lambda shown: f"third:{shown}/1",
                 entries=["third-entry"],
                 trailer_factory=lambda omitted: [],
                 drop_priority=10,

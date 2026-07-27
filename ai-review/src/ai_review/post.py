@@ -41,9 +41,6 @@ from .render import (
 from .render import (
     source_hash as _source_hash,
 )
-from .render import (
-    validate_suggestion as _validate_suggestion,
-)
 from .schema import load_json_file, now_iso, validate_instance, write_canonical_json
 from .types import (
     Anchor,
@@ -55,10 +52,6 @@ from .types import (
     StateRecordStatus,
     SummaryComment,
 )
-
-
-def validate_suggestion(suggestion: str | None) -> bool:
-    return _validate_suggestion(suggestion)
 
 
 def source_hash(source_finding_ids: list[str]) -> str:
@@ -95,6 +88,10 @@ SUMMARY_MARKER_RE = re.compile(
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
+REVIEW_SECTION_BOUNDARIES = frozenset(
+    {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
+)
+BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
 LOGGER = logging.getLogger(__name__)
@@ -141,6 +138,57 @@ def parse_marker(body: str) -> dict[str, str] | None:
     return matches[-1].groupdict()
 
 
+def _parse_review_title(line: str) -> tuple[str, bool]:
+    """Return a v2/v3 title and whether the line used the v3 label."""
+
+    title_line = line.strip()
+    if not title_line.startswith("Title:"):
+        return title_line, False
+    rendered_title = title_line.removeprefix("Title:").strip()
+    if rendered_title == "(empty)":
+        return "", True
+    span_match = re.fullmatch(
+        r"(?P<delimiter>`+)(?P<value>.*)(?P=delimiter)", rendered_title
+    )
+    if span_match is None:
+        # A hand-edited or older note may retain the label without a valid
+        # code span. The text after the label is still useful state data.
+        return rendered_title, True
+    value = span_match.group("value")
+    if value.startswith(" ") and value.endswith(" ") and value.strip():
+        value = value[1:-1]
+    return value.replace(r"\n", "\n"), True
+
+
+def _read_review_body(lines: list[str]) -> list[str]:
+    """Read a v2/v3 body without consuming renderer-owned later sections."""
+
+    start = 0
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+    if start >= len(lines) or lines[start].strip() in REVIEW_SECTION_BOUNDARIES:
+        return []
+
+    opening_match = BODY_FENCE_RE.fullmatch(lines[start].strip())
+    if opening_match is not None:
+        delimiter = opening_match.group("delimiter")
+        content: list[str] = []
+        for line in lines[start + 1 :]:
+            if line.strip() == delimiter:
+                break
+            if line.strip() in REVIEW_SECTION_BOUNDARIES:
+                break
+            content.append(line)
+        return content
+
+    content = []
+    for line in lines[start:]:
+        if line.strip() in REVIEW_SECTION_BOUNDARIES:
+            break
+        content.append(line)
+    return content
+
+
 def parse_review_note(body: str) -> dict[str, str] | None:
     without_marker = MARKER_RE.sub("", body).strip()
     lines = without_marker.splitlines()
@@ -160,26 +208,15 @@ def parse_review_note(body: str) -> dict[str, str] | None:
     if not remaining:
         return None
 
-    title_line = remaining[0].strip()
-    title = title_line
-    if title_line.startswith("Title:"):
-        rendered_title = title_line.removeprefix("Title:").strip()
-        if rendered_title == "(empty)":
-            title = ""
-        else:
-            span_match = re.fullmatch(
-                r"(?P<delimiter>`+)(?P<value>.*)(?P=delimiter)", rendered_title
-            )
-            if span_match is not None:
-                title = span_match.group("value").replace(r"\n", "\n")
-    summary_lines: list[str] = []
-    summary_start = 1
-    if title_line.startswith("Title:") and len(remaining) > 1 and remaining[1].strip() == "Body:":
-        summary_start = 2
-    for line in remaining[summary_start:]:
-        if line.strip() == "Evidence:":
-            break
-        summary_lines.append(line)
+    title, labelled_title = _parse_review_title(remaining[0])
+    remaining = remaining[1:]
+    while remaining and not remaining[0].strip():
+        remaining.pop(0)
+    if labelled_title and remaining and remaining[0].strip() == "Body:":
+        remaining = remaining[1:]
+    summary_lines = _read_review_body(remaining)
+    if summary_lines == ["(empty)"]:
+        summary_lines = []
     return {
         "category": header_match.group("category").strip(),
         "title": title,
@@ -631,17 +668,16 @@ def _anchor_location(anchor: dict[str, Any]) -> str:
 def _summary_line(group: Mapping[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
     location = literal_span(_anchor_location(anchor), required=True)
-    assert location is not None
     severity = str(group.get("final_severity") or "").upper()
     category = str(group.get("category") or "")
     title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
-    assert title is not None
     category_part = f" {category}" if category else ""
     header = f"- **{severity}**{category_part} — {location}: {title}"
     detail = literal_block(str(group.get("body") or ""))
     if detail is None:
         return header
-    return f"{header}\nBody:\n{detail}"
+    indented_detail = "\n".join(f"  {line}" for line in detail.split("\n"))
+    return f"{header}\n  Body:\n{indented_detail}"
 
 
 @overload
@@ -664,7 +700,7 @@ def _sort_groups(groups: list[Any]) -> list[Any]:
 
 @dataclass
 class SummarySectionDescriptor:
-    header_factory: Callable[[int, int], str]
+    header_factory: Callable[[int], str]
     entries: list[str]
     trailer_factory: Callable[[int], list[str]]
     drop_priority: int
@@ -676,7 +712,7 @@ def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
     for section in sections:
         total = len(section.entries)
         section_lines = [
-            section.header_factory(section.retained_count, total),
+            section.header_factory(section.retained_count),
             *section.entries[: section.retained_count],
             *section.trailer_factory(total - section.retained_count),
         ]
@@ -697,6 +733,24 @@ def _drop_lowest_priority_trailing_entry(
     _, section = min(candidates, key=lambda candidate: (candidate[1].drop_priority, -candidate[0]))
     section.retained_count -= 1
     return True
+
+
+def _summary_section_length(
+    section: SummarySectionDescriptor,
+    entry_prefix_lengths: list[int],
+) -> int:
+    """Return one section's exact length without composing the full summary."""
+
+    total = len(section.entries)
+    trailers = section.trailer_factory(total - section.retained_count)
+    line_count = 1 + section.retained_count + len(trailers)
+    return (
+        len(section.header_factory(section.retained_count))
+        + entry_prefix_lengths[section.retained_count]
+        + sum(len(trailer) for trailer in trailers)
+        + line_count
+        - 1
+    )
 
 
 def render_summary_body(
@@ -743,7 +797,7 @@ def render_summary_body(
     if fallback_sorted:
         sections.append(
             SummarySectionDescriptor(
-                header_factory=lambda shown, total: section_header(
+                header_factory=lambda shown: section_header(
                     "Findings not posted inline", shown, len(fallback_sorted)
                 ),
                 entries=fallback_entries,
@@ -755,7 +809,7 @@ def render_summary_body(
     if fyi_sorted:
         sections.append(
             SummarySectionDescriptor(
-                header_factory=lambda shown, total: section_header(
+                header_factory=lambda shown: section_header(
                     "Advisory (FYI) findings", shown, len(fyi_sorted)
                 ),
                 entries=fyi_entries,
@@ -765,18 +819,51 @@ def render_summary_body(
             )
         )
 
+    def prefix_lengths(entries: list[str]) -> list[int]:
+        lengths = [0]
+        for entry in entries:
+            lengths.append(lengths[-1] + len(entry))
+        return lengths
+
+    entry_prefix_lengths = {
+        id(section): prefix_lengths(section.entries) for section in sections
+    }
+    section_lengths = [
+        _summary_section_length(section, entry_prefix_lengths[id(section)])
+        for section in sections
+    ]
+
     def rendered_size() -> int:
-        return len(_compose_summary_sections(sections)) + len("\n\n") + len(placeholder_marker)
+        return (
+            len("**AI review summary**")
+            + sum(2 + section_length for section_length in section_lengths)
+            + len("\n\n")
+            + len(placeholder_marker)
+        )
+
+    def drop_entry() -> bool:
+        previous_counts = [section.retained_count for section in sections]
+        if not _drop_lowest_priority_trailing_entry(sections):
+            return False
+        for index, (previous, section) in enumerate(
+            zip(previous_counts, sections, strict=True)
+        ):
+            if previous != section.retained_count:
+                section_lengths[index] = _summary_section_length(
+                    section, entry_prefix_lengths[id(section)]
+                )
+                break
+        return True
 
     while rendered_size() > max_comment_size:
-        if not _drop_lowest_priority_trailing_entry(sections):
+        if not drop_entry():
             raise ValueError("platform comment limit is too small for summary marker")
 
     body_without_marker = _compose_summary_sections(sections)
     # The composed string is the source of truth. If layout and size arithmetic
     # ever drift, keep dropping whole trailing entries until the real payload fits.
     while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
-        if not _drop_lowest_priority_trailing_entry(sections):
+        if not drop_entry():
             raise ValueError("platform comment limit is too small for summary marker")
         body_without_marker = _compose_summary_sections(sections)
 

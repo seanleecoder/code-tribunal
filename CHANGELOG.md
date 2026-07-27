@@ -169,6 +169,9 @@ versioning.
 - The posted-body format is now `render-body.v3`. Existing bot-authored inline
   threads receive a one-time body update on the next review run; issue IDs, state
   records, and marker grammar remain unchanged.
+- Consensus `category` inputs are now restricted to the finding-batch enum at the
+  posting boundary. Pipeline-produced artifacts remain compatible; hand-edited or
+  third-party artifacts with arbitrary categories must be corrected before posting.
 - Replace legacy top-level `state.overflow_behavior: fail_closed` with
   `state.fail_closed_on_load_error: true`; the legacy key is now rejected.
   Remove `critique.max_rounds`. Rename `state.retention.keep_resolved_runs` and

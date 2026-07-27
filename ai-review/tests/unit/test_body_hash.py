@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from ai_review.post import parse_marker, render_body, validate_suggestion
-from ai_review.render import PLATFORM_COMMENT_LIMITS, platform_comment_limit
+from ai_review.post import parse_marker, render_body
+from ai_review.render import PLATFORM_COMMENT_LIMITS, literal_span, platform_comment_limit
 
 
 class BodyHashTests(unittest.TestCase):
@@ -32,6 +32,39 @@ class BodyHashTests(unittest.TestCase):
         )
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
+
+    def test_body_hash_includes_canonical_source_identity(self) -> None:
+        first_group = self._group()
+        second_group = self._group()
+        second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
+
+        first, first_hash = render_body(
+            first_group, 3, "run", posting_mode="gitlab_discussions"
+        )
+        second, second_hash = render_body(
+            second_group, 3, "run", posting_mode="gitlab_discussions"
+        )
+
+        self.assertEqual(
+            first.rsplit("\n\n<!--", 1)[0], second.rsplit("\n\n<!--", 1)[0]
+        )
+        self.assertNotEqual(first_hash, second_hash)
+        self.assertNotEqual(parse_marker(first), parse_marker(second))
+
+    def test_boundary_backticks_get_standard_code_span_padding(self) -> None:
+        self.assertEqual(literal_span("`leading", required=True), "`` `leading ``")
+        self.assertEqual(literal_span("trailing`", required=True), "`` trailing` ``")
+        self.assertEqual(literal_span("`both`", required=True), "`` `both` ``")
+        for value in ("`leading", "trailing`", "`both`"):
+            rendered = literal_span(value, required=True)
+            delimiter = rendered.split(" ", 1)[0]
+            self.assertEqual(rendered.count(delimiter), 2)
+
+    def test_scalar_cap_precedes_display_encoding(self) -> None:
+        self.assertEqual(
+            literal_span("`" + ("x" * 300), max_length=3, required=True),
+            "`` `xx ``",
+        )
 
     def test_v2_and_v3_markers_remain_parseable(self) -> None:
         body, _body_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
@@ -87,7 +120,7 @@ class BodyHashTests(unittest.TestCase):
         )
         self.assertEqual(
             body_hash,
-            "0d1b8d0d61bd5c1ad5b0c13b2a80d2e8f9124e11c363ef82a41e27fba4974357",
+            "bde28f1c8b768f14f2443f6f62b5710bd29df2a3bf2d6744b73822b16a8b2029",
         )
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
@@ -187,11 +220,6 @@ class BodyHashTests(unittest.TestCase):
 
         self.assertIn("Suggestion:\n````text\n```python", valid_body)
         self.assertIn("Suggestion:\n````text\n```python", invalid_body)
-
-    def test_validate_suggestion_rejects_markers_and_unbalanced_fences(self) -> None:
-        self.assertFalse(validate_suggestion("<!-- ai-review:v1 -->"))
-        self.assertFalse(validate_suggestion("```python\nx = 1"))
-        self.assertTrue(validate_suggestion("```python\nx = 1\n```"))
 
     def test_long_model_content_survives_below_platform_limit(self) -> None:
         group = self._group()

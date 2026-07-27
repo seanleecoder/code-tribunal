@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, overload
 
 from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
@@ -66,6 +66,33 @@ def _sanitized_literal(value: str, *, max_length: int | None = None) -> str:
     return sanitize_model_text(value, max_length=max_length)
 
 
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: Literal[True],
+) -> str: ...
+
+
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: Literal[False] = False,
+) -> str | None: ...
+
+
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: bool,
+) -> str | None: ...
+
+
 def literal_span(
     value: str,
     *,
@@ -79,11 +106,19 @@ def literal_span(
     line or list boundary.  ``None`` means an optional value is empty.
     """
 
+    # ``max_length`` deliberately caps the normalized scalar before display
+    # encoding (newline escaping, delimiter selection, and boundary padding).
+    # Platform limits govern the final rendered payload separately.
     sanitized = _sanitized_literal(value, max_length=max_length)
     if not sanitized:
         return "(empty)" if required else None
     scalar = sanitized.replace("\n", r"\n")
     delimiter = "`" * (_longest_backtick_run(scalar) + 1)
+    if scalar.startswith("`") or scalar.endswith("`"):
+        # CommonMark removes one matching outer space from a code span. Add
+        # both sides when either boundary is a backtick so the displayed
+        # scalar remains unchanged while the delimiter is unambiguous.
+        scalar = f" {scalar} "
     return f"{delimiter}{scalar}{delimiter}"
 
 
@@ -146,6 +181,33 @@ def _block_fragment(label: str, value: str, *, required: bool = False) -> Render
 
 def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
     return _FRAGMENT_SEPARATOR.join(fragment.text for fragment in fragments)
+
+
+def details_fragment(
+    summary_text: str,
+    fragments: Sequence[RenderFragment],
+) -> RenderFragment:
+    """Compose an atomic, renderer-owned disclosure fragment.
+
+    ``summary_text`` is supplied by the renderer, not model output. The
+    fragments must already carry their own literal delimiters; this compositor
+    never interpolates raw model text into the disclosure structure. Escaping
+    the summary defensively keeps an accidental closing tag inert as well.
+    """
+
+    if not isinstance(summary_text, str):
+        raise TypeError("details summary must be renderer-owned text")
+    if any(not isinstance(fragment, RenderFragment) for fragment in fragments):
+        raise TypeError("details content must contain RenderFragment values")
+    escaped_summary = (
+        summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    content = _compose_fragments(fragments)
+    text = f"<details>\n<summary>{escaped_summary}</summary>\n\n"
+    if content:
+        text += content + "\n"
+    text += "</details>"
+    return RenderFragment(text=text, kind="text")
 
 
 def _partial_block(fragment: RenderFragment, available: int) -> str | None:
@@ -252,29 +314,24 @@ def limit_body_before_marker(
     return limited_body + _FRAGMENT_SEPARATOR + reserved_suffix
 
 
-def validate_suggestion(suggestion: str | None) -> bool:
-    """Legacy validation helper; rendering no longer uses it as a gate."""
-
-    if suggestion is None:
-        return True
-    if "<!--" in suggestion or "-->" in suggestion:
-        return False
-    return suggestion.count("```") % 2 == 0
-
-
 def source_hash(source_finding_ids: list[str]) -> str:
     return sha256_hex(canonical_json(sorted(source_finding_ids)))
 
 
 def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
-    """Hash only the final rendered body, never raw model fields."""
+    """Hash rendered content plus the canonical source identity.
 
-    del group
+    The source hash is a renderer/marker identity input, not raw model text. It
+    ensures a same-looking finding from a different source set still refreshes
+    an existing bot-owned discussion.
+    """
+
     return sha256_hex(
         canonical_json(
             {
                 "render_body_version": RENDER_BODY_VERSION,
                 "body_without_marker": body_without_marker,
+                "source_hash": source_hash(group.get("source_finding_ids", [])),
             }
         )
     )
@@ -382,7 +439,6 @@ def render_body(
             variable_fragments.append(suggestion_fragment)
 
     reviewer_span = literal_span(", ".join(reviewers), required=True)
-    assert reviewer_span is not None
     consensus_footer = "\n".join(
         [
             "Consensus:",
