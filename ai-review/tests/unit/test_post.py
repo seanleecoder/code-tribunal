@@ -2269,6 +2269,80 @@ class PostTests(unittest.TestCase):
         self.assertEqual(state_after["records"][0]["remap_status"], "remapped")
         validate_instance(result, "post_result.schema.json")
 
+    def _one_sided_diff(self, *, added: bool, line: int, text: str = "target") -> str:
+        path = "src/new.py" if added else "src/gone.py"
+        return "\n".join(
+            [
+                f"diff --git a/{path} b/{path}",
+                "new file mode 100644" if added else "deleted file mode 100644",
+                "--- /dev/null" if added else f"--- a/{path}",
+                f"+++ b/{path}" if added else "+++ /dev/null",
+                f"@@ -0,0 +{line},1 @@" if added else f"@@ -{line},1 +0,0 @@",
+                ("+" if added else "-") + text,
+            ]
+        )
+
+    def test_post_one_sided_remap_updates_existing_discussion(self) -> None:
+        # An added file's diff has no old side and a deleted file's no new side.
+        # A drifted anchor on either must follow the line and update the existing
+        # thread, not fall back to a stale/summary comment.
+        for added in (True, False):
+            with self.subTest(added=added):
+                path = "src/new.py" if added else "src/gone.py"
+                side = "new" if added else "old"
+                consensus = self._consensus()
+                group = consensus["groups"][0]
+                group["representative_anchor"] = {
+                    "new_path": path,
+                    "old_path": path,
+                    "side": side,
+                    "start": {
+                        "old_line": None if added else 2,
+                        "new_line": 2 if added else None,
+                        "line_code": None,
+                    },
+                    "end": {
+                        "old_line": None if added else 2,
+                        "new_line": 2 if added else None,
+                        "line_code": None,
+                    },
+                }
+                old_diff = self._one_sided_diff(added=added, line=2)
+                current_diff = self._one_sided_diff(added=added, line=4)
+                anchor = copy.deepcopy(group["representative_anchor"])
+                anchor["hunk_header"] = ""
+                anchor["symbol"] = None
+                anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
+                state = self._state_with_records([self._state_record(group, anchor=anchor)])
+                client = StatePostClient("head", state)
+                config = self._state_config()
+                config["posting"]["v1_inline_sides"] = ["new", "old"]
+
+                result = post_consensus(
+                    client,  # type: ignore[arg-type]
+                    config,
+                    self._manifest("head"),
+                    consensus,
+                    diff_text=current_diff,
+                )
+
+                self.assertEqual(result["created_discussions"], 0)
+                self.assertEqual(result["updated_discussions"], 1)
+                self.assertEqual(result["stale_unverified"], 0)
+                self.assertEqual(result["summary_comment"]["action"], "none")
+                self.assertEqual(client.updated_notes[0]["discussion_id"], "existing-discussion")
+                record_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])[
+                    "records"
+                ][0]
+                self.assertEqual(record_after["remap_status"], "remapped")
+                self.assertEqual(record_after["status"], "open")
+                line_key = "new_line" if added else "old_line"
+                self.assertEqual(record_after["anchor"]["start"][line_key], 4)
+                # Both sides carry the real path so the anchor stays postable.
+                self.assertEqual(record_after["anchor"]["old_path"], path)
+                self.assertEqual(record_after["anchor"]["new_path"], path)
+                validate_instance(result, "post_result.schema.json")
+
     def test_post_remapped_anchor_creates_at_new_position_without_root_note(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]

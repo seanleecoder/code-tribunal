@@ -149,15 +149,24 @@ def candidate_issue_signature_hash(signature: dict[str, Any]) -> str:
 DEV_NULL = "/dev/null"
 
 
-def _parse_side_path(path: str) -> str | None:
+def _strip_side_timestamp(path: str) -> str:
+    # Git never appends a timestamp to a `---`/`+++` path, but other unified-diff
+    # producers do, after a tab. Drop it so both the sentinel check and the real
+    # path survive such a diff.
+    return path.split("\t", 1)[0].strip()
+
+
+def _is_dev_null(path: str | None) -> bool:
     # `/dev/null` is git's sentinel for "this side does not exist" (added or
     # deleted file). It is not a repo path, and keeping it would make every
     # downstream normalize_path() call reject the anchor as absolute.
-    # Git never emits a timestamp, but other diff producers append one after a
-    # tab; strip it so the sentinel is still recognised.
-    if path.split("\t", 1)[0].strip() == DEV_NULL:
+    return path is not None and _strip_side_timestamp(path) == DEV_NULL
+
+
+def _parse_side_path(path: str) -> str | None:
+    if _is_dev_null(path):
         return None
-    return strip_diff_prefix(path)
+    return strip_diff_prefix(_strip_side_timestamp(path))
 
 
 def resolve_side_paths(old_path: str | None, new_path: str | None) -> tuple[str, str]:
@@ -166,11 +175,16 @@ def resolve_side_paths(old_path: str | None, new_path: str | None) -> tuple[str,
     An added file has no old side and a deleted file has no new side (git spells
     that ``/dev/null``). Anchors carry both paths, and finalization rejects
     ``/dev/null`` as absolute, so each side falls back to the other — for an
-    added file both sides are the new file anyway.
+    added file both sides are the new file anyway. Callers reading a single side
+    must therefore not treat a populated path as proof the side exists; use
+    ``anchor["side"]`` for that.
+
+    Accepts raw reviewer output as well as parser output, so the sentinel check
+    is the same lenient one the parser uses.
     """
 
-    old = None if not old_path or old_path == DEV_NULL else old_path
-    new = None if not new_path or new_path == DEV_NULL else new_path
+    old = None if not old_path or _is_dev_null(old_path) else old_path
+    new = None if not new_path or _is_dev_null(new_path) else new_path
     return (old or new or ""), (new or old or "")
 
 
@@ -345,6 +359,9 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
         # neither is unanchorable.
         if not diff_file.old_path and not diff_file.new_path:
             continue
+        # A one-sided file borrows its path into the absent side so the remapped
+        # anchor stays postable. `side` remains the source of truth for which
+        # side actually exists.
         remap_old, remap_new = resolve_side_paths(diff_file.old_path, diff_file.new_path)
         side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
         for index, line in enumerate(side_lines):
