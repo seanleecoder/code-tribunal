@@ -14,6 +14,6 @@ Phase 3 landed in three reviewable increments:
    and publish-workflow actions, with a supply-chain drift check.
 
 The authoritative reconciliation of these claims against the current tree is in
-[completion-audit.md](completion-audit.md). Deferred ideas are intentionally
+[completion-audit.md](../../improvement-specs/completion-audit.md). Deferred ideas are intentionally
 absent from this active record and stored as independent documents under
-[`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
+[`../../archived-improvement-plans/`](../../archived-improvement-plans/README.md).

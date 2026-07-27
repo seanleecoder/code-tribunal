@@ -2,7 +2,7 @@
 
 > Status: complete on `main`; retained as implementation history. The former
 > platform composition-root follow-up is recorded as resolved in the
-> [completion audit](completion-audit.md).
+> [completion audit](../../improvement-specs/completion-audit.md).
 
 Adds GitHub support and reproducible image inputs. Paused product ideas are not
 part of this phase or the active roadmap.

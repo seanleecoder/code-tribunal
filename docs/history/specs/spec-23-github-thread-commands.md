@@ -1,7 +1,7 @@
 # SPEC-23 — GitHub review-thread grouping: working `/ai-review` commands and real thread resolution
 
 > **Historical completed requirement.** Current behavior is documented under
-> [`../reference/`](../reference/README.md); this file is non-normative.
+> [`../../reference/`](../../reference/README.md); this file is non-normative.
 
 - **Severity:** High (documented feature silently dead on GitHub) · **Effort:** M · **ROI rank:** 1 (pre-1.0)
 - **Depends on:** none.

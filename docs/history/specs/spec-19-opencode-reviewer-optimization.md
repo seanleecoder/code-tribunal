@@ -34,7 +34,7 @@ default), and on `google/gemini-3.1-flash-lite` it cost more per review than the
 `claude` (Haiku 4.5) and `codex` (gpt-5.4-mini) reviewers on stronger models.
 
 This rationale records the pre-change 1.0.0 baseline; current defaults are
-documented in the [configuration reference](../configuration.md).
+documented in the [configuration reference](../../configuration.md).
 
 All three reviewers receive the identical rendered prompt
 (`ai-review/prompts/review.md` + manifest + diff) and the same read-only
