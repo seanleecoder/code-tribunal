@@ -423,12 +423,12 @@ class DocumentationContractTests(unittest.TestCase):
 
         self.assertEqual(len(issues), 2)
         self.assertIn(
-            "docs/reference/internal: documentation directory contains markdown files "
+            "docs/reference/internal: docs directory contains markdown files "
             "but no README.md index",
             issues[0],
         )
         self.assertIn(
-            "docs/unindexed: documentation directory contains markdown files "
+            "docs/unindexed: docs directory contains markdown files "
             "but no README.md index",
             issues[1],
         )

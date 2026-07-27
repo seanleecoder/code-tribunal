@@ -39,6 +39,8 @@ RELEASE_STATE_DOCS = (
 # public paths such as docs/reference/internal/.
 # docs/ needs no index of its own because root README.md links every top-level
 # docs/*.md file; _root_doc_index_issues() enforces that premise rather than asserting it.
+# If root README.md ever outgrows its line budget, drop docs/ from this set and give the
+# directory its own README.md instead of stretching the root index.
 EXCLUDED_README_PATHS = {Path("docs")}
 # docs/internal/ is an internal workspace and needs no public index, subtrees included.
 EXCLUDED_README_TREES = {Path("docs/internal")}
@@ -455,13 +457,21 @@ def _needs_readme(directory: Path) -> bool:
 
 
 def _directory_readme_issues() -> list[str]:
+    """Require a README.md index in every docs/ directory that holds markdown.
+
+    Deliberately scoped to docs/ — the reader-facing tree. Markdown elsewhere is not
+    documentation in the same sense: ai-review/prompts/*.md are runtime reviewer prompt
+    assets rendered by prompt_render, ai-review/ and ai-review/rules/ already carry their
+    own README.md, and ai-review/docs/acceptance/ is historical material indexed from
+    docs/history/README.md. Widen the scope here if that stops being true.
+    """
     issues: list[str] = []
     docs_root = ROOT / "docs"
     for directory in sorted(chain([docs_root], docs_root.rglob("*"))):
         if _needs_readme(directory):
             issues.append(
-                f"{directory.relative_to(ROOT)}: documentation directory contains "
-                "markdown files but no README.md index"
+                f"{directory.relative_to(ROOT)}: docs directory contains markdown "
+                "files but no README.md index"
             )
     return issues
 
@@ -471,6 +481,8 @@ def _linked_paths(source: Path, text: str) -> set[Path]:
 
     Uses the same destination parsing as _link_issues() so that any spelling a link
     checker accepts — `](x.md#anchor)`, `](x.md "Title")`, `](<x.md>)` — counts here too.
+    Inline links only, matching _link_issues(): the repository defines no reference-style
+    links today, and one introduced in an index would read here as an unlinked file.
     """
     linked: set[Path] = set()
     for raw_target in _markdown_link_targets(text):
