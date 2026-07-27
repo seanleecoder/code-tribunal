@@ -45,8 +45,8 @@ run artifact and job output, not the maintainer's comment thread.
 
 **In:** additive consensus provenance, a persisted suppression reason, tiered
 inline/summary rendering behind renderer-owned disclosure, an opt-in summary audit
-for majority-noise suppression, schema/type/golden updates, and one
-renderer-version refresh shared with SPEC-44.
+for majority-noise suppression, schema/type/golden updates, and the
+`render-body.v4` refresh.
 
 **Out:** critique prompts and verdict vocabulary; grouping, quorum, severity, merge
 gate, state matching, state retention, or the rules that determine whether a
@@ -264,13 +264,14 @@ size-accounting or drop loop. A partially rendered rationale is never posted.
 5. In `config.py` and `config/review.yaml`, add `critique.show_disposition_audit`
    defaulting to `false`. Follow the `max_findings` precedent: YAML-only, no
    environment override, and no rejection of an unsupported one.
-6. **Renderer version.** If SPEC-44 and SPEC-45 ship in the same release, they must
-   share a single `render-body.v3` bump and a single one-time thread refresh. Only if
-   SPEC-45 ships in a later release than SPEC-44 does it set
-   `RENDER_BODY_VERSION` to `render-body.v4`. Two refresh waves across maintainers'
-   open merge requests for one feature arc is avoidable churn, and the version string
-   is not itself a compatibility surface — the marker grammar is, and it does not
-   change.
+6. **Renderer version.** Set `RENDER_BODY_VERSION` to `render-body.v4`,
+   unconditionally. No conditional or shared version string is needed: the constant is
+   compiled into the release, so if SPEC-44 and SPEC-45 ship together only `v4` is ever
+   posted and there is exactly one refresh. The only real requirement is a packaging
+   one — **SPEC-44's `render-body.v3` must not ship in a release of its own unless
+   SPEC-45 is genuinely deferred**, because two sequential releases mean two refresh
+   waves across maintainers' open merge requests. The version string is not a
+   compatibility surface; the marker grammar is, and it does not change.
 7. When implementation lands, update current consensus/rendering reference material
    and CHANGELOG in that implementation change. This proposed specification does
    not claim those current documents have already changed.
@@ -284,16 +285,36 @@ disposition selection, because neither their noise rationales nor their suppress
 reason was ever stored. Treat a missing `drop_reason` as "unknown", never as
 `critique_majority_noise`.
 
-Renderer churn depends on release packaging (implementation surface item 6): shared
-with SPEC-44 in a combined release, or one deliberate `render-body.v4` refresh if
-SPEC-45 lands later. Either way it does not change issue IDs, state records,
-consensus decisions, or merge gates. Reverting the feature restores the prior
-renderer and causes at most one reverse refresh; retain the additive artifact fields
-so historical run records remain inspectable.
+`render-body.v4` causes one deliberate refresh of existing bot threads. Shipping
+SPEC-44 and SPEC-45 in one release keeps that at one refresh total rather than two
+(implementation surface item 6). It does not change issue IDs, state records, consensus
+decisions, or merge gates. Reverting the feature restores the prior renderer and causes
+at most one reverse refresh; retain the additive artifact fields so historical run
+records remain inspectable.
 
 Enabling `critique.show_disposition_audit` on an existing repository changes only
 the summary comment's content and hash, triggering its normal upsert. Disabling it
 again removes the section through the same path.
+
+## Deviations from the original draft
+
+These requirements changed after the first committed draft of this specification. Each
+is a deliberate maintainer decision, recorded here so a reviewer comparing against the
+original sees intent rather than drift.
+
+**The retention obligation is unchanged.** Every deviation below is about *display*
+budget; `critique_observations` still records every selected effective non-agree
+critique in full, so nothing the original draft preserved has been lost from the
+artifact.
+
+| Original requirement | Now | Reason |
+| --- | --- | --- |
+| All critique reasoning expanded in normal inline and summary output | Counts line always; dispute expanded, noise elided to one line, valid-duplicate rationale retained but not rendered | On an N-reviewer panel a group has up to N−1 critics, so expanded blocks can occupy three to four times the space of the finding they annotate. Value per line differs sharply by verdict. |
+| `Found by` on inline and summary entries | Summary entries only | The inline consensus footer already emits `- Reviewers: {sorted contributing_reviewers}` from the identical source; inline `Found by` would be byte-for-byte duplicate provenance. Summary entries have no footer. |
+| Critique disposition audit posted by default | Artifact and job output by default; MR summary opt-in via `critique.show_disposition_audit` | Majority-noise suppression exists to reduce maintainer clutter; re-posting suppressed titles and rationales partially undoes the suppression it audits, and the audience is whoever tunes the panel. |
+| Suppression selected by re-testing `critique_noise_count > len(eligible_critics) / 2` downstream | Selected by the persisted `drop_reason` | Not a preference: `successful_critics` is a local in `_apply_critiques` and is never written to the artifact, so the predicate was not computable downstream at all. |
+
+`render-body.v4` is unchanged from the original draft.
 
 ## Acceptance criteria
 

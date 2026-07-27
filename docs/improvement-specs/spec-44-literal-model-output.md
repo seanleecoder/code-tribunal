@@ -16,7 +16,17 @@ consume the bot-owned footer or marker.
 
 The product must make a clear trust boundary: only renderer-owned labels,
 delimiters, lists, emphasis, disclosure elements, and machine markers may be
-Markdown. Every dynamic value must be literal data.
+Markdown.
+
+**Every free-text or path-shaped value must be literal data.** That is the boundary
+this specification enforces, and it is deliberately narrower than "every dynamic
+value". Closed enumerations — `severity`, `category`, `decision`, and the other fixed
+vocabularies — are constrained by `finding_batch.schema.json` before they reach the
+renderer, so a model cannot place arbitrary bytes in them and they remain
+renderer-owned text. Stating the limit here is a decision, not an exemption
+discovered later: a rule of "every dynamic value" would either be violated by the
+existing severity header or would force closed enums through a literal API that buys
+no safety.
 
 ## Design decision: fenced literals over selective escaping
 
@@ -45,19 +55,20 @@ an oversight.
 
 ## Scope
 
-**In:** the common rendering path for inline threads and summary comments; all
-visible dynamic values (model text, reviewer names, paths, titles, bodies,
-evidence, critique rationale, and suggestions); GitHub and GitLab platform-size
-handling; rendering tests and golden fixtures.
+**In:** the common rendering path for inline threads and summary comments; every
+visible free-text or path-shaped value (model text, reviewer names, paths, titles,
+bodies, evidence, critique rationale, and suggestions); GitHub and GitLab
+platform-size handling; rendering tests and golden fixtures.
 
 **Out:** changing consensus, voting, redaction rules, reviewer prompting, schema
 meaning, or allowing a supported subset of model-authored Markdown. This is not a
-formatting-preference feature: model-originated content is never partially trusted
-Markdown.
+formatting-preference feature: model-originated free text is never partially trusted
+Markdown. Also out: routing schema-validated closed enums through the literal API
+(see the boundary statement in the rationale).
 
 ## Rendering contract
 
-### One renderer owns every dynamic value
+### One renderer owns every free-text and path-shaped value
 
 Introduce a small renderer-owned literal API in
 [`ai-review/src/ai_review/render.py`](../../ai-review/src/ai_review/render.py), for
@@ -80,12 +91,10 @@ The API has these invariants:
    rendered as the literal two-character sequence `\n`, so no dynamic scalar can
    cross a renderer-owned line or list boundary.
 
-   Schema-validated enums are **not** dynamic values for this purpose. `severity`,
-   `category`, `decision`, and the other closed vocabularies are constrained by
-   `finding_batch.schema.json` before rendering, so they remain renderer-owned text
-   and keep their current presentation — in particular the existing
-   `**AI review: MAJOR correctness**` header line is retained verbatim. Routing them
-   through `literal_span` would buy no safety and would degrade the header.
+   Per the boundary statement in the rationale, schema-validated closed enums are
+   outside this API. `severity`, `category`, `decision`, and the other fixed
+   vocabularies keep their current presentation — in particular the existing
+   `**AI review: MAJOR correctness**` header line is retained verbatim.
 3. `literal_block` is used for multiline values: body, evidence, rationale, and
    suggestion. It emits a `text` fenced block using
    `max(3, longest_backtick_run(value) + 1)` backticks for both delimiters. The
@@ -105,7 +114,13 @@ The API has these invariants:
    renderer-owned summary text and counts, and they wrap fragments that are already
    literal. Both supported platforms render them; GitHub requires a blank line after
    `</summary>` before a fenced block is recognized, so the renderer must emit that
-   blank line unconditionally. SPEC-45 relies on this invariant.
+   blank line unconditionally.
+
+   This invariant exists solely to support SPEC-45's tiered critique display, which is
+   the mitigation for the vertical bulk that fencing introduces. It is not
+   independently motivated: if that tiering is abandoned, this invariant is removed
+   with it and the permitted-structure list reverts to labels, delimiters, lists,
+   emphasis, and markers.
 
 The following is illustrative output for a hostile body. The four-backtick wrapper
 is chosen by the renderer because the value contains a three-backtick run; the
@@ -218,8 +233,11 @@ model Markdown as trusted structure.
 
 ## Acceptance criteria
 
-- No visible dynamic value can create a heading, quote, list, math rendering,
-  HTML comment, marker, or code-fence boundary in either supported platform.
+- No visible free-text or path-shaped value can create a heading, quote, list, math
+  rendering, HTML comment, marker, or code-fence boundary in either supported
+  platform. Closed schema-validated enums are out of scope by the stated boundary,
+  and a schema test asserts each such vocabulary is closed so the exemption stays
+  earned rather than assumed.
 - A title containing backticks and a multiline field containing arbitrary backtick
   runs render literally without corrupting the bot footer or marker.
 - Redaction and newline normalization still occur before display; a malformed
@@ -229,7 +247,9 @@ model Markdown as trusted structure.
 - Truncation never emits a partially rendered literal span, and never leaves a
   literal block unclosed.
 - Schema-validated enums keep their existing renderer-owned presentation; the
-  `**AI review: <SEVERITY> <category>**` header is unchanged.
+  `**AI review: <SEVERITY> <category>**` header is unchanged. Any future field added
+  to a rendered payload is literal by default; exempting one requires showing its
+  schema vocabulary is closed.
 - `render_summary_body` gains a new section without changes to its size-accounting
   or drop loop, demonstrated by SPEC-45 and SPEC-46 landing as descriptor additions.
 - The only intentional posting churn is the one-time v3 body refresh.
@@ -247,6 +267,11 @@ model Markdown as trusted structure.
 - `ai-review/tests/unit/test_body_hash.py` — add
   `test_truncation_drops_whole_literal_span_instead_of_splitting_it` and
   `test_required_scalar_that_redacts_to_empty_renders_owned_placeholder`.
+- `ai-review/tests/unit/test_schema_validation.py` — add
+  `test_renderer_exempt_enums_are_closed_vocabularies`, asserting every value rendered
+  outside the literal API is constrained by an `enum` in
+  `finding_batch.schema.json`. This is what keeps the narrowed boundary honest if a
+  schema is ever loosened.
 - `ai-review/tests/unit/test_post.py` — add
   `test_summary_uses_literal_renderer_for_reviewer_path_title_evidence_and_suggestion`,
   `test_malformed_suggestion_fence_is_rendered_not_dropped`, and
