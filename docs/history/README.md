@@ -26,7 +26,8 @@ them against the present repository.
 ## Completed specification history
 
 Completed requirement documents are archived under
-[`docs/history/specs/`](specs/) — searchable implementation history, not operator guidance. Current state:
+[`docs/history/specs/`](specs/README.md) — searchable implementation history,
+not operator guidance. Current state:
 
 - SPEC-01–05 and SPEC-07–19 are implemented. SPEC-06 is complete; its deployment
   evidence was recorded for 1.0.0 in the

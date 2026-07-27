@@ -427,6 +427,23 @@ def _release_state_issues() -> list[str]:
     return issues
 
 
+def _directory_readme_issues() -> list[str]:
+    issues: list[str] = []
+    docs_root = ROOT / "docs"
+    for directory in sorted(docs_root.rglob("*")):
+        if (
+            directory.is_dir()
+            and "internal" not in directory.parts
+            and any(directory.glob("*.md"))
+        ):
+            if not (directory / "README.md").exists():
+                issues.append(
+                    f"{directory.relative_to(ROOT)}: documentation directory contains "
+                    "markdown files but no README.md index"
+                )
+    return issues
+
+
 def find_issues() -> list[str]:
     issues: list[str] = []
     seen: set[Path] = set()
@@ -449,6 +466,7 @@ def find_issues() -> list[str]:
 
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
+    issues.extend(_directory_readme_issues())
     return issues
 
 
