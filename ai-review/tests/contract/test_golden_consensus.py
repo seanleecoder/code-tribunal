@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from ai_review.canonical import canonical_json
+from ai_review.render import platform_comment_limit, render_body
 from ai_review.schema import load_json_file, validate_instance
 
 from .golden_cases import GOLDEN_CASES
@@ -20,6 +21,29 @@ class GoldenConsensusContractTests(unittest.TestCase):
                     canonical_json(consensus),
                     canonical_json(load_json_file(fixture_dir / fixture_name)),
                 )
+
+    def test_hostile_rendering_contract_snapshot(self) -> None:
+        fixture = load_json_file(
+            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "render_body_hostile.json"
+        )
+
+        for posting_mode in ("github_reviews", "gitlab_discussions"):
+            with self.subTest(posting_mode=posting_mode):
+                rendered, body_hash = render_body(
+                    fixture["group"],
+                    fixture["successful_reviewer_count"],
+                    fixture["run_id"],
+                    posting_mode=posting_mode,
+                )
+
+                self.assertEqual(rendered, fixture["expected_body"])
+                self.assertEqual(body_hash, fixture["expected_body_hash"])
+                # SPEC-26/44 platform limits are Unicode character counts.
+                self.assertLessEqual(
+                    len(rendered), platform_comment_limit(posting_mode)
+                )
+                self.assertEqual(rendered.count("<!--"), 1)
+                self.assertEqual(rendered.count("-->"), 1)
 
 
 if __name__ == "__main__":

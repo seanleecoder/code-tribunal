@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,18 @@ from ai_review.memory import attach_state_hash, decode_state_note_body, encode_s
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.post import (
+    SummarySectionDescriptor,
     _classify_post_groups,
+    _compose_summary_sections,
     _desired_discussion_resolved,
+    _drop_lowest_priority_trailing_entry,
     _initial_post_result,
     collect_human_commands,
     finalize_state,
     index_ai_review_discussions,
     load_persisted_state,
+    parse_marker,
+    parse_review_note,
     plan_state,
     post_consensus,
     post_inline,
@@ -33,7 +39,7 @@ from ai_review.post import (
     render_body,
     source_hash,
 )
-from ai_review.schema import validate_instance
+from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient
@@ -300,6 +306,49 @@ class PostTests(unittest.TestCase):
             },
         )
         validate_instance(result, "post_result.schema.json")
+
+    def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
+        fixture_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "golden"
+            / "semantic_consensus.json"
+        )
+        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+
+        for field, invalid_value in (
+            ("category", "correctness **injected**"),
+            ("decision", "**injected**"),
+            ("final_severity", "critical"),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                inputs = root / "inputs"
+                inputs.mkdir()
+                write_canonical_json(inputs / "manifest.json", {})
+                invalid = load_json_file(fixture_path)
+                invalid["groups"][0][field] = invalid_value
+                consensus_path = root / "consensus.json"
+                write_canonical_json(consensus_path, invalid)
+                output_path = root / "post-result.json"
+
+                with patch("ai_review.post.create_runtime_platform") as factory:
+                    with self.assertRaisesRegex(ValueError, "critical|injected|category"):
+                        post_module.cli(
+                            [
+                                "--config",
+                                str(config_path),
+                                "--inputs",
+                                str(inputs),
+                                "--consensus",
+                                str(consensus_path),
+                                "--out",
+                                str(output_path),
+                                "--dry-run",
+                            ]
+                        )
+                    factory.assert_not_called()
+                self.assertFalse(output_path.exists())
 
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
@@ -1318,6 +1367,42 @@ class PostTests(unittest.TestCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_existing_marker_updates_when_only_source_identity_changes(self) -> None:
+        client = FakePostClient("head")
+        old_consensus = self._consensus()
+        old_group = old_consensus["groups"][0]
+        old_body, old_hash = render_body(
+            old_group, 1, "run", posting_mode="gitlab_discussions"
+        )
+        client.discussions = [
+            {
+                "id": "existing-discussion",
+                "notes": [
+                    {
+                        "id": 123,
+                        "author": {"id": 10},
+                        "body": old_body,
+                    }
+                ],
+            }
+        ]
+        new_consensus = copy.deepcopy(old_consensus)
+        new_consensus["groups"][0]["source_finding_ids"] = ["c" * 64]
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._manifest("head"),
+            new_consensus,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["updated_discussions"], 1)
+        self.assertEqual(result["skipped_unchanged"], 0)
+        self.assertEqual(client.updated, 1)
+        self.assertNotEqual(old_hash, parse_marker(client.updated_notes[0]["body"])["body_hash"])
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_existing_marker_updates_changed_body(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
@@ -1651,17 +1736,270 @@ class PostTests(unittest.TestCase):
         self.assertIn("Advisory (FYI) findings", client.mr_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
-    def test_summary_renders_full_multiline_body_as_blockquote(self) -> None:
+    def test_summary_renders_full_multiline_body_as_literal_block(self) -> None:
         group = self._consensus()["groups"][0]
         group["decision"] = "fyi"
-        group["body"] = "First line\n\nSecond line"
+        group["body"] = "First line\n \nSecond line"
 
         body, _body_hash = post_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
 
         self.assertIn("- **MAJOR** correctness", body)
-        self.assertIn("  > First line\n  > \n  > Second line", body)
+        lines = body.splitlines()
+        body_start = lines.index("  Body:")
+        self.assertEqual(
+            lines[body_start : body_start + 6],
+            ["  Body:", "  ```text", "  First line", "   ", "  Second line", "  ```"],
+        )
+
+        group["body"] = "First line\n\nSecond line"
+        empty_body, _empty_body_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+        empty_lines = empty_body.splitlines()
+        empty_body_start = empty_lines.index("  Body:")
+        self.assertEqual(
+            empty_lines[empty_body_start : empty_body_start + 6],
+            ["  Body:", "  ```text", "  First line", "", "  Second line", "  ```"],
+        )
+
+    def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["representative_anchor"]["new_path"] = "src/# > $file$.py"
+        group["representative_anchor"]["old_path"] = "src/# > $file$.py"
+        group["title"] = "# title `with` math $x$"
+        group["body"] = "- body\n> quote\n<!-- not a marker -->"
+
+        body, _body_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+
+        self.assertIn("`src/# > $file$.py:2`", body)
+        self.assertIn("``# title `with` math $x$``", body)
+        self.assertIn("  Body:\n  ```text\n  - body\n  > quote", body)
+        self.assertIn("  < !-- not a marker -- >", body)
+        self.assertEqual(body.count("<!--"), 1)
+
+    def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
+        v3_body, _body_hash = render_body(
+            self._consensus()["groups"][0], 1, "run", posting_mode="gitlab_discussions"
+        )
+        parsed_v3 = parse_review_note(v3_body)
+        self.assertIsNotNone(parsed_v3)
+        assert parsed_v3 is not None
+        self.assertEqual(parsed_v3["title"], "Title")
+        self.assertEqual(parsed_v3["summary"], "Body")
+
+        v2_marker = (
+            "<!-- ai-review:v1 issue_id="
+            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
+        )
+        parsed_v2 = parse_review_note(
+            "**AI review: MAJOR correctness**\n\nLegacy title\n\nLegacy body\n\n" + v2_marker
+        )
+        self.assertIsNotNone(parsed_v2)
+        assert parsed_v2 is not None
+        self.assertEqual(parsed_v2["title"], "Legacy title")
+        self.assertEqual(parsed_v2["summary"], "Legacy body")
+
+    def test_review_note_parser_preserves_exact_section_labels_inside_closed_v3_body(self) -> None:
+        body = "\n".join(
+            [
+                "**AI review: MAJOR correctness**",
+                "",
+                "Title: `` `starts with ticks` ``",
+                "",
+                "Body:",
+                "",
+                "````text",
+                "first line",
+                "Evidence:",
+                "Dissent:",
+                "Suggestion:",
+                "Consensus:",
+                "```python",
+                "second line",
+                "````",
+                "",
+                "Dissent:",
+                "- `critic`:",
+                "```text",
+                "ignored rationale",
+                "```",
+                "",
+                "Consensus:",
+                "- Decision: surface",
+            ]
+        )
+
+        parsed = parse_review_note(body)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["title"], "`starts with ticks`")
+        self.assertEqual(
+            parsed["summary"],
+            "first line\nEvidence:\nDissent:\nSuggestion:\nConsensus:\n```python\nsecond line",
+        )
+        self.assertNotIn("ignored rationale", parsed["summary"])
+
+    def test_review_note_parser_preserves_fenced_blank_lines_and_v2_boundaries(self) -> None:
+        fenced = "\n".join(
+            [
+                "**AI review: MINOR style**",
+                "",
+                "Title: `Clean title`",
+                "",
+                "Body:",
+                "",
+                "```text",
+                "first line",
+                "",
+                "last line",
+                "```",
+                "",
+                "Evidence:",
+                "ignored later section",
+            ]
+        )
+        parsed_fenced = parse_review_note(fenced)
+        self.assertIsNotNone(parsed_fenced)
+        assert parsed_fenced is not None
+        self.assertEqual(parsed_fenced["title"], "Clean title")
+        self.assertEqual(parsed_fenced["summary"], "first line\n\nlast line")
+
+        unfenced = "\n".join(
+            [
+                "**AI review: INFO style**",
+                "",
+                "Legacy title",
+                "",
+                "legacy body",
+                "",
+                "Evidence:",
+                "ignored evidence",
+                "Dissent:",
+                "ignored dissent",
+                "Suggestion:",
+                "ignored suggestion",
+                "Consensus:",
+                "ignored consensus",
+            ]
+        )
+        parsed_unfenced = parse_review_note(unfenced)
+        self.assertIsNotNone(parsed_unfenced)
+        assert parsed_unfenced is not None
+        self.assertEqual(parsed_unfenced["title"], "Legacy title")
+        self.assertEqual(parsed_unfenced["summary"], "legacy body")
+
+    def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
+        for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
+            with self.subTest(boundary=boundary):
+                body = "\n".join(
+                    [
+                        "**AI review: INFO style**",
+                        "",
+                        "Title: `Legacy title`",
+                        "",
+                        "Body:",
+                        "",
+                        "```text",
+                        "legacy body",
+                        boundary,
+                        "ignored footer content",
+                    ]
+                )
+
+                parsed = parse_review_note(body)
+
+                self.assertIsNotNone(parsed)
+                assert parsed is not None
+                self.assertEqual(parsed["summary"], "legacy body")
+
+    def test_review_note_parser_handles_blank_lines_and_malformed_title_fallback(self) -> None:
+        body = "\n".join(
+            [
+                "**AI review: MINOR style**",
+                "",
+                "",
+                "Title: malformed title from an older note",
+                "",
+                "Body:",
+                "",
+                "legacy body",
+                "",
+                "Evidence:",
+            ]
+        )
+
+        parsed = parse_review_note(body)
+
+        self.assertEqual(
+            parsed,
+            {
+                "category": "style",
+                "title": "malformed title from an older note",
+                "summary": "legacy body",
+            },
+        )
+
+    def test_summary_section_descriptors_drop_by_declared_priority(self) -> None:
+        sections = [
+            SummarySectionDescriptor(
+                header_factory=lambda shown: f"first:{shown}/1",
+                entries=["first-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=20,
+                retained_count=1,
+            ),
+            SummarySectionDescriptor(
+                header_factory=lambda shown: f"second:{shown}/1",
+                entries=["second-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=5,
+                retained_count=1,
+            ),
+            SummarySectionDescriptor(
+                header_factory=lambda shown: f"third:{shown}/1",
+                entries=["third-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=10,
+                retained_count=1,
+            ),
+        ]
+
+        self.assertTrue(_drop_lowest_priority_trailing_entry(sections))
+        self.assertEqual([section.retained_count for section in sections], [1, 0, 1])
+        self.assertIn("first-entry", _compose_summary_sections(sections))
+        self.assertNotIn("second-entry", _compose_summary_sections(sections))
+        self.assertIn("third-entry", _compose_summary_sections(sections))
+
+    def test_summary_section_descriptor_normalizes_entries_and_defaults_retention(self) -> None:
+        entries = ["first", "second"]
+        section = SummarySectionDescriptor(
+            header_factory=lambda shown: f"section:{shown}",
+            entries=entries,
+            trailer_factory=lambda omitted: [],
+            drop_priority=1,
+        )
+
+        entries.append("caller mutation")
+
+        self.assertEqual(section.entries, ("first", "second"))
+        self.assertEqual(section.retained_count, 2)
+        self.assertEqual(section.entry_prefix_lengths, (0, 5, 11))
+
+    def test_summary_section_descriptor_rejects_invalid_retained_count(self) -> None:
+        for retained_count in (-1, 2):
+            with self.subTest(retained_count=retained_count), self.assertRaises(ValueError):
+                SummarySectionDescriptor(
+                    header_factory=lambda shown: f"section:{shown}",
+                    entries=("only",),
+                    trailer_factory=lambda omitted: [],
+                    drop_priority=1,
+                    retained_count=retained_count,
+                )
 
     def test_summary_drops_whole_advisory_entries_at_github_limit(self) -> None:
         first = copy.deepcopy(self._consensus()["groups"][0])
@@ -1787,6 +2125,31 @@ class PostTests(unittest.TestCase):
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertIn("…and 1 more advisory findings (configured count limit)", body)
         self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(body))
+
+    def test_v3_title_recovery_is_lossy_for_newline_and_literal_backslash_n(self) -> None:
+        encoded_newline = copy.deepcopy(self._consensus()["groups"][0])
+        literal_backslash_n = copy.deepcopy(encoded_newline)
+        encoded_newline["title"] = "line one\nline two"
+        literal_backslash_n["title"] = r"line one\nline two"
+
+        encoded_body, encoded_hash = render_body(
+            encoded_newline, 1, "run", posting_mode="github_reviews"
+        )
+        literal_body, literal_hash = render_body(
+            literal_backslash_n, 1, "run", posting_mode="github_reviews"
+        )
+
+        parsed_encoded = parse_review_note(encoded_body)
+        parsed_literal = parse_review_note(literal_body)
+
+        self.assertIsNotNone(parsed_encoded)
+        self.assertIsNotNone(parsed_literal)
+        assert parsed_encoded is not None
+        assert parsed_literal is not None
+        self.assertEqual(parsed_encoded["title"], "line one\nline two")
+        self.assertEqual(parsed_literal["title"], "line one\nline two")
+        self.assertEqual(encoded_body, literal_body)
+        self.assertEqual(encoded_hash, literal_hash)
 
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
         client = FakePostClient("head")

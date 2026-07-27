@@ -209,11 +209,11 @@ safe.
 ### Suggestions are data, not executable Markdown
 
 Retire the posting decision that suppresses a suggestion because its
-model-supplied triple-backtick count is unbalanced. `validate_suggestion` may be
-removed or narrowed to a legacy parsing helper, but it must no longer gate whether a
-suggestion is shown. A suggestion is rendered through `literal_block` exactly like a
-body; malformed inner fences, HTML-comment-like text, and Markdown directives are
-visible as text rather than interpreted as syntax.
+model-supplied triple-backtick count is unbalanced. The obsolete
+`validate_suggestion` helper is removed; malformed suggestions are never filtered by
+fence balance. A suggestion is rendered through `literal_block` exactly like a body;
+malformed inner fences, HTML-comment-like text, and Markdown directives are visible as
+text rather than interpreted as syntax.
 
 ### Limits, hashes, and markers
 
@@ -237,9 +237,12 @@ Summary comments continue to drop whole rendered entries and append their existi
 size-limit trailer; they never cut an entry, a span, or a literal fence in half.
 
 `body_hash` and the summary hash are calculated from the final redacted,
-normalized, literal-rendered, size-limited body. Equal inputs must therefore produce
-identical bytes and hashes on both platforms. Redaction, newline normalization,
-marker parsing, source hashes, and idempotent upsert behavior remain unchanged.
+normalized, literal-rendered, size-limited body. Inline `body_hash` additionally
+includes the canonical source-finding hash as a renderer/marker identity input, not
+raw model text. Equal inputs must therefore produce identical bytes and hashes on both
+platforms, while a same-looking group with a different source set still refreshes its
+existing discussion. Redaction, newline normalization, marker parsing, source hashes,
+and idempotent upsert behavior remain unchanged.
 
 ## Exact implementation surface
 
@@ -405,17 +408,19 @@ or the scope consequences that follow from them.
   This is the regression that makes the exemption enforceable rather than assumed. Without
   it, a refactor could move validation after client construction — or after the first API
   call — and nothing would notice.
-- `ai-review/tests/unit/test_post.py` — add
-  `test_summary_uses_literal_renderer_for_reviewer_path_title_evidence_and_suggestion`,
-  `test_malformed_suggestion_fence_is_rendered_not_dropped`, and
-  `test_summary_section_descriptors_drop_by_declared_priority` covering a synthetic
+- `ai-review/tests/unit/test_post.py` — cover literal rendering of summary paths,
+  titles, and bodies, plus
+  `test_summary_section_descriptors_drop_by_declared_priority` with a synthetic
   third section so the generic drop loop is verified independently of SPEC-45/46.
+  Evidence, critique, and suggestion values remain covered on the inline literal
+  rendering path; SPEC-45 owns any later summary disclosure coverage.
 - `ai-review/tests/security/test_prompt_injection_rendering.py` — add
   `test_renderer_owned_details_block_keeps_fenced_model_text_literal`, asserting the
   blank line after `</summary>` and that model text cannot close the disclosure
   element.
-- `ai-review/tests/contract/test_golden_consensus.py` — refresh the inline and
-  summary rendering goldens, including an adversarial fence-escape fixture.
+- `ai-review/tests/contract/test_golden_consensus.py` — add the exact
+  `render_body_hostile.json` rendering-contract fixture, including hostile fences,
+  HTML-close tags, marker-looking text, and the expected body/hash output.
 - Cross-platform integration coverage in
   `ai-review/tests/integration/test_post_gate_e2e.py` — post the same hostile group
   through `gitlab_discussions` and `github_reviews`, then assert no extra thread,

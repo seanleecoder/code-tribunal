@@ -1,16 +1,40 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Literal, overload
+
 from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-RENDER_BODY_VERSION = "render-body.v2"
+RENDER_BODY_VERSION = "render-body.v3"
+# GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
     "github_reviews": 65_536,
 }
 PLATFORM_TRUNCATION_NOTICE = "…[truncated: platform comment size limit]"
-FENCE_CLOSURE = "\n```\n"
+_FRAGMENT_SEPARATOR = "\n\n"
+_MARKER_TOKEN_RE = re.compile(r"[^A-Za-z0-9._:/+@=-]")
+
+
+@dataclass(frozen=True)
+class RenderFragment:
+    """A renderer-owned piece of a body.
+
+    ``span`` fragments are atomic.  ``block`` fragments carry their owned
+    opening/closing delimiters and may be shortened only in ``content``.
+    ``text`` fragments contain renderer-owned Markdown structure and are
+    atomic as a whole for the purposes of platform truncation.
+    """
+
+    text: str
+    kind: Literal["text", "span", "block"] = "text"
+    prefix: str = ""
+    content: str = ""
+    closing: str = ""
 
 
 def platform_comment_limit(posting_mode: str) -> int:
@@ -27,66 +51,247 @@ def sanitize_model_text(text: str, *, max_length: int | None = None) -> str:
     return sanitized if max_length is None else sanitized[:max_length]
 
 
-def _truncate_at_safe_boundary(text: str, max_length: int) -> str:
-    if len(text) <= max_length:
-        return text
+def _longest_backtick_run(value: str) -> int:
+    longest = 0
+    current = 0
+    for character in value:
+        if character == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
 
-    def prefix_at_boundary(content_length: int) -> str:
-        prefix = text[:content_length]
-        minimum_boundary = content_length // 2
-        boundary = max(
-            prefix.rfind("\n\n"),
-            prefix.rfind("\n"),
-            prefix.rfind(" "),
-        )
-        if boundary >= minimum_boundary:
-            prefix = prefix[:boundary]
-        return prefix.rstrip()
 
-    available = max_length - len(PLATFORM_TRUNCATION_NOTICE)
-    if available < 0:
+def _sanitized_literal(value: str, *, max_length: int | None = None) -> str:
+    return sanitize_model_text(value, max_length=max_length)
+
+
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: Literal[True],
+) -> str: ...
+
+
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: Literal[False] = False,
+) -> str | None: ...
+
+
+@overload
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: bool,
+) -> str | None: ...
+
+
+def literal_span(
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: bool = False,
+) -> str | None:
+    """Render a scalar as literal Markdown data.
+
+    The returned span owns its delimiter.  Newlines are represented by the
+    two literal characters ``\\n`` so a scalar cannot cross a renderer-owned
+    line or list boundary.  ``None`` means an optional value is empty.
+    """
+
+    # ``max_length`` deliberately caps the normalized scalar before display
+    # encoding (newline escaping, delimiter selection, and boundary padding).
+    # Platform limits govern the final rendered payload separately.
+    sanitized = _sanitized_literal(value, max_length=max_length)
+    if not sanitized:
+        return "(empty)" if required else None
+    scalar = sanitized.replace("\n", r"\n")
+    delimiter = "`" * (_longest_backtick_run(scalar) + 1)
+    if scalar.startswith("`") or scalar.endswith("`"):
+        # CommonMark removes one matching outer space from a code span. Add
+        # both sides when either boundary is a backtick so the displayed
+        # scalar remains unchanged while the delimiter is unambiguous.
+        scalar = f" {scalar} "
+    return f"{delimiter}{scalar}{delimiter}"
+
+
+def _literal_block_parts(
+    value: str,
+    *,
+    required: bool = False,
+) -> tuple[str, str, str] | str | None:
+    sanitized = _sanitized_literal(value)
+    if not sanitized:
+        return "(empty)" if required else None
+    fence = "`" * max(3, _longest_backtick_run(sanitized) + 1)
+    return fence, sanitized, fence
+
+
+def literal_block(value: str, *, required: bool = False) -> str | None:
+    """Render multiline data in a renderer-owned ``text`` fence."""
+
+    parts = _literal_block_parts(value, required=required)
+    if parts is None or isinstance(parts, str):
+        return parts
+    opening, content, closing = parts
+    return f"{opening}text\n{content}\n{closing}"
+
+
+def _text_fragment(text: str) -> RenderFragment:
+    return RenderFragment(text=text, kind="text")
+
+
+def _span_fragment(
+    label: str,
+    value: str,
+    *,
+    max_length: int | None = None,
+    required: bool = False,
+) -> RenderFragment | None:
+    rendered = literal_span(value, max_length=max_length, required=required)
+    if rendered is None:
+        return None
+    return RenderFragment(text=f"{label}{rendered}", kind="span")
+
+
+def _block_fragment(label: str, value: str, *, required: bool = False) -> RenderFragment | None:
+    parts = _literal_block_parts(value, required=required)
+    if parts is None:
+        return None
+    if isinstance(parts, str):
+        return _text_fragment(f"{label}\n{parts}")
+    opening, content, closing = parts
+    prefix = f"{label}\n{opening}text\n"
+    text = f"{prefix}{content}\n{closing}"
+    return RenderFragment(
+        text=text,
+        kind="block",
+        prefix=prefix,
+        content=content,
+        closing=closing,
+    )
+
+
+def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
+    return _FRAGMENT_SEPARATOR.join(fragment.text for fragment in fragments)
+
+
+def details_fragment(
+    summary_text: str,
+    fragments: Sequence[RenderFragment],
+) -> RenderFragment:
+    """Compose the pre-landed v4 disclosure primitive as an atomic fragment.
+
+    This helper lives in the v3 renderer so SPEC-45 can add its disclosure
+    section without another fragment API change; v3 ``render_body`` does not
+    call it. ``summary_text`` is supplied by the renderer, not model output,
+    and the typed fragment sequence must already carry its own literal
+    delimiters. The compositor never interpolates raw model text into the
+    disclosure structure. Escaping the summary defensively keeps an accidental
+    closing tag inert as well.
+    """
+
+    escaped_summary = (
+        summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    content = _compose_fragments(fragments)
+    text = f"<details>\n<summary>{escaped_summary}</summary>\n\n"
+    if content:
+        text += content + "\n"
+    text += "</details>"
+    return RenderFragment(text=text, kind="text")
+
+
+def _partial_block(fragment: RenderFragment, available: int) -> str | None:
+    if fragment.kind != "block":
+        return None
+    # The newline before the owned closing delimiter is part of the block
+    # protocol.  If the opening fence and exact closure do not fit, omit the
+    # complete fragment rather than emitting a dangling fence or label.
+    minimum = len(fragment.prefix) + 1 + len(fragment.closing)
+    if available < minimum:
+        return None
+    content_length = min(
+        len(fragment.content), available - len(fragment.prefix) - 1 - len(fragment.closing)
+    )
+    return f"{fragment.prefix}{fragment.content[:content_length]}\n{fragment.closing}"
+
+
+def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> str:
+    """Fit fragments while keeping spans atomic and blocks closed."""
+
+    notice_length = len(PLATFORM_TRUNCATION_NOTICE)
+    if max_length < notice_length:
         raise ValueError("platform comment limit is too small for truncation notice")
-    prefix = prefix_at_boundary(available)
-    fence_closure = ""
-    # Conservatively treat an odd number of triple-backtick tokens as an open
-    # fenced block. Inline triple backticks may cause an unnecessary closure,
-    # but keeping trusted footer/marker content out of a fence is safer.
-    if prefix.count("```") % 2:
-        available -= len(FENCE_CLOSURE)
+
+    full = _compose_fragments(fragments)
+    if len(full) <= max_length:
+        return full
+
+    # The notice follows the final fragment on the next line.  A single
+    # newline is intentional: a block's exact closing fence is immediately
+    # followed by the trusted truncation notice rather than another blank
+    # paragraph.
+    truncation_separator = "\n"
+    surviving_budget = max_length - notice_length - len(truncation_separator)
+    surviving: list[str] = []
+    used = 0
+    for fragment in fragments:
+        separator_length = len(_FRAGMENT_SEPARATOR) if surviving else 0
+        available = surviving_budget - used - separator_length
         if available < 0:
-            raise ValueError("platform comment limit is too small to close code fence")
-        prefix = prefix_at_boundary(available)
-        if prefix.count("```") % 2:
-            fence_closure = FENCE_CLOSURE
-    return prefix + fence_closure + PLATFORM_TRUNCATION_NOTICE
+            break
+        if len(fragment.text) <= available:
+            surviving.append(fragment.text)
+            used += separator_length + len(fragment.text)
+            continue
+        partial = _partial_block(fragment, available)
+        if partial is not None:
+            surviving.append(partial)
+        break
+
+    if surviving:
+        return (
+            _FRAGMENT_SEPARATOR.join(surviving)
+            + truncation_separator
+            + PLATFORM_TRUNCATION_NOTICE
+        )
+    return PLATFORM_TRUNCATION_NOTICE
 
 
 def limit_body_before_marker(
-    variable_body: str,
+    variable_body: Sequence[RenderFragment],
     marker_with_placeholder_hash: str,
     max_comment_size: int,
     *,
     reserved_suffix: str,
 ) -> str:
+    """Limit renderer-owned fragments before adding trusted footer/marker text."""
+
     body_limit = (
         max_comment_size
-        - len("\n\n")
+        - len(_FRAGMENT_SEPARATOR)
         - len(marker_with_placeholder_hash)
-        - len("\n\n")
+        - len(_FRAGMENT_SEPARATOR)
         - len(reserved_suffix)
     )
     if body_limit < 0:
         raise ValueError("platform comment limit is too small for review footer and marker")
-    limited_body = _truncate_at_safe_boundary(variable_body, body_limit)
-    return limited_body + "\n\n" + reserved_suffix
-
-
-def validate_suggestion(suggestion: str | None) -> bool:
-    if suggestion is None:
-        return True
-    if "<!--" in suggestion or "-->" in suggestion:
-        return False
-    return suggestion.count("```") % 2 == 0
+    variable_text = _compose_fragments(variable_body)
+    limited_body = (
+        variable_text
+        if len(variable_text) <= body_limit
+        else _limit_fragments(variable_body, body_limit)
+    )
+    return limited_body + _FRAGMENT_SEPARATOR + reserved_suffix
 
 
 def source_hash(source_finding_ids: list[str]) -> str:
@@ -94,28 +299,41 @@ def source_hash(source_finding_ids: list[str]) -> str:
 
 
 def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
-    critique_summary = group.get(
-        "critique_summary",
-        {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
-    )
+    """Hash rendered content plus the canonical source identity.
+
+    The source hash is a renderer/marker identity input, not raw model text. It
+    ensures a same-looking finding from a different source set still refreshes
+    an existing bot-owned discussion.
+    """
+
     return sha256_hex(
         canonical_json(
             {
                 "render_body_version": RENDER_BODY_VERSION,
-                "issue_id": group["issue_id"],
-                "decision": group["decision"],
-                "final_severity": group["final_severity"],
-                "block_merge": group["block_merge"],
-                "human_ack_recommended": group.get("human_ack_recommended", False),
-                "title": group["title"],
                 "body_without_marker": body_without_marker,
-                "sorted_source_finding_ids": sorted(group.get("source_finding_ids", [])),
-                "sorted_critique_summary": {
-                    key: critique_summary.get(key, 0)
-                    for key in sorted(["agree", "dispute", "noise", "duplicate"])
-                },
+                "source_hash": source_hash(group.get("source_finding_ids", [])),
             }
         )
+    )
+
+
+def encode_marker_token(value: object) -> str:
+    """Encode a marker attribute without changing the marker grammar."""
+
+    token = _MARKER_TOKEN_RE.sub("_", str(value))
+    return token or "_"
+
+
+def _inline_marker(
+    issue_id: object,
+    run_id: object,
+    body_hash: str,
+    source: str,
+) -> str:
+    return (
+        f"<!-- ai-review:v1 issue_id={encode_marker_token(issue_id)} "
+        f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} "
+        f"source={encode_marker_token(source)} -->"
     )
 
 
@@ -126,11 +344,24 @@ def render_body(
     *,
     posting_mode: str,
 ) -> tuple[str, str]:
-    reviewers = sorted(group.get("contributing_reviewers", []))
-    title = sanitize_model_text(str(group["title"]), max_length=240)
-    summary = sanitize_model_text(str(group.get("body", "")))
-    normalized_title = normalize_text(str(group["title"]))
-    normalized_summary = normalize_text(str(group.get("body", "")))
+    reviewers = sorted(str(reviewer) for reviewer in group.get("contributing_reviewers", []))
+    title = str(group["title"])
+    summary = str(group.get("body", ""))
+    variable_fragments: list[RenderFragment] = [
+        _text_fragment(
+            f"**AI review: {str(group['final_severity']).upper()} {group['category']}**"
+        )
+    ]
+
+    title_fragment = _span_fragment("Title: ", title, max_length=240, required=True)
+    if title_fragment is not None:
+        variable_fragments.append(title_fragment)
+    body_fragment = _block_fragment("Body:", summary, required=True)
+    if body_fragment is not None:
+        variable_fragments.append(body_fragment)
+
+    normalized_title = normalize_text(title)
+    normalized_summary = normalize_text(summary)
     evidence_groups: dict[str, tuple[list[str], str]] = {}
     evidence_by_reviewer = group.get("evidence_by_reviewer", {})
     if isinstance(evidence_by_reviewer, dict):
@@ -141,58 +372,57 @@ def render_body(
             normalized_evidence = normalize_text(raw_evidence)
             if normalized_evidence in {normalized_summary, normalized_title}:
                 continue
-            evidence = sanitize_model_text(raw_evidence)
             if normalized_evidence in evidence_groups:
                 evidence_groups[normalized_evidence][0].append(reviewer)
             else:
-                evidence_groups[normalized_evidence] = ([reviewer], evidence)
-    evidence_lines = [
-        f"- {', '.join(evidence_reviewers)}: {evidence}"
-        for evidence_reviewers, evidence in evidence_groups.values()
-    ]
+                evidence_groups[normalized_evidence] = ([reviewer], raw_evidence)
 
-    dissent_lines: list[str] = []
+    evidence_fragments: list[RenderFragment] = []
+    for evidence_reviewers, evidence in evidence_groups.values():
+        reviewer_span = literal_span(", ".join(evidence_reviewers), required=True)
+        if reviewer_span is None:
+            continue
+        fragment = _block_fragment(f"- {reviewer_span}:", evidence)
+        if fragment is not None:
+            evidence_fragments.append(fragment)
+    if evidence_fragments:
+        variable_fragments.append(_text_fragment("Evidence:"))
+        variable_fragments.extend(evidence_fragments)
+
+    dissent_fragments: list[RenderFragment] = []
     critique_disputes = group.get("critique_disputes", [])
     if isinstance(critique_disputes, list):
         for dispute in critique_disputes:
             if not isinstance(dispute, dict):
                 continue
-            critic = sanitize_model_text(str(dispute.get("critic", "")))
-            rationale = sanitize_model_text(str(dispute.get("rationale", "")))
-            if not critic or not rationale:
-                continue
-            line = f"- {critic} disputes: {rationale}"
+            critic_span = literal_span(str(dispute.get("critic", "")), required=True)
             adjusted = dispute.get("adjusted_severity")
-            if isinstance(adjusted, str):
-                line += " (suggested severity: " + sanitize_model_text(adjusted) + ")"
-            dissent_lines.append(line)
+            adjusted_span = (
+                literal_span(adjusted) if isinstance(adjusted, str) else None
+            )
+            if critic_span is None:
+                continue
+            label = f"- {critic_span} disputes:"
+            if adjusted_span is not None:
+                label += f" (suggested severity: {adjusted_span})"
+            fragment = _block_fragment(label, str(dispute.get("rationale", "")))
+            if fragment is not None:
+                dissent_fragments.append(fragment)
+    if dissent_fragments:
+        variable_fragments.append(_text_fragment("Dissent:"))
+        variable_fragments.extend(dissent_fragments)
 
     suggestion = group.get("suggestion")
-    suggestion_block = ""
-    if isinstance(suggestion, str) and validate_suggestion(suggestion):
-        suggestion_block = "\n\nSuggestion:\n" + sanitize_model_text(suggestion)
+    if isinstance(suggestion, str):
+        suggestion_fragment = _block_fragment("Suggestion:", suggestion)
+        if suggestion_fragment is not None:
+            variable_fragments.append(suggestion_fragment)
 
-    variable_sections = [
-        "\n".join(
-            [
-                f"**AI review: {str(group['final_severity']).upper()} {group['category']}**",
-                "",
-                title,
-                "",
-                summary,
-            ]
-        )
-    ]
-    if evidence_lines:
-        variable_sections.append("\n".join(["Evidence:", *evidence_lines]))
-    if dissent_lines:
-        variable_sections.append("\n".join(["Dissent:", *dissent_lines]))
-    if suggestion_block:
-        variable_sections.append(suggestion_block.removeprefix("\n\n"))
+    reviewer_span = literal_span(", ".join(reviewers), required=True)
     consensus_footer = "\n".join(
         [
             "Consensus:",
-            f"- Reviewers: {', '.join(reviewers)}",
+            f"- Reviewers: {reviewer_span}",
             f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
             f"- Critique support: {group.get('critique_support_count', 0)}",
             f"- Decision: {group['decision']}",
@@ -201,20 +431,23 @@ def render_body(
             + ("recommended" if group.get("human_ack_recommended") else "not required"),
         ]
     )
-    variable_body = "\n\n".join(variable_sections)
-    placeholder_marker = (
-        f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
-        f"body_hash={'0' * 64} source={source_hash(group.get('source_finding_ids', []))} -->"
+    placeholder_marker = _inline_marker(
+        group["issue_id"],
+        run_id,
+        "0" * 64,
+        source_hash(group.get("source_finding_ids", [])),
     )
     body_without_marker = limit_body_before_marker(
-        variable_body,
+        variable_fragments,
         placeholder_marker,
         platform_comment_limit(posting_mode),
         reserved_suffix=consensus_footer,
     )
     body_hash = compute_body_hash(group, body_without_marker)
-    marker = (
-        f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={run_id} "
-        f"body_hash={body_hash} source={source_hash(group.get('source_finding_ids', []))} -->"
+    marker = _inline_marker(
+        group["issue_id"],
+        run_id,
+        body_hash,
+        source_hash(group.get("source_finding_ids", [])),
     )
-    return body_without_marker + "\n\n" + marker, body_hash
+    return body_without_marker + _FRAGMENT_SEPARATOR + marker, body_hash

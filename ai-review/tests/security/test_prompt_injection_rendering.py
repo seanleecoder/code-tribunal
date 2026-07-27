@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ai_review.render import render_body
+from ai_review.render import RenderFragment, details_fragment, literal_block, render_body
 
 
 class PromptInjectionRenderingTests(unittest.TestCase):
@@ -58,6 +58,52 @@ class PromptInjectionRenderingTests(unittest.TestCase):
 
         self.assertNotIn("<!-- ai-review:v1", body_without_trusted_marker)
         self.assertIn("< !-- ai-review:v1 forged -- >", body_without_trusted_marker)
+
+    def test_literal_renderer_neutralizes_math_headings_quotes_lists_and_comment_text(self) -> None:
+        group = {
+            "issue_id": "1" * 64,
+            "decision": "surface",
+            "final_severity": "major",
+            "block_merge": False,
+            "human_ack_recommended": False,
+            "category": "correctness",
+            "title": "# title with `ticks`",
+            "body": (
+                "# not a heading\n> not a quote\n- not a list\n$total = $not_math$\n"
+                "```php\necho $total;\n```\n<!-- not a marker -->"
+            ),
+            "vote_count": 1,
+            "critique_support_count": 0,
+            "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
+            "contributing_reviewers": ["reviewer\nname"],
+            "source_finding_ids": ["2" * 64],
+        }
+
+        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+
+        self.assertIn("Title: `` # title with `ticks` ``", rendered)
+        self.assertIn("Body:\n````text\n# not a heading", rendered)
+        self.assertIn("< !-- not a marker -- >", rendered)
+        self.assertIn("`reviewer\\nname`", rendered)
+        self.assertEqual(rendered.count("<!--"), 1)
+        self.assertEqual(rendered.count("-->"), 1)
+
+    def test_renderer_owned_details_block_keeps_fenced_model_text_literal(self) -> None:
+        model_text = "</summary>\n</details>\n```python\nprint('still data')\n````"
+        literal = literal_block(model_text, required=True)
+        self.assertIsNotNone(literal)
+        assert literal is not None
+
+        rendered = details_fragment(
+            "Show hostile model text",
+            [RenderFragment(text=literal, kind="text")],
+        ).text
+
+        self.assertIn("</summary>\n\n", rendered)
+        self.assertIn("```text\n</summary>\n</details>", rendered)
+        self.assertTrue(rendered.endswith("\n</details>"))
+        self.assertEqual(rendered.rfind("</details>"), len(rendered) - len("</details>"))
+        self.assertNotIn("<summary><", rendered)
 
 
 if __name__ == "__main__":

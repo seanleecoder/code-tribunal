@@ -54,7 +54,7 @@
         "ai-review/schemas/state.schema.json",
         "ai-review/schemas/state_aliases.schema.json"
       ],
-      "sha256": "1ecdbf5f83202a8be6c6a854bfcba91d3e66030a5f2e36cd2c21f4c5b2e21c05"
+      "sha256": "5f7e9d43c0e368c7e0c3f870ee2995d424d43245b453b337d4fd21944e005f63"
     }
   },
   "images": {

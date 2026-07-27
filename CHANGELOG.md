@@ -94,6 +94,11 @@ versioning.
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
   the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
+- Posted review output now uses `render-body.v3`: free-text and path-shaped model
+  values render as literal spans or fenced blocks, malformed suggestions remain
+  visible as data, and fragment-aware truncation keeps spans atomic, blocks closed,
+  and trusted footers/markers intact. Existing bot-owned inline threads receive one
+  refresh after upgrade; consensus artifacts remain `consensus.v1`.
 - Project description now covers GitLab merge requests and GitHub pull requests.
 - GitLab web/API pipelines create AI review jobs only when a merge request IID is
   present, and the trust auditor now reserves the shipped Cursor jobs.
@@ -161,8 +166,12 @@ versioning.
   representation.
 - Replace any remaining `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` CI variables with a
   single `GITLAB_TOKEN` project access token (`api` scope) used by prepare and post.
-- The posted-body format is now `render-body.v2`. Existing bot-authored threads receive
-  a one-time body update on the next review run.
+- The posted-body format is now `render-body.v3`. Existing bot-authored inline
+  threads receive a one-time body update on the next review run; issue IDs, state
+  records, and marker grammar remain unchanged.
+- Consensus `category` inputs are now restricted to the finding-batch enum at the
+  posting boundary. Pipeline-produced artifacts remain compatible; hand-edited or
+  third-party artifacts with arbitrary categories must be corrected before posting.
 - Replace legacy top-level `state.overflow_behavior: fail_closed` with
   `state.fail_closed_on_load_error: true`; the legacy key is now rejected.
   Remove `critique.max_rounds`. Rename `state.retention.keep_resolved_runs` and

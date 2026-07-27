@@ -130,7 +130,17 @@
         "final_severity": { "enum": ["info", "minor", "major", "blocker"] },
         "block_merge": { "type": "boolean" },
         "human_ack_recommended": { "type": "boolean" },
-        "category": { "type": "string", "minLength": 1 },
+        "category": {
+          "enum": [
+            "security",
+            "correctness",
+            "performance",
+            "maintainability",
+            "style",
+            "test",
+            "other"
+          ]
+        },
         "title": { "type": "string", "minLength": 1 },
         "body": { "type": "string" },
         "suggestion": { "type": ["string", "null"] },
