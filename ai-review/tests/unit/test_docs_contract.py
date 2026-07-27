@@ -388,6 +388,66 @@ class DocumentationContractTests(unittest.TestCase):
         )
         self.assertTrue(any("must name the active runtime_source" in issue for issue in issues))
 
+    def test_directory_readme_issues_flags_missing_index(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "docs"
+            sub = docs / "unindexed"
+            sub.mkdir(parents=True)
+            (sub / "guide.md").write_text("# Guide\n", encoding="utf-8")
+
+            exempt = docs / "internal" / "scratch"
+            exempt.mkdir(parents=True)
+            (exempt / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+            checker.ROOT = root
+            try:
+                issues = checker._directory_readme_issues()
+            finally:
+                checker.ROOT = original_root
+
+        self.assertEqual(len(issues), 1)
+        self.assertIn(
+            "docs/unindexed: documentation directory contains markdown files "
+            "but no README.md index",
+            issues[0],
+        )
+
+    def test_adr_issues_requires_markdown_link_target(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_index = checker.DECISIONS_INDEX
+        original_dir = checker.DECISIONS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            decisions = root / "docs/decisions"
+            decisions.mkdir(parents=True)
+            (decisions / "0001-test.md").write_text("# ADR 1\n", encoding="utf-8")
+            readme = decisions / "README.md"
+            readme.write_text(
+                "# Decisions\n\nMentioning 0001-test.md in plain text\n", encoding="utf-8"
+            )
+
+            checker.ROOT = root
+            checker.DECISIONS_INDEX = readme
+            checker.DECISIONS_DIR = decisions
+            try:
+                prose_issues = checker._adr_issues()
+                readme.write_text(
+                    "# Decisions\n\n- [ADR 1](0001-test.md)\n", encoding="utf-8"
+                )
+                linked_issues = checker._adr_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.DECISIONS_INDEX = original_index
+                checker.DECISIONS_DIR = original_dir
+
+        self.assertEqual(len(prose_issues), 1)
+        self.assertIn("0001-test.md", prose_issues[0])
+        self.assertEqual(linked_issues, [])
+
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()
         self.assertEqual(checker.find_issues(), [])
