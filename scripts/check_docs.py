@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from collections import Counter
+from itertools import chain
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -32,9 +33,11 @@ RELEASE_STATE_DOCS = (
     ROOT / "docs/SECURITY_MODEL.md",
     RELEASE_NOTES,
 )
-# Internal notes, case studies, and presentations are scratch material and do not
-# require a public README.md index.
+# Internal workspace directories under docs/internal/ do not require a public
+# README.md index.
 EXCLUDED_README_DIR_PARTS = {"internal"}
+# Top-level docs/*.md files are indexed by root README.md.
+EXCLUDED_README_PATHS = {ROOT / "docs"}
 DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
 DECISIONS_DIR = ROOT / "docs/decisions"
 # A tripwire for the exact wording that survived the 1.0.0 release, not a general
@@ -435,6 +438,7 @@ def _release_state_issues() -> list[str]:
 def _needs_readme(directory: Path) -> bool:
     return (
         directory.is_dir()
+        and directory not in EXCLUDED_README_PATHS
         and not (set(directory.parts) & EXCLUDED_README_DIR_PARTS)
         and any(directory.glob("*.md"))
         and not (directory / "README.md").exists()
@@ -444,7 +448,7 @@ def _needs_readme(directory: Path) -> bool:
 def _directory_readme_issues() -> list[str]:
     issues: list[str] = []
     docs_root = ROOT / "docs"
-    for directory in sorted(docs_root.rglob("*")):
+    for directory in sorted(chain([docs_root], docs_root.rglob("*"))):
         if _needs_readme(directory):
             issues.append(
                 f"{directory.relative_to(ROOT)}: documentation directory contains "
@@ -455,13 +459,14 @@ def _directory_readme_issues() -> list[str]:
 
 def _adr_issues() -> list[str]:
     issues: list[str] = []
+    # If docs/decisions/README.md is missing, _directory_readme_issues() flags it.
     if not DECISIONS_INDEX.exists():
         return issues
     index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
     for path in sorted(DECISIONS_DIR.glob("*.md")):
         if path.name == "README.md":
             continue
-        if path.name not in index_text:
+        if f"]({path.name})" not in index_text and f"]({path.name}#" not in index_text:
             issues.append(
                 f"docs/decisions/README.md: decision record {path.name!r} is "
                 "missing from the index table"
