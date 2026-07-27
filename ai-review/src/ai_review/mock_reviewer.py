@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import parse_unified_diff
+from .anchors import parse_unified_diff, resolve_side_paths
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting/state/gate behavior with
@@ -53,25 +52,11 @@ def _mock_scenario() -> str:
     return scenario
 
 
-def _usable_path(path: str | None, fallback: str | None) -> str:
-    """Return a repo-relative anchor path, falling back when git gave us none.
-
-    A newly added file's diff carries ``--- /dev/null`` (and a deleted file's
-    ``+++ /dev/null``), so the parsed path is absolute. Anchor finalization
-    rejects absolute paths and drops the finding, so substitute the other side's
-    path — for an added file both anchor sides are the new file anyway.
-    """
-
-    for value in (path, fallback):
-        if value and not value.startswith("/") and not re.match(r"^[A-Za-z]:[\\/]", value):
-            return value
-    return ""
-
-
 def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
+    old_path, new_path = resolve_side_paths(diff_file.old_path, diff_file.new_path)
     return {
-        "old_path": _usable_path(diff_file.old_path, diff_file.new_path),
-        "new_path": _usable_path(diff_file.new_path, diff_file.old_path),
+        "old_path": old_path,
+        "new_path": new_path,
         "new_line": line.new_line,
         "hunk_header": line.hunk_header,
     }

@@ -39,10 +39,7 @@ class SchemaValidationTests(unittest.TestCase):
         self,
     ) -> None:
         fixture = load_json_file(
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "golden"
-            / "semantic_consensus.json"
+            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
         )
         invalid_values = [
             ("empty evidence", {"evidence_by_reviewer": {"claude": ""}}),
@@ -83,6 +80,69 @@ class SchemaValidationTests(unittest.TestCase):
                 consensus["groups"][0].update(replacement)
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
+
+    def test_finalize_finding_batch_resolves_dev_null_anchor_sides(self) -> None:
+        # Any reviewer reading the raw diff can echo git's `/dev/null` sentinel
+        # for an added file's absent old side. Normalizing centrally keeps that
+        # finding inline instead of dropping it as an absolute path.
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/new.py b/src/new.py",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/new.py",
+                "@@ -0,0 +1,2 @@",
+                "+def f():",
+                "+    return records[0]",
+                "",
+            ]
+        )
+        batch = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [
+                {
+                    "anchor": {
+                        "old_path": "/dev/null",
+                        "new_path": "src/new.py",
+                        "side": "new",
+                        "start": {"old_line": None, "new_line": 2, "line_code": None},
+                        "end": {"old_line": None, "new_line": 2, "line_code": None},
+                        "hunk_header": "@@ -0,0 +1,2 @@",
+                        "context_hash": "",
+                        "symbol": None,
+                    },
+                    "severity": "major",
+                    "category": "correctness",
+                    "title": "Unguarded index",
+                    "body": "records[0] can raise IndexError.",
+                    "evidence": ["    return records[0]"],
+                    "suggestion": None,
+                    "confidence": 0.6,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mr.diff").write_text(diff_text, encoding="utf-8")
+            finalized = finalize_finding_batch(
+                batch,
+                reviewer="claude",
+                model="model",
+                run_id="local",
+                started_at="2026-06-29T00:00:00Z",
+                input_dir=tmp,
+                effective_config_sha256="0" * 64,
+            )
+
+        self.assertEqual(finalized["accepted_finding_count"], 1)
+        anchor = finalized["findings"][0]["anchor"]
+        self.assertEqual(anchor["old_path"], "src/new.py")
+        self.assertEqual(anchor["new_path"], "src/new.py")
 
     def test_critique_batch_rejects_whitespace_only_identity_and_rationale(self) -> None:
         batch = empty_critique_batch(
