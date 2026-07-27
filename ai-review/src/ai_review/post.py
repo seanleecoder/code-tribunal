@@ -4,7 +4,7 @@ import argparse
 import logging
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast, overload
@@ -178,13 +178,27 @@ def _read_review_body(lines: list[str]) -> list[str]:
         delimiter = opening_match.group("delimiter")
         content: list[str] = []
         for line in lines[start + 1 :]:
+            if line.strip() in REVIEW_SECTION_BOUNDARIES:
+                # An exact renderer section label before any closing fence is
+                # the safest boundary when a footer's own fence is the only
+                # delimiter left in a damaged note.
+                return _read_unfenced_review_body(lines[start + 1 :])
             if line.strip() == delimiter:
-                break
+                return content
             content.append(line)
-        return content
+        # A damaged v3 note can retain its opening fence while losing the
+        # close. Recover the remainder with the v2 line-oriented rules so a
+        # footer section is not folded into the stored body summary.
+        return _read_unfenced_review_body(lines[start + 1 :])
+
+    return _read_unfenced_review_body(lines[start:])
+
+
+def _read_unfenced_review_body(lines: list[str]) -> list[str]:
+    """Read legacy body lines until a renderer-owned section boundary."""
 
     content = []
-    for line in lines[start:]:
+    for line in lines:
         if line.strip() in REVIEW_SECTION_BOUNDARIES:
             break
         content.append(line)
@@ -678,7 +692,7 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     detail = literal_block(str(group.get("body") or ""))
     if detail is None:
         return header
-    indented_detail = "\n".join(f"  {line}" if line.strip() else "" for line in detail.split("\n"))
+    indented_detail = "\n".join(f"  {line}" if line else "" for line in detail.split("\n"))
     return f"{header}\n  Body:\n{indented_detail}"
 
 
@@ -703,22 +717,31 @@ def _sort_groups(groups: list[Any]) -> list[Any]:
 @dataclass
 class SummarySectionDescriptor:
     header_factory: Callable[[int], str]
-    entries: list[str]
+    entries: Sequence[str]
     trailer_factory: Callable[[int], list[str]]
     drop_priority: int
-    retained_count: int
-    entry_prefix_lengths: list[int] = field(init=False, repr=False)
+    retained_count: int | None = None
+    entry_prefix_lengths: tuple[int, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.entry_prefix_lengths = [0]
+        self.entries = tuple(self.entries)
+        if self.retained_count is None:
+            self.retained_count = len(self.entries)
+        if not 0 <= self.retained_count <= len(self.entries):
+            raise ValueError(
+                "summary section retained_count must be between zero and the entry count"
+            )
+        prefix_lengths = [0]
         for entry in self.entries:
-            self.entry_prefix_lengths.append(self.entry_prefix_lengths[-1] + len(entry))
+            prefix_lengths.append(prefix_lengths[-1] + len(entry))
+        self.entry_prefix_lengths = tuple(prefix_lengths)
 
 
 def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
     rendered_sections = ["**AI review summary**"]
     for section in sections:
         total = len(section.entries)
+        assert section.retained_count is not None
         section_lines = [
             section.header_factory(section.retained_count),
             *section.entries[: section.retained_count],
@@ -734,11 +757,12 @@ def _drop_lowest_priority_trailing_entry(
     candidates = [
         (index, section)
         for index, section in enumerate(sections)
-        if section.retained_count > 0
+        if section.retained_count is not None and section.retained_count > 0
     ]
     if not candidates:
         return False
     _, section = min(candidates, key=lambda candidate: (candidate[1].drop_priority, -candidate[0]))
+    assert section.retained_count is not None
     section.retained_count -= 1
     return True
 
@@ -749,6 +773,7 @@ def _summary_section_length(
     """Return one section's exact length without composing the full summary."""
 
     total = len(section.entries)
+    assert section.retained_count is not None
     trailers = section.trailer_factory(total - section.retained_count)
     line_count = 1 + section.retained_count + len(trailers)
     return (
@@ -810,7 +835,6 @@ def render_summary_body(
                 entries=fallback_entries,
                 trailer_factory=fallback_trailers,
                 drop_priority=10,
-                retained_count=len(fallback_entries),
             )
         )
     if fyi_sorted:
@@ -822,7 +846,6 @@ def render_summary_body(
                 entries=fyi_entries,
                 trailer_factory=fyi_trailers,
                 drop_priority=0,
-                retained_count=len(fyi_entries),
             )
         )
 

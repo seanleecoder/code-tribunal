@@ -46,11 +46,12 @@ text flow, but it would require a supposedly complete list of Markdown, math, HT
 autolink, and reference-link constructs that differs between GitHub and GitLab.
 Fencing is the safer structural boundary; its readability cost is intentional.
 
-The v3 renderer also adds an atomic renderer-owned `<details>` compositor for the
+The v3 renderer pre-lands an atomic renderer-owned `<details>` compositor for the
 future SPEC-45 disclosure sections. Its summary text is renderer-owned, its content
 must already be literal fragments, and it emits a blank line after `</summary>` so
-GitHub recognizes a following fenced block. It does not add critique sections to the
-current summary output.
+GitHub recognizes a following fenced block. `render_body` does not call this helper
+in v3; SPEC-45 owns the later disclosure activation, and v3 does not add critique
+sections to the current summary output.
 
 The consensus input category is now the same closed enum as the finding batch
 (`security`, `correctness`, `performance`, `maintainability`, `style`, `test`, or

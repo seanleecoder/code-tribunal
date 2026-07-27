@@ -187,18 +187,17 @@ def details_fragment(
     summary_text: str,
     fragments: Sequence[RenderFragment],
 ) -> RenderFragment:
-    """Compose an atomic, renderer-owned disclosure fragment.
+    """Compose the pre-landed v4 disclosure primitive as an atomic fragment.
 
-    ``summary_text`` is supplied by the renderer, not model output. The
-    fragments must already carry their own literal delimiters; this compositor
-    never interpolates raw model text into the disclosure structure. Escaping
-    the summary defensively keeps an accidental closing tag inert as well.
+    This helper lives in the v3 renderer so SPEC-45 can add its disclosure
+    section without another fragment API change; v3 ``render_body`` does not
+    call it. ``summary_text`` is supplied by the renderer, not model output,
+    and the typed fragment sequence must already carry its own literal
+    delimiters. The compositor never interpolates raw model text into the
+    disclosure structure. Escaping the summary defensively keeps an accidental
+    closing tag inert as well.
     """
 
-    if not isinstance(summary_text, str):
-        raise TypeError("details summary must be renderer-owned text")
-    if any(not isinstance(fragment, RenderFragment) for fragment in fragments):
-        raise TypeError("details content must contain RenderFragment values")
     escaped_summary = (
         summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )

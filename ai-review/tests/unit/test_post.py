@@ -1739,7 +1739,7 @@ class PostTests(unittest.TestCase):
     def test_summary_renders_full_multiline_body_as_literal_block(self) -> None:
         group = self._consensus()["groups"][0]
         group["decision"] = "fyi"
-        group["body"] = "First line\n\nSecond line"
+        group["body"] = "First line\n \nSecond line"
 
         body, _body_hash = post_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
@@ -1750,10 +1750,18 @@ class PostTests(unittest.TestCase):
         body_start = lines.index("  Body:")
         self.assertEqual(
             lines[body_start : body_start + 6],
-            ["  Body:", "  ```text", "  First line", "", "  Second line", "  ```"],
+            ["  Body:", "  ```text", "  First line", "   ", "  Second line", "  ```"],
         )
-        self.assertFalse(
-            any(line.strip() == "" and line != "" for line in lines[body_start : body_start + 6])
+
+        group["body"] = "First line\n\nSecond line"
+        empty_body, _empty_body_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+        empty_lines = empty_body.splitlines()
+        empty_body_start = empty_lines.index("  Body:")
+        self.assertEqual(
+            empty_lines[empty_body_start : empty_body_start + 6],
+            ["  Body:", "  ```text", "  First line", "", "  Second line", "  ```"],
         )
 
     def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
@@ -1884,6 +1892,31 @@ class PostTests(unittest.TestCase):
         self.assertEqual(parsed_unfenced["title"], "Legacy title")
         self.assertEqual(parsed_unfenced["summary"], "legacy body")
 
+    def test_review_note_parser_bounds_unterminated_fence_at_v2_section_boundaries(self) -> None:
+        for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
+            with self.subTest(boundary=boundary):
+                body = "\n".join(
+                    [
+                        "**AI review: INFO style**",
+                        "",
+                        "Title: `Legacy title`",
+                        "",
+                        "Body:",
+                        "",
+                        "```text",
+                        "legacy body",
+                        boundary,
+                        "ignored footer content",
+                        "```",
+                    ]
+                )
+
+                parsed = parse_review_note(body)
+
+                self.assertIsNotNone(parsed)
+                assert parsed is not None
+                self.assertEqual(parsed["summary"], "legacy body")
+
     def test_review_note_parser_handles_blank_lines_and_malformed_title_fallback(self) -> None:
         body = "\n".join(
             [
@@ -1941,6 +1974,32 @@ class PostTests(unittest.TestCase):
         self.assertIn("first-entry", _compose_summary_sections(sections))
         self.assertNotIn("second-entry", _compose_summary_sections(sections))
         self.assertIn("third-entry", _compose_summary_sections(sections))
+
+    def test_summary_section_descriptor_normalizes_entries_and_defaults_retention(self) -> None:
+        entries = ["first", "second"]
+        section = SummarySectionDescriptor(
+            header_factory=lambda shown: f"section:{shown}",
+            entries=entries,
+            trailer_factory=lambda omitted: [],
+            drop_priority=1,
+        )
+
+        entries.append("caller mutation")
+
+        self.assertEqual(section.entries, ("first", "second"))
+        self.assertEqual(section.retained_count, 2)
+        self.assertEqual(section.entry_prefix_lengths, (0, 5, 11))
+
+    def test_summary_section_descriptor_rejects_invalid_retained_count(self) -> None:
+        for retained_count in (-1, 2):
+            with self.subTest(retained_count=retained_count), self.assertRaises(ValueError):
+                SummarySectionDescriptor(
+                    header_factory=lambda shown: f"section:{shown}",
+                    entries=("only",),
+                    trailer_factory=lambda omitted: [],
+                    drop_priority=1,
+                    retained_count=retained_count,
+                )
 
     def test_summary_drops_whole_advisory_entries_at_github_limit(self) -> None:
         first = copy.deepcopy(self._consensus()["groups"][0])
@@ -2066,6 +2125,31 @@ class PostTests(unittest.TestCase):
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertIn("…and 1 more advisory findings (configured count limit)", body)
         self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(body))
+
+    def test_v3_title_recovery_is_lossy_for_newline_and_literal_backslash_n(self) -> None:
+        encoded_newline = copy.deepcopy(self._consensus()["groups"][0])
+        literal_backslash_n = copy.deepcopy(encoded_newline)
+        encoded_newline["title"] = "line one\nline two"
+        literal_backslash_n["title"] = r"line one\nline two"
+
+        encoded_body, encoded_hash = render_body(
+            encoded_newline, 1, "run", posting_mode="github_reviews"
+        )
+        literal_body, literal_hash = render_body(
+            literal_backslash_n, 1, "run", posting_mode="github_reviews"
+        )
+
+        parsed_encoded = parse_review_note(encoded_body)
+        parsed_literal = parse_review_note(literal_body)
+
+        self.assertIsNotNone(parsed_encoded)
+        self.assertIsNotNone(parsed_literal)
+        assert parsed_encoded is not None
+        assert parsed_literal is not None
+        self.assertEqual(parsed_encoded["title"], "line one\nline two")
+        self.assertEqual(parsed_literal["title"], "line one\nline two")
+        self.assertEqual(encoded_body, literal_body)
+        self.assertEqual(encoded_hash, literal_hash)
 
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
         client = FakePostClient("head")
