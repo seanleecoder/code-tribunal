@@ -1,6 +1,7 @@
-# Architecture Decision Records (ADRs)
+# Architecture decision records (ADRs)
 
-This directory contains architectural and product-policy decision records for Code Tribunal.
+This directory contains architectural and product-policy decision records for
+Code Tribunal.
 
 | ADR | Title | Decision Area | Status |
 |---|---|---|---|

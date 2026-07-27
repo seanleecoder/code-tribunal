@@ -32,6 +32,11 @@ RELEASE_STATE_DOCS = (
     ROOT / "docs/SECURITY_MODEL.md",
     RELEASE_NOTES,
 )
+# Internal notes, case studies, and presentations are scratch material and do not
+# require a public README.md index.
+EXCLUDED_README_DIR_PARTS = {"internal"}
+DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
+DECISIONS_DIR = ROOT / "docs/decisions"
 # A tripwire for the exact wording that survived the 1.0.0 release, not a general
 # proof that prose cannot contradict release state. A re-introduced draft claim worded
 # differently will pass; treat a green run as "these known phrasings are gone", and add
@@ -427,19 +432,39 @@ def _release_state_issues() -> list[str]:
     return issues
 
 
+def _needs_readme(directory: Path) -> bool:
+    return (
+        directory.is_dir()
+        and not (set(directory.parts) & EXCLUDED_README_DIR_PARTS)
+        and any(directory.glob("*.md"))
+        and not (directory / "README.md").exists()
+    )
+
+
 def _directory_readme_issues() -> list[str]:
     issues: list[str] = []
     docs_root = ROOT / "docs"
     for directory in sorted(docs_root.rglob("*")):
-        if (
-            directory.is_dir()
-            and "internal" not in directory.parts
-            and any(directory.glob("*.md"))
-            and not (directory / "README.md").exists()
-        ):
+        if _needs_readme(directory):
             issues.append(
                 f"{directory.relative_to(ROOT)}: documentation directory contains "
                 "markdown files but no README.md index"
+            )
+    return issues
+
+
+def _adr_issues() -> list[str]:
+    issues: list[str] = []
+    if not DECISIONS_INDEX.exists():
+        return issues
+    index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
+    for path in sorted(DECISIONS_DIR.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        if path.name not in index_text:
+            issues.append(
+                f"docs/decisions/README.md: decision record {path.name!r} is "
+                "missing from the index table"
             )
     return issues
 
@@ -467,6 +492,7 @@ def find_issues() -> list[str]:
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
     issues.extend(_directory_readme_issues())
+    issues.extend(_adr_issues())
     return issues
 
 
