@@ -16,7 +16,7 @@ from ai_review.consensus import build_consensus, validate_consensus_inputs
 from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
-from ai_review.post import post_consensus
+from ai_review.post import parse_marker, post_consensus
 from ai_review.schema import finalize_finding_batch, load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +125,53 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.review_comment_count(), 1)
         self.assertEqual(client.state_comment_count(), 1)
+
+    def test_hostile_literal_body_rerun_is_idempotent_on_both_platforms(self) -> None:
+        for posting_mode in ("gitlab_discussions", "github_reviews"):
+            with self.subTest(posting_mode=posting_mode), tempfile.TemporaryDirectory() as tmp:
+                config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+                batches = self._blocking_batches()
+                for batch in batches:
+                    finding = batch["findings"][0]
+                    finding["title"] = "# hostile `title` $math$"
+                    finding["body"] = (
+                        "> not a quote\n- not a list\n```python\n"
+                        "echo $total;\n````\n<!-- not a marker -->"
+                    )
+                    finding["evidence"] = ["records[0] runs before the guard\n> still literal"]
+                    finding["suggestion"] = "```python\nreturn records[0]\n"
+
+                if posting_mode == "github_reviews":
+                    config["posting"]["mode"] = posting_mode
+                    config["state"]["backend"] = "github_pr_comment"
+                    manifest = dict(
+                        manifest,
+                        project_id="octo-org/octo-repo",
+                        merge_request_iid="17",
+                    )
+                    client = FakeGitHubClient(
+                        head_sha=manifest["head_sha"], diff_text=diff_text
+                    )
+                else:
+                    client = FakeGitLabClient(
+                        head_sha=manifest["head_sha"], diff_text=diff_text
+                    )
+
+                consensus = build_consensus(manifest, batches, config)
+                first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+                second = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+
+                if posting_mode == "github_reviews":
+                    self.assertEqual(client.review_comment_count(), 1)
+                    body = client.inline_comment_bodies()[0]
+                else:
+                    self.assertEqual(client.discussion_count(), 1)
+                    body = client.created_discussion_bodies[0]
+                self.assertEqual(first["created_discussions"], 1)
+                self.assertEqual(second["created_discussions"], 0)
+                self.assertGreaterEqual(second["skipped_unchanged"], 1)
+                self.assertIsNotNone(parse_marker(body))
+                self.assertEqual(body.count("<!--"), 1)
 
     def test_rerun_with_unchanged_state_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

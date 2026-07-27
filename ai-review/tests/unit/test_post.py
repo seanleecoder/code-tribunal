@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,17 @@ from ai_review.memory import attach_state_hash, decode_state_note_body, encode_s
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.post import (
+    SummarySectionDescriptor,
     _classify_post_groups,
+    _compose_summary_sections,
     _desired_discussion_resolved,
+    _drop_lowest_priority_trailing_entry,
     _initial_post_result,
     collect_human_commands,
     finalize_state,
     index_ai_review_discussions,
     load_persisted_state,
+    parse_review_note,
     plan_state,
     post_consensus,
     post_inline,
@@ -33,7 +38,7 @@ from ai_review.post import (
     render_body,
     source_hash,
 )
-from ai_review.schema import validate_instance
+from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient
@@ -300,6 +305,49 @@ class PostTests(unittest.TestCase):
             },
         )
         validate_instance(result, "post_result.schema.json")
+
+    def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
+        fixture_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "golden"
+            / "semantic_consensus.json"
+        )
+        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+
+        for field, invalid_value in (
+            ("category", "correctness **injected**"),
+            ("decision", "**injected**"),
+            ("final_severity", "critical"),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                inputs = root / "inputs"
+                inputs.mkdir()
+                write_canonical_json(inputs / "manifest.json", {})
+                invalid = load_json_file(fixture_path)
+                invalid["groups"][0][field] = invalid_value
+                consensus_path = root / "consensus.json"
+                write_canonical_json(consensus_path, invalid)
+                output_path = root / "post-result.json"
+
+                with patch("ai_review.post.create_runtime_platform") as factory:
+                    with self.assertRaisesRegex(ValueError, "critical|injected|category"):
+                        post_module.cli(
+                            [
+                                "--config",
+                                str(config_path),
+                                "--inputs",
+                                str(inputs),
+                                "--consensus",
+                                str(consensus_path),
+                                "--out",
+                                str(output_path),
+                                "--dry-run",
+                            ]
+                        )
+                    factory.assert_not_called()
+                self.assertFalse(output_path.exists())
 
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
@@ -1651,7 +1699,7 @@ class PostTests(unittest.TestCase):
         self.assertIn("Advisory (FYI) findings", client.mr_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
-    def test_summary_renders_full_multiline_body_as_blockquote(self) -> None:
+    def test_summary_renders_full_multiline_body_as_literal_block(self) -> None:
         group = self._consensus()["groups"][0]
         group["decision"] = "fyi"
         group["body"] = "First line\n\nSecond line"
@@ -1661,7 +1709,76 @@ class PostTests(unittest.TestCase):
         )
 
         self.assertIn("- **MAJOR** correctness", body)
-        self.assertIn("  > First line\n  > \n  > Second line", body)
+        self.assertIn("Body:\n```text\nFirst line\n\nSecond line\n```", body)
+
+    def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["representative_anchor"]["new_path"] = "src/# > $file$.py"
+        group["representative_anchor"]["old_path"] = "src/# > $file$.py"
+        group["title"] = "# title `with` math $x$"
+        group["body"] = "- body\n> quote\n<!-- not a marker -->"
+
+        body, _body_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+
+        self.assertIn("`src/# > $file$.py:2`", body)
+        self.assertIn("``# title `with` math $x$``", body)
+        self.assertIn("Body:\n```text\n- body\n> quote", body)
+        self.assertIn("< !-- not a marker -- >", body)
+        self.assertNotIn("  > ", body)
+        self.assertEqual(body.count("<!--"), 1)
+
+    def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
+        v3_body, _body_hash = render_body(
+            self._consensus()["groups"][0], 1, "run", posting_mode="gitlab_discussions"
+        )
+        parsed_v3 = parse_review_note(v3_body)
+        self.assertIsNotNone(parsed_v3)
+        assert parsed_v3 is not None
+        self.assertEqual(parsed_v3["title"], "Title")
+
+        v2_marker = (
+            "<!-- ai-review:v1 issue_id="
+            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
+        )
+        parsed_v2 = parse_review_note(
+            "**AI review: MAJOR correctness**\n\nLegacy title\n\nLegacy body\n\n" + v2_marker
+        )
+        self.assertIsNotNone(parsed_v2)
+        assert parsed_v2 is not None
+        self.assertEqual(parsed_v2["title"], "Legacy title")
+
+    def test_summary_section_descriptors_drop_by_declared_priority(self) -> None:
+        sections = [
+            SummarySectionDescriptor(
+                header_factory=lambda shown, total: f"first:{shown}/{total}",
+                entries=["first-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=20,
+                retained_count=1,
+            ),
+            SummarySectionDescriptor(
+                header_factory=lambda shown, total: f"second:{shown}/{total}",
+                entries=["second-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=5,
+                retained_count=1,
+            ),
+            SummarySectionDescriptor(
+                header_factory=lambda shown, total: f"third:{shown}/{total}",
+                entries=["third-entry"],
+                trailer_factory=lambda omitted: [],
+                drop_priority=10,
+                retained_count=1,
+            ),
+        ]
+
+        self.assertTrue(_drop_lowest_priority_trailing_entry(sections))
+        self.assertEqual([section.retained_count for section in sections], [1, 0, 1])
+        self.assertIn("first-entry", _compose_summary_sections(sections))
+        self.assertNotIn("second-entry", _compose_summary_sections(sections))
+        self.assertIn("third-entry", _compose_summary_sections(sections))
 
     def test_summary_drops_whole_advisory_entries_at_github_limit(self) -> None:
         first = copy.deepcopy(self._consensus()["groups"][0])

@@ -19,6 +19,22 @@ Both platforms use the same configuration, reviewer adapters, artifact schemas,
 consensus policy, posting reconciliation, and gate evaluator. Platform-specific
 credentials are never passed into reviewer subprocess environments.
 
+## Rendered review output
+
+The shared posting renderer uses `render-body.v3`. Model-authored titles, paths,
+reviewer names, bodies, evidence, critique text, and suggestions are displayed as
+literal code spans or `text` fenced blocks on both platforms. Redaction and newline
+normalization happen before fencing; malformed suggestion fences remain visible as
+literal data. Only renderer-owned labels, the validated severity/category/decision
+presentation, and bot markers are Markdown structure.
+
+Fenced literals are a deliberate safety tradeoff: they prevent headings, quotes,
+lists, math-like text, HTML comments, and model fences from changing the review's
+layout, but prose is less readable and long lines may scroll horizontally. The
+renderer uses dynamic delimiters and fragment-aware limits so spans are never split,
+blocks are always closed, and the trusted footer and marker remain outside truncated
+model content.
+
 GitLab's deprecated `/changes?access_raw_diffs=true` endpoint is a conditional
 compatibility fallback only; the paginated `/diffs` endpoint remains primary.
 Fallback data is accepted only when the response explicitly reports

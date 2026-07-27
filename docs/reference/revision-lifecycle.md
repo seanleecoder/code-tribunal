@@ -38,5 +38,8 @@ identifier needed to resolve or reopen its thread through GraphQL.
 
 Open and `wontfix` records are retained by default. Bounded resolved and stale
 record counts plus a total byte limit prevent unbounded state. Overflow is an
-operational failure consumed by the gate. Render-body version changes may cause
-a one-time update of bot-authored comments without changing issue identity.
+operational failure consumed by the gate. The posted-body format is now
+`render-body.v3`. Existing bot-authored inline threads receive one content refresh
+on the next run; issue IDs, markers, state records, and resolution status remain
+unchanged. Summary notes update through their normal body-hash upsert. A rollback
+causes one reverse refresh and does not discard state.

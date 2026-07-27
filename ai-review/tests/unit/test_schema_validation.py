@@ -35,6 +35,30 @@ def _load_validate_output():
 
 
 class SchemaValidationTests(unittest.TestCase):
+    def test_renderer_exempt_enums_are_closed_in_consensus_schema(self) -> None:
+        consensus_schema = load_json_file(
+            Path(__file__).resolve().parents[2] / "schemas" / "consensus.schema.json"
+        )
+        finding_schema = load_json_file(
+            Path(__file__).resolve().parents[2] / "schemas" / "finding_batch.schema.json"
+        )
+        consensus_group = consensus_schema["$defs"]["group"]["properties"]
+        finding_group = finding_schema["$defs"]["finding"]["properties"]
+
+        for field in ("final_severity", "decision", "category"):
+            with self.subTest(field=field):
+                self.assertIsInstance(consensus_group[field].get("enum"), list)
+        self.assertEqual(consensus_group["category"]["enum"], finding_group["category"]["enum"])
+
+    def test_consensus_group_category_outside_enum_is_rejected(self) -> None:
+        fixture = load_json_file(
+            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
+        )
+        fixture["groups"][0]["category"] = "correctness **not a category**"
+
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(fixture, "consensus.schema.json")
+
     def test_consensus_rejects_empty_display_fields_and_unknown_adjusted_severity(
         self,
     ) -> None:

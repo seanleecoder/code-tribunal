@@ -237,7 +237,7 @@ class FindingGroup(TypedDict):
     final_severity: Severity
     block_merge: bool
     human_ack_recommended: bool
-    category: str
+    category: Category
     title: str
     body: str
     body_hash: str
