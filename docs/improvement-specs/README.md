@@ -22,7 +22,7 @@ wins.
 | [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies the running image. |
 | [SPEC-44](spec-44-literal-model-output.md) | Proposed (post-1.0) | Render every dynamic review value as literal data so model output cannot reshape Markdown, markers, or thread layout. |
-| [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Preserve and display effective duplicate/noise/dispute reasoning, with a summary-only audit for majority-noise suppression. |
+| [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Retain all effective duplicate/noise/dispute reasoning, display it tiered behind a disclosure, and record the suppression reason for an opt-in majority-noise audit. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
@@ -40,8 +40,13 @@ completed for `v1.0.0`. Remaining order:
 4. Implement the post-1.0 review-output sequence in order: SPEC-44 literal-safe
    rendering, then SPEC-45 critique provenance/suppression audit, then SPEC-46
    non-line-anchored advisories. SPEC-45 and SPEC-46 rely on the renderer boundary
-   established by SPEC-44; SPEC-46 is handed off after SPEC-45 so its summary
-   priority composes with the critique-disposition section.
+   and the summary section-descriptor refactor established by SPEC-44; SPEC-46 is
+   handed off after SPEC-45 so its summary priority composes with the
+   critique-disposition section, and degrades cleanly if SPEC-45 slips.
+   Prefer shipping SPEC-44 and SPEC-45 in one release so they share a single
+   `render-body` bump and a single one-time thread refresh.
+   Critique of advisories is deliberately deferred out of SPEC-46 and needs its own
+   specification before the advisory caps there are raised.
 
 ## Historical indexes
 

@@ -1,6 +1,6 @@
 # SPEC-44 — Literal-safe rendering of model output
 
-- **Severity:** High (untrusted model output can alter the review that a maintainer sees) · **Effort:** M · **ROI rank:** post-1.0
+- **Severity:** High (untrusted model output can alter the review that a maintainer sees) · **Effort:** L · **ROI rank:** post-1.0
 - **Depends on:** none.
 
 ## Rationale
@@ -15,8 +15,33 @@ surface: `$...$` can become KaTeX-like math, `# ...` can become a heading, `>` a
 consume the bot-owned footer or marker.
 
 The product must make a clear trust boundary: only renderer-owned labels,
-delimiters, lists, emphasis, and machine markers may be Markdown. Every dynamic
-value must be literal data.
+delimiters, lists, emphasis, disclosure elements, and machine markers may be
+Markdown. Every dynamic value must be literal data.
+
+## Design decision: fenced literals over selective escaping
+
+Two mechanisms can make a dynamic value literal. This specification chooses
+fencing, and records the cost so the choice is not revisited by accident.
+
+**Chosen — wrap in renderer-owned code spans/fences.** Safety is structural: the
+delimiter is computed from the value, so correctness does not depend on
+enumerating Markdown constructs. The cost is real and affects every comment a
+maintainer reads: a prose `body` becomes a monospace block with no soft wrap, so
+long lines scroll horizontally, and any legitimate model paragraphing or emphasis
+is flattened. SPEC-45's disclosure-collapsed sections are the mitigation for the
+resulting vertical bulk.
+
+**Rejected — backslash-escape prose, fence only code-shaped fields.** This
+preserves proportional text flow and reads better. It is rejected because
+correctness becomes a completeness argument over an open-ended construct list
+(line-leading `#`, `>`, `-`, `*`, `+`, `N.`, `|`, plus backticks, `$` math,
+autolinks, raw HTML, and reference-link syntax), and that list differs between
+GitHub and GitLab. A single missed construct is a silent injection. Escaping may
+be reconsidered only if it is expressed as a proven-complete transform with
+per-platform fixtures, not as a hand-maintained character list.
+
+Readability is therefore a known, accepted regression of this specification, not
+an oversight.
 
 ## Scope
 
@@ -48,29 +73,46 @@ The API has these invariants:
    LF normalization, and outer-whitespace trimming. The existing 240-character
    title cap remains a renderer policy and is applied before the title span is
    wrapped. No other old per-field cap is restored.
-2. `literal_span` is used for scalar values: titles, reviewer names, paths,
-   severity/category values, source IDs shown to a maintainer, and other short
-   labels. It renders a Markdown code span whose delimiter is one backtick longer
-   than the longest contiguous backtick run in the normalized value. A newline in a
-   scalar is rendered as the literal two-character sequence `\n`, so no dynamic
-   scalar can cross a renderer-owned line or list boundary.
+2. `literal_span` is used for scalar values: titles, reviewer names, paths, source
+   IDs shown to a maintainer, and other short free-text or path-shaped labels. It
+   renders a Markdown code span whose delimiter is one backtick longer than the
+   longest contiguous backtick run in the normalized value. A newline in a scalar is
+   rendered as the literal two-character sequence `\n`, so no dynamic scalar can
+   cross a renderer-owned line or list boundary.
+
+   Schema-validated enums are **not** dynamic values for this purpose. `severity`,
+   `category`, `decision`, and the other closed vocabularies are constrained by
+   `finding_batch.schema.json` before rendering, so they remain renderer-owned text
+   and keep their current presentation — in particular the existing
+   `**AI review: MAJOR correctness**` header line is retained verbatim. Routing them
+   through `literal_span` would buy no safety and would degrade the header.
 3. `literal_block` is used for multiline values: body, evidence, rationale, and
    suggestion. It emits a `text` fenced block using
    `max(3, longest_backtick_run(value) + 1)` backticks for both delimiters. The
    opening and closing delimiters, surrounding newlines, and field labels are
    renderer-owned. A model-supplied fence can therefore never close the outer fence.
 4. Empty optional values are omitted with their entire bot-owned field label. The
-   renderer never substitutes a model-derived placeholder.
+   renderer never substitutes a model-derived placeholder. A **required** scalar that
+   normalizes to empty — for example a title that redacts to nothing — renders as the
+   renderer-owned literal `(empty)` outside any span, because an empty code span
+   displays as stray backticks. This is renderer-owned text, not a model-derived
+   placeholder.
 5. The only HTML comments in a rendered payload are the renderer-owned
    `ai-review:v1` / `ai-review-summary:v1` markers. Marker attributes are emitted by
    a dedicated marker encoder, not by the literal-value API.
+6. Renderer-owned `<details>` / `<summary>` disclosure elements are permitted
+   structure. They are never derived from model output, they carry only
+   renderer-owned summary text and counts, and they wrap fragments that are already
+   literal. Both supported platforms render them; GitHub requires a blank line after
+   `</summary>` before a fenced block is recognized, so the renderer must emit that
+   blank line unconditionally. SPEC-45 relies on this invariant.
 
 The following is illustrative output for a hostile body. The four-backtick wrapper
 is chosen by the renderer because the value contains a three-backtick run; the
 heading, quote, list, math-looking text, and comment-looking text remain literal.
 
 `````markdown
-**AI review**
+**AI review: MAJOR correctness**
 
 Title: `PHP template output is literal`
 
@@ -107,12 +149,19 @@ and 65,536 for GitHub review comments. Apply the limit to the final literal-rend
 payload, before the bot marker and before `body_hash` is calculated.
 
 Replace the current raw backtick-count truncation heuristic with renderer-owned
-fragments or an equivalent token stream. If inline truncation ends inside a literal
-block, the renderer must append that block's exact owned closing delimiter before
-the existing platform-truncation notice, trusted footer, and marker. It must never
-infer safety from model text. Summary comments continue to drop whole rendered
-entries and append their existing size-limit trailer; they never cut an entry or a
-literal fence in half.
+fragments or an equivalent token stream. It must never infer safety from model text.
+Truncation obeys two fragment rules:
+
+- A cut may land inside a `literal_block`. The renderer then appends that block's
+  exact owned closing delimiter before the existing platform-truncation notice,
+  trusted footer, and marker.
+- A cut may **never** land inside a `literal_span`. Spans are atomic: truncation
+  falls back to the preceding fragment boundary and drops the whole span with its
+  bot-owned label. A partially rendered span would leave an unmatched backtick run
+  and is never emitted.
+
+Summary comments continue to drop whole rendered entries and append their existing
+size-limit trailer; they never cut an entry, a span, or a literal fence in half.
 
 `body_hash` and the summary hash are calculated from the final redacted,
 normalized, literal-rendered, size-limited body. Equal inputs must therefore produce
@@ -132,13 +181,28 @@ marker parsing, source hashes, and idempotent upsert behavior remain unchanged.
 3. Preserve the current platform-limit API, but change its input from an arbitrary
    Markdown string to renderer-owned fragments (or an equivalent representation)
    so a truncation can close only a known renderer fence.
-4. Refresh rendering goldens, body-hash fixtures, and marker-parser fixtures. The
+4. Restructure `render_summary_body` from its current hand-rolled prefix-length
+   arithmetic over exactly two hardcoded sections into a **list of section
+   descriptors** — each carrying its header factory, rendered entries, trailer
+   factory, and an explicit drop priority — with one generic
+   drop-lowest-priority-trailing-entry loop. The composed string remains the source
+   of truth and the existing recheck loop is retained.
+
+   This refactor belongs here rather than in a later specification. SPEC-44 already
+   has to convert this function's input to fragments; SPEC-45 adds a third section
+   and SPEC-46 a fourth, each with its own trailer and a position in a strict global
+   retention order. Patching the size arithmetic and the `drop_trailing_entry` tuple
+   three times is how layout and size accounting drift apart. After this change,
+   adding a section is data.
+5. Refresh rendering goldens, body-hash fixtures, and marker-parser fixtures. The
    parser must continue to recognize both existing v2-rendered bot markers and v3
    markers because the marker grammar itself does not change. No consensus, finding,
    or state schema version changes are required for this specification.
-5. When implementation lands, update the current rendering/reference documentation
-   and CHANGELOG in that implementation change. This proposed specification does
-   not itself advertise the behavior as shipped.
+6. When implementation lands, update the current rendering/reference documentation
+   and CHANGELOG in that implementation change. Record the accepted readability
+   regression and the rejected escaping alternative in the rendering reference so the
+   tradeoff is discoverable outside this specification. This proposed specification
+   does not itself advertise the behavior as shipped.
 
 ## Migration and rollback
 
@@ -162,6 +226,12 @@ model Markdown as trusted structure.
   suggestion is shown safely rather than silently omitted.
 - Inline bodies and summary entries respect their existing platform limits, retain
   the trusted marker, and have stable hashes across identical reruns.
+- Truncation never emits a partially rendered literal span, and never leaves a
+  literal block unclosed.
+- Schema-validated enums keep their existing renderer-owned presentation; the
+  `**AI review: <SEVERITY> <category>**` header is unchanged.
+- `render_summary_body` gains a new section without changes to its size-accounting
+  or drop loop, demonstrated by SPEC-45 and SPEC-46 landing as descriptor additions.
 - The only intentional posting churn is the one-time v3 body refresh.
 
 ## Required tests
@@ -174,9 +244,18 @@ model Markdown as trusted structure.
   GitLab and GitHub limits twice and assert byte-identical body/hash pairs and an
   intact marker. Add a paired `parse_marker` regression for retained v2/v3 marker
   compatibility.
+- `ai-review/tests/unit/test_body_hash.py` — add
+  `test_truncation_drops_whole_literal_span_instead_of_splitting_it` and
+  `test_required_scalar_that_redacts_to_empty_renders_owned_placeholder`.
 - `ai-review/tests/unit/test_post.py` — add
-  `test_summary_uses_literal_renderer_for_reviewer_path_title_evidence_and_suggestion`
-  and `test_malformed_suggestion_fence_is_rendered_not_dropped`.
+  `test_summary_uses_literal_renderer_for_reviewer_path_title_evidence_and_suggestion`,
+  `test_malformed_suggestion_fence_is_rendered_not_dropped`, and
+  `test_summary_section_descriptors_drop_by_declared_priority` covering a synthetic
+  third section so the generic drop loop is verified independently of SPEC-45/46.
+- `ai-review/tests/security/test_prompt_injection_rendering.py` — add
+  `test_renderer_owned_details_block_keeps_fenced_model_text_literal`, asserting the
+  blank line after `</summary>` and that model text cannot close the disclosure
+  element.
 - `ai-review/tests/contract/test_golden_consensus.py` — refresh the inline and
   summary rendering goldens, including an adversarial fence-escape fixture.
 - Cross-platform integration coverage in
