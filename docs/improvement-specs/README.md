@@ -12,7 +12,8 @@ wins.
 | SPEC-01–05 | Complete | Initial quality, security, and documentation foundations shipped before Phase 1. |
 | SPEC-06 | Complete | Trust auditor/template tests plus the recorded 1.0.0 [hostile-MR evidence](../evidence/record-gitlab-hostile-mr.md) (scoped: unprotected-ref MR in the hardened child). |
 | SPEC-07–19 | Complete | State, consensus, correctness, platform, supply-chain, and reviewer optimization changes are represented by tests/changelog. |
-| SPEC-20–22 | Proposed | Usage accounting, Cursor-as-generalized feature work, and project learning/rules are not advertised product features. Cursor reviewer support that exists is documented independently of the old proposal. |
+| [SPEC-20](spec-20-reviewer-usage-accounting.md), [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed | Reviewer usage accounting and project learning/rules are not advertised product features. |
+| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental); acceptance outstanding | The opt-in cursor reviewer ships disabled: adapter, config block, `CURSOR_API_KEY` credential separation, supply-chain notes, and the permission smoke harness landed with unit coverage. Open acceptance: one real-key run against a fixture MR to pin the exact Composer model id, and the hostile real-image permission-denial check. The [evidence matrix](../evidence/RUNBOOK.md) carries no cursor row while the reviewer is experimental. |
 | [SPEC-23–30](../history/specs/README.md#completed-specifications) | Complete history | Implemented on `main`; requirements archived in [history specs](../history/specs/README.md) for provenance. |
 | [SPEC-31–36](../history/specs/README.md#completed-specifications) | Complete on `main` | Snapshot containment, reviewer validity, artifact/config integrity, revision binding, distribution contract, and quality/type gates landed. |
 | [SPEC-37](../history/specs/spec-37-final-release-artifacts.md) | Complete at `v1.0.0` | Runtime source `88bc941` frozen, images published and attested, release commit `3ad443e` tagged with a validated external manifest. |
@@ -53,6 +54,9 @@ completed for `v1.0.0`. Remaining order:
    [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
+5. Close SPEC-21 acceptance before advertising the cursor reviewer: one real-key run
+   against a fixture MR to pin the Composer model id, then the hostile real-image
+   permission-denial check. Keep the reviewer disabled until both pass.
 
 ## Historical indexes
 
