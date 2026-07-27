@@ -21,6 +21,9 @@ wins.
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel; observed live with a weak default model. |
 | [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies the running image. |
+| [SPEC-44](spec-44-literal-model-output.md) | Proposed (post-1.0) | Render every dynamic review value as literal data so model output cannot reshape Markdown, markers, or thread layout. |
+| [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Preserve and display effective duplicate/noise/dispute reasoning, with a summary-only audit for majority-noise suppression. |
+| [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
 ## Active dependency order
@@ -34,6 +37,11 @@ completed for `v1.0.0`. Remaining order:
    1.0.1 follow-ups in [`release/1.0.0.md`](../../release/1.0.0.md)).
 3. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
    in-pipeline trusted-image enforcement).
+4. Implement the post-1.0 review-output sequence in order: SPEC-44 literal-safe
+   rendering, then SPEC-45 critique provenance/suppression audit, then SPEC-46
+   non-line-anchored advisories. SPEC-45 and SPEC-46 rely on the renderer boundary
+   established by SPEC-44; SPEC-46 is handed off after SPEC-45 so its summary
+   priority composes with the critique-disposition section.
 
 ## Historical indexes
 
