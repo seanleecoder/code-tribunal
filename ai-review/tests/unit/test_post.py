@@ -1803,7 +1803,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(parsed_v2["title"], "Legacy title")
         self.assertEqual(parsed_v2["summary"], "Legacy body")
 
-    def test_review_note_parser_recovers_v3_body_and_stops_at_bot_sections(self) -> None:
+    def test_review_note_parser_preserves_exact_section_labels_inside_closed_v3_body(self) -> None:
         body = "\n".join(
             [
                 "**AI review: MAJOR correctness**",
@@ -1814,10 +1814,12 @@ class PostTests(unittest.TestCase):
                 "",
                 "````text",
                 "first line",
-                "Evidence: still body data",
+                "Evidence:",
+                "Dissent:",
+                "Suggestion:",
+                "Consensus:",
                 "```python",
                 "second line",
-                "Consensus: still body data",
                 "````",
                 "",
                 "Dissent:",
@@ -1838,10 +1840,9 @@ class PostTests(unittest.TestCase):
         self.assertEqual(parsed["title"], "`starts with ticks`")
         self.assertEqual(
             parsed["summary"],
-            "first line\nEvidence: still body data\n```python\nsecond line\n"
-            "Consensus: still body data",
+            "first line\nEvidence:\nDissent:\nSuggestion:\nConsensus:\n```python\nsecond line",
         )
-        self.assertNotIn("Dissent:", parsed["summary"])
+        self.assertNotIn("ignored rationale", parsed["summary"])
 
     def test_review_note_parser_preserves_fenced_blank_lines_and_v2_boundaries(self) -> None:
         fenced = "\n".join(
@@ -1892,7 +1893,7 @@ class PostTests(unittest.TestCase):
         self.assertEqual(parsed_unfenced["title"], "Legacy title")
         self.assertEqual(parsed_unfenced["summary"], "legacy body")
 
-    def test_review_note_parser_bounds_unterminated_fence_at_v2_section_boundaries(self) -> None:
+    def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
         for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
             with self.subTest(boundary=boundary):
                 body = "\n".join(
@@ -1907,7 +1908,6 @@ class PostTests(unittest.TestCase):
                         "legacy body",
                         boundary,
                         "ignored footer content",
-                        "```",
                     ]
                 )
 

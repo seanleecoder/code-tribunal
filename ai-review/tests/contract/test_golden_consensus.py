@@ -27,7 +27,6 @@ class GoldenConsensusContractTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "render_body_hostile.json"
         )
 
-        rendered_by_platform: dict[str, tuple[str, str]] = {}
         for posting_mode in ("github_reviews", "gitlab_discussions"):
             with self.subTest(posting_mode=posting_mode):
                 rendered, body_hash = render_body(
@@ -39,16 +38,12 @@ class GoldenConsensusContractTests(unittest.TestCase):
 
                 self.assertEqual(rendered, fixture["expected_body"])
                 self.assertEqual(body_hash, fixture["expected_body_hash"])
+                # SPEC-26/44 platform limits are Unicode character counts.
                 self.assertLessEqual(
-                    len(rendered.encode("utf-8")), platform_comment_limit(posting_mode)
+                    len(rendered), platform_comment_limit(posting_mode)
                 )
                 self.assertEqual(rendered.count("<!--"), 1)
                 self.assertEqual(rendered.count("-->"), 1)
-                rendered_by_platform[posting_mode] = (rendered, body_hash)
-
-        self.assertEqual(
-            rendered_by_platform["github_reviews"], rendered_by_platform["gitlab_discussions"]
-        )
 
 
 if __name__ == "__main__":

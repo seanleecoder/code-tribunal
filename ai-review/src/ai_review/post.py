@@ -126,6 +126,7 @@ class ExistingReviewDiscussion:
     position: dict[str, Any] | None
     category: str | None
     title: str
+    # Intentionally retained v2/v3 recovery metadata, not a state-matching key.
     summary: str
     resolved: bool
     author_id: int | None
@@ -176,16 +177,9 @@ def _read_review_body(lines: list[str]) -> list[str]:
     opening_match = BODY_FENCE_RE.fullmatch(lines[start].strip())
     if opening_match is not None:
         delimiter = opening_match.group("delimiter")
-        content: list[str] = []
-        for line in lines[start + 1 :]:
-            if line.strip() in REVIEW_SECTION_BOUNDARIES:
-                # An exact renderer section label before any closing fence is
-                # the safest boundary when a footer's own fence is the only
-                # delimiter left in a damaged note.
-                return _read_unfenced_review_body(lines[start + 1 :])
+        for closing_index, line in enumerate(lines[start + 1 :], start + 1):
             if line.strip() == delimiter:
-                return content
-            content.append(line)
+                return lines[start + 1 : closing_index]
         # A damaged v3 note can retain its opening fence while losing the
         # close. Recover the remainder with the v2 line-oriented rules so a
         # footer section is not folded into the stored body summary.

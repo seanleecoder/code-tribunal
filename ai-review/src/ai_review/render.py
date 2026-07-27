@@ -10,6 +10,7 @@ from .redact import redact_text
 from .types import FindingGroup
 
 RENDER_BODY_VERSION = "render-body.v3"
+# GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
     "github_reviews": 65_536,
