@@ -1,5 +1,15 @@
 # SPEC-21 — Cursor CLI as an opt-in substitute reviewer
 
+> **Status: implemented and shipping disabled; acceptance outstanding.** The
+> implementation and unit-test sections below have landed — see
+> `ai-review/adapters/cursor.sh`, the `cursor` block in
+> [`review.yaml`](../../ai-review/config/review.yaml), and
+> `scripts/smoke_cursor_permissions.sh`. Two acceptance criteria remain open: one
+> real-key run against a fixture MR to pin the exact Composer model id, and the
+> hostile real-image permission-denial check. Keep the reviewer disabled in
+> consuming repositories until both pass. Current operator documentation is the
+> [configuration reference](../configuration.md), not this file.
+
 - **Severity:** Medium (capability/flexibility) · **Effort:** M · **ROI rank:** n/a (post-Phase-3)
 - **Depends on:** none hard. SPEC-20 (usage accounting) recommended first so
   the panel's cost story is symmetric when cursor lands (cursor's `usage` is
