@@ -298,21 +298,22 @@ again removes the section through the same path.
 
 ## Deviations from the original draft
 
-These requirements changed after the first committed draft of this specification. Each
-is a deliberate maintainer decision, recorded here so a reviewer comparing against the
-original sees intent rather than drift.
+These requirements changed after the first committed draft of this specification.
+Display-policy changes were ratified in
+[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md) and are recorded here so a
+reviewer comparing against the original sees a decision rather than drift.
 
-**The retention obligation is unchanged.** Every deviation below is about *display*
-budget; `critique_observations` still records every selected effective non-agree
+**The retention obligation is unchanged.** Every display deviation below is about
+*budget*; `critique_observations` still records every selected effective non-agree
 critique in full, so nothing the original draft preserved has been lost from the
 artifact.
 
-| Original requirement | Now | Reason |
-| --- | --- | --- |
-| All critique reasoning expanded in normal inline and summary output | Counts line always; dispute expanded, noise elided to one line, valid-duplicate rationale retained but not rendered | On an N-reviewer panel a group has up to N−1 critics, so expanded blocks can occupy three to four times the space of the finding they annotate. Value per line differs sharply by verdict. |
-| `Found by` on inline and summary entries | Summary entries only | The inline consensus footer already emits `- Reviewers: {sorted contributing_reviewers}` from the identical source; inline `Found by` would be byte-for-byte duplicate provenance. Summary entries have no footer. |
-| Critique disposition audit posted by default | Artifact and job output by default; MR summary opt-in via `critique.show_disposition_audit` | Majority-noise suppression exists to reduce maintainer clutter; re-posting suppressed titles and rationales partially undoes the suppression it audits, and the audience is whoever tunes the panel. |
-| Suppression selected by re-testing `critique_noise_count > len(eligible_critics) / 2` downstream | Selected by the persisted `drop_reason` | Not a preference: `successful_critics` is a local in `_apply_critiques` and is never written to the artifact, so the predicate was not computable downstream at all. |
+| Original requirement | Now | Reason | Decided in |
+| --- | --- | --- | --- |
+| All critique reasoning expanded in normal inline and summary output | Counts line always; dispute expanded, noise elided to one line, valid-duplicate rationale retained but not rendered | On an N-reviewer panel a group has up to N−1 critics, so expanded blocks can occupy three to four times the space of the finding they annotate. Value per line differs sharply by verdict. | ADR-0002 §2 |
+| `Found by` on inline and summary entries | Summary entries only | The inline consensus footer already emits `- Reviewers: {sorted contributing_reviewers}` from the identical source; inline `Found by` would be byte-for-byte duplicate provenance. Summary entries have no footer. | ADR-0002 §2 |
+| Critique disposition audit posted by default | Artifact and job output by default; MR summary opt-in via `critique.show_disposition_audit` | Majority-noise suppression exists to reduce maintainer clutter; re-posting suppressed titles and rationales partially undoes the suppression it audits, and the audience is whoever tunes the panel. | ADR-0002 §3 |
+| Suppression selected by re-testing `critique_noise_count > len(eligible_critics) / 2` downstream | Selected by the persisted `drop_reason` | Correctness, not policy: `successful_critics` is a local in `_apply_critiques` and is never written to the artifact, so the predicate was not computable downstream at all. | n/a — defect fix |
 
 `render-body.v4` is unchanged from the original draft.
 
@@ -323,9 +324,10 @@ artifact.
 - Majority-noise suppression is selected downstream from the persisted
   `drop_reason`; no consumer re-evaluates the suppression predicate, and none needs
   `successful_critics`.
-- A group with critiques adds exactly one visible line by default. Dispute and noise
-  reasoning is reachable in one click; noise is elided to one line; valid-duplicate
-  rationale is retained but not rendered.
+- A group with critiques adds exactly one visible line by default. Expanding the
+  disclosure shows full dispute rationale, and noise rationale only in its elided
+  one-line form. Full noise text and all valid-duplicate rationale are reachable in
+  `critique_observations` and the job output, not from the merge request.
 - Summary entries show `Found by`; inline bodies do not, and the consensus footer's
   `Reviewers` line is unchanged.
 - Invalid duplicate claims display as disputes and leave current voting/decision

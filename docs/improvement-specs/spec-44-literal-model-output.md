@@ -20,13 +20,64 @@ Markdown.
 
 **Every free-text or path-shaped value must be literal data.** That is the boundary
 this specification enforces, and it is deliberately narrower than "every dynamic
-value". Closed enumerations — `severity`, `category`, `decision`, and the other fixed
-vocabularies — are constrained by `finding_batch.schema.json` before they reach the
-renderer, so a model cannot place arbitrary bytes in them and they remain
-renderer-owned text. Stating the limit here is a decision, not an exemption
-discovered later: a rule of "every dynamic value" would either be violated by the
-existing severity header or would force closed enums through a literal API that buys
-no safety.
+value" — a rule of "every dynamic value" would either be violated by the existing
+severity header or would force closed enumerations through a literal API that buys no
+safety.
+
+**The exemption is earned per field, and only where a validation boundary actually
+enforces it.** A value may render outside the literal API only when the schema of the
+artifact the renderer reads closes its vocabulary **and** that schema is validated
+before rendering. For inline and summary rendering the artifact is `consensus.v1`,
+because `render_body` and the summary-entry renderer consume consensus groups.
+
+Two conditions must hold, and today **neither is fully satisfied**:
+
+| Rendered field | Vocabulary closed by `consensus.schema.json`? | Validated before rendering? |
+| --- | --- | --- |
+| `final_severity` | Yes (enum) | **No** |
+| `decision` | Yes (enum) | **No** |
+| `category` | **No** (`{"type": "string", "minLength": 1}`) | **No** |
+
+On the vocabulary axis, `category` is enumerated in `finding_batch.schema.json` and the
+pipeline copies it from a validated finding, so the in-process path is safe by
+construction — but a consensus artifact loaded from disk can carry any string.
+
+On the enforcement axis, the posting stage does not validate its input at all.
+[`post.py`](../../ai-review/src/ai_review/post.py)'s `cli` does
+`consensus = cast(Consensus, load_json_file(args.consensus))` — a `cast` is a typing
+annotation with no runtime effect — and goes straight to `post_consensus`, which renders
+`group['category']` into Markdown at
+[`render.py`](../../ai-review/src/ai_review/render.py). It then validates its *output*
+against `post_result.schema.json`. The consensus stage validates
+(`validate_consensus_inputs`) and the gate stage validates
+([`gate.py`](../../ai-review/src/ai_review/gate.py) `cli`), so posting is the sole
+consumer that trusts the artifact — and it is the one that renders to the platform.
+
+**This is a pre-existing gap, not one introduced here.** In the current product an altered
+consensus artifact — including one today's schema accepts, since `category` is
+unconstrained — can place arbitrary text in the severity header, category, and consensus
+footer, and can supply wrong-typed `vote_count` / `block_merge` values, none of which the
+literal API would cover. This specification therefore closes both conditions: it tightens
+`consensus.schema.json` *and* requires the posting stage to validate before any posting
+API call. Ratified in
+[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md).
+
+**What validation does not buy.** Schema validation is a shape-and-vocabulary check. It
+cannot reject a schema-valid but altered artifact and it establishes nothing about
+provenance, so it must never be cited as a reason to trust a value's content. Its role
+here is narrow and singular: to make the exempt enumerations genuinely closed at the point
+of use. Every other rendered value is protected from **Markdown, marker, and layout
+injection** because it is literal, not because the artifact was validated — which is why
+the exemption remains confined to closed enumerations and is never extended to a free-text
+field on the strength of validation.
+
+**What literal rendering does not buy either.** Literal rendering constrains only how a
+value is *displayed*. It has no effect on a value's *semantics*, and neither mechanism in
+this specification addresses artifact integrity. A schema-valid altered
+`summary.block_merge` still decides the merge gate in
+[`gate.py`](../../ai-review/src/ai_review/gate.py); a `decision` change still moves a
+finding between inline, summary, and dropped. Those consequences are out of scope here and
+are not claimed to be mitigated.
 
 ## Design decision: fenced literals over selective escaping
 
@@ -60,11 +111,16 @@ visible free-text or path-shaped value (model text, reviewer names, paths, title
 bodies, evidence, critique rationale, and suggestions); GitHub and GitLab
 platform-size handling; rendering tests and golden fixtures.
 
-**Out:** changing consensus, voting, redaction rules, reviewer prompting, schema
-meaning, or allowing a supported subset of model-authored Markdown. This is not a
-formatting-preference feature: model-originated free text is never partially trusted
-Markdown. Also out: routing schema-validated closed enums through the literal API
-(see the boundary statement in the rationale).
+**Out:** changing consensus, voting, redaction rules, reviewer prompting, or allowing a
+supported subset of model-authored Markdown. This is not a formatting-preference
+feature: model-originated free text is never partially trusted Markdown. Also out:
+routing closed enumerations through the literal API (see the boundary statement in the
+rationale).
+
+**In, narrowly:** two changes the rendering exemption depends on — tightening
+`consensus.schema.json` `$defs.group.properties.category`, and adding consensus-schema
+validation to the posting stage. No other schema meaning changes and no
+`schema_version` is bumped.
 
 ## Rendering contract
 
@@ -91,10 +147,12 @@ The API has these invariants:
    rendered as the literal two-character sequence `\n`, so no dynamic scalar can
    cross a renderer-owned line or list boundary.
 
-   Per the boundary statement in the rationale, schema-validated closed enums are
-   outside this API. `severity`, `category`, `decision`, and the other fixed
-   vocabularies keep their current presentation — in particular the existing
-   `**AI review: MAJOR correctness**` header line is retained verbatim.
+   Per the boundary statement in the rationale, a field is outside this API only once
+   both its vocabulary is closed by `consensus.schema.json` and the posting stage
+   validates against that schema: `final_severity`, `decision`, and — once tightened by
+   this specification — `category`. The existing `**AI review: MAJOR correctness**`
+   header line is therefore retained verbatim. Until the posting-stage validation lands,
+   the exemption is not earned and these fields render through `literal_span`.
 3. `literal_block` is used for multiline values: body, evidence, rationale, and
    suggestion. It emits a `text` fenced block using
    `max(3, longest_backtick_run(value) + 1)` backticks for both delimiters. The
@@ -209,11 +267,36 @@ marker parsing, source hashes, and idempotent upsert behavior remain unchanged.
    retention order. Patching the size arithmetic and the `drop_trailing_entry` tuple
    three times is how layout and size accounting drift apart. After this change,
    adding a section is data.
-5. Refresh rendering goldens, body-hash fixtures, and marker-parser fixtures. The
+5. In [`ai-review/src/ai_review/post.py`](../../ai-review/src/ai_review/post.py), validate
+   the loaded consensus artifact against `consensus.schema.json` in `cli`, **before
+   `create_runtime_platform` and therefore before any posting API call**. Mirror the
+   established pattern in [`gate.py`](../../ai-review/src/ai_review/gate.py) `cli`
+   exactly — `load_json_file`, `validate_instance(consensus, "consensus.schema.json")`,
+   then `cast` — so the three stages that consume a consensus artifact treat it
+   identically. The CLI is the correct boundary because it is the only place an
+   artifact file enters; in-process callers construct their own values.
+
+   Validation must precede client construction so a schema-invalid artifact cannot cause
+   a partially posted review before being rejected. This item is a prerequisite for the
+   enum exemption, and it independently closes the pre-existing gap described in the
+   rationale.
+6. In
+   [`ai-review/schemas/consensus.schema.json`](../../ai-review/schemas/consensus.schema.json),
+   tighten `$defs.group.properties.category` from `{"type": "string", "minLength": 1}` to
+   the `finding_batch.schema.json` category enum (`security`, `correctness`,
+   `performance`, `maintainability`, `style`, `test`, `other`). Keep
+   `schema_version` at `consensus.v1`; no artifact migration exists because the value
+   has always been copied from a schema-validated finding
+   (`_representative(findings)["category"]`), so every artifact the pipeline has produced
+   already satisfies the enum. The intended effect is that a hand-edited or third-party
+   consensus artifact with an arbitrary category is rejected by every consensus-consuming
+   stage — including, once item 5 lands, the posting stage — instead of reaching the
+   renderer.
+7. Refresh rendering goldens, body-hash fixtures, and marker-parser fixtures. The
    parser must continue to recognize both existing v2-rendered bot markers and v3
    markers because the marker grammar itself does not change. No consensus, finding,
    or state schema version changes are required for this specification.
-6. When implementation lands, update the current rendering/reference documentation
+8. When implementation lands, update the current rendering/reference documentation
    and CHANGELOG in that implementation change. Record the accepted readability
    regression and the rejected escaping alternative in the rendering reference so the
    tradeoff is discoverable outside this specification. This proposed specification
@@ -231,13 +314,24 @@ markers and issue IDs do not change. A rollback restores the prior renderer and
 causes one reverse refresh; it must not discard state or attempt to parse historical
 model Markdown as trusted structure.
 
+The `category` schema tightening needs no migration either — the value has always been
+copied from a schema-validated finding — but it does narrow an accepted input, and the
+new posting-stage validation will reject an artifact that previously posted. Both are
+intended.
+
+Rollback couples three things: the enum exemption, the tightened constraint, and the
+posting-stage validation are a single decision. A rollback that restores the loose
+`{"type": "string"}` constraint, or that removes the posting-stage validation, must also
+restore `literal_span` rendering for `category`, `decision`, and `final_severity`.
+Reverting one without the others reopens the injection surface.
+
 ## Acceptance criteria
 
 - No visible free-text or path-shaped value can create a heading, quote, list, math
   rendering, HTML comment, marker, or code-fence boundary in either supported
-  platform. Closed schema-validated enums are out of scope by the stated boundary,
-  and a schema test asserts each such vocabulary is closed so the exemption stays
-  earned rather than assumed.
+  platform. Closed enumerations are out of scope by the stated boundary, and a schema
+  test asserts every exempt field is closed **by `consensus.schema.json`** so the
+  exemption stays earned rather than assumed.
 - A title containing backticks and a multiline field containing arbitrary backtick
   runs render literally without corrupting the bot footer or marker.
 - Redaction and newline normalization still occur before display; a malformed
@@ -246,10 +340,16 @@ model Markdown as trusted structure.
   the trusted marker, and have stable hashes across identical reruns.
 - Truncation never emits a partially rendered literal span, and never leaves a
   literal block unclosed.
-- Schema-validated enums keep their existing renderer-owned presentation; the
-  `**AI review: <SEVERITY> <category>**` header is unchanged. Any future field added
-  to a rendered payload is literal by default; exempting one requires showing its
-  schema vocabulary is closed.
+- Exempt enums keep their existing renderer-owned presentation; the
+  `**AI review: <SEVERITY> <category>**` header is unchanged.
+- The posting stage rejects a consensus artifact that fails `consensus.schema.json`
+  **before** constructing a platform client, so a schema-invalid artifact cannot produce a
+  partially posted review. Out-of-vocabulary `category`, `decision`, and `final_severity`
+  values are all rejected on that path. A schema-valid alteration is not rejected — that
+  is not what this check is for.
+- Any future field added to a rendered payload is literal by default; exempting one
+  requires showing that the rendered artifact's own schema closes its vocabulary *and*
+  that the consuming stage validates against it.
 - `render_summary_body` gains a new section without changes to its size-accounting
   or drop loop, demonstrated by SPEC-45 and SPEC-46 landing as descriptor additions.
 - The only intentional posting churn is the one-time v3 body refresh.
@@ -268,10 +368,29 @@ model Markdown as trusted structure.
   `test_truncation_drops_whole_literal_span_instead_of_splitting_it` and
   `test_required_scalar_that_redacts_to_empty_renders_owned_placeholder`.
 - `ai-review/tests/unit/test_schema_validation.py` — add
-  `test_renderer_exempt_enums_are_closed_vocabularies`, asserting every value rendered
-  outside the literal API is constrained by an `enum` in
-  `finding_batch.schema.json`. This is what keeps the narrowed boundary honest if a
-  schema is ever loosened.
+  `test_renderer_exempt_enums_are_closed_in_consensus_schema`, asserting every field
+  rendered outside the literal API (`final_severity`, `decision`, `category`) is
+  constrained by an `enum` in **`consensus.schema.json`** — the artifact the renderer
+  reads — not merely upstream. This is the check that keeps the narrowed boundary honest
+  if a schema is ever loosened, and it fails today against the untightened `category`.
+  Add `test_consensus_group_category_outside_enum_is_rejected` for the schema itself, and
+  assert `category` parity between `consensus.schema.json` and
+  `finding_batch.schema.json` so the two cannot drift.
+- `ai-review/tests/unit/test_post.py` — add
+  `test_posting_cli_rejects_schema_invalid_consensus_before_client_construction`. Feed a
+  consensus artifact with an out-of-vocabulary `category` (Markdown-injecting text), then
+  separately an invalid `decision` and `final_severity`, through `post.py`'s `cli`.
+
+  **Patch `create_runtime_platform` itself with a mock and assert it was never called.**
+  A platform double cannot prove the negative: injecting a double means a client object
+  *was* constructed, so the double can only show that no method was invoked on it. The
+  claim under test is that construction never happens, and only asserting non-invocation
+  of the factory establishes that. Also assert each run raises the schema error and that
+  no output artifact is written.
+
+  This is the regression that makes the exemption enforceable rather than assumed. Without
+  it, a refactor could move validation after client construction — or after the first API
+  call — and nothing would notice.
 - `ai-review/tests/unit/test_post.py` — add
   `test_summary_uses_literal_renderer_for_reviewer_path_title_evidence_and_suggestion`,
   `test_malformed_suggestion_fence_is_rendered_not_dropped`, and

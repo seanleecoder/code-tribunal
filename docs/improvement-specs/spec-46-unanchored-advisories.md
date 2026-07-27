@@ -18,9 +18,9 @@ of the authority of an anchored finding.
 ## Scope
 
 **In:** an additive review-output contract, per-advisory validation/finalization,
-changed-path validation with MR-wide degradation, YAML-only per-reviewer and
-per-merge-request caps, consensus transport with exact-duplicate merging, summary
-rendering, quality/integrity/audit fields, drift observability, prompts, and tests.
+changed-path validation with MR-wide degradation, a YAML-only per-reviewer cap,
+consensus transport of individually attributed advisories, summary rendering,
+quality/integrity/audit fields, drift observability, prompts, and tests.
 
 **Out:** loosening anchor validation; creating anchorless semantic grouping, quorum
 votes, inline discussions, state records, automatic resolution, or merge-gate
@@ -100,10 +100,18 @@ omitted. An advisory has no `anchor` and has these model-supplied fields:
 }
 ```
 
-`anchor_attempt_reason` is required and nonblank on every advisory. It raises the
-cost of choosing the anchorless path over a real anchor, and it gives a maintainer
-evidence to judge whether the choice was honest. An advisory whose reason is missing
-or blank is dropped. It is rendered as a literal block like any other model text.
+`anchor_attempt_reason` is required on every advisory. It raises the cost of choosing
+the anchorless path over a real anchor, and it gives a maintainer evidence to judge
+whether the choice was honest. It is rendered as a literal block like any other model
+text.
+
+**Validation is exactly: present, of type string, and nonblank after the existing
+normalization. That is the complete contract and the only drop condition attached to
+this field.** No check inspects what the reason says. The quality expectation below is
+prompt-level guidance only — never validated, never a drop condition, never an audit
+counter — because "this reason is too generic" is a judgment about model content that
+cannot be evaluated mechanically, and making it a drop condition would turn an
+unreviewable opinion into silent data loss.
 
 `severity` and `category` use the existing enums but are descriptive only. They
 must never feed severity policy, quorum, `block_merge`, or any group decision.
@@ -116,8 +124,10 @@ Update [`ai-review/prompts/review.md`](../../ai-review/prompts/review.md) to sta
 2. Use an `advisories` entry only when that attempt fails and the concern is still
    materially useful to the MR author. It is never a convenience alternative for an
    anchorable finding.
-3. `anchor_attempt_reason` is required and must state concretely why no changed line
-   is a defensible location. A generic restatement of the concern is not a reason.
+3. `anchor_attempt_reason` is required and should state concretely why no changed line
+   is a defensible location; a generic restatement of the concern is not a useful
+   reason. This sentence is reviewer guidance, not a validation rule — finalization
+   checks only that the field is present and nonblank.
 4. `scope_paths`, when supplied, names only changed repository-relative paths;
    emit sorted unique paths. Omit it or use `[]` for an MR-wide advisory.
 5. Return the complete JSON object and no outer Markdown, as today.
@@ -403,9 +413,10 @@ after those complete-entry drops, so reruns remain idempotent.
    receives the advisory counts, the degrade counter, and both flags.
 3. In `consensus.py`, extend `_require_quality_invariants` to validate both flags and
    the advisory count invariants; carry reviewer-attributed advisories separately from
-   `groups`, apply the exact-duplicate merge, and drop them on the
-   `panel_status == "failed"` branch. In `post.py`, register the advisory section
-   descriptor and keep advisories out of `_classify_post_groups` and `plan_state`.
+   `groups`, preserving each as an individual entry with no merging of any kind, and drop
+   them on the `panel_status == "failed"` branch. In `post.py`, register the advisory
+   section descriptor and keep advisories out of `_classify_post_groups` and
+   `plan_state`.
 4. In `config.py` and `config/review.yaml`, validate `reviewers.<name>.max_advisories`
    and bind its resolved value into the effective configuration summary/digest. Add no
    environment override and no rejection, matching `max_findings`.
@@ -429,20 +440,22 @@ not try to create, resolve, or delete state records for prior advisories.
 
 ## Deviations from the original draft
 
-These requirements changed after the first committed draft of this specification. Each
-is a deliberate maintainer decision, recorded here so a reviewer comparing against the
-original sees intent rather than drift. The authority model is untouched: advisories
-still have no grouping, quorum, state, resolution, or merge-gate power.
+These requirements changed after the first committed draft of this specification. Policy
+changes were ratified in
+[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md); the rest are defect fixes
+or gap fills. Recorded here so a reviewer comparing against the original sees a decision
+rather than drift. The authority model is untouched: advisories still have no grouping,
+quorum, state, resolution, or merge-gate power.
 
-| Original requirement | Now | Reason |
-| --- | --- | --- |
-| `max_advisories` is 0–10, default 10 | Same range, **default 3** | With advisory critique deferred, nothing suppresses a low-value advisory after the fact. Four shipped reviewers × 10 permits 40 non-gating entries in one summary, and advisories consume neither global finding cap. Revisit once critique lands. |
-| Advisory fields are exactly the enumerated set | Adds required `anchor_attempt_reason` | The only in-phase quality control. It raises the cost of choosing the anchorless path over a real anchor and gives a maintainer evidence to judge whether the choice was honest. |
-| Any invalid `scope_paths` member drops the advisory | Split by failure mode: malformed/absolute/traversal/unavailable-diff drops; well-formed-but-absent degrades scope to MR-wide | Broken paths are evidence about the whole advisory; a well-formed path outside the diff is a common benign case, and `scope_paths` is display-only and never dereferenced. Neither case ever keeps a partial list. |
-| Any batch containing an advisory candidate loses resolution eligibility | Only advisory-**only** batches lose it | With four reviewers and `min_successful_reviewers_for_resolution: 2`, the blanket rule stops absence-based resolution once three reviewers emit one advisory each — the steady state, since the prompt requires the key. See the interpretation section above. |
-| Sort `(reviewer, scope_paths, category, -severity_rank, …)` | Severity first, `scope_paths` joined to a string for the key | A `MAJOR` must not sort below every `INFO` from an alphabetically earlier reviewer. Equally deterministic. |
-| Panel-failure behavior unstated | Advisories dropped on the `panel_status == "failed"` branch | A failed panel must not post advisory content through a path anchored findings cannot use. |
-| Environment override `AI_REVIEW_<REVIEWER>_MAX_ADVISORIES` must be rejected | Ignored, not rejected | Matches the `max_findings` precedent; newly failing pipelines on a variable that never did anything is a gratuitous break. |
+| Original requirement | Now | Reason | Decided in |
+| --- | --- | --- | --- |
+| `max_advisories` is 0–10, default 10 | Same range, **default 3** | With advisory critique deferred, nothing suppresses a low-value advisory after the fact. Four shipped reviewers × 10 permits 40 non-gating entries in one summary, and advisories consume neither global finding cap. Revisit once critique lands. | ADR-0002 §4 |
+| Advisory fields are exactly the enumerated set | Adds required `anchor_attempt_reason`, validated as present-and-nonblank only | The only in-phase quality control. It raises the cost of choosing the anchorless path and gives a maintainer evidence to judge the choice. Content is never judged, so no unreviewable opinion becomes a drop condition. | ADR-0002 §4 |
+| Any invalid `scope_paths` member drops the advisory | Split by failure mode: malformed/absolute/traversal/unavailable-diff drops; well-formed-but-absent degrades scope to MR-wide | Broken paths are evidence about the whole advisory; a well-formed path outside the diff is a common benign case, and `scope_paths` is display-only and never dereferenced. Neither case ever keeps a partial list. | ADR-0002 §5 |
+| Any batch containing an advisory candidate loses resolution eligibility | Only advisory-**only** batches lose it | With four reviewers and `min_successful_reviewers_for_resolution: 2`, the blanket rule stops absence-based resolution once three reviewers emit one advisory each — the steady state, since the prompt requires the key. See the interpretation section above. | n/a — would disable a shipped feature |
+| Sort `(reviewer, scope_paths, category, -severity_rank, …)` | Severity first, `scope_paths` joined to a string for the key | A `MAJOR` must not sort below every `INFO` from an alphabetically earlier reviewer. Equally deterministic. | n/a — readability fix |
+| Panel-failure behavior unstated | Advisories dropped on the `panel_status == "failed"` branch | A failed panel must not post advisory content through a path anchored findings cannot use. | n/a — gap fill |
+| Environment override `AI_REVIEW_<REVIEWER>_MAX_ADVISORIES` must be rejected | Ignored, not rejected | Matches the `max_findings` precedent; newly failing pipelines on a variable that never did anything is a gratuitous break. | n/a — consistency fix |
 
 Also considered and **not** adopted: a merge-request-level `max_summary_advisories` cap,
 and byte-exact advisory merging. Both are noted at their respective sections with the
@@ -454,7 +467,8 @@ reasoning.
   the required summary heading, and never creates an inline thread or state record.
 - A best-effort anchorable concern remains a normal finding; the prompt and contract
   do not permit an advisory as an easier placement path, and every advisory carries a
-  nonblank `anchor_attempt_reason`.
+  nonblank `anchor_attempt_reason`. Validation never judges the reason's content — a
+  terse reason is accepted, and only absence or blankness drops the advisory.
 - Every nonempty `scope_paths` list is normalized, sorted, unique, and entirely in
   the changed diff. A malformed, absolute, or traversal-shaped path — or an unavailable
   diff — drops that advisory; a well-formed path merely absent from the changed set
@@ -485,7 +499,9 @@ reasoning.
   `test_malformed_advisory_scope_drops_the_advisory_with_counts` (absolute, traversal,
   and unavailable-diff cases), `test_absent_advisory_scope_degrades_to_mr_wide_with_counts`
   (well-formed path outside the changed set, asserting the advisory survives with
-  canonical `[]`), and `test_advisory_without_anchor_attempt_reason_is_dropped`.
+  canonical `[]`), `test_advisory_without_anchor_attempt_reason_is_dropped`, and
+  `test_generic_anchor_attempt_reason_is_accepted_not_judged` — asserting a terse or
+  restated reason still validates, so the quality expectation stays prompt-level.
 - `ai-review/tests/unit/test_finding_cap.py` — add
   `test_max_advisories_defaults_to_three_and_does_not_cap_findings`; verify
   deterministic severity/confidence/index selection, separate
