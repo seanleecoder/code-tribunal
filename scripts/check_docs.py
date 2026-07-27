@@ -435,12 +435,12 @@ def _directory_readme_issues() -> list[str]:
             directory.is_dir()
             and "internal" not in directory.parts
             and any(directory.glob("*.md"))
+            and not (directory / "README.md").exists()
         ):
-            if not (directory / "README.md").exists():
-                issues.append(
-                    f"{directory.relative_to(ROOT)}: documentation directory contains "
-                    "markdown files but no README.md index"
-                )
+            issues.append(
+                f"{directory.relative_to(ROOT)}: documentation directory contains "
+                "markdown files but no README.md index"
+            )
     return issues
 
 
