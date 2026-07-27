@@ -392,7 +392,9 @@ class DocumentationContractTests(unittest.TestCase):
         checker = _load_docs_checker()
         original_root = checker.ROOT
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
+            # The checkout itself sits under a directory named "internal": exemptions
+            # are repo-relative, so this must not disable the check for the whole tree.
+            root = (Path(tmp) / "internal" / "checkout").resolve()
             docs = root / "docs"
             sub = docs / "unindexed"
             sub.mkdir(parents=True)
@@ -401,6 +403,13 @@ class DocumentationContractTests(unittest.TestCase):
             exempt = docs / "internal" / "scratch"
             exempt.mkdir(parents=True)
             (exempt / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+            # Only docs/internal/ is exempt; a public directory that happens to be
+            # named "internal" deeper in the tree still needs its own index.
+            public_internal = docs / "reference" / "internal"
+            public_internal.mkdir(parents=True)
+            (public_internal / "detail.md").write_text("# Detail\n", encoding="utf-8")
+            (docs / "reference" / "README.md").write_text("# Reference\n", encoding="utf-8")
 
             # docs/ itself is exempt even with top-level markdown; root README.md
             # coverage is enforced by _root_doc_index_issues() instead.
@@ -412,11 +421,16 @@ class DocumentationContractTests(unittest.TestCase):
             finally:
                 checker.ROOT = original_root
 
-        self.assertEqual(len(issues), 1)
+        self.assertEqual(len(issues), 2)
+        self.assertIn(
+            "docs/reference/internal: documentation directory contains markdown files "
+            "but no README.md index",
+            issues[0],
+        )
         self.assertIn(
             "docs/unindexed: documentation directory contains markdown files "
             "but no README.md index",
-            issues[0],
+            issues[1],
         )
 
     def test_root_doc_index_issues_requires_readme_link(self) -> None:
@@ -428,9 +442,18 @@ class DocumentationContractTests(unittest.TestCase):
             docs = root / "docs"
             docs.mkdir(parents=True)
             (docs / "linked.md").write_text("# Linked\n", encoding="utf-8")
+            (docs / "anchored.md").write_text("# Anchored\n", encoding="utf-8")
+            (docs / "titled.md").write_text("# Titled\n", encoding="utf-8")
             (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
             readme = root / "README.md"
-            readme.write_text("# Root\n\n- [Linked](docs/linked.md)\n", encoding="utf-8")
+            # An anchor or a link title still indexes the file.
+            readme.write_text(
+                "# Root\n\n"
+                "- [Linked](docs/linked.md)\n"
+                "- [Anchored](docs/anchored.md#failure-behavior)\n"
+                '- [Titled](docs/titled.md "Titled guide")\n',
+                encoding="utf-8",
+            )
 
             checker.ROOT = root
             checker.ROOT_README = readme
@@ -471,6 +494,13 @@ class DocumentationContractTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 table_issues = checker._adr_issues()
+                # A titled table-row link indexes the record just as well.
+                readme.write_text(
+                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
+                    '| [ADR-0001](0001-test.md "Test record") | Test |\n',
+                    encoding="utf-8",
+                )
+                titled_table_issues = checker._adr_issues()
             finally:
                 checker.ROOT = original_root
                 checker.DECISIONS_INDEX = original_index
@@ -481,6 +511,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertEqual(len(outside_table_issues), 1)
         self.assertIn("missing from the index table", outside_table_issues[0])
         self.assertEqual(table_issues, [])
+        self.assertEqual(titled_table_issues, [])
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

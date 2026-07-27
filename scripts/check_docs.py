@@ -33,13 +33,15 @@ RELEASE_STATE_DOCS = (
     ROOT / "docs/SECURITY_MODEL.md",
     RELEASE_NOTES,
 )
-# Internal workspace directories under docs/internal/ do not require a public
-# README.md index.
-EXCLUDED_README_DIR_PARTS = {"internal"}
-# docs/ itself needs no README.md index because root README.md indexes every
-# top-level docs/*.md file. _root_doc_index_issues() enforces that claim rather
-# than asserting it. Kept repo-relative so tests can retarget ROOT.
-EXCLUDED_README_RELATIVE_PATHS = {Path("docs")}
+# Exemptions from the "every docs directory needs a README.md index" rule. Both are
+# repo-relative: an absolute match would exempt the whole tree whenever the checkout
+# itself sits under a directory of the same name, and would also exempt unrelated
+# public paths such as docs/reference/internal/.
+# docs/ needs no index of its own because root README.md links every top-level
+# docs/*.md file; _root_doc_index_issues() enforces that premise rather than asserting it.
+EXCLUDED_README_PATHS = {Path("docs")}
+# docs/internal/ is an internal workspace and needs no public index, subtrees included.
+EXCLUDED_README_TREES = {Path("docs/internal")}
 DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
 DECISIONS_DIR = ROOT / "docs/decisions"
 # A tripwire for the exact wording that survived the 1.0.0 release, not a general
@@ -437,11 +439,16 @@ def _release_state_issues() -> list[str]:
     return issues
 
 
+def _readme_exempt(relative: Path) -> bool:
+    return relative in EXCLUDED_README_PATHS or any(
+        relative == tree or tree in relative.parents for tree in EXCLUDED_README_TREES
+    )
+
+
 def _needs_readme(directory: Path) -> bool:
     return (
         directory.is_dir()
-        and directory.relative_to(ROOT) not in EXCLUDED_README_RELATIVE_PATHS
-        and not (set(directory.parts) & EXCLUDED_README_DIR_PARTS)
+        and not _readme_exempt(directory.relative_to(ROOT))
         and any(directory.glob("*.md"))
         and not (directory / "README.md").exists()
     )
@@ -459,13 +466,29 @@ def _directory_readme_issues() -> list[str]:
     return issues
 
 
+def _linked_paths(source: Path, text: str) -> set[Path]:
+    """Repository paths `text` links to, ignoring anchors, titles, and URL escapes.
+
+    Uses the same destination parsing as _link_issues() so that any spelling a link
+    checker accepts — `](x.md#anchor)`, `](x.md "Title")`, `](<x.md>)` — counts here too.
+    """
+    linked: set[Path] = set()
+    for raw_target in _markdown_link_targets(text):
+        if re.match(r"^(?:https?|mailto):", raw_target):
+            continue
+        target_text, _ = _target_parts(raw_target)
+        if target_text:
+            linked.add((source.parent / target_text).resolve())
+    return linked
+
+
 def _root_doc_index_issues() -> list[str]:
     """docs/ is exempt from the README.md rule only while root README.md indexes it."""
-    readme_text = ROOT_README.read_text(encoding="utf-8")
+    linked = _linked_paths(ROOT_README, ROOT_README.read_text(encoding="utf-8"))
     return [
         f"README.md: top-level {path.name!r} is not linked from the root index"
         for path in sorted((ROOT / "docs").glob("*.md"))
-        if f"](docs/{path.name})" not in readme_text
+        if path.resolve() not in linked
     ]
 
 
@@ -477,11 +500,14 @@ def _adr_issues() -> list[str]:
     index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
     # Only table rows count, so the message below stays true: a bare prose mention
     # or a link outside the table does not index a decision record.
-    table_rows = [line for line in index_text.splitlines() if line.lstrip().startswith("|")]
+    table_rows = "\n".join(
+        line for line in index_text.splitlines() if line.lstrip().startswith("|")
+    )
+    indexed = _linked_paths(DECISIONS_INDEX, table_rows)
     for path in sorted(DECISIONS_DIR.glob("*.md")):
         if path.name == "README.md":
             continue
-        if not any(f"]({path.name})" in row or f"]({path.name}#" in row for row in table_rows):
+        if path.resolve() not in indexed:
             issues.append(
                 f"docs/decisions/README.md: decision record {path.name!r} is "
                 "missing from the index table"
