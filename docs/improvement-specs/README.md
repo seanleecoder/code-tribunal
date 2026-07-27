@@ -45,8 +45,8 @@ completed for `v1.0.0`. Remaining order:
    and the summary section-descriptor refactor established by SPEC-44; SPEC-46 is
    handed off after SPEC-45 so its summary priority composes with the
    critique-disposition section, and degrades cleanly if SPEC-45 slips.
-   Prefer shipping SPEC-44 and SPEC-45 in one release: only `render-body.v4` is then
-   ever posted, so maintainers see one thread refresh instead of two.
+   SPEC-44 remains independently shippable as `render-body.v3`; SPEC-45 owns the
+   later critique disclosure and `render-body.v4` change.
    Critique of advisories is deliberately deferred out of SPEC-46 and needs its own
    specification before the advisory caps there are raised.
    Product-policy decisions for this sequence — critique display tiering, the opt-in

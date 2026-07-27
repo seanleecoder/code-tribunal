@@ -1746,7 +1746,15 @@ class PostTests(unittest.TestCase):
         )
 
         self.assertIn("- **MAJOR** correctness", body)
-        self.assertIn("  Body:\n  ```text\n  First line\n  \n  Second line\n  ```", body)
+        lines = body.splitlines()
+        body_start = lines.index("  Body:")
+        self.assertEqual(
+            lines[body_start : body_start + 6],
+            ["  Body:", "  ```text", "  First line", "", "  Second line", "  ```"],
+        )
+        self.assertFalse(
+            any(line.strip() == "" and line != "" for line in lines[body_start : body_start + 6])
+        )
 
     def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
         group = self._consensus()["groups"][0]
@@ -1801,6 +1809,7 @@ class PostTests(unittest.TestCase):
                 "Evidence: still body data",
                 "```python",
                 "second line",
+                "Consensus: still body data",
                 "````",
                 "",
                 "Dissent:",
@@ -1820,9 +1829,60 @@ class PostTests(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["title"], "`starts with ticks`")
         self.assertEqual(
-            parsed["summary"], "first line\nEvidence: still body data\n```python\nsecond line"
+            parsed["summary"],
+            "first line\nEvidence: still body data\n```python\nsecond line\n"
+            "Consensus: still body data",
         )
         self.assertNotIn("Dissent:", parsed["summary"])
+
+    def test_review_note_parser_preserves_fenced_blank_lines_and_v2_boundaries(self) -> None:
+        fenced = "\n".join(
+            [
+                "**AI review: MINOR style**",
+                "",
+                "Title: `Clean title`",
+                "",
+                "Body:",
+                "",
+                "```text",
+                "first line",
+                "",
+                "last line",
+                "```",
+                "",
+                "Evidence:",
+                "ignored later section",
+            ]
+        )
+        parsed_fenced = parse_review_note(fenced)
+        self.assertIsNotNone(parsed_fenced)
+        assert parsed_fenced is not None
+        self.assertEqual(parsed_fenced["title"], "Clean title")
+        self.assertEqual(parsed_fenced["summary"], "first line\n\nlast line")
+
+        unfenced = "\n".join(
+            [
+                "**AI review: INFO style**",
+                "",
+                "Legacy title",
+                "",
+                "legacy body",
+                "",
+                "Evidence:",
+                "ignored evidence",
+                "Dissent:",
+                "ignored dissent",
+                "Suggestion:",
+                "ignored suggestion",
+                "Consensus:",
+                "ignored consensus",
+            ]
+        )
+        parsed_unfenced = parse_review_note(unfenced)
+        self.assertIsNotNone(parsed_unfenced)
+        assert parsed_unfenced is not None
+        self.assertEqual(parsed_unfenced["title"], "Legacy title")
+        self.assertEqual(parsed_unfenced["summary"], "legacy body")
 
     def test_review_note_parser_handles_blank_lines_and_malformed_title_fallback(self) -> None:
         body = "\n".join(

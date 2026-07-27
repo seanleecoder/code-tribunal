@@ -267,24 +267,8 @@ def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> st
     return PLATFORM_TRUNCATION_NOTICE
 
 
-def _truncate_at_safe_boundary(text: str, max_length: int) -> str:
-    """Legacy string helper retained for callers outside the renderer.
-
-    Rendering itself uses ``RenderFragment`` values.  This compatibility
-    helper deliberately has no Markdown or backtick heuristic: an arbitrary
-    raw string is not a safe rendering input.
-    """
-
-    if len(text) <= max_length:
-        return text
-    available = max_length - len(PLATFORM_TRUNCATION_NOTICE)
-    if available < 0:
-        raise ValueError("platform comment limit is too small for truncation notice")
-    return text[:available].rstrip() + PLATFORM_TRUNCATION_NOTICE
-
-
 def limit_body_before_marker(
-    variable_body: str | Sequence[RenderFragment],
+    variable_body: Sequence[RenderFragment],
     marker_with_placeholder_hash: str,
     max_comment_size: int,
     *,
@@ -292,10 +276,6 @@ def limit_body_before_marker(
 ) -> str:
     """Limit renderer-owned fragments before adding trusted footer/marker text."""
 
-    if isinstance(variable_body, str):
-        fragments: Sequence[RenderFragment] = (RenderFragment(variable_body),)
-    else:
-        fragments = variable_body
     body_limit = (
         max_comment_size
         - len(_FRAGMENT_SEPARATOR)
@@ -305,11 +285,11 @@ def limit_body_before_marker(
     )
     if body_limit < 0:
         raise ValueError("platform comment limit is too small for review footer and marker")
-    variable_text = _compose_fragments(fragments)
+    variable_text = _compose_fragments(variable_body)
     limited_body = (
         variable_text
         if len(variable_text) <= body_limit
-        else _limit_fragments(fragments, body_limit)
+        else _limit_fragments(variable_body, body_limit)
     )
     return limited_body + _FRAGMENT_SEPARATOR + reserved_suffix
 

@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -157,6 +157,10 @@ def _parse_review_title(line: str) -> tuple[str, bool]:
     value = span_match.group("value")
     if value.startswith(" ") and value.endswith(" ") and value.strip():
         value = value[1:-1]
+    # v3 encodes a newline as the two literal characters ``\n`` inside the
+    # title span. Recovery cannot distinguish that encoding from a literal
+    # backslash followed by ``n`` without changing the wire format, so retain
+    # the existing compatibility behavior.
     return value.replace(r"\n", "\n"), True
 
 
@@ -175,8 +179,6 @@ def _read_review_body(lines: list[str]) -> list[str]:
         content: list[str] = []
         for line in lines[start + 1 :]:
             if line.strip() == delimiter:
-                break
-            if line.strip() in REVIEW_SECTION_BOUNDARIES:
                 break
             content.append(line)
         return content
@@ -676,7 +678,7 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     detail = literal_block(str(group.get("body") or ""))
     if detail is None:
         return header
-    indented_detail = "\n".join(f"  {line}" for line in detail.split("\n"))
+    indented_detail = "\n".join(f"  {line}" if line.strip() else "" for line in detail.split("\n"))
     return f"{header}\n  Body:\n{indented_detail}"
 
 
@@ -705,6 +707,12 @@ class SummarySectionDescriptor:
     trailer_factory: Callable[[int], list[str]]
     drop_priority: int
     retained_count: int
+    entry_prefix_lengths: list[int] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.entry_prefix_lengths = [0]
+        for entry in self.entries:
+            self.entry_prefix_lengths.append(self.entry_prefix_lengths[-1] + len(entry))
 
 
 def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
@@ -737,7 +745,6 @@ def _drop_lowest_priority_trailing_entry(
 
 def _summary_section_length(
     section: SummarySectionDescriptor,
-    entry_prefix_lengths: list[int],
 ) -> int:
     """Return one section's exact length without composing the full summary."""
 
@@ -746,7 +753,7 @@ def _summary_section_length(
     line_count = 1 + section.retained_count + len(trailers)
     return (
         len(section.header_factory(section.retained_count))
-        + entry_prefix_lengths[section.retained_count]
+        + section.entry_prefix_lengths[section.retained_count]
         + sum(len(trailer) for trailer in trailers)
         + line_count
         - 1
@@ -819,19 +826,7 @@ def render_summary_body(
             )
         )
 
-    def prefix_lengths(entries: list[str]) -> list[int]:
-        lengths = [0]
-        for entry in entries:
-            lengths.append(lengths[-1] + len(entry))
-        return lengths
-
-    entry_prefix_lengths = {
-        id(section): prefix_lengths(section.entries) for section in sections
-    }
-    section_lengths = [
-        _summary_section_length(section, entry_prefix_lengths[id(section)])
-        for section in sections
-    ]
+    section_lengths = [_summary_section_length(section) for section in sections]
 
     def rendered_size() -> int:
         return (
@@ -849,9 +844,7 @@ def render_summary_body(
             zip(previous_counts, sections, strict=True)
         ):
             if previous != section.retained_count:
-                section_lengths[index] = _summary_section_length(
-                    section, entry_prefix_lengths[id(section)]
-                )
+                section_lengths[index] = _summary_section_length(section)
                 break
         return True
 
