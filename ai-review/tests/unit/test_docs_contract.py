@@ -388,6 +388,165 @@ class DocumentationContractTests(unittest.TestCase):
         )
         self.assertTrue(any("must name the active runtime_source" in issue for issue in issues))
 
+    def test_directory_readme_issues_flags_missing_index(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            # The checkout itself sits under a directory named "internal": exemptions
+            # are repo-relative, so this must not disable the check for the whole tree.
+            root = (Path(tmp) / "internal" / "checkout").resolve()
+            docs = root / "docs"
+            sub = docs / "unindexed"
+            sub.mkdir(parents=True)
+            (sub / "guide.md").write_text("# Guide\n", encoding="utf-8")
+
+            exempt = docs / "internal" / "scratch"
+            exempt.mkdir(parents=True)
+            (exempt / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+            # Only docs/internal/ is exempt; a public directory that happens to be
+            # named "internal" deeper in the tree still needs its own index.
+            public_internal = docs / "reference" / "internal"
+            public_internal.mkdir(parents=True)
+            (public_internal / "detail.md").write_text("# Detail\n", encoding="utf-8")
+            (docs / "reference" / "README.md").write_text("# Reference\n", encoding="utf-8")
+
+            # docs/ itself is exempt even with top-level markdown; root README.md
+            # coverage is enforced by _root_doc_index_issues() instead.
+            (docs / "operations.md").write_text("# Operations\n", encoding="utf-8")
+
+            checker.ROOT = root
+            try:
+                issues = checker._directory_readme_issues()
+            finally:
+                checker.ROOT = original_root
+
+        self.assertEqual(len(issues), 2)
+        self.assertIn(
+            "docs/reference/internal: docs directory contains markdown files "
+            "but no README.md index",
+            issues[0],
+        )
+        self.assertIn(
+            "docs/unindexed: docs directory contains markdown files but no README.md index",
+            issues[1],
+        )
+
+    def test_root_doc_index_issues_requires_readme_link(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_readme = checker.ROOT_README
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "docs"
+            docs.mkdir(parents=True)
+            (docs / "linked.md").write_text("# Linked\n", encoding="utf-8")
+            (docs / "anchored.md").write_text("# Anchored\n", encoding="utf-8")
+            (docs / "titled.md").write_text("# Titled\n", encoding="utf-8")
+            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
+            readme = root / "README.md"
+            # An anchor or a link title still indexes the file.
+            readme.write_text(
+                "# Root\n\n"
+                "- [Linked](docs/linked.md)\n"
+                "- [Anchored](docs/anchored.md#failure-behavior)\n"
+                '- [Titled](docs/titled.md "Titled guide")\n',
+                encoding="utf-8",
+            )
+
+            checker.ROOT = root
+            checker.ROOT_README = readme
+            try:
+                issues = checker._root_doc_index_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.ROOT_README = original_readme
+
+        self.assertEqual(len(issues), 1)
+        self.assertIn("'unlinked.md' is not linked from the root index", issues[0])
+
+    def test_docs_index_checks_hand_off_when_exemption_is_dropped(self) -> None:
+        """Dropping docs/ from the exemption must move the burden, not double it."""
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_readme = checker.ROOT_README
+        original_excluded = checker.EXCLUDED_README_PATHS
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "docs"
+            docs.mkdir(parents=True)
+            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("# Root\n", encoding="utf-8")
+
+            checker.ROOT = root
+            checker.ROOT_README = readme
+            try:
+                # While docs/ is exempt, root README.md must index it.
+                exempt_root_issues = checker._root_doc_index_issues()
+                exempt_directory_issues = checker._directory_readme_issues()
+                # Once it is not, the root index stands down and docs/ needs its own README.
+                checker.EXCLUDED_README_PATHS = set()
+                dropped_root_issues = checker._root_doc_index_issues()
+                dropped_directory_issues = checker._directory_readme_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.ROOT_README = original_readme
+                checker.EXCLUDED_README_PATHS = original_excluded
+
+        self.assertEqual(len(exempt_root_issues), 1)
+        self.assertEqual(exempt_directory_issues, [])
+        self.assertEqual(dropped_root_issues, [])
+        self.assertEqual(len(dropped_directory_issues), 1)
+        self.assertIn("docs: docs directory contains markdown files", dropped_directory_issues[0])
+
+    def test_adr_issues_requires_table_row_link(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_index = checker.DECISIONS_INDEX
+        original_dir = checker.DECISIONS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            decisions = root / "docs/decisions"
+            decisions.mkdir(parents=True)
+            (decisions / "0001-test.md").write_text("# ADR 1\n", encoding="utf-8")
+            readme = decisions / "README.md"
+            readme.write_text(
+                "# Decisions\n\nMentioning 0001-test.md in plain text\n", encoding="utf-8"
+            )
+
+            checker.ROOT = root
+            checker.DECISIONS_INDEX = readme
+            checker.DECISIONS_DIR = decisions
+            try:
+                prose_issues = checker._adr_issues()
+                readme.write_text("# Decisions\n\n- [ADR 1](0001-test.md)\n", encoding="utf-8")
+                outside_table_issues = checker._adr_issues()
+                readme.write_text(
+                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
+                    "| [ADR-0001](0001-test.md) | Test |\n",
+                    encoding="utf-8",
+                )
+                table_issues = checker._adr_issues()
+                # A titled table-row link indexes the record just as well.
+                readme.write_text(
+                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
+                    '| [ADR-0001](0001-test.md "Test record") | Test |\n',
+                    encoding="utf-8",
+                )
+                titled_table_issues = checker._adr_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.DECISIONS_INDEX = original_index
+                checker.DECISIONS_DIR = original_dir
+
+        self.assertEqual(len(prose_issues), 1)
+        self.assertIn("0001-test.md", prose_issues[0])
+        self.assertEqual(len(outside_table_issues), 1)
+        self.assertIn("missing from the index table", outside_table_issues[0])
+        self.assertEqual(table_issues, [])
+        self.assertEqual(titled_table_issues, [])
+
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()
         self.assertEqual(checker.find_issues(), [])

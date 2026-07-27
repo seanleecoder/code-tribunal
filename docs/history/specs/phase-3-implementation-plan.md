@@ -15,5 +15,5 @@ Phase 3 landed in three reviewable increments:
 
 The authoritative reconciliation of these claims against the current tree is in
 [completion-audit.md](completion-audit.md). Deferred ideas are intentionally
-absent from this active record and stored as independent documents under
-[`../archived-improvement-plans/`](../archived-improvement-plans/README.md).
+absent from this historical record and stored as independent documents under
+[`../../archived-improvement-plans/`](../../archived-improvement-plans/README.md).

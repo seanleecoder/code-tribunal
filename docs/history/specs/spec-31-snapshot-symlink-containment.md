@@ -1,7 +1,7 @@
 # SPEC-31 — Contain repository snapshots and reject symlink escapes
 
 > **Historical completed requirement.** Current behavior is documented under
-> [`../reference/`](../reference/README.md); this file is non-normative.
+> [`../../reference/`](../../reference/README.md); this file is non-normative.
 
 - **Severity:** Blocker (credential disclosure / trust-boundary escape) · **Effort:** M · **ROI rank:** 1 (pre-1.0)
 - **Depends on:** none.

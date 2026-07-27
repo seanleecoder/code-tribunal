@@ -1,7 +1,7 @@
 # SPEC-28 — Packaging metadata: drop unused python-gitlab, correct description
 
 > **Historical completed requirement.** Current behavior is documented under
-> [`../reference/`](../reference/README.md); this file is non-normative.
+> [`../../reference/`](../../reference/README.md); this file is non-normative.
 
 - **Severity:** Medium (supply-chain surface + misleading metadata) · **Effort:** XS · **ROI rank:** 6 (pre-1.0)
 - **Depends on:** none.

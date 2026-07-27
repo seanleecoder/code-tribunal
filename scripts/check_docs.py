@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from collections import Counter
+from itertools import chain
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -32,6 +33,20 @@ RELEASE_STATE_DOCS = (
     ROOT / "docs/SECURITY_MODEL.md",
     RELEASE_NOTES,
 )
+# Exemptions from the "every docs directory needs a README.md index" rule. Both are
+# repo-relative: an absolute match would exempt the whole tree whenever the checkout
+# itself sits under a directory of the same name, and would also exempt unrelated
+# public paths such as docs/reference/internal/.
+# docs/ needs no index of its own because root README.md links every top-level
+# docs/*.md file; _root_doc_index_issues() enforces that premise rather than asserting it.
+# The two checks hand off: drop docs/ from this set when root README.md outgrows its line
+# budget, and _root_doc_index_issues() stands down while _directory_readme_issues() starts
+# requiring docs/README.md instead. Exactly one of them indexes docs/ at any time.
+EXCLUDED_README_PATHS = {Path("docs")}
+# docs/internal/ is an internal workspace and needs no public index, subtrees included.
+EXCLUDED_README_TREES = {Path("docs/internal")}
+DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
+DECISIONS_DIR = ROOT / "docs/decisions"
 # A tripwire for the exact wording that survived the 1.0.0 release, not a general
 # proof that prose cannot contradict release state. A re-introduced draft claim worded
 # differently will pass; treat a green run as "these known phrasings are gone", and add
@@ -427,6 +442,98 @@ def _release_state_issues() -> list[str]:
     return issues
 
 
+def _readme_exempt(relative: Path) -> bool:
+    return relative in EXCLUDED_README_PATHS or any(
+        relative == tree or tree in relative.parents for tree in EXCLUDED_README_TREES
+    )
+
+
+def _needs_readme(directory: Path) -> bool:
+    return (
+        directory.is_dir()
+        and not _readme_exempt(directory.relative_to(ROOT))
+        and any(directory.glob("*.md"))
+        and not (directory / "README.md").exists()
+    )
+
+
+def _directory_readme_issues() -> list[str]:
+    """Require a README.md index in every docs/ directory that holds markdown.
+
+    Deliberately scoped to docs/ — the reader-facing tree. Markdown elsewhere is not
+    documentation in the same sense; for example ai-review/prompts/*.md are runtime
+    reviewer prompt assets rendered by prompt_render, release/*.md are release artifacts
+    parsed by check_release_inputs, and ai-review/docs/acceptance/ is historical material
+    indexed from docs/history/README.md. Widen the scope here if that stops being true.
+    """
+    issues: list[str] = []
+    docs_root = ROOT / "docs"
+    for directory in sorted(chain([docs_root], docs_root.rglob("*"))):
+        if _needs_readme(directory):
+            issues.append(
+                f"{directory.relative_to(ROOT)}: docs directory contains markdown "
+                "files but no README.md index"
+            )
+    return issues
+
+
+def _linked_paths(source: Path, text: str) -> set[Path]:
+    """Repository paths `text` links to, ignoring anchors, titles, and URL escapes.
+
+    Uses the same destination parsing as _link_issues() so that any spelling a link
+    checker accepts — `](x.md#anchor)`, `](x.md "Title")`, `](<x.md>)` — counts here too.
+    Inline links only, matching _link_issues(): the repository defines no reference-style
+    links today, and one introduced in an index would read here as an unlinked file.
+    """
+    linked: set[Path] = set()
+    for raw_target in _markdown_link_targets(text):
+        if re.match(r"^(?:https?|mailto):", raw_target):
+            continue
+        target_text, _ = _target_parts(raw_target)
+        if target_text:
+            linked.add((source.parent / target_text).resolve())
+    return linked
+
+
+def _root_doc_index_issues() -> list[str]:
+    """docs/ is exempt from the README.md rule only while root README.md indexes it.
+
+    Stands down once docs/ leaves EXCLUDED_README_PATHS, because from then on
+    _directory_readme_issues() requires docs/README.md to do the indexing.
+    """
+    if Path("docs") not in EXCLUDED_README_PATHS:
+        return []
+    linked = _linked_paths(ROOT_README, ROOT_README.read_text(encoding="utf-8"))
+    return [
+        f"README.md: top-level {path.name!r} is not linked from the root index"
+        for path in sorted((ROOT / "docs").glob("*.md"))
+        if path.resolve() not in linked
+    ]
+
+
+def _adr_issues() -> list[str]:
+    issues: list[str] = []
+    # If docs/decisions/README.md is missing, _directory_readme_issues() flags it.
+    if not DECISIONS_INDEX.exists():
+        return issues
+    index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
+    # Only table rows count, so the message below stays true: a bare prose mention
+    # or a link outside the table does not index a decision record.
+    table_rows = "\n".join(
+        line for line in index_text.splitlines() if line.lstrip().startswith("|")
+    )
+    indexed = _linked_paths(DECISIONS_INDEX, table_rows)
+    for path in sorted(DECISIONS_DIR.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        if path.resolve() not in indexed:
+            issues.append(
+                f"docs/decisions/README.md: decision record {path.name!r} is "
+                "missing from the index table"
+            )
+    return issues
+
+
 def find_issues() -> list[str]:
     issues: list[str] = []
     seen: set[Path] = set()
@@ -449,6 +556,9 @@ def find_issues() -> list[str]:
 
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
+    issues.extend(_directory_readme_issues())
+    issues.extend(_root_doc_index_issues())
+    issues.extend(_adr_issues())
     return issues
 
 
