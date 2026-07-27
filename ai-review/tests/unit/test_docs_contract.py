@@ -402,6 +402,10 @@ class DocumentationContractTests(unittest.TestCase):
             exempt.mkdir(parents=True)
             (exempt / "notes.md").write_text("# Notes\n", encoding="utf-8")
 
+            # docs/ itself is exempt even with top-level markdown; root README.md
+            # coverage is enforced by _root_doc_index_issues() instead.
+            (docs / "operations.md").write_text("# Operations\n", encoding="utf-8")
+
             checker.ROOT = root
             try:
                 issues = checker._directory_readme_issues()
@@ -415,7 +419,31 @@ class DocumentationContractTests(unittest.TestCase):
             issues[0],
         )
 
-    def test_adr_issues_requires_markdown_link_target(self) -> None:
+    def test_root_doc_index_issues_requires_readme_link(self) -> None:
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_readme = checker.ROOT_README
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "docs"
+            docs.mkdir(parents=True)
+            (docs / "linked.md").write_text("# Linked\n", encoding="utf-8")
+            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("# Root\n\n- [Linked](docs/linked.md)\n", encoding="utf-8")
+
+            checker.ROOT = root
+            checker.ROOT_README = readme
+            try:
+                issues = checker._root_doc_index_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.ROOT_README = original_readme
+
+        self.assertEqual(len(issues), 1)
+        self.assertIn("'unlinked.md' is not linked from the root index", issues[0])
+
+    def test_adr_issues_requires_table_row_link(self) -> None:
         checker = _load_docs_checker()
         original_root = checker.ROOT
         original_index = checker.DECISIONS_INDEX
@@ -435,10 +463,14 @@ class DocumentationContractTests(unittest.TestCase):
             checker.DECISIONS_DIR = decisions
             try:
                 prose_issues = checker._adr_issues()
+                readme.write_text("# Decisions\n\n- [ADR 1](0001-test.md)\n", encoding="utf-8")
+                outside_table_issues = checker._adr_issues()
                 readme.write_text(
-                    "# Decisions\n\n- [ADR 1](0001-test.md)\n", encoding="utf-8"
+                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
+                    "| [ADR-0001](0001-test.md) | Test |\n",
+                    encoding="utf-8",
                 )
-                linked_issues = checker._adr_issues()
+                table_issues = checker._adr_issues()
             finally:
                 checker.ROOT = original_root
                 checker.DECISIONS_INDEX = original_index
@@ -446,7 +478,9 @@ class DocumentationContractTests(unittest.TestCase):
 
         self.assertEqual(len(prose_issues), 1)
         self.assertIn("0001-test.md", prose_issues[0])
-        self.assertEqual(linked_issues, [])
+        self.assertEqual(len(outside_table_issues), 1)
+        self.assertIn("missing from the index table", outside_table_issues[0])
+        self.assertEqual(table_issues, [])
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

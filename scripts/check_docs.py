@@ -36,8 +36,10 @@ RELEASE_STATE_DOCS = (
 # Internal workspace directories under docs/internal/ do not require a public
 # README.md index.
 EXCLUDED_README_DIR_PARTS = {"internal"}
-# Top-level docs/*.md files are indexed by root README.md.
-EXCLUDED_README_PATHS = {ROOT / "docs"}
+# docs/ itself needs no README.md index because root README.md indexes every
+# top-level docs/*.md file. _root_doc_index_issues() enforces that claim rather
+# than asserting it. Kept repo-relative so tests can retarget ROOT.
+EXCLUDED_README_RELATIVE_PATHS = {Path("docs")}
 DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
 DECISIONS_DIR = ROOT / "docs/decisions"
 # A tripwire for the exact wording that survived the 1.0.0 release, not a general
@@ -438,7 +440,7 @@ def _release_state_issues() -> list[str]:
 def _needs_readme(directory: Path) -> bool:
     return (
         directory.is_dir()
-        and directory not in EXCLUDED_README_PATHS
+        and directory.relative_to(ROOT) not in EXCLUDED_README_RELATIVE_PATHS
         and not (set(directory.parts) & EXCLUDED_README_DIR_PARTS)
         and any(directory.glob("*.md"))
         and not (directory / "README.md").exists()
@@ -457,16 +459,29 @@ def _directory_readme_issues() -> list[str]:
     return issues
 
 
+def _root_doc_index_issues() -> list[str]:
+    """docs/ is exempt from the README.md rule only while root README.md indexes it."""
+    readme_text = ROOT_README.read_text(encoding="utf-8")
+    return [
+        f"README.md: top-level {path.name!r} is not linked from the root index"
+        for path in sorted((ROOT / "docs").glob("*.md"))
+        if f"](docs/{path.name})" not in readme_text
+    ]
+
+
 def _adr_issues() -> list[str]:
     issues: list[str] = []
     # If docs/decisions/README.md is missing, _directory_readme_issues() flags it.
     if not DECISIONS_INDEX.exists():
         return issues
     index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
+    # Only table rows count, so the message below stays true: a bare prose mention
+    # or a link outside the table does not index a decision record.
+    table_rows = [line for line in index_text.splitlines() if line.lstrip().startswith("|")]
     for path in sorted(DECISIONS_DIR.glob("*.md")):
         if path.name == "README.md":
             continue
-        if f"]({path.name})" not in index_text and f"]({path.name}#" not in index_text:
+        if not any(f"]({path.name})" in row or f"]({path.name}#" in row for row in table_rows):
             issues.append(
                 f"docs/decisions/README.md: decision record {path.name!r} is "
                 "missing from the index table"
@@ -497,6 +512,7 @@ def find_issues() -> list[str]:
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
     issues.extend(_directory_readme_issues())
+    issues.extend(_root_doc_index_issues())
     issues.extend(_adr_issues())
     return issues
 

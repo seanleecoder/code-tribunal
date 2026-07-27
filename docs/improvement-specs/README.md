@@ -66,4 +66,9 @@ implementation sequencing and image examples are historical. The temporary
 redirect stubs that held `docs/history/acceptance/` and
 `docs/history/completed-specs/` open for one compatibility release were retired
 after `v1.0.0`, and their content now lives in
-[documentation history](../history/README.md).
+[documentation history](../history/README.md). The remaining SPEC-38 stubs at
+`docs/ARCHITECTURE.md`, `docs/CONSENSUS.md`, and `docs/REVISION_LIFECYCLE.md`
+were retired on the same basis; their current replacements are
+[development/architecture.md](../development/architecture.md),
+[reference/consensus.md](../reference/consensus.md), and
+[reference/revision-lifecycle.md](../reference/revision-lifecycle.md).
