@@ -466,6 +466,41 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertIn("'unlinked.md' is not linked from the root index", issues[0])
 
+    def test_docs_index_checks_hand_off_when_exemption_is_dropped(self) -> None:
+        """Dropping docs/ from the exemption must move the burden, not double it."""
+        checker = _load_docs_checker()
+        original_root = checker.ROOT
+        original_readme = checker.ROOT_README
+        original_excluded = checker.EXCLUDED_README_PATHS
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            docs = root / "docs"
+            docs.mkdir(parents=True)
+            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text("# Root\n", encoding="utf-8")
+
+            checker.ROOT = root
+            checker.ROOT_README = readme
+            try:
+                # While docs/ is exempt, root README.md must index it.
+                exempt_root_issues = checker._root_doc_index_issues()
+                exempt_directory_issues = checker._directory_readme_issues()
+                # Once it is not, the root index stands down and docs/ needs its own README.
+                checker.EXCLUDED_README_PATHS = set()
+                dropped_root_issues = checker._root_doc_index_issues()
+                dropped_directory_issues = checker._directory_readme_issues()
+            finally:
+                checker.ROOT = original_root
+                checker.ROOT_README = original_readme
+                checker.EXCLUDED_README_PATHS = original_excluded
+
+        self.assertEqual(len(exempt_root_issues), 1)
+        self.assertEqual(exempt_directory_issues, [])
+        self.assertEqual(dropped_root_issues, [])
+        self.assertEqual(len(dropped_directory_issues), 1)
+        self.assertIn("docs: docs directory contains markdown files", dropped_directory_issues[0])
+
     def test_adr_issues_requires_table_row_link(self) -> None:
         checker = _load_docs_checker()
         original_root = checker.ROOT

@@ -39,8 +39,9 @@ RELEASE_STATE_DOCS = (
 # public paths such as docs/reference/internal/.
 # docs/ needs no index of its own because root README.md links every top-level
 # docs/*.md file; _root_doc_index_issues() enforces that premise rather than asserting it.
-# If root README.md ever outgrows its line budget, drop docs/ from this set and give the
-# directory its own README.md instead of stretching the root index.
+# The two checks hand off: drop docs/ from this set when root README.md outgrows its line
+# budget, and _root_doc_index_issues() stands down while _directory_readme_issues() starts
+# requiring docs/README.md instead. Exactly one of them indexes docs/ at any time.
 EXCLUDED_README_PATHS = {Path("docs")}
 # docs/internal/ is an internal workspace and needs no public index, subtrees included.
 EXCLUDED_README_TREES = {Path("docs/internal")}
@@ -460,10 +461,10 @@ def _directory_readme_issues() -> list[str]:
     """Require a README.md index in every docs/ directory that holds markdown.
 
     Deliberately scoped to docs/ — the reader-facing tree. Markdown elsewhere is not
-    documentation in the same sense: ai-review/prompts/*.md are runtime reviewer prompt
-    assets rendered by prompt_render, ai-review/ and ai-review/rules/ already carry their
-    own README.md, and ai-review/docs/acceptance/ is historical material indexed from
-    docs/history/README.md. Widen the scope here if that stops being true.
+    documentation in the same sense; for example ai-review/prompts/*.md are runtime
+    reviewer prompt assets rendered by prompt_render, release/*.md are release artifacts
+    parsed by check_release_inputs, and ai-review/docs/acceptance/ is historical material
+    indexed from docs/history/README.md. Widen the scope here if that stops being true.
     """
     issues: list[str] = []
     docs_root = ROOT / "docs"
@@ -495,7 +496,13 @@ def _linked_paths(source: Path, text: str) -> set[Path]:
 
 
 def _root_doc_index_issues() -> list[str]:
-    """docs/ is exempt from the README.md rule only while root README.md indexes it."""
+    """docs/ is exempt from the README.md rule only while root README.md indexes it.
+
+    Stands down once docs/ leaves EXCLUDED_README_PATHS, because from then on
+    _directory_readme_issues() requires docs/README.md to do the indexing.
+    """
+    if Path("docs") not in EXCLUDED_README_PATHS:
+        return []
     linked = _linked_paths(ROOT_README, ROOT_README.read_text(encoding="utf-8"))
     return [
         f"README.md: top-level {path.name!r} is not linked from the root index"
