@@ -9,9 +9,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
+_REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_GITHUB_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
 _PUBLISH_WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
 )
@@ -25,6 +29,36 @@ _CURSOR_PERMISSION_SMOKE = (
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
+
+_OVERHEAD_RESERVE_SECONDS = 300
+_EXPECTED_OUTER_TIMEOUT_COUNT = 4  # GitLab/GitHub review and critique ceilings.
+_GITLAB_DURATION_UNIT_PATTERN = r"(?:seconds?|minutes?|hours?|days?|weeks?|s|m|h|d|w)"
+_GITLAB_TIMEOUT_RE = re.compile(
+    rf"^\d+\s*{_GITLAB_DURATION_UNIT_PATTERN}"
+    rf"(?:\s*\d+\s*{_GITLAB_DURATION_UNIT_PATTERN})*$",
+    re.IGNORECASE,
+)
+_GITLAB_DURATION_COMPONENT_RE = re.compile(
+    rf"(?P<amount>\d+)\s*(?P<unit>{_GITLAB_DURATION_UNIT_PATTERN})",
+    re.IGNORECASE,
+)
+_GITLAB_DURATION_UNIT_SECONDS = {
+    "s": 1,
+    "second": 1,
+    "seconds": 1,
+    "m": 60,
+    "minute": 60,
+    "minutes": 60,
+    "h": 60 * 60,
+    "hour": 60 * 60,
+    "hours": 60 * 60,
+    "d": 24 * 60 * 60,
+    "day": 24 * 60 * 60,
+    "days": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+    "week": 7 * 24 * 60 * 60,
+    "weeks": 7 * 24 * 60 * 60,
+}
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -101,6 +135,146 @@ def _workflow_named_step_script(job: str, step_name: str) -> str:
     if script is None:
         raise AssertionError(f"Workflow step script not found: {step_name}")
     return textwrap.dedent(script.group("script"))
+
+
+def _gitlab_timeout_seconds(raw_timeout: object, *, field_name: str) -> int:
+    """Parse the numeric GitLab timeout forms before applying the invariant."""
+    assert isinstance(raw_timeout, str), (
+        f"{field_name} GitLab timeout must be a duration string, got {raw_timeout!r}"
+    )
+    timeout = raw_timeout.strip()
+    assert _GITLAB_TIMEOUT_RE.fullmatch(timeout), (
+        f"{field_name} GitLab timeout has malformed duration {raw_timeout!r}; "
+        "expected numeric units such as '20 minutes', '1200s', or '3h 30m'"
+    )
+
+    seconds = 0
+    for match in _GITLAB_DURATION_COMPONENT_RE.finditer(timeout):
+        unit = match.group("unit").lower()
+        seconds += int(match.group("amount")) * _GITLAB_DURATION_UNIT_SECONDS[unit]
+    return seconds
+
+
+class TimeoutInvariantTests(unittest.TestCase):
+    def _assert_timeout_budget(
+        self,
+        process_timeouts: list[int],
+        outer_seconds: list[int],
+        *,
+        expected_reviewer_count: int,
+        expected_topology_count: int,
+    ) -> None:
+        self.assertEqual(
+            len(process_timeouts),
+            expected_reviewer_count,
+            f"expected {expected_reviewer_count} reviewer timeouts",
+        )
+        self.assertEqual(
+            len(outer_seconds),
+            expected_topology_count,
+            f"expected {expected_topology_count} outer ceilings",
+        )
+
+        process_timeout = max(process_timeouts)
+        shortest_outer_seconds = min(outer_seconds)
+        self.assertLessEqual(
+            process_timeout + _OVERHEAD_RESERVE_SECONDS,
+            shortest_outer_seconds,
+            "each outer ceiling must leave at least the overhead reserve for "
+            "wrapper/artifact work",
+        )
+
+    def test_reviewer_and_critique_templates_have_outer_timeout(self) -> None:
+        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
+        reviewers = config["reviewers"]
+        process_timeouts = [reviewer["timeout_seconds"] for reviewer in reviewers.values()]
+
+        gitlab_template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        outer_seconds = []
+        for block_name in (".review_template", ".critique_template"):
+            outer_seconds.append(
+                _gitlab_timeout_seconds(
+                    gitlab_template[block_name]["timeout"], field_name=block_name
+                )
+            )
+
+        github_template = yaml.safe_load(_GITHUB_TEMPLATE.read_text(encoding="utf-8"))
+        outer_seconds.extend(
+            github_template["jobs"][job_name]["timeout-minutes"] * 60
+            for job_name in ("review", "critique")
+        )
+
+        self._assert_timeout_budget(
+            process_timeouts,
+            outer_seconds,
+            expected_reviewer_count=len(reviewers),
+            expected_topology_count=_EXPECTED_OUTER_TIMEOUT_COUNT,
+        )
+
+    def test_gitlab_timeout_parser_normalizes_documented_numeric_forms(self) -> None:
+        cases = {
+            "20 minutes": 20 * 60,
+            "1200s": 1200,
+            "20m": 20 * 60,
+            "3h 30m": 3 * 60 * 60 + 30 * 60,
+            "3h30m": 3 * 60 * 60 + 30 * 60,
+        }
+        for raw_timeout, expected_seconds in cases.items():
+            with self.subTest(raw_timeout=raw_timeout):
+                self.assertEqual(
+                    _gitlab_timeout_seconds(raw_timeout, field_name=".review_template"),
+                    expected_seconds,
+                )
+
+    def test_gitlab_timeout_parser_rejects_malformed_values_with_context(self) -> None:
+        for raw_timeout in (
+            20,
+            "20",
+            "20 minutez",
+            "3h30",
+            "3h extra",
+            "three hours",
+        ):
+            with (
+                self.subTest(raw_timeout=raw_timeout),
+                self.assertRaisesRegex(AssertionError, r"\.review_template.*GitLab timeout"),
+            ):
+                _gitlab_timeout_seconds(raw_timeout, field_name=".review_template")
+
+    def test_timeout_budget_rejects_zero_margin_or_mismatched_ceilings(self) -> None:
+        cases = {
+            "zero margin": ([1200] * 4, [20 * 60] * 4),
+            "shortest mismatched ceiling": (
+                [900] * 4,
+                [20 * 60, 20 * 60, 20 * 60, 19 * 60],
+            ),
+        }
+        for label, (process_timeouts, outer_seconds) in cases.items():
+            with self.subTest(label=label), self.assertRaises(AssertionError):
+                self._assert_timeout_budget(
+                    process_timeouts,
+                    outer_seconds,
+                    expected_reviewer_count=4,
+                    expected_topology_count=4,
+                )
+
+    def test_helper_permits_exact_reserve_boundary(self) -> None:
+        # Equality is intentional: 1200 seconds plus the 300-second reserve is
+        # exactly the 25-minute outer ceiling.
+        self._assert_timeout_budget(
+            [1200] * 4,
+            [25 * 60] * 4,
+            expected_reviewer_count=4,
+            expected_topology_count=4,
+        )
+
+    def test_helper_is_not_four_reviewer_specific(self) -> None:
+        self._assert_timeout_budget(
+            [900] * 5,
+            [20 * 60] * 4,
+            expected_reviewer_count=5,
+            expected_topology_count=4,
+        )
 
 
 class GitLabCiTemplateTests(unittest.TestCase):
@@ -737,6 +911,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
         self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
+        self.assertRegex(review, r"(?m)^    timeout-minutes: 20$")
+        self.assertRegex(critique, r"(?m)^    timeout-minutes: 20$")
         self.assertIn(
             "AI_REVIEW_MERGE_GATE_ENABLED: "
             "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}",

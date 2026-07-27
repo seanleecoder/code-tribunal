@@ -1,5 +1,10 @@
 # SPEC-38 — Replace milestone narration with task-oriented 1.0 documentation and evidence
 
+> **Historical completed requirement.** Closed at `v1.0.0` (runtime source
+> `88bc941`, release commit `3ad443e`). Statements below describe the state at
+> authoring time and are non-normative; current behavior is defined by code,
+> schemas, tests, and the task-oriented docs.
+
 - **Severity:** Medium (adoption risk / unsupported security claims) · **Effort:** L · **ROI rank:** 8 (pre-1.0 content gate)
 - **Depends on:** SPEC-31 through SPEC-36 for final behavior; evidence collection can begin earlier.
 

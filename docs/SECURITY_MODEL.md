@@ -28,9 +28,25 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. The required hostile-MR evidence is not yet complete for
-the 1.0 candidate, so “credential isolated” means the tested subprocess
-allowlist and template design—not a completed claim about every installation.
+proved per deployment. Hostile-MR evidence was recorded for 1.0.0 in one scoped
+topology — a merge request from an **unprotected** ref in the hardened mirrored
+child, where GitLab withheld both protected credentials, prepare failed closed
+with an empty input bundle, and no credential value appeared in any trace or
+artifact (see the
+[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). So
+“credential isolated” means that recorded scope plus the tested subprocess
+allowlist and template design — not a completed claim about every installation.
+Fork-based merge requests and protected-ref insiders are untested.
+
+That same probe established a limit worth stating plainly here: **the trusted
+image pin is not enforced inside the pipeline.** A consumer `.gitlab-ci.yml` that
+declares the image variables in its own top-level `variables:` and enables
+variable forwarding can run the stages on an arbitrary image, and no stage
+verifies what it is running. Containment came from credential withholding and
+from `scripts/verify_pipeline_trust.py`, which rejects such a composition but
+runs out-of-band. Run that auditor against your consumer configuration, and do
+not read “digest-pinned templates” as a runtime guarantee against a hostile
+consumer config.
 
 ### Repository snapshot containment
 
@@ -87,7 +103,7 @@ disables finding-based blocking only; post/state loss still fails the gate.
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
 integrity, and gate unit/integration tests. Deployment evidence and unexercised
-paths are indexed under [history/evidence](history/evidence/README.md).
+paths are indexed under [docs/evidence](evidence/README.md).
 
 Evidence must record source and image digests, expected/actual outcomes, and a
 secret audit without storing credential values or sensitive model content.

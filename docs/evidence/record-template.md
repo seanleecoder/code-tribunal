@@ -7,9 +7,9 @@ Status: pending
      set Release-evidence-waived: <reason> and register the same reason under
      verification.evidence_waivers in release/release-inputs.json. -->
 
-Release-runtime-source: `REPLACE-ME-40-CHAR-COMMIT-SHA-GOES-HERE!!`
-Release-base-digest: sha256:replace-me
-Release-reviewer-digest: sha256:replace-me
+Release-runtime-source: `<40-character-runtime-source-sha>`
+Release-base-digest: `sha256:<64-character-base-image-digest>`
+Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
 
 ## Identity
 

@@ -1,5 +1,10 @@
 # SPEC-40 — Execute and verify the 1.0 finalization sequence
 
+> **Historical completed requirement.** Closed at `v1.0.0` (runtime source
+> `88bc941`, release commit `3ad443e`). Statements below describe the state at
+> authoring time and are non-normative; current behavior is defined by code,
+> schemas, tests, and the task-oriented docs.
+
 - **Severity:** Release blocker coordination
 - **Effort:** M implementation plus credentialed live operations
 - **Depends on:** SPEC-31–39 milestone A
@@ -104,7 +109,7 @@ change in `P`:
 - `ai-review/ci/review.github-actions.yml`
 - the three pin variables at the top of `ai-review/ci/review.gitlab-ci.yml`
 - `CHANGELOG.md`
-- `docs/history/evidence/**`
+- `docs/evidence/**`
 - `docs/improvement-specs/**` status only
 - a release-input file under `release/`
 - release notes under `release/`
@@ -349,7 +354,7 @@ the images from `R`; no runtime path changed in `R..P0`.
 inspect sanitized artifacts, and update records after the operator supplies
 results.
 
-Use the procedures and record templates under `docs/history/evidence/`. Run all
+Use the procedures and record templates under `docs/evidence/`. Run all
 four suites against templates from `P0` (or a later evidence-only `P`) and images
 from `R`.
 
