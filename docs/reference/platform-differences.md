@@ -50,7 +50,12 @@ Within that invariant the renderer picks the container by content shape:
 
 A blank model line renders as a line holding only the hard break: a genuinely empty
 line would end the paragraph and orphan the fragments after it. The last line never
-carries a break, which would otherwise render its backslash literally.
+carries a break, which would otherwise render its backslash literally. Prose under a
+`- ` label is indented into that item's content column, matching the summary renderer.
+
+Wrapping reflows prose; it does not break tokens. A single unbroken run with no space
+in it — a long URL, path, or hash — still overflows its container in a prose paragraph
+exactly as it does in a suggestion, on both platforms.
 
 The renderer uses dynamic delimiters and fragment-aware limits so spans are never
 split, blocks are always closed, prose is shortened only by re-encoding a shortened

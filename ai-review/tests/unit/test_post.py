@@ -1895,6 +1895,54 @@ class PostTests(unittest.TestCase):
         self.assertEqual(parsed_unfenced["title"], "Legacy title")
         self.assertEqual(parsed_unfenced["summary"], "legacy body")
 
+    def test_mixed_prose_note_falls_back_instead_of_returning_a_partial_body(self) -> None:
+        """A hand-edited note must not lose the lines after the first bad one.
+
+        Returning the lines read so far looks like a successful prose read, so
+        the caller would stop there and silently discard the remainder rather
+        than falling back to the line-oriented rules.
+        """
+
+        body = "\n".join(
+            [
+                "**AI review: INFO style**",
+                "",
+                "Title: `Clean title`",
+                "",
+                "Body:",
+                "`recovered line one`\\",
+                "hand-edited line two",
+                "hand-edited line three",
+                "",
+                "Consensus:",
+                "ignored consensus",
+            ]
+        )
+
+        parsed = parse_review_note(body)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(
+            parsed["summary"],
+            "`recovered line one`\\\nhand-edited line two\nhand-edited line three",
+        )
+
+    def test_hand_edited_two_span_line_is_not_unwrapped(self) -> None:
+        # The delimiter match is greedy, so two adjacent spans look like one
+        # span wrapping the text between them. A title is a state-matching key
+        # via title_fingerprint, so a mis-unwrap would route the group to a new
+        # discussion instead of its existing one.
+        self.assertIsNone(post_module._unwrap_span("`foo` and `bar`"))
+        self.assertEqual(
+            post_module._parse_review_title("Title: `foo` and `bar`"),
+            ("`foo` and `bar`", True),
+        )
+        # Renderer output is unaffected: its delimiter is always longer than
+        # any run inside the value.
+        self.assertEqual(post_module._unwrap_span("`` `x` ``"), "`x`")
+        self.assertEqual(post_module._unwrap_span("```` ```php ````"), "```php")
+
     def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
         for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
             with self.subTest(boundary=boundary):

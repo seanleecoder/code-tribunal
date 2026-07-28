@@ -171,7 +171,17 @@ def _unwrap_span(rendered: str) -> str | None:
     span_match = SPAN_RE.fullmatch(rendered)
     if span_match is None:
         return None
+    delimiter = span_match.group("delimiter")
     value = span_match.group("value")
+    # The delimiter match is greedy, so two adjacent spans on one line look
+    # like a single span wrapping the text between them. Renderer output can
+    # never do that — the delimiter is always one backtick longer than any run
+    # inside the value — so a standalone run of exactly the delimiter's length
+    # means this line was hand-edited and is not safe to unwrap.
+    if re.search(rf"(?<!`){re.escape(delimiter)}(?!`)", value):
+        return None
+    # CommonMark strips one boundary space from each side, but not when the
+    # content is entirely spaces. ``_encode_span`` pads on the same condition.
     if value.startswith(" ") and value.endswith(" ") and value.strip():
         value = value[1:-1]
     return value
@@ -208,9 +218,14 @@ def _read_prose_review_body(lines: list[str]) -> list[str] | None:
     """Read a prose paragraph of per-line code spans, or ``None``.
 
     The paragraph ends at the blank line that separates it from the next
-    renderer-owned fragment. ``None`` means the first line is not a rendered
-    prose line, so an older or hand-edited note falls back to the
+    renderer-owned fragment. ``None`` means these lines are not a rendered
+    prose paragraph, so an older or hand-edited note falls back to the
     line-oriented rules.
+
+    Any malformed line rejects the whole paragraph rather than returning the
+    lines read so far. A partial return looks like a successful read to
+    ``_read_review_body``, which would then silently discard every remaining
+    line instead of falling back and recovering them verbatim.
     """
 
     content: list[str] = []
@@ -219,13 +234,13 @@ def _read_prose_review_body(lines: list[str]) -> list[str] | None:
         if not stripped or stripped in REVIEW_SECTION_BOUNDARIES:
             break
         if PROSE_LINE_RE.fullmatch(stripped) is None:
-            return content or None
+            return None
         if stripped == PROSE_LINE_BREAK:
             content.append("")
             continue
         value = _unwrap_span(stripped.removesuffix(PROSE_LINE_BREAK))
         if value is None:
-            return content or None
+            return None
         content.append(value)
     return content or None
 

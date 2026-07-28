@@ -6,6 +6,8 @@ from unittest.mock import patch
 from ai_review.post import parse_marker, parse_review_note, render_body
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
+    _encode_span,
+    _shorten_span,
     literal_span,
     platform_comment_limit,
     prose_block,
@@ -136,7 +138,7 @@ class BodyHashTests(unittest.TestCase):
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
-            "Evidence:\n\n- `codex`:\n`records[0] executes before the guard`",
+            "Evidence:\n\n- `codex`:\n  `records[0] executes before the guard`",
             body,
         )
         self.assertNotIn("- claude:", body)
@@ -151,7 +153,7 @@ class BodyHashTests(unittest.TestCase):
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
-            "Evidence:\n\n- `claude, codex`:\n`records[0] executes before the guard`",
+            "Evidence:\n\n- `claude, codex`:\n  `records[0] executes before the guard`",
             body,
         )
         self.assertEqual(body.count("records[0] executes before the guard"), 1)
@@ -165,8 +167,8 @@ class BodyHashTests(unittest.TestCase):
 
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
-        self.assertIn("- `claude`:\n`records[0] executes before the guard`", body)
-        self.assertIn("- `codex`:\n`the empty check occurs on the next line`", body)
+        self.assertIn("- `claude`:\n  `records[0] executes before the guard`", body)
+        self.assertIn("- `codex`:\n  `the empty check occurs on the next line`", body)
 
     def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
         group = self._group()
@@ -190,11 +192,11 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("Dissent:", body)
         self.assertIn(
             "- `codex` disputes: (suggested severity: `minor`)\n"
-            "`The caller already checks emptiness.`",
+            "  `The caller already checks emptiness.`",
             body,
         )
         self.assertIn(
-            "- `opencode` disputes:\n`This path is unreachable.`",
+            "- `opencode` disputes:\n  `This path is unreachable.`",
             body,
         )
         self.assertIn("- Blocking: yes", body)
@@ -409,6 +411,63 @@ class BodyHashTests(unittest.TestCase):
         self.assertTrue(prose.startswith("`") and prose.endswith("`"))
         self.assertIn("\n\n…[truncated: platform comment size limit]", body)
         self.assertIsNotNone(parse_marker(body))
+
+    def test_backtick_heavy_prose_is_shortened_rather_than_dropped(self) -> None:
+        """A growing delimiter must not make truncation discard the field.
+
+        Encoding cost is ``2 * (longest_backtick_run + 1) + length + padding``,
+        so a naive "step back by the overshoot" converges to zero on
+        backtick-dense text and drops the whole body — leaving a review with a
+        truncation notice and no finding text at all.
+        """
+
+        for label, body in (
+            ("all backticks", "`" * 70_000),
+            ("mixed", "a" * 50 + "`" * 300 + "b" * 50),
+        ):
+            with self.subTest(body=label):
+                group = self._group()
+                group["body"] = body
+
+                rendered, _body_hash = render_body(
+                    group, 3, "run", posting_mode="github_reviews"
+                )
+
+                self.assertLessEqual(len(rendered), 65_536)
+                self.assertIn("Body:\n", rendered)
+                prose = rendered.split("Body:\n", 1)[1].split("\n", 1)[0]
+                self.assertGreater(len(prose), 100)
+                # The re-encoded span owns a matched delimiter on both sides.
+                delimiter = prose[: len(prose) - len(prose.lstrip("`"))]
+                self.assertTrue(prose.endswith(delimiter))
+                self.assertIsNotNone(parse_marker(rendered))
+
+    def test_shorten_span_returns_the_longest_prefix_that_fits(self) -> None:
+        # The encoded length is not monotone in the prefix length: a prefix
+        # ending in a space is padded and extending past it drops the padding.
+        for scalar in ("`" * 40, "a b `c`` d ", "x" * 30, "a" + "`" * 9 + "b"):
+            for room in range(0, 40):
+                with self.subTest(scalar=scalar, room=room):
+                    shortened = _shorten_span(scalar, room)
+                    best = max(
+                        (
+                            length
+                            for length in range(1, len(scalar) + 1)
+                            if len(_encode_span(scalar[:length])) <= room
+                        ),
+                        default=0,
+                    )
+                    if not best:
+                        self.assertIsNone(shortened)
+                        continue
+                    self.assertEqual(shortened, _encode_span(scalar[:best]))
+                    assert shortened is not None
+                    self.assertLessEqual(len(shortened), room)
+
+    def test_all_space_scalar_is_not_padded(self) -> None:
+        # CommonMark does not strip boundary spaces when a code span's content
+        # is entirely spaces, so padding one would change the displayed value.
+        self.assertEqual(_encode_span("   "), "`   `")
 
     def test_unknown_posting_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
