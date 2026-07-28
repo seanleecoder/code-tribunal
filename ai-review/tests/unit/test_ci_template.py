@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shutil
@@ -28,6 +29,7 @@ _CURSOR_PERMISSION_SMOKE = (
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
+_PACKAGED_RUNTIME_ENV = "AI_REVIEW_PACKAGED_RUNTIME"
 
 _OVERHEAD_RESERVE_SECONDS = 300
 _EXPECTED_OUTER_TIMEOUT_COUNT = 4  # GitLab/GitHub review and critique ceilings.
@@ -58,6 +60,10 @@ _GITLAB_DURATION_UNIT_SECONDS = {
     "week": 7 * 24 * 60 * 60,
     "weeks": 7 * 24 * 60 * 60,
 }
+
+
+def _is_packaged_runtime() -> bool:
+    return os.environ.get(_PACKAGED_RUNTIME_ENV) == "1"
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -684,34 +690,53 @@ class GitLabCiTemplateTests(unittest.TestCase):
         smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
         self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
         self.assertEqual(smoke_model.group(1), configured_cursor_model)
-        missing_key_skip = cursor_smoke.index('if [[ -z "$CURSOR_API_KEY" ]]')
-        missing_key_annotation = cursor_smoke.index(
+        def required_index(marker: str, label: str, start: int = 0) -> int:
+            index = cursor_smoke.find(marker, start)
+            if index < 0:
+                self.fail(f"Cursor permission smoke is missing {label}: {marker!r}")
+            return index
+
+        missing_key_skip = required_index(
+            'if [[ -z "$CURSOR_API_KEY" ]]', "the CURSOR_API_KEY guard"
+        )
+        missing_key_annotation = required_index(
             "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
+            "the CURSOR_API_KEY notice",
             missing_key_skip,
         )
-        missing_key_summary = cursor_smoke.index(
+        missing_key_summary = required_index(
             'echo "- Cursor permission smoke skipped: CURSOR_API_KEY is not configured. '
             'Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"',
+            "the CURSOR_API_KEY step summary",
             missing_key_skip,
         )
-        missing_key_exit = cursor_smoke.index("exit 0", missing_key_skip)
+        missing_key_exit = required_index(
+            "exit 0", "the CURSOR_API_KEY successful exit", missing_key_skip
+        )
         self.assertLess(missing_key_skip, missing_key_annotation)
         self.assertLess(missing_key_annotation, missing_key_summary)
         self.assertLess(missing_key_summary, missing_key_exit)
-        auto_skip = cursor_smoke.index('if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]')
-        auto_annotation = cursor_smoke.index(
+        auto_skip = required_index(
+            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]', "the auto-model guard"
+        )
+        auto_annotation = required_index(
             "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
+            "the auto-model warning",
             auto_skip,
         )
-        auto_summary = cursor_smoke.index(
+        auto_summary = required_index(
             'echo "- Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only '
             "'auto' placeholder. Keep Cursor disabled.\" >> \"$GITHUB_STEP_SUMMARY\"",
+            "the auto-model step summary",
             auto_skip,
         )
-        auto_exit = cursor_smoke.index("exit 0", auto_skip)
-        smoke_invocation = cursor_smoke.index(
+        auto_exit = required_index(
+            "exit 0", "the auto-model successful exit", auto_skip
+        )
+        smoke_invocation = required_index(
             'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" '
-            '"$CURSOR_SMOKE_MODEL"'
+            '"$CURSOR_SMOKE_MODEL"',
+            "the Cursor smoke invocation",
         )
         self.assertLess(auto_skip, auto_annotation)
         self.assertLess(auto_annotation, auto_summary)
@@ -732,8 +757,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
     def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
-            if Path("/opt") == _REPO_ROOT:
-                self.skipTest("GitHub publish workflow is absent from the /opt runtime image")
+            if _is_packaged_runtime():
+                self.skipTest("GitHub publish workflow is absent from the packaged runtime image")
             self.fail(f"GitHub publish workflow is missing from checkout: {_PUBLISH_WORKFLOW}")
 
         placeholder = "auto"
@@ -793,6 +818,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_base_image_copies_root_readme_to_documented_runtime_path(self) -> None:
         text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
+        self.assertIn("AI_REVIEW_PACKAGED_RUNTIME=1", text)
         self.assertIn("COPY README.md /opt/README.md", text)
         self.assertIn(
             "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
