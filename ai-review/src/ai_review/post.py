@@ -156,6 +156,17 @@ def _parse_review_header(line: str) -> str | None:
     ``line.strip()`` over ``splitlines()`` output. That precondition is what
     makes the ``endswith`` test equivalent to the pattern's ``\\*\\*$``, which
     would also have matched before one trailing newline.
+
+    One deliberate difference from that pattern: a whitespace-only category —
+    ``**AI review: MAJOR  **``, two or more spaces — matched it and yielded
+    ``""``, and is refused here. Recovering it would invent a category the note
+    does not carry, and ``normalize_record`` turns an empty one into ``other``,
+    which is the input most likely to match the *wrong* group. Refusing costs
+    only the two ``_same_category``-gated fallback tiers, and only for a
+    hand-edited note: ``category`` is a validated enum, so the renderer cannot
+    emit this shape — an empty category would produce a single space, which
+    both this parser and the pattern reject. The differential test asserts the
+    difference as a property rather than a list of cases.
     """
 
     if not (line.startswith(REVIEW_HEADER_PREFIX) and line.endswith(REVIEW_HEADER_SUFFIX)):
@@ -174,7 +185,14 @@ def _parse_review_header(line: str) -> str | None:
     # ``str.split(None)`` and ``\s`` agree on every whitespace character.
     parts = inner.split(None, 1)
     if len(parts) != 2:
+        # A single part means there was no category, or only whitespace where
+        # one belonged. This is where the deliberate difference described above
+        # takes effect: the replaced pattern recovered ``""`` from
+        # ``**AI review: MAJOR  **``; refusing avoids inventing a category.
         return None
+    # ``split(None, 1)`` also discards a trailing whitespace run, so a second
+    # part always carries non-whitespace and ``category`` is never empty here.
+    # The fallback is belt and braces against a future change to the split.
     category = parts[1].strip()
     return category or None
 

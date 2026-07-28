@@ -2010,7 +2010,12 @@ class PostTests(unittest.TestCase):
             ("**AI review:\tMAJOR correctness**", "correctness"),
             ("**AI review:\xa0MAJOR correctness**", "correctness"),
             ("**AI review: MAJOR**", None),
+            # One space before the delimiter leaves no category at all, and the
+            # replaced pattern rejected it too. Two or more is the deliberate
+            # difference: the pattern recovered "", this refuses to invent one.
             ("**AI review: MAJOR **", None),
+            ("**AI review: MAJOR  **", None),
+            ("**AI review: MAJOR \xa0**", None),
             ("**AI review:**", None),
             ("**AI review: MAJOR correctness", None),
             ("AI review: MAJOR correctness**", None),
@@ -2022,11 +2027,19 @@ class PostTests(unittest.TestCase):
     def test_review_header_parsing_is_equivalent_to_the_replaced_pattern(self) -> None:
         """Differential check against the regex this parser replaced.
 
-        Asserting equivalence in prose is exactly what went wrong here: the
-        first version of the parser silently dropped the mandatory separator
-        after the colon. Pinning it executably stops a later refactor drifting
-        the same way. The historical pattern is cubic, so it is only ever run
-        on the short fragments below.
+        Generated from the header *grammar* rather than a flat product of
+        fragments. The flat version missed the whitespace-only-category shape
+        entirely, because that needs five parts and it only combined four —
+        equivalence asserted over a domain that could not express the case that
+        had drifted. Build the shape deliberately instead of hoping for it.
+
+        The asserted property is total, with the one intentional difference
+        expressed rather than listed: the parser agrees with the pattern
+        everywhere, except that it returns ``None`` exactly where the pattern
+        returned ``""``. See ``_parse_review_header`` for why a whitespace-only
+        category is refused rather than recovered as empty.
+
+        The historical pattern is cubic, so it is only run on short lines.
         """
 
         replaced = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
@@ -2035,35 +2048,52 @@ class PostTests(unittest.TestCase):
             matched = replaced.match(line)
             return matched.group("category").strip() if matched else None
 
-        fragments = (
-            "**AI review:",
-            "**AI review",
-            " ",
-            "  ",
-            "\t",
-            "\x0b",
-            "\x1c",
-            "\xa0",
-            "MAJOR",
-            "cat",
-            "two words",
-            "**",
-            "*",
-            "",
-        )
-        for size in (2, 3, 4):
-            for combination in itertools.product(fragments, repeat=size):
-                line = "".join(combination)
-                # The precondition the call site guarantees: a single stripped
-                # line. Only there do ``endswith("**")`` and ``\*\*$`` agree,
-                # since ``$`` also matches before one trailing newline.
-                if line != line.strip():
-                    continue
-                self.assertEqual(
-                    post_module._parse_review_header(line),
-                    by_pattern(line),
-                    f"diverged on {line!r}",
-                )
+        spacings = ("", " ", "  ", "\t", " \t", "\xa0")
+        severities = ("MAJOR", "x", "")
+        categories = ("correctness", "two words", "", " ", "  ", "\t")
+
+        agreed = 0
+        refused_empty = 0
+        for lead, severity, gap, category, trail in itertools.product(
+            spacings, severities, spacings, categories, spacings
+        ):
+            line = f"**AI review:{lead}{severity}{gap}{category}{trail}**"
+            # The precondition the call site guarantees: a single stripped
+            # line. Only there do ``endswith("**")`` and ``\*\*$`` agree,
+            # since ``$`` also matches before one trailing newline.
+            if line != line.strip():
+                continue
+            expected = by_pattern(line)
+            parsed = post_module._parse_review_header(line)
+            if expected == "":
+                self.assertIsNone(parsed, f"expected refusal on {line!r}")
+                refused_empty += 1
+            else:
+                self.assertEqual(parsed, expected, f"diverged on {line!r}")
+                agreed += 1
+
+        # Both branches must stay reachable. If a later edit to the grammar
+        # stops generating the exception class, this test would silently become
+        # a weaker claim than the one its docstring makes.
+        self.assertGreater(agreed, 0)
+        self.assertGreater(refused_empty, 0)
+
+    def test_header_differential_covers_the_shapes_that_escaped_the_flat_corpus(self) -> None:
+        # Guard the generator itself: these are the reported shapes the previous
+        # fragment product could not build, so their absence would quietly
+        # restore the blind spot.
+        spacings = ("", " ", "  ", "\t", " \t", "\xa0")
+        severities = ("MAJOR", "x", "")
+        categories = ("correctness", "two words", "", " ", "  ", "\t")
+        generated = {
+            f"**AI review:{lead}{severity}{gap}{category}{trail}**"
+            for lead, severity, gap, category, trail in itertools.product(
+                spacings, severities, spacings, categories, spacings
+            )
+        }
+
+        for shape in ("**AI review: MAJOR  **", "**AI review: MAJOR \xa0**"):
+            self.assertIn(shape, generated)
 
     def test_span_recovery_accepts_renderer_output_and_rejects_hand_edits(self) -> None:
         for rendered, expected in (
