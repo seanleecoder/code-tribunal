@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shutil
 import subprocess
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -16,9 +19,8 @@ _CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _GITHUB_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
-_PUBLISH_WORKFLOW = (
-    Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
-)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
@@ -29,6 +31,7 @@ _CURSOR_PERMISSION_SMOKE = (
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
+_PACKAGED_RUNTIME_ENV = "AI_REVIEW_PACKAGED_RUNTIME"
 
 _OVERHEAD_RESERVE_SECONDS = 300
 _EXPECTED_OUTER_TIMEOUT_COUNT = 4  # GitLab/GitHub review and critique ceilings.
@@ -59,6 +62,29 @@ _GITLAB_DURATION_UNIT_SECONDS = {
     "week": 7 * 24 * 60 * 60,
     "weeks": 7 * 24 * 60 * 60,
 }
+
+
+def _is_packaged_runtime() -> bool:
+    return os.environ.get(_PACKAGED_RUNTIME_ENV) == "1"
+
+
+def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW) -> str | None:
+    """Return a skip reason only when a packaged runtime lacks the publish workflow.
+
+    Raise AssertionError if the marker is set with the checkout workflow present,
+    or if a checkout lacks the workflow without the marker.
+    """
+    packaged_runtime = _is_packaged_runtime()
+    if packaged_runtime and workflow_path.exists():
+        raise AssertionError(
+            f"{_PACKAGED_RUNTIME_ENV}=1 contradicts a checkout that contains the "
+            f"GitHub publish workflow: {workflow_path}"
+        )
+    if not workflow_path.exists():
+        if packaged_runtime:
+            return "GitHub publish workflow is absent from the packaged runtime image"
+        raise AssertionError(f"GitHub publish workflow is missing from checkout: {workflow_path}")
+    return None
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -658,14 +684,86 @@ class GitLabCiTemplateTests(unittest.TestCase):
         # the probe can be iterated without merging to main.
         for smoke_marker in (
             "Verify Cursor denies write and shell tools",
-            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"',
             "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
+            "CURSOR_SMOKE_MODEL:",
             'if [[ -z "$CURSOR_API_KEY" ]]',
+            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
+            (
+                "Cursor permission smoke skipped: CURSOR_API_KEY is not configured. "
+                "Keep Cursor disabled."
+            ),
+            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]',
+            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
+            (
+                "Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only "
+                "'auto' placeholder. Keep Cursor disabled."
+            ),
+            "discovery-only 'auto' placeholder",
+            "Pin an exact Composer model slug",
             "Keep Cursor disabled",
         ):
             self.assertIn(smoke_marker, cursor_smoke)
             self.assertNotIn(smoke_marker, build_preflight)
             self.assertNotIn(smoke_marker, publish)
+        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
+        configured_cursor_model = config["reviewers"]["cursor"]["model"]
+        smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
+        self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
+        self.assertEqual(smoke_model.group(1), configured_cursor_model)
+        def required_index(marker: str, label: str, start: int = 0) -> int:
+            index = cursor_smoke.find(marker, start)
+            if index < 0:
+                self.fail(f"Cursor permission smoke is missing {label}: {marker!r}")
+            return index
+
+        missing_key_skip = required_index(
+            'if [[ -z "$CURSOR_API_KEY" ]]', "the CURSOR_API_KEY guard"
+        )
+        missing_key_annotation = required_index(
+            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
+            "the CURSOR_API_KEY notice",
+            missing_key_skip,
+        )
+        missing_key_summary = required_index(
+            'echo "- Cursor permission smoke skipped: CURSOR_API_KEY is not configured. '
+            'Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"',
+            "the CURSOR_API_KEY step summary",
+            missing_key_skip,
+        )
+        missing_key_exit = required_index(
+            "exit 0", "the CURSOR_API_KEY successful exit", missing_key_skip
+        )
+        self.assertLess(missing_key_skip, missing_key_annotation)
+        self.assertLess(missing_key_annotation, missing_key_summary)
+        self.assertLess(missing_key_summary, missing_key_exit)
+        auto_skip = required_index(
+            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]', "the auto-model guard"
+        )
+        auto_annotation = required_index(
+            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
+            "the auto-model warning",
+            auto_skip,
+        )
+        auto_summary = required_index(
+            'echo "- Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only '
+            "'auto' placeholder. Keep Cursor disabled.\" >> \"$GITHUB_STEP_SUMMARY\"",
+            "the auto-model step summary",
+            auto_skip,
+        )
+        auto_exit = required_index(
+            "exit 0", "the auto-model successful exit", auto_skip
+        )
+        smoke_invocation = required_index(
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" '
+            '"$CURSOR_SMOKE_MODEL"',
+            "the Cursor smoke invocation",
+        )
+        self.assertLess(auto_skip, auto_annotation)
+        self.assertLess(auto_annotation, auto_summary)
+        self.assertLess(auto_summary, auto_exit)
+        self.assertLess(auto_skip, smoke_invocation)
+        self.assertIn("exit 0", cursor_smoke[auto_skip:smoke_invocation])
         self.assertIn("needs: build-preflight", cursor_smoke)
         self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
         self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)
@@ -677,6 +775,57 @@ class GitLabCiTemplateTests(unittest.TestCase):
         publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
         self.assertIsNotNone(publish_needs)
         self.assertEqual(publish_needs.group(1), "build-preflight")
+
+    def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
+        if skip_reason := _cursor_publish_workflow_skip_reason():
+            self.skipTest(skip_reason)
+
+        placeholder = "auto"
+        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
+        workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        cursor_smoke = _workflow_job(workflow, "cursor-permission-smoke")
+        smoke_script = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
+
+        self.assertEqual(config["reviewers"]["cursor"]["model"], placeholder)
+
+        publisher_model = re.search(
+            r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke
+        )
+        self.assertIsNotNone(publisher_model)
+        assert publisher_model is not None
+        self.assertEqual(publisher_model.group(1), placeholder)
+
+        publisher_guard = re.search(
+            r'(?s)if \[\[ "\$CURSOR_SMOKE_MODEL" == "([^"]+)" \]\]; then.*?exit 0\n'
+            r"          fi",
+            cursor_smoke,
+        )
+        self.assertIsNotNone(publisher_guard)
+        assert publisher_guard is not None
+        self.assertEqual(publisher_guard.group(1), placeholder)
+
+        smoke_rejection = re.search(
+            r'(?s)if \[ -z "\$cursor_model" \] \|\| \[ "\$cursor_model" = "([^"]+)" \]; '
+            r"then.*?exit 2\nfi",
+            smoke_script,
+        )
+        self.assertIsNotNone(smoke_rejection)
+        assert smoke_rejection is not None
+        self.assertEqual(smoke_rejection.group(1), placeholder)
+
+    def test_packaged_runtime_marker_rejects_checkout_publish_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_path = Path(tmp) / ".github/workflows/publish-ai-review-images.yml"
+            workflow_path.parent.mkdir(parents=True)
+            workflow_path.touch()
+            with (
+                mock.patch.dict(os.environ, {_PACKAGED_RUNTIME_ENV: "1"}),
+                self.assertRaisesRegex(
+                    AssertionError,
+                    rf"{_PACKAGED_RUNTIME_ENV}=1 contradicts a checkout that contains",
+                ),
+            ):
+                _cursor_publish_workflow_skip_reason(workflow_path)
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
@@ -699,10 +848,25 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text = dockerfile.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
 
-    def test_base_image_copies_root_readme_to_documented_runtime_path(self) -> None:
+    def test_base_image_declares_test_only_packaged_runtime_marker(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "# Test-only packaging marker with no production runtime behavior; "
+            "checkout-based tests must not override it.",
+            text,
+        )
+        self.assertIn("AI_REVIEW_PACKAGED_RUNTIME=1", text)
+
+    def test_base_image_copies_readmes_to_documented_runtime_paths(self) -> None:
         text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
         self.assertIn("COPY README.md /opt/README.md", text)
+        self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
+
+    def test_base_image_copies_cursor_permission_smoke_script(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
         self.assertIn(
             "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
             text,

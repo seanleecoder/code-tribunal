@@ -22,6 +22,7 @@ from release_common import (
     computed_hashes,
     image_ref,
     load_json,
+    validate_release_version,
 )
 
 GITHUB_CONTAINER_ROLES = {
@@ -261,8 +262,7 @@ def validate_release_inputs(
     )
     if data["schema_version"] != "code_tribunal.release_inputs.v1":
         raise ReleaseValidationError("unsupported release-input schema_version")
-    if data["release_version"] != "1.0.0":
-        raise ReleaseValidationError("release_version must be 1.0.0")
+    validate_release_version(data["release_version"])
     if data["status"] not in {"draft", "active"}:
         raise ReleaseValidationError("status must be draft or active")
     if PLACEHOLDER_RE.search(canonical_json_bytes(data).decode()):

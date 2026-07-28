@@ -1,20 +1,44 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: $0 <reviewer-image>" >&2
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <reviewer-image> <cursor-model>" >&2
   exit 2
 fi
-if [ -z "${CURSOR_API_KEY:-}" ]; then
-  echo "CURSOR_API_KEY is required for the Cursor permission smoke test" >&2
-  exit 2
-fi
+image="$1"
+cursor_model="$2"
+model_id_pattern='^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required for Cursor permission policy validation" >&2
   exit 2
 fi
 
-image="$1"
+# This literal is contract-tested against ai_review.adapter_runner._MODEL_ID_RE.
+# Both validators use this same literal with full-match semantics: the adapter
+# calls Pattern.fullmatch(), and this smoke calls re.fullmatch() below.
+# The permission smoke is an enablement gate, so the discovery placeholder `auto`
+# must fail before any Docker invocation can spend a real key.
+if [ -z "$cursor_model" ] || [ "$cursor_model" = "auto" ]; then
+  echo "Cursor permission smoke requires an exact Composer model slug before Cursor can be enabled; empty and 'auto' model arguments are invalid" >&2
+  exit 2
+fi
+if ! python3 - "$cursor_model" "$model_id_pattern" <<'PY'
+import re
+import sys
+
+if re.fullmatch(sys.argv[2], sys.argv[1]) is None:
+    raise SystemExit(1)
+PY
+then
+  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact Composer slug before Cursor can be enabled" >&2
+  exit 2
+fi
+
+if [ -z "${CURSOR_API_KEY:-}" ]; then
+  echo "CURSOR_API_KEY is required for the Cursor permission smoke test" >&2
+  exit 2
+fi
+
 smoke_dir="$(mktemp -d)"
 cleanup() {
   if rm -rf "$smoke_dir" 2>/dev/null; then
@@ -237,9 +261,9 @@ run_cursor_probe() {
     sh -euc '
       export HOME=/cursor-home
       export TMPDIR=/permission-tmp
-      printf "%s\n" "$1" \
-        | cursor-agent -p --output-format json --trust --sandbox disabled --mode ask --model auto
-    ' sh "$3"
+      printf "%s\n" "$2" \
+        | cursor-agent -p --output-format json --trust --sandbox disabled --mode ask --model "$1"
+    ' sh "$cursor_model" "$3"
 }
 
 workspace_before_read="$(workspace_manifest)"

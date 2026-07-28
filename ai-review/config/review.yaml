@@ -40,8 +40,9 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
-  # Cursor is an experimental opt-in substitute reviewer outside the 1.0
-  # live-evidence matrix. Cursor CLI cannot route through
+  # Cursor is an experimental opt-in substitute reviewer. Its acceptance is
+  # required before enabling Cursor, but it does not block shipping 1.0.1.
+  # Cursor CLI cannot route through
   # OpenRouter/BYOK/custom-base-URL; enabling it sends review prompts, diffs,
   # and any repo snapshot content it reads to Cursor's backend as a deliberate
   # second egress destination. Substitute opencode with:
@@ -53,7 +54,7 @@ reviewers:
     # Cursor has no separate effort option: reasoning depth is part of the
     # model variant. Use an exact slug reported by `cursor-agent --list-models`;
     # AI_REVIEW_CURSOR_EFFORT is unsupported and rejected.
-    model: auto # Cursor model/effort variant. Override: AI_REVIEW_CURSOR_MODEL
+    model: auto # Discovery-only placeholder; enabling Cursor requires an exact Composer slug. Override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter

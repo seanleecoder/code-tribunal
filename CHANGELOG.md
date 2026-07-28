@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project follows semantic
 versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Reviewer model IDs in `review.yaml` must fully match the supported model-ID
+  grammar. A malformed YAML value, including a trailing newline, is rejected
+  with `model_error` before the reviewer CLI is invoked.
+- The Cursor permission smoke now requires an explicit exact model argument and
+  rejects the discovery placeholder `auto` before invoking Docker.
+
 ## [1.0.0] - 2026-07-25
 
 ### Security

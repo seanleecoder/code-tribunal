@@ -8,7 +8,7 @@ effective configuration.
 
 ## YAML keys
 
-Defaults below are the shipped 1.0-candidate defaults. A custom configuration
+Defaults below are the shipped defaults. A custom configuration
 must retain `schema_version: review_config.v1`.
 
 ### Reviewers
@@ -139,7 +139,7 @@ artifacts.
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
-| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. |
+| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. `auto` is discovery-only and is not valid Cursor-enablement evidence. |
 | `AI_REVIEW_CLAUDE_ENABLED` | `true` | Exact lowercase `true` or `false`. |
 | `AI_REVIEW_CODEX_ENABLED` | `true` | Exact lowercase `true` or `false`. |
 | `AI_REVIEW_OPENCODE_ENABLED` | `true` | Exact lowercase `true` or `false`. |
@@ -200,6 +200,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
 | `AI_REVIEW_TRUSTED_ROOT` | Trusted in-image root, `/opt/ai-review`. |
+| `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |

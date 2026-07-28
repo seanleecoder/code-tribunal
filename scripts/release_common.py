@@ -56,6 +56,10 @@ ALLOWED_RELEASE_PATHS = (
 
 FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+RELEASE_VERSION_RE = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
 IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)")
 PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
@@ -141,11 +145,26 @@ def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT)
     raise ReleaseValidationError(completed.stderr.strip() or "git merge-base failed")
 
 
+def validate_release_version(value: object) -> str:
+    if not isinstance(value, str) or not RELEASE_VERSION_RE.fullmatch(value):
+        raise ReleaseValidationError(
+            "release_version must be a semantic version in MAJOR.MINOR.PATCH format "
+            "with an optional prerelease suffix such as 1.0.1-rc.1; build metadata "
+            "is not supported"
+        )
+    return value
+
+
 def validate_release_coordinates(
-    tag: object, runtime_source: object, release_commit: object
+    tag: object,
+    runtime_source: object,
+    release_commit: object,
+    release_version: object,
 ) -> None:
-    if tag != "v1.0.0":
-        raise ReleaseValidationError("release tag must be v1.0.0")
+    version = validate_release_version(release_version)
+    expected_tag = f"v{version}"
+    if tag != expected_tag:
+        raise ReleaseValidationError(f"release tag must be {expected_tag}")
     if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
         raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
     if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):

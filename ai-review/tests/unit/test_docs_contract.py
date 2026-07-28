@@ -192,6 +192,20 @@ class DocumentationContractTests(unittest.TestCase):
             self.assertTrue(any(name in issue and "0 canonical" in issue for issue in missing))
             self.assertFalse(any(name in issue for issue in documented))
 
+    def test_image_runtime_names_are_inventoried_and_documented_once(self) -> None:
+        checker = _load_docs_checker()
+        marker = "AI_REVIEW_PACKAGED_RUNTIME"
+        documentation = checker.CONFIG_DOC.read_text(encoding="utf-8")
+        heading = checker.ENVIRONMENT_HEADING_RE.search(documentation)
+
+        self.assertIn(checker.ROOT / "ai-review/images", checker.SOURCE_ENV_PATHS)
+        self.assertIn(marker, checker._source_environment_names())
+        self.assertNotIn(marker, checker.REJECTED_ENV_NAMES)
+        self.assertIsNotNone(heading)
+        assert heading is not None
+        environment_rows = checker._reference_row_counts(documentation[heading.end() :])
+        self.assertEqual(environment_rows[marker], 1)
+
     def test_readme_line_limit_is_enforced(self) -> None:
         checker = _load_docs_checker()
         self.assertEqual(checker._readme_issues("line\n" * 220), [])
@@ -283,6 +297,8 @@ class DocumentationContractTests(unittest.TestCase):
         evidence_body: str = "| row | **Passed** |\n",
         notes_body: str | None = None,
         runtime_source: str = "a" * 40,
+        release_version: str = "1.0.1",
+        create_notes: bool = True,
     ) -> list[str]:
         """Run ``_release_state_issues`` against a synthetic release state."""
         with tempfile.TemporaryDirectory() as raw_root:
@@ -290,37 +306,41 @@ class DocumentationContractTests(unittest.TestCase):
             (root / "release").mkdir()
             (root / "docs/evidence").mkdir(parents=True)
             (root / "release/release-inputs.json").write_text(
-                json.dumps({"status": status, "runtime_source": runtime_source}),
+                json.dumps(
+                    {
+                        "status": status,
+                        "release_version": release_version,
+                        "runtime_source": runtime_source,
+                    }
+                ),
                 encoding="utf-8",
             )
             readme = root / "README.md"
             readme.write_text(readme_body, encoding="utf-8")
-            notes = root / "release/1.0.0.md"
-            notes.write_text(
-                runtime_source if notes_body is None else notes_body, encoding="utf-8"
-            )
+            notes = root / "release" / f"{release_version}.md"
+            if create_notes:
+                notes.write_text(
+                    runtime_source if notes_body is None else notes_body, encoding="utf-8"
+                )
             evidence = root / "docs/evidence/README.md"
             evidence.write_text(evidence_body, encoding="utf-8")
 
             saved = (
                 checker.ROOT,
                 checker.RELEASE_INPUTS,
-                checker.RELEASE_NOTES,
                 checker.EVIDENCE_INDEX,
                 checker.RELEASE_STATE_DOCS,
             )
             checker.ROOT = root
             checker.RELEASE_INPUTS = root / "release/release-inputs.json"
-            checker.RELEASE_NOTES = notes
             checker.EVIDENCE_INDEX = evidence
-            checker.RELEASE_STATE_DOCS = (readme, notes)
+            checker.RELEASE_STATE_DOCS = (readme,)
             try:
                 return checker._release_state_issues()
             finally:
                 (
                     checker.ROOT,
                     checker.RELEASE_INPUTS,
-                    checker.RELEASE_NOTES,
                     checker.EVIDENCE_INDEX,
                     checker.RELEASE_STATE_DOCS,
                 ) = saved
@@ -334,6 +354,18 @@ class DocumentationContractTests(unittest.TestCase):
         )
         self.assertTrue(issues)
         self.assertTrue(any("draft/incomplete release state" in issue for issue in issues))
+
+    def test_active_release_rejects_all_new_draft_state_phrasings(self) -> None:
+        checker = _load_docs_checker()
+        for phrase in ("(draft)", "status: draft", "draft notes"):
+            with self.subTest(phrase=phrase):
+                issues = self._release_state_issues_for(
+                    checker,
+                    status="active",
+                    readme_body=f"Release heading {phrase}.\n",
+                )
+                self.assertTrue(issues)
+                self.assertTrue(any("draft/incomplete release state" in issue for issue in issues))
 
     def test_active_release_accepts_released_prose(self) -> None:
         checker = _load_docs_checker()
@@ -387,6 +419,53 @@ class DocumentationContractTests(unittest.TestCase):
             notes_body="No runtime source here.\n",
         )
         self.assertTrue(any("must name the active runtime_source" in issue for issue in issues))
+
+    def test_active_release_requires_version_derived_notes_file(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Released.\n",
+            release_version="1.0.2",
+            create_notes=False,
+        )
+        self.assertEqual(
+            issues,
+            [
+                "release/1.0.2.md: active release inputs require the corresponding "
+                "release notes file"
+            ],
+        )
+
+    def test_active_release_supports_version_derived_rc_notes(self) -> None:
+        checker = _load_docs_checker()
+        self.assertEqual(
+            self._release_state_issues_for(
+                checker,
+                status="active",
+                readme_body="Released.\n",
+                release_version="1.0.2-rc.1",
+            ),
+            [],
+        )
+
+    def test_active_release_uses_shared_version_contract_error(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Released.\n",
+            release_version="1.0.2+build.1",
+        )
+
+        self.assertEqual(
+            issues,
+            [
+                "release/release-inputs.json: active release_version must be a semantic "
+                "version in MAJOR.MINOR.PATCH format with an optional prerelease suffix "
+                "such as 1.0.1-rc.1; build metadata is not supported"
+            ],
+        )
 
     def test_directory_readme_issues_flags_missing_index(self) -> None:
         checker = _load_docs_checker()

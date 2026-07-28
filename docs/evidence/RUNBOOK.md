@@ -7,15 +7,19 @@ replace — the executable tests (`make quality`) and the
 
 **This is the durable procedure, not a one-release artifact.** It was executed in
 full for 1.0.0 against the pair named below, and it is the sequence to follow for
-the next release: replace the identity block with the new runtime source, images,
+1.0.1: replace the identity block with the new runtime source, images,
 and run IDs, then work through the same steps. Sections that record what 1.0.0
 actually observed are marked as such, so a future operator can tell the procedure
 apart from the results.
 
 The identity block below is the last activated 1.0.0 pair. The current source
-branch is a draft release candidate: `release/release-inputs.json` is back to
-`status: draft` with its runtime source and image digests unset pending rebuild,
-so these values remain historical until a new pair is published.
+branch is the 1.0.1 draft release candidate: `release/release-inputs.json` is
+`release_version: 1.0.1` and `status: draft`, with its runtime source and image
+digests unset pending rebuild. These values remain historical until a new pair
+is published.
+
+For the accepted release-version grammar and derived notes path, see the
+[release version contract](../development/release-process.md#release-version-contract).
 
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
@@ -339,7 +343,7 @@ python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secr
 
 ### Coverage gaps carried out of 1.0.0
 
-Start the next release from this list rather than rediscovering it.
+Start 1.0.1 from this list rather than rediscovering it.
 
 | Gap | Why it was unproven at 1.0.0 | How to close it |
 |---|---|---|
@@ -349,7 +353,7 @@ Start the next release from this list rather than rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | no evidence row at all | out of scope while experimental |
+| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -363,10 +367,15 @@ Actual result / Audit / Verdict.
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
+| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
-live pass is optional and **not** a release gate.
+live pass is optional and **not** a release gate. Run 5 is historical supporting
+evidence; Run 6 is a required Cursor-enablement gate, not a release-gating row.
+The product decision must choose and record the ask-mode/blocking contract; it
+does not make the acceptance row optional.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -454,11 +463,57 @@ race windows are milliseconds wide. Treat any live attempt as optional wiring
 confirmation and record it as such; do not block the release on reproducing a
 timing race that the regression tests already prove fail-closed.
 
+### Run 5 — Cursor experimental reviewer evidence (non-release)
+
+The [Cursor supplemental record](record-cursor-real-runs.md) captures the
+real-project GitLab pipeline and the GitHub dogfood run. Confirm in the review
+and critique artifacts that `adapter_status: success`, accepted findings equal
+raw findings, `usable_for_resolution: true`, and the panel lists Cursor as a
+successful reviewer. These checks establish real-route wiring and artifact
+validity only.
+
+The remaining enablement sequence is intentionally separate: identify and pin
+the exact Composer model slug (the recorded runs only say `model: auto`), then
+complete Run 6 below. Keep Cursor disabled until the enablement evidence passes;
+ordinary review success is not permission-denial evidence.
+
+### Run 6 — Cursor enablement acceptance (required before enablement)
+
+Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
+for the normative acceptance criteria. Run this only after the reviewer image
+and runtime source proposed for enablement are frozen. It does not block the
+1.0.1 tag while Cursor remains disabled. The historical GitLab/GitHub runs in
+Run 5 cannot be reused as the enablement pass because they used an older reviewer
+image and reported `model: auto`.
+
+1. Freeze `R`, build and attest the final base/reviewer pair, validate
+   `cursor-agent.pin`, and record immutable digests/provenance.
+2. Resolve the exact model with `cursor-agent --list-models`, set the controlled
+   `AI_REVIEW_CURSOR_MODEL`/YAML value, and record the exact slug without secrets
+   or model content.
+3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that
+   explicitly; otherwise change the invocation and repeat the read/permission
+   validation. If blocking behavior is required, use a blocking fixture and
+   verify the required check genuinely blocks.
+4. Run the parameterized permission smoke with a real `CURSOR_API_KEY` against
+   the exact final reviewer image. A missing key or a `Skipping Cursor
+   permission smoke` notice is not a pass.
+5. Run the fresh real-key fixture review/critique under the chosen contract and
+   record exact model, counts, config digest, runtime/image coordinates,
+   provenance, job IDs, and consensus/post/gate outcomes without secrets or model
+   text.
+6. Add the sanitized supplemental record only after all required paths are scoped
+   `Status: passed` against the same `R` and final image pair. Repin the
+   configuration and publisher workflow to the same exact model slug. Do not add
+   this record to release inputs. Cursor may remain disabled by default as an
+   accepted opt-in substitute; completing this gate is required only before
+   enabling Cursor.
+
 ## After the release-gating runs pass
 
 > **Completed for 1.0.0** on 2026-07-25 against `R = 88bc941` (release commit
 > `3ad443e`, tag `v1.0.0`). The steps below are retained as the reusable sequence
-> for the next release; the parenthetical notes record how 1.0.0 satisfied each.
+> for 1.0.1; the parenthetical notes record how 1.0.0 satisfied each.
 
 1. Mark each release-gating record `Status: passed` with a scoped verdict, and
    record the per-run token/cost for the one real panel per platform. (1.0.0: all

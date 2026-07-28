@@ -30,9 +30,14 @@ def build_manifest(
     release_inputs: Path = RELEASE_INPUTS,
     root: Path = ROOT,
 ) -> dict[str, object]:
-    validate_release_coordinates(tag, runtime_source, release_commit)
     inputs = load_json(release_inputs)
     validate_release_inputs(inputs, root)
+    validate_release_coordinates(
+        tag,
+        runtime_source,
+        release_commit,
+        inputs["release_version"],
+    )
     if inputs["status"] != "active":
         raise ReleaseValidationError("release inputs must be active before building a manifest")
     if runtime_source != inputs["runtime_source"]:
