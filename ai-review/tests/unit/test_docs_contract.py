@@ -192,6 +192,20 @@ class DocumentationContractTests(unittest.TestCase):
             self.assertTrue(any(name in issue and "0 canonical" in issue for issue in missing))
             self.assertFalse(any(name in issue for issue in documented))
 
+    def test_image_runtime_names_are_inventoried_and_documented_once(self) -> None:
+        checker = _load_docs_checker()
+        marker = "AI_REVIEW_PACKAGED_RUNTIME"
+        documentation = checker.CONFIG_DOC.read_text(encoding="utf-8")
+        heading = checker.ENVIRONMENT_HEADING_RE.search(documentation)
+
+        self.assertIn(checker.ROOT / "ai-review/images", checker.SOURCE_ENV_PATHS)
+        self.assertIn(marker, checker._source_environment_names())
+        self.assertNotIn(marker, checker.REJECTED_ENV_NAMES)
+        self.assertIsNotNone(heading)
+        assert heading is not None
+        environment_rows = checker._reference_row_counts(documentation[heading.end() :])
+        self.assertEqual(environment_rows[marker], 1)
+
     def test_readme_line_limit_is_enforced(self) -> None:
         checker = _load_docs_checker()
         self.assertEqual(checker._readme_issues("line\n" * 220), [])

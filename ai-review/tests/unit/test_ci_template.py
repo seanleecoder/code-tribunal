@@ -6,9 +6,11 @@ import posixpath
 import re
 import shutil
 import subprocess
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -64,6 +66,21 @@ _GITLAB_DURATION_UNIT_SECONDS = {
 
 def _is_packaged_runtime() -> bool:
     return os.environ.get(_PACKAGED_RUNTIME_ENV) == "1"
+
+
+def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW) -> str | None:
+    """Return the sole packaged-runtime skip condition for the Cursor contract."""
+    packaged_runtime = _is_packaged_runtime()
+    if packaged_runtime and workflow_path.exists():
+        raise AssertionError(
+            f"{_PACKAGED_RUNTIME_ENV}=1 contradicts a checkout that contains the "
+            f"GitHub publish workflow: {workflow_path}"
+        )
+    if not workflow_path.exists():
+        if packaged_runtime:
+            return "GitHub publish workflow is absent from the packaged runtime image"
+        raise AssertionError(f"GitHub publish workflow is missing from checkout: {workflow_path}")
+    return None
 
 
 def _strip_yaml_string(value: str) -> str:
@@ -756,10 +773,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(publish_needs.group(1), "build-preflight")
 
     def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
-        if not _PUBLISH_WORKFLOW.exists():
-            if _is_packaged_runtime():
-                self.skipTest("GitHub publish workflow is absent from the packaged runtime image")
-            self.fail(f"GitHub publish workflow is missing from checkout: {_PUBLISH_WORKFLOW}")
+        if skip_reason := _cursor_publish_workflow_skip_reason():
+            self.skipTest(skip_reason)
 
         placeholder = "auto"
         config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
@@ -794,6 +809,20 @@ class GitLabCiTemplateTests(unittest.TestCase):
         assert smoke_rejection is not None
         self.assertEqual(smoke_rejection.group(1), placeholder)
 
+    def test_packaged_runtime_marker_rejects_checkout_publish_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow_path = Path(tmp) / ".github/workflows/publish-ai-review-images.yml"
+            workflow_path.parent.mkdir(parents=True)
+            workflow_path.touch()
+            with (
+                mock.patch.dict(os.environ, {_PACKAGED_RUNTIME_ENV: "1"}),
+                self.assertRaisesRegex(
+                    AssertionError,
+                    rf"{_PACKAGED_RUNTIME_ENV}=1 contradicts a checkout that contains",
+                ),
+            ):
+                _cursor_publish_workflow_skip_reason(workflow_path)
+
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
 
@@ -815,11 +844,25 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text = dockerfile.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?m)^COPY\s+\.github\b")
 
-    def test_base_image_copies_root_readme_to_documented_runtime_path(self) -> None:
+    def test_base_image_declares_test_only_packaged_runtime_marker(self) -> None:
         text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
+        self.assertIn(
+            "# Test-only packaging marker with no production runtime behavior; "
+            "checkout-based tests must not override it.",
+            text,
+        )
         self.assertIn("AI_REVIEW_PACKAGED_RUNTIME=1", text)
+
+    def test_base_image_copies_readmes_to_documented_runtime_paths(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
         self.assertIn("COPY README.md /opt/README.md", text)
+        self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
+
+    def test_base_image_copies_cursor_permission_smoke_script(self) -> None:
+        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
+
         self.assertIn(
             "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
             text,

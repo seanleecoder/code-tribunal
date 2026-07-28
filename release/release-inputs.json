@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "cded4c1ebe393cd8f0769ed75d8c266742d54b1cde5a1511393b90a150337533"
+      "sha256": "bcad1ca08d69835a3be546c9a51facdb52210ab07561f5c05b89cc06d02ae840"
     },
     "image_recipes": {
       "files": [
@@ -40,7 +40,7 @@
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile"
       ],
-      "sha256": "761b892d7d34910ec92927a4f4b39a20cabc84b9c4e699d2f6d3ca1afaf5cf79"
+      "sha256": "70cea8329b66425483ae6a71d15d8e76b2f25ba646135d0e01542bcb80ac66cc"
     },
     "schemas": {
       "files": [

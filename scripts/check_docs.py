@@ -71,6 +71,7 @@ CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" no
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
     ROOT / "ai-review/adapters",
+    ROOT / "ai-review/images",
     ROOT / "ai-review/ci",
     ROOT / ".github/workflows",
     ROOT / "scripts",
