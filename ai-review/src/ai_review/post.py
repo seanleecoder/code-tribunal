@@ -88,7 +88,8 @@ SUMMARY_MARKER_RE = re.compile(
     r"body_hash=(?P<body_hash>[a-f0-9]{64})\s*-->"
 )
 COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
-REVIEW_HEADER_RE = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
+REVIEW_HEADER_PREFIX = "**AI review:"
+REVIEW_HEADER_SUFFIX = "**"
 REVIEW_SECTION_BOUNDARIES = frozenset(
     {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
 )
@@ -140,6 +141,31 @@ def parse_marker(body: str) -> dict[str, str] | None:
     return matches[-1].groupdict()
 
 
+def _parse_review_header(line: str) -> str | None:
+    """Return the category from a ``**AI review: <SEVERITY> <category>**`` line.
+
+    Scanned rather than matched. The equivalent pattern
+    ``^\\*\\*AI review:\\s+\\S+\\s+(.+?)\\s*\\*\\*$`` puts ``\\s+``, a lazy
+    ``.+?``, and ``\\s*`` in front of an anchored ``\\*\\*$``, which backtracks
+    **cubically**: a 1,616-character line of interior spaces took 1.9 seconds.
+    This runs on every line of an unauthenticated note — see ``_unwrap_span``
+    for why the input is attacker-controlled — and ``line.strip()`` does not
+    help, because interior whitespace survives it. Do not restore the regex.
+    """
+
+    if not (line.startswith(REVIEW_HEADER_PREFIX) and line.endswith(REVIEW_HEADER_SUFFIX)):
+        return None
+    inner = line[len(REVIEW_HEADER_PREFIX) : -len(REVIEW_HEADER_SUFFIX)]
+    # ``split(None, 1)`` collapses the leading and separating whitespace runs
+    # the pattern spelled ``\s+``; the category then keeps its own internal
+    # spaces and drops the trailing run that preceded the closing ``**``.
+    parts = inner.split(None, 1)
+    if len(parts) != 2:
+        return None
+    category = parts[1].strip()
+    return category or None
+
+
 def _parse_review_title(line: str) -> tuple[str, bool]:
     """Return a v2/v3 title and whether the line used the v3 label."""
 
@@ -182,11 +208,17 @@ def _unwrap_span(rendered: str) -> str | None:
     value = rendered[leading:-leading]
     # Two adjacent spans on one line would otherwise look like a single span
     # wrapping the text between them. Renderer output can never do that — the
-    # delimiter is always one backtick longer than any run inside the value —
-    # so a standalone run of exactly the delimiter's length means this line was
-    # hand-edited and is not safe to unwrap. This search is a fixed literal
-    # with lookarounds: linear, and it must not be rewritten as a backreference.
-    if re.search(rf"(?<!`){'`' * leading}(?!`)", value):
+    # delimiter is always one backtick longer than any run inside the value, so
+    # a rendered value's longest run is exactly ``leading - 1``. Any run of
+    # ``leading`` or more therefore means the line was hand-edited and is not
+    # safe to unwrap.
+    #
+    # Testing "at least ``leading``" rather than "exactly ``leading``" is
+    # deliberate: it is strictly stricter, so it never accepts more, and it
+    # never rejects renderer output for the reason above. What it buys is a
+    # plain substring search instead of a regex whose pattern is built from
+    # attacker-influenced input on every call.
+    if "`" * leading in value:
         return None
     # CommonMark strips one boundary space from each side unless the content is
     # entirely U+0020 spaces. ``_encode_span`` pads on the same condition, and
@@ -267,13 +299,13 @@ def parse_review_note(body: str) -> dict[str, str] | None:
     without_marker = MARKER_RE.sub("", body).strip()
     lines = without_marker.splitlines()
     header_index = None
-    header_match = None
+    header_category = None
     for index, line in enumerate(lines):
-        header_match = REVIEW_HEADER_RE.match(line.strip())
-        if header_match is not None:
+        header_category = _parse_review_header(line.strip())
+        if header_category is not None:
             header_index = index
             break
-    if header_index is None or header_match is None:
+    if header_index is None or header_category is None:
         return None
 
     remaining = lines[header_index + 1 :]
@@ -292,7 +324,7 @@ def parse_review_note(body: str) -> dict[str, str] | None:
     if summary_lines == ["(empty)"]:
         summary_lines = []
     return {
-        "category": header_match.group("category").strip(),
+        "category": header_category,
         "title": title,
         "summary": "\n".join(summary_lines).strip(),
     }

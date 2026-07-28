@@ -1965,6 +1965,51 @@ class PostTests(unittest.TestCase):
 
         self.assertLess(elapsed, 2.0)
 
+    def test_review_header_parsing_is_linear_on_interior_whitespace(self) -> None:
+        """The header parse must not backtrack on attacker-controlled input.
+
+        ``^\\*\\*AI review:\\s+\\S+\\s+(.+?)\\s*\\*\\*$`` is cubic: 1,616
+        characters took 1.9s, which puts GitHub's 65,536-character body limit at
+        hours. It runs on every line of any note carrying a marker, and
+        ``line.strip()`` does not help because interior whitespace survives it.
+        As with the span guard, a backtracking implementation hangs here rather
+        than failing.
+        """
+
+        line = "**AI review: x " + " " * 200_000 + "z"
+        marker = (
+            "<!-- ai-review:v1 issue_id="
+            + "a" * 64
+            + " run_id=r body_hash="
+            + "b" * 64
+            + " source="
+            + "c" * 64
+            + " -->"
+        )
+
+        started = time.perf_counter()
+        self.assertIsNone(post_module._parse_review_header(line.strip()))
+        self.assertIsNone(parse_review_note(line + "\n\n" + marker))
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 2.0)
+
+    def test_review_header_parsing_matches_the_pattern_it_replaced(self) -> None:
+        for line, expected in (
+            ("**AI review: MAJOR correctness**", "correctness"),
+            # Repeated separators collapse, an internal space is kept, and the
+            # run before the closing delimiter is dropped.
+            ("**AI review:   MAJOR   two words  **", "two words"),
+            ("**AI review: MAJOR**", None),
+            ("**AI review: MAJOR **", None),
+            ("**AI review:**", None),
+            ("**AI review: MAJOR correctness", None),
+            ("AI review: MAJOR correctness**", None),
+            ("", None),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(post_module._parse_review_header(line), expected)
+
     def test_span_recovery_accepts_renderer_output_and_rejects_hand_edits(self) -> None:
         for rendered, expected in (
             ("`hello`", "hello"),
