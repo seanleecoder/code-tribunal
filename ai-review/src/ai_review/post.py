@@ -151,14 +151,27 @@ def _parse_review_header(line: str) -> str | None:
     This runs on every line of an unauthenticated note — see ``_unwrap_span``
     for why the input is attacker-controlled — and ``line.strip()`` does not
     help, because interior whitespace survives it. Do not restore the regex.
+
+    ``line`` must be a single already-stripped line; the one call site passes
+    ``line.strip()`` over ``splitlines()`` output. That precondition is what
+    makes the ``endswith`` test equivalent to the pattern's ``\\*\\*$``, which
+    would also have matched before one trailing newline.
     """
 
     if not (line.startswith(REVIEW_HEADER_PREFIX) and line.endswith(REVIEW_HEADER_SUFFIX)):
         return None
     inner = line[len(REVIEW_HEADER_PREFIX) : -len(REVIEW_HEADER_SUFFIX)]
+    # The separator after the colon is mandatory, as the pattern's first
+    # ``\s+`` was: ``**AI review:MAJOR correctness**`` is not a header the
+    # renderer can emit, and accepting it would feed a hand-edited note's title
+    # and category into state matching instead of ignoring the note. The
+    # ``[:1]`` slice covers an empty ``inner`` without a separate length check.
+    if not inner[:1].isspace():
+        return None
     # ``split(None, 1)`` collapses the leading and separating whitespace runs
     # the pattern spelled ``\s+``; the category then keeps its own internal
     # spaces and drops the trailing run that preceded the closing ``**``.
+    # ``str.split(None)`` and ``\s`` agree on every whitespace character.
     parts = inner.split(None, 1)
     if len(parts) != 2:
         return None

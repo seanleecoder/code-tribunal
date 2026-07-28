@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import itertools
+import re
 import sys
 import tempfile
 import time
@@ -2000,6 +2002,13 @@ class PostTests(unittest.TestCase):
             # Repeated separators collapse, an internal space is kept, and the
             # run before the closing delimiter is dropped.
             ("**AI review:   MAJOR   two words  **", "two words"),
+            # The separator after the colon is mandatory. The renderer cannot
+            # emit this form, so accepting it would feed a hand-edited note's
+            # title and category into state matching instead of ignoring it.
+            ("**AI review:MAJOR correctness**", None),
+            # Any whitespace separates, not only U+0020.
+            ("**AI review:\tMAJOR correctness**", "correctness"),
+            ("**AI review:\xa0MAJOR correctness**", "correctness"),
             ("**AI review: MAJOR**", None),
             ("**AI review: MAJOR **", None),
             ("**AI review:**", None),
@@ -2009,6 +2018,52 @@ class PostTests(unittest.TestCase):
         ):
             with self.subTest(line=line):
                 self.assertEqual(post_module._parse_review_header(line), expected)
+
+    def test_review_header_parsing_is_equivalent_to_the_replaced_pattern(self) -> None:
+        """Differential check against the regex this parser replaced.
+
+        Asserting equivalence in prose is exactly what went wrong here: the
+        first version of the parser silently dropped the mandatory separator
+        after the colon. Pinning it executably stops a later refactor drifting
+        the same way. The historical pattern is cubic, so it is only ever run
+        on the short fragments below.
+        """
+
+        replaced = re.compile(r"^\*\*AI review:\s+\S+\s+(?P<category>.+?)\s*\*\*$")
+
+        def by_pattern(line: str) -> str | None:
+            matched = replaced.match(line)
+            return matched.group("category").strip() if matched else None
+
+        fragments = (
+            "**AI review:",
+            "**AI review",
+            " ",
+            "  ",
+            "\t",
+            "\x0b",
+            "\x1c",
+            "\xa0",
+            "MAJOR",
+            "cat",
+            "two words",
+            "**",
+            "*",
+            "",
+        )
+        for size in (2, 3, 4):
+            for combination in itertools.product(fragments, repeat=size):
+                line = "".join(combination)
+                # The precondition the call site guarantees: a single stripped
+                # line. Only there do ``endswith("**")`` and ``\*\*$`` agree,
+                # since ``$`` also matches before one trailing newline.
+                if line != line.strip():
+                    continue
+                self.assertEqual(
+                    post_module._parse_review_header(line),
+                    by_pattern(line),
+                    f"diverged on {line!r}",
+                )
 
     def test_span_recovery_accepts_renderer_output_and_rejects_hand_edits(self) -> None:
         for rendered, expected in (
