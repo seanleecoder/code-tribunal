@@ -28,7 +28,9 @@ state migration.
    version changes. This should update existing identities, not duplicate them.
 8. Verify state ownership, posting, commands, and the gate before enforcing it.
 9. Leave Cursor disabled unless you deliberately accept its separate egress path;
-   it is experimental and outside the 1.0 evidence matrix.
+   it is experimental and remains outside the next-release evidence matrix until
+   the [SPEC-21 acceptance queue](evidence/README.md#next-release-acceptance-queue)
+   passes.
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
 `needs`, overrides, dashboards, and scripts that refer to the old job names:
 

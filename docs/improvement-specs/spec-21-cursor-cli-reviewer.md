@@ -1,14 +1,20 @@
 # SPEC-21 — Cursor CLI as an opt-in substitute reviewer
 
-> **Status: implemented and shipping disabled; acceptance outstanding.** The
-> implementation and unit-test sections below have landed — see
+> **Status: implemented and shipping disabled; next-release acceptance pending.**
+> The implementation and unit-test sections below have landed — see
 > `ai-review/adapters/cursor.sh`, the `cursor` block in
 > [`review.yaml`](../../ai-review/config/review.yaml), and
-> `scripts/smoke_cursor_permissions.sh`. Two acceptance criteria remain open: one
-> real-key run against a fixture MR to pin the exact Composer model id, and the
-> hostile real-image permission-denial check. Keep the reviewer disabled in
-> consuming repositories until both pass. Current operator documentation is the
-> [configuration reference](../configuration.md), not this file.
+> `scripts/smoke_cursor_permissions.sh`. The supplied [GitLab real-project
+> pipeline](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/pipelines/185695)
+> and [GitHub dogfood run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563)
+> prove real Cursor execution and valid finding/critique artifacts at historical
+> coordinates, but both record only `model: auto`. For the next release, the
+> exact Composer model id, smoke/CI alignment with that id, final-image
+> real-key evidence, and the hostile real-image permission-denial check remain
+> open. Keep the reviewer disabled in consuming repositories until the
+> next-release evidence is complete. See the [supplemental evidence
+> record](../evidence/record-cursor-real-runs.md); current operator documentation
+> is the [configuration reference](../configuration.md), not this file.
 
 - **Severity:** Medium (capability/flexibility) · **Effort:** M · **ROI rank:** n/a (post-Phase-3)
 - **Depends on:** none hard. SPEC-20 (usage accounting) recommended first so
@@ -128,7 +134,7 @@ needed.**
   cursor:
     enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
-    model: composer # Cursor Composer model id (verify current id via `cursor-agent models`); override: AI_REVIEW_CURSOR_MODEL
+    model: auto # Temporary unresolved Cursor selection; pin the exact Composer model id after live acceptance; override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
@@ -281,20 +287,57 @@ dashboard), plus the substitution recipe.
   exit 0, no adapter spawn.
 - With `AI_REVIEW_CURSOR_ENABLED=true` and the fake CLI: findings batch
   validates; recorded argv contains `-p`, `--output-format json`,
-  `--model composer`; recorded cwd matches `cursor-review-root.\d+`; recorded
+  `--model <configured exact slug>`; recorded cwd matches `cursor-review-root.\d+`; recorded
   tree contains the snapshot files but no `AGENTS.md`/`CLAUDE.md`/
   `.cursorrules`/`.cursorignore`/`.cursor`; recorded env contains
   `CURSOR_API_KEY` but **not** `OPENROUTER_API_KEY` (nor any other secret).
 - Critique stage: fake CLI sees an empty working root.
 - Invalid model id (e.g. containing quotes) → `model_error` status without
   spawning.
-- Image build succeeds with the pinned cursor binary and the smoke line.
-- One real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real `CURSOR_API_KEY`,
-  fixture MR) produces a valid finding batch within timeout — operator
-  acceptance step, also confirms the exact Composer model id.
+- Image build succeeds with the pinned cursor binary, the reviewer preflight
+  records `cursor-agent --version`, and the permission smoke runs the exact
+  pinned model against the final published reviewer image without a skip.
+- A next-release real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
+  `CURSOR_API_KEY`, fixture MR) produces a valid finding batch within timeout
+  against the frozen runtime source and final image pair. The artifact records
+  the exact pinned Composer slug, `raw_finding_count > 0`, no dropped findings,
+  `usable_for_resolution: true`, and a successful critique/panel path. The
+  supplied runs establish only the historical real-key execution and
+  valid-batch subclaim.
 - A hostile real-image prompt asks Cursor to write a sentinel file and invoke a
-  shell command; neither side effect exists after the run. Keep Cursor disabled
-  in the consuming repository until this permission-denial check passes.
+  shell command; neither side effect exists after the run, and the required
+  permission policy remains intact. **Open:** neither supplied run exercised
+  this prompt. Keep Cursor disabled in the consuming repository until this
+  permission-denial check passes.
+
+## Next-release closure checklist
+
+The supplied [real-run record](../evidence/record-cursor-real-runs.md) closes
+one subclaim: the adapter can execute with a real key and emit valid,
+resolution-eligible artifacts in a real project and in dogfood. It is historical
+supporting evidence, not next-release evidence, because it uses an older image
+and reports `model: auto`.
+
+Before marking SPEC-21 accepted for the next release, complete all of the
+following against one frozen runtime source `R` and the final reviewer digest:
+
+1. Discover and pin the exact Composer model slug supported by the pinned
+   `cursor-agent` binary; update the configuration/override contract and tests.
+2. Change the permission smoke so it exercises that exact slug. The current
+   `scripts/smoke_cursor_permissions.sh` hard-codes `--model auto`, which is an
+   implementation prerequisite rather than acceptance evidence. Add the
+   reviewer-image `cursor-agent --version` preflight and verify the supply-chain
+   pin.
+3. Run the real-key fixture review and critique with a non-empty finding batch,
+   exact model identity, zero dropped findings, valid artifacts, and a complete
+   panel/consensus/post/gate path on the final image pair.
+4. Run the hostile write-and-shell permission smoke with a real key against the
+   same final image and record that all side effects are absent and the policy
+   remains intact. A skipped smoke is not a pass.
+5. Add the scoped Cursor pass to the next-release evidence matrix and release
+   inputs only after the runtime source, image digests, config digest, and job
+   URLs all match. Keep the default disabled unless the product decision is to
+   opt every consumer in.
 
 ## Tests
 

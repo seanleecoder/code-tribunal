@@ -349,7 +349,7 @@ Start the next release from this list rather than rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | no evidence row at all | out of scope while experimental |
+| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before the next release, pin the exact Composer model id, make the smoke use that pin, verify the reviewer image preflight, run a fresh final-image real-key fixture, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -363,10 +363,14 @@ Actual result / Audit / Verdict.
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
+| 6 | Cursor next-release acceptance | [Cursor supplemental record](record-cursor-real-runs.md) plus a new next-release record | release-gating candidate | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
-live pass is optional and **not** a release gate.
+live pass is optional and **not** a release gate. Run 5 is historical supporting
+evidence; Run 6 becomes a release-gating row only for a next release that is
+intended to accept Cursor.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -453,6 +457,67 @@ classes are **fully covered** by `make quality` (`test_input_bundle.py`,
 race windows are milliseconds wide. Treat any live attempt as optional wiring
 confirmation and record it as such; do not block the release on reproducing a
 timing race that the regression tests already prove fail-closed.
+
+### Run 5 — Cursor experimental reviewer evidence (non-release)
+
+The [Cursor supplemental record](record-cursor-real-runs.md) captures the
+real-project GitLab pipeline and the GitHub dogfood run. Confirm in the review
+and critique artifacts that `adapter_status: success`, accepted findings equal
+raw findings, `usable_for_resolution: true`, and the panel lists Cursor as a
+successful reviewer. These checks establish real-route wiring and artifact
+validity only.
+
+The remaining enablement sequence is intentionally separate: identify and pin
+the exact Composer model slug (the recorded runs only say `model: auto`), then
+complete Run 6 below. Keep Cursor disabled until the next-release evidence
+passes; ordinary review success is not permission-denial evidence.
+
+### Run 6 — Cursor next-release acceptance (release-gating candidate)
+
+Run this only after the reviewer image and runtime source for the next release
+are frozen. The historical GitLab/GitHub runs in Run 5 cannot be reused as the
+release pass because they used an older reviewer image and reported
+`model: auto`.
+
+1. **Resolve and pin the model.** Use the model-list command supported by the
+   pinned `cursor-agent` binary and a real Cursor account to identify the exact
+   Composer slug. Set that slug in `review.yaml` or the controlled
+   `AI_REVIEW_CURSOR_MODEL` override, and record the exact value in the evidence
+   record. Do not record the API key or model response content.
+2. **Align the implementation before spending a real key.** The current
+   `scripts/smoke_cursor_permissions.sh` invokes `cursor-agent ... --model auto`.
+   Parameterize or otherwise bind the smoke to the exact pinned slug, add a
+   `cursor-agent --version` line to the reviewer-image preflight, and update the
+   fake-CLI/unit expectations that depend on the model argument. Run the
+   targeted tests and supply-chain pin checks.
+3. **Build and attest the final pair.** Freeze runtime source `R`, build the
+   base and reviewer images exactly from `R`, validate `cursor-agent.pin`, and
+   record both immutable digests and provenance. Run the permission smoke with a
+   real `CURSOR_API_KEY` against that exact final reviewer image (prefer an
+   immutable published digest). A missing key or a `Skipping Cursor permission
+   smoke` notice is not a pass.
+4. **Run a fresh real-key fixture review.** On a trusted GitHub or GitLab
+   consumer, enable Cursor as the explicit substitute, disable OpenCode, set
+   `AI_REVIEW_REQUIRE_REAL_CURSOR=1`, leave local mock disabled, and run review
+   plus critique on a fixture change that produces at least one finding. Require
+   `adapter_status: success`, `raw_finding_count > 0`, accepted count equal to
+   raw count, `dropped_finding_count: 0`, `usable_for_resolution: true`, and an
+   artifact `model` equal to the exact pinned slug. Record the effective-config
+   digest, runtime source, base/reviewer digests, image provenance, job URLs,
+   and the consensus/post/gate outcomes without recording secrets or model text.
+5. **Record the hostile permission result.** Require the read probe to succeed
+   without workspace/home/temp side effects and the hostile write-and-shell
+   probe to leave all sentinels absent while preserving the required permission
+   policy. Record the exact model, final reviewer digest, smoke job/run ID, and
+   bounded pass/fail diagnostics. This is the permission boundary, not a second
+   ordinary review run; container egress remains a separate limitation.
+6. **Activate only after both evidence paths pass.** Add the new Cursor record to
+   the next release's evidence matrix and release inputs only when the real run
+   and hostile smoke are both scoped `Status: passed` against the same `R` and
+   final image pair. Repin both GitHub workflow copies and all three GitLab pin
+   variables together. Cursor may remain disabled by default if the intended
+   product contract is an accepted opt-in substitute; acceptance does not by
+   itself authorize enabling it for every consumer.
 
 ## After the release-gating runs pass
 

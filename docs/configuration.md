@@ -8,7 +8,7 @@ effective configuration.
 
 ## YAML keys
 
-Defaults below are the shipped 1.0-candidate defaults. A custom configuration
+Defaults below are the shipped defaults. A custom configuration
 must retain `schema_version: review_config.v1`.
 
 ### Reviewers

@@ -5,18 +5,24 @@ only sanitized identifiers, digests, expected/actual outcomes, and audit results
 Never store credentials, CLI session material, proprietary source, or sensitive
 model content.
 
-## Release readiness gate
+## Next-release readiness gate
 
-`release/release-inputs.json` is **`draft`** until every release-gating row below
-is a scoped `Status: passed` against one frozen runtime source `R` and its
-attested base/reviewer digests (or carries an explicit
+For a release after `v1.0.0`, the release-inputs artifact for that release must
+remain **`draft`** until every release-gating row is a scoped `Status: passed`
+against one frozen runtime source `R` and its attested base/reviewer digests (or
+carries an explicit
 `Release-evidence-waived: <reason>` line also registered under
 `verification.evidence_waivers` in the hashed release-inputs artifact).
 `scripts/check_release_inputs.py` rejects `status: active` when cited records
 are partial, bind a different SHA/digest pair, or waive without that registry
 entry.
 
-## Operator checklist (final image pair)
+The checked-in 1.0.0 release record is historical. Do not reactivate its source
+or image coordinates for the next release; create or retarget a fresh draft and
+bind it to the new runtime source and final image pair only after the new runs
+pass.
+
+## Operator checklist (next-release final image pair)
 
 1. Freeze runtime commit `R` that includes the intended mock/gate code.
 2. Publish attested base+reviewer images from exactly `R`; record anonymous
@@ -39,10 +45,13 @@ entry.
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
    binding; re-stamp older records with these explicit fields.
-8. Only then set `release-inputs.status` to `active`, cut release commit `P`,
-   build the external manifest, and tag `v1.0.0`.
+8. Only then set the next release's `release-inputs.status` to `active`, cut
+   release commit `P`, build the external manifest, and create the release tag.
 
-## 1.0 evidence matrix
+## 1.0 historical evidence matrix
+
+This section records the evidence that supported the already-released `v1.0.0`.
+It is retained for provenance and is not a passing matrix for the next release.
 
 > Historical candidates (`b674d1e`, `15d424f`, and earlier) remain useful
 > provenance only. **Every release-gating row below, including image
@@ -58,7 +67,8 @@ classified by whether a live run proves something the regression suite cannot:
 
 - **Release-gating (live-only):** exercises a real model, a real platform
   merge-block, real credential withholding, or the registry — behavior no unit
-  test can stand in for. A scoped live pass is required for final 1.0.0.
+  test can stand in for. A scoped live pass is required for the release under
+  preparation.
 - **Regression-covered (live-optional):** the logic is proven fail-closed by
   named tests inside `make quality`; a live run only adds CI-wiring confidence
   and is **not** a release gate. This is deliberate — two of these race windows
@@ -75,11 +85,28 @@ classified by whether a live run proves something the regression suite cannot:
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
 | GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional; **waived** for 1.0.0 with a reason registered under `verification.evidence_waivers`. The **stale-head** boundary was nonetheless reproduced live in run `30173073036` attempt 7 (`post` returned `status: stale_head` and wrote nothing; `gate` returned `passed_stale_head`). The other two boundaries and the 406 path rest on the regression suite. [record](record-github-revision-failures.md) |
 
+### Supplemental experimental evidence (not release-gating)
+
+| Suite | Status | Evidence |
+|---|---|---|
+| Cursor reviewer real-run adapter and critique | **Observed; SPEC-21 partial; historical supporting evidence only** | [Supplemental record](record-cursor-real-runs.md): GitLab pipeline `185695` and GitHub workflow `30080420563` both produced successful, resolution-eligible Cursor artifacts and full panels. Both recorded `model: auto`; neither exercised the hostile permission-denial prompt or the next-release image pair. |
+
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
 check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
 [legacy acceptance](../history/README.md#legacy-milestone-acceptance).
+
+## Next-release acceptance queue
+
+These items are not 1.0.0 results. Add Cursor to the next release's
+release-gating matrix only after the exact model, image, and permission evidence
+below is recorded against the same frozen runtime source `R` and final reviewer
+digest.
+
+| Suite | Current state | Closure evidence |
+|---|---|---|
+| Cursor reviewer acceptance (SPEC-21) | **Pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Pin the exact Composer model slug; make the permission smoke and image preflight exercise that slug; run a non-skipped hostile permission smoke against the final published reviewer image; run a fresh real-key fixture review/critique/consensus on that same image; then record the scoped pass and add it to the release inputs. |
 
 ### Known gaps and missing evidence
 
@@ -91,9 +118,15 @@ consumer flow but not the hostile-MR deployment boundary. See
   `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
-- **Cursor reviewer** is an experimental opt-in substitute with a separate
-  credential and egress path. It currently has only a permission smoke and **no
-  evidence row**; do not advertise Cursor as evidence-backed.
+- **Cursor reviewer is not yet accepted for the next release.** It is an
+  experimental opt-in substitute with a separate credential and egress path.
+  The supplemental [real-run record](record-cursor-real-runs.md) proves real
+  execution and valid artifacts at historical coordinates only. The exact
+  Composer model pin, a smoke implementation that uses that pin (the current
+  script invokes `--model auto`), the reviewer-image version preflight, a fresh
+  final-image real-key fixture run, and the hostile write/shell denial smoke are
+  still required. Do not add Cursor to release inputs or advertise it as
+  acceptance-complete until those checks pass.
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted
@@ -112,8 +145,8 @@ consumer flow but not the hostile-MR deployment boundary. See
   sense — protected credentials withheld from an unprotected-ref MR in the
   hardened child topology — and not as a product-wide property. Network egress is
   still unenforced at the container/runner boundary, forks are untested on GitLab,
-  and Cursor remains unevidenced. The regression-covered rows do not block the
-  release.
+  and Cursor remains outside the next-release matrix pending the SPEC-21 queue
+  above. The regression-covered rows do not block the release.
 
 ## Record format
 

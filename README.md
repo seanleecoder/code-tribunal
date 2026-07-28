@@ -35,8 +35,10 @@ internal container implementation, not a supported Python package or API.
 - A GitHub gate blocks merging only when the gate job is configured as a
   required check. GitLab requires **Pipelines must succeed**.
 - Cursor is an experimental opt-in substitute reviewer with a separate credential
-  and egress path. It is **not** covered by the 1.0 live-evidence matrix and must
-  not be treated as evidence-backed.
+  and egress path. Supplemental real runs close the historical real-route and
+  artifact-validity subclaim, but Cursor remains disabled and outside the
+  next-release live-evidence matrix until the exact Composer model, final-image
+  real-key run, and hostile permission smoke all pass.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the
@@ -50,9 +52,10 @@ internal container implementation, not a supported Python package or API.
   credentials being withheld from untrusted refs and on running
   `scripts/verify_pipeline_trust.py` against your consumer config.
 - The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
-  attested image pair, and `release/release-inputs.json` is `active`. Each row is
-  a **scoped** pass with its own recorded limits, and some paths remain
-  regression-covered only — read
+  attested image pair, and `v1.0.0` was released. Each row is a **scoped** pass
+  with its own recorded limits, and some paths remain regression-covered only.
+  The next release needs a fresh draft release-inputs artifact and new
+  source/image-bound evidence — read
   [documentation history](docs/history/README.md) before making a maturity or
   security claim.
 
