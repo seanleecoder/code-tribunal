@@ -315,7 +315,7 @@ dashboard), plus the substitution recipe.
   this prompt. Keep Cursor disabled in the consuming repository until this
   permission-denial check passes.
 
-## 1.0.1 closure checklist
+## Cursor enablement closure checklist
 
 The supplied [real-run record](../evidence/record-cursor-real-runs.md) closes
 one subclaim: the adapter can execute with a real key and emit valid,
@@ -342,7 +342,9 @@ optional acceptance path substitutes for this checklist:
 3. Make the permission smoke exercise the exact pinned slug against the image
    proposed for enablement and preserve the required read/write/shell policy. The
    existing Dockerfile already verifies `cursor-agent --version`; that build-time
-   check is not an outstanding acceptance item. A skipped smoke is not a pass.
+   check is not an outstanding acceptance item. A green `auto` discovery skip is
+   expected while the default remains unpinned, but it is not Cursor-enablement
+   evidence.
 4. Run the real-key fixture review and critique with a non-empty finding
    batch, exact model identity, zero dropped findings, valid artifacts, and the
    downstream panel path required by the chosen ask-mode/blocking contract.

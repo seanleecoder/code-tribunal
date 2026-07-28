@@ -14,12 +14,12 @@ from urllib.parse import unquote
 import yaml
 from ai_review.pipeline_trust import find_trust_issues
 
-try:
-    from release_common import ReleaseValidationError, validate_release_version
-except ModuleNotFoundError:  # Imported as scripts.check_docs from repository-root tests.
-    from scripts.release_common import ReleaseValidationError, validate_release_version
+SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
 
-ROOT = Path(__file__).resolve().parents[1]
+from release_common import ReleaseValidationError, validate_release_version  # noqa: E402
+
+ROOT = SCRIPTS.parent
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
 CONFIG_DOC = ROOT / "docs/configuration.md"
 ROOT_README = ROOT / "README.md"

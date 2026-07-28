@@ -353,7 +353,7 @@ Start 1.0.1 from this list rather than rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
+| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -368,7 +368,7 @@ Actual result / Audit / Verdict.
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
+| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
@@ -479,7 +479,7 @@ ordinary review success is not permission-denial evidence.
 
 ### Run 6 — Cursor enablement acceptance (required before enablement)
 
-Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
+Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
 for the normative acceptance criteria. Run this only after the reviewer image
 and runtime source proposed for enablement are frozen. It does not block the
 1.0.1 tag while Cursor remains disabled. The historical GitLab/GitHub runs in

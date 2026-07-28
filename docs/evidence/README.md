@@ -100,13 +100,13 @@ consumer flow but not the hostile-MR deployment boundary. See
 
 These are not 1.0.0 results. SPEC-21 completion is required before enabling
 Cursor, not before shipping 1.0.1. Complete the canonical [SPEC-21 closure
-checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
+checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
 against one frozen runtime source `R` and final reviewer digest before changing
 the disabled default.
 
 | Suite | Current state | Closure evidence |
 |---|---|---|
-| Cursor reviewer enablement (SPEC-21) | **Required before enablement and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), then create a sanitized, explicitly bound supplemental enablement record. |
+| Cursor reviewer enablement (SPEC-21) | **Required before enablement and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), then create a sanitized, explicitly bound supplemental enablement record. |
 
 ### Known gaps and missing evidence
 

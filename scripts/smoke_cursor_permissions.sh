@@ -14,6 +14,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # This literal is contract-tested against ai_review.adapter_runner._MODEL_ID_RE.
+# Keep its anchors and the re.fullmatch call below: the redundancy is intentional
+# because the test requires exact equality with the adapter regex.
 # The permission smoke is an enablement gate, so the discovery placeholder `auto`
 # must fail before any Docker invocation can spend a real key.
 if [ -z "$cursor_model" ] || [ "$cursor_model" = "auto" ]; then

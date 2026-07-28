@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import re
@@ -20,6 +21,7 @@ REQUIRED_RELEASE_SCRIPTS = (
     "check_release_manifest.py",
     "release_common.py",
 )
+V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290afeda41156616fd"
 if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
 ORIGINAL_SYS_PATH = sys.path.copy()
@@ -231,6 +233,13 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(data["verification"]["evidence_waivers"], {})
         self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
 
+    def test_1_0_0_release_notes_remain_tag_identical(self) -> None:
+        release_notes = (REPO_ROOT / "release/1.0.0.md").read_bytes()
+
+        self.assertEqual(
+            hashlib.sha256(release_notes).hexdigest(), V1_0_0_RELEASE_NOTES_SHA256
+        )
+
     def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
         self,
     ) -> None:
@@ -245,7 +254,9 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertRegex(snapshot["runtime_source"], r"^[0-9a-f]{40}$")
         for role in ("base", "reviewer"):
             with self.subTest(role=role):
-                self.assertRegex(snapshot["images"][role]["digest"], DIGEST_RE)
+                digest = snapshot["images"][role]["digest"]
+                self.assertIsInstance(digest, str)
+                self.assertIsNotNone(DIGEST_RE.fullmatch(digest))
 
         verification = snapshot["verification"]
         for field in ("ci_run_id", "publication_run_id"):

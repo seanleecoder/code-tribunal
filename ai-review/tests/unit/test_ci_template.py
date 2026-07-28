@@ -662,7 +662,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
             "CURSOR_SMOKE_MODEL:",
             'if [[ -z "$CURSOR_API_KEY" ]]',
+            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
             'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]',
+            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
             "discovery-only 'auto' placeholder",
             "Pin an exact Composer model slug",
             "Keep Cursor disabled",
@@ -693,6 +695,40 @@ class GitLabCiTemplateTests(unittest.TestCase):
         publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
         self.assertIsNotNone(publish_needs)
         self.assertEqual(publish_needs.group(1), "build-preflight")
+
+    def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
+        placeholder = "auto"
+        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
+        workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        cursor_smoke = _workflow_job(workflow, "cursor-permission-smoke")
+        smoke_script = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
+
+        self.assertEqual(config["reviewers"]["cursor"]["model"], placeholder)
+
+        publisher_model = re.search(
+            r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke
+        )
+        self.assertIsNotNone(publisher_model)
+        assert publisher_model is not None
+        self.assertEqual(publisher_model.group(1), placeholder)
+
+        publisher_guard = re.search(
+            r'(?s)if \[\[ "\$CURSOR_SMOKE_MODEL" == "([^"]+)" \]\]; then.*?exit 0\n'
+            r"          fi",
+            cursor_smoke,
+        )
+        self.assertIsNotNone(publisher_guard)
+        assert publisher_guard is not None
+        self.assertEqual(publisher_guard.group(1), placeholder)
+
+        smoke_rejection = re.search(
+            r'(?s)if \[ -z "\$cursor_model" \] \|\| \[ "\$cursor_model" = "([^"]+)" \]; '
+            r"then.*?exit 2\nfi",
+            smoke_script,
+        )
+        self.assertIsNotNone(smoke_rejection)
+        assert smoke_rejection is not None
+        self.assertEqual(smoke_rejection.group(1), placeholder)
 
     def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
         text = _BUILD_TEMPLATE.read_text(encoding="utf-8")

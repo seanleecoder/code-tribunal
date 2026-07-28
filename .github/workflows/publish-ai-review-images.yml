@@ -250,7 +250,7 @@ jobs:
             exit 0
           fi
           if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]; then
-            echo "::notice::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL is the discovery-only 'auto' placeholder. Pin an exact Composer model slug in ai-review/config/review.yaml and this workflow before enabling Cursor (SPEC-21 item 1)."
+            echo "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL is the discovery-only 'auto' placeholder. Pin an exact Composer model slug in ai-review/config/review.yaml and this workflow before enabling Cursor (SPEC-21 item 1)."
             exit 0
           fi
           scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"
