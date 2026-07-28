@@ -31,7 +31,6 @@ EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 RELEASE_STATE_DOCS = (
     ROOT_README,
     ROOT / "docs/SECURITY_MODEL.md",
-    RELEASE_NOTES,
 )
 # Exemptions from the "every docs directory needs a README.md index" rule. Both are
 # repo-relative: an absolute match would exempt the whole tree whenever the checkout
@@ -56,8 +55,16 @@ DRAFT_CLAIM_PATTERNS = (
     r"still being collected",
     r"is not yet complete",
     r"until that matrix passes",
+    r"\(\s*draft\s*\)",
+    r"\bstatus\s*:\s*draft\b",
+    r"\bdraft\s+notes\b",
 )
 DRAFT_CLAIM_RE = re.compile("|".join(DRAFT_CLAIM_PATTERNS), re.IGNORECASE)
+
+_RELEASE_VERSION_RE = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
 
 CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
 
@@ -397,9 +404,9 @@ def _release_state_issues() -> list[str]:
     draft state is a documentation failure rather than a stale sentence.
 
     Scope limit, deliberately: ``DRAFT_CLAIM_PATTERNS`` is a phrase blocklist. It
-    catches regressions of the specific sentences that shipped, and the positive
-    ``runtime_source`` assertion below is the only structural check here. It does not
-    and cannot verify that all prose agrees with the release state.
+    catches common draft/incomplete claims, and the positive ``runtime_source``
+    assertion below is the only structural check here. It does not and cannot verify
+    that all prose agrees with the release state.
     """
     issues: list[str] = []
     try:
@@ -410,9 +417,33 @@ def _release_state_issues() -> list[str]:
     if inputs.get("status") != "active":
         return issues
 
-    for path in RELEASE_STATE_DOCS:
+    release_version = inputs.get("release_version")
+    if not isinstance(release_version, str) or not _RELEASE_VERSION_RE.fullmatch(
+        release_version
+    ):
+        issues.append(
+            "release/release-inputs.json: active release_version must be a semantic "
+            "version with an optional prerelease suffix"
+        )
+        release_notes = None
+    else:
+        release_notes = ROOT / "release" / f"{release_version}.md"
+
+    state_docs = list(RELEASE_STATE_DOCS)
+    if release_notes is not None and release_notes not in state_docs:
+        state_docs.append(release_notes)
+
+    for path in state_docs:
         if not path.exists():
-            issues.append(f"{path.relative_to(ROOT)}: expected release-state document is missing")
+            if release_notes is not None and path == release_notes:
+                issues.append(
+                    f"{path.relative_to(ROOT)}: active release inputs require the "
+                    "corresponding release notes file"
+                )
+            else:
+                issues.append(
+                    f"{path.relative_to(ROOT)}: expected release-state document is missing"
+                )
             continue
         body = _without_fenced_code(path.read_text(encoding="utf-8"))
         for match in DRAFT_CLAIM_RE.finditer(body):
@@ -433,11 +464,12 @@ def _release_state_issues() -> list[str]:
     runtime_source = inputs.get("runtime_source")
     if (
         runtime_source
-        and RELEASE_NOTES.exists()
-        and runtime_source not in RELEASE_NOTES.read_text(encoding="utf-8")
+        and release_notes is not None
+        and release_notes.exists()
+        and runtime_source not in release_notes.read_text(encoding="utf-8")
     ):
         issues.append(
-            f"{RELEASE_NOTES.relative_to(ROOT)}: must name the active "
+            f"{release_notes.relative_to(ROOT)}: must name the active "
             f"runtime_source {runtime_source[:12]}…"
         )
     return issues

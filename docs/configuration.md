@@ -139,7 +139,7 @@ artifacts.
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
-| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. |
+| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. `auto` is discovery-only and is not valid 1.0.1 acceptance evidence. |
 | `AI_REVIEW_CLAUDE_ENABLED` | `true` | Exact lowercase `true` or `false`. |
 | `AI_REVIEW_CODEX_ENABLED` | `true` | Exact lowercase `true` or `false`. |
 | `AI_REVIEW_OPENCODE_ENABLED` | `true` | Exact lowercase `true` or `false`. |

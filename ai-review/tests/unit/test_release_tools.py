@@ -42,6 +42,8 @@ try:
         git_is_ancestor,
         image_ref,
         sha256_bytes,
+        validate_release_coordinates,
+        validate_release_version,
     )
 finally:
     sys.path[:] = ORIGINAL_SYS_PATH
@@ -227,6 +229,67 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(data["verification"]["evidence_record_ids"], [])
         self.assertEqual(data["verification"]["evidence_waivers"], {})
         self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
+
+    def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
+        self,
+    ) -> None:
+        snapshot = json.loads(
+            (REPO_ROOT / "release/history/1.0.0-release-inputs.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(snapshot["release_version"], "1.0.0")
+        self.assertEqual(snapshot["status"], "active")
+        self.assertEqual(
+            snapshot["runtime_source"], "88bc9412b283d4a44328ab3ffd9f9708b0290f8e"
+        )
+        self.assertEqual(
+            snapshot["images"]["base"]["digest"],
+            "sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896",
+        )
+        self.assertEqual(
+            snapshot["images"]["reviewer"]["digest"],
+            "sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe",
+        )
+        self.assertEqual(snapshot["verification"]["ci_run_id"], "30125523924")
+        self.assertEqual(snapshot["verification"]["publication_run_id"], "30125524008")
+        self.assertEqual(
+            snapshot["verification"]["evidence_record_ids"],
+            [
+                "record-image-publication-verification.md",
+                "record-gitlab-hostile-mr.md",
+                "record-gitlab-current-image.md",
+                "record-github-current-image.md",
+                "record-github-revision-failures.md",
+                "record-github-default-model-smoke.md",
+            ],
+        )
+        self.assertIn(
+            "record-github-revision-failures.md",
+            snapshot["verification"]["evidence_waivers"],
+        )
+
+    def test_populated_synthetic_draft_verification_remains_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._draft(root)
+            data["release_version"] = "1.0.2-rc.1"
+            data["verification"] = {
+                "ci_run_id": "synthetic-ci-1",
+                "publication_run_id": "synthetic-publication-1",
+                "evidence_record_ids": ["synthetic-future-record.md"],
+                "evidence_waivers": {},
+            }
+
+            self.assertEqual(validate_release_inputs(data, root), [])
+
+    def test_release_version_accepts_prerelease_and_rejects_build_metadata(self) -> None:
+        self.assertEqual(validate_release_version("1.0.2-rc.1"), "1.0.2-rc.1")
+        validate_release_coordinates("v1.0.2-rc.1", "a" * 40, "b" * 40, "1.0.2-rc.1")
+        with self.assertRaisesRegex(ReleaseValidationError, "build metadata"):
+            validate_release_version("1.0.2+build.1")
 
     def test_active_happy_path_matches_every_template(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -730,6 +793,16 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "images.base"),
             ):
                 validate_manifest(candidate, release_inputs, root)
+
+    def test_manifest_version_mismatch_points_to_tagged_worktree_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            manifest, _inputs, release_inputs, _changed_paths = self._build_valid_manifest(root)
+            manifest["release_version"] = "1.0.0"
+
+            with self.assertRaisesRegex(ReleaseValidationError, "tagged worktree"):
+                validate_manifest(manifest, release_inputs, root)
 
     def test_manifest_validator_requires_active_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

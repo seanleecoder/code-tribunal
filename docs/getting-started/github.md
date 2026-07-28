@@ -58,8 +58,8 @@ failing prepare.
 
 Cursor is disabled by default. Enabling it sends review prompts, diffs, and any
 snapshot content the Cursor CLI reads to Cursor's backend as a second egress
-destination. Leave it disabled unless you deliberately accept that path; it is
-outside the 1.0.1 live-evidence scope until the [SPEC-21 acceptance
+destination. Leave it disabled unless you deliberately accept that path; it
+cannot be accepted for 1.0.1 until the required [SPEC-21 acceptance
 queue](../evidence/README.md#101-acceptance-queue) passes.
 
 Runtime reviewer and policy variables are listed in the

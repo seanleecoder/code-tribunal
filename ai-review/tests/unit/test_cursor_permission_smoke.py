@@ -16,7 +16,9 @@ class CursorPermissionSmokeTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
-    def _run_smoke(self, **overrides: str) -> subprocess.CompletedProcess[str]:
+    def _run_smoke(
+        self, model: str = "composer-2.5", **overrides: str
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             bin_dir = root / "bin"
@@ -191,7 +193,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 }
             )
             result = subprocess.run(
-                [str(_SMOKE), "reviewer:test", "composer-test"],
+                [str(_SMOKE), "reviewer:test", model],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -211,6 +213,21 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 shutil.rmtree(cleanup_root, ignore_errors=True)
             return result
 
+    def test_invalid_model_is_rejected_before_docker(self) -> None:
+        cases = (
+            ("", "exact Composer model slug"),
+            ("composer model", "unsupported characters"),
+            ("auto", "exact Composer model slug"),
+        )
+        for model, expected_error in cases:
+            with self.subTest(model=model):
+                result = self._run_smoke(model=model)
+
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(expected_error, result.stderr)
+                self.assertIn("1.0.1 acceptance", result.stderr)
+                self.assertEqual(result.invocation_count, 0)
+
     def test_success_requires_read_control_then_hostile_probe(self) -> None:
         result = self._run_smoke()
 
@@ -219,7 +236,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.invocations.count("--mode ask"), 2)
         self.assertEqual(result.invocations.count("--sandbox disabled"), 2)
         self.assertEqual(result.invocations.count("--trust"), 2)
-        self.assertEqual(result.invocations.count("composer-test"), 2)
+        self.assertEqual(result.invocations.count("composer-2.5"), 2)
         self.assertIn("returned the fixture nonce", result.stdout)
         self.assertIn("permission smoke passed", result.stdout)
 

@@ -18,6 +18,10 @@ branch is the 1.0.1 draft release candidate: `release/release-inputs.json` is
 digests unset pending rebuild. These values remain historical until a new pair
 is published.
 
+Release versions use `MAJOR.MINOR.PATCH` with an optional prerelease suffix such
+as `-rc.1`; build metadata is not supported. The corresponding release notes
+file is derived as `release/<release_version>.md`.
+
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
 regression suite inside `make quality`; those rows are confirmed here at most as
@@ -365,13 +369,14 @@ Actual result / Audit / Verdict.
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor 1.0.1 acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist) plus a new 1.0.1 record | release-gating candidate | final-image real run and permission smoke |
+| 6 | Cursor 1.0.1 acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist) plus a new 1.0.1 record | release-gating (required) | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
-evidence; Run 6 becomes a release-gating row for 1.0.1 if the product decision
-is to accept Cursor under the chosen ask-mode/blocking contract.
+evidence; Run 6 is a required 1.0.1 release-gating row. The product decision
+must choose and record the ask-mode/blocking contract; it does not make the
+acceptance row optional.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -473,7 +478,7 @@ the exact Composer model slug (the recorded runs only say `model: auto`), then
 complete Run 6 below. Keep Cursor disabled until the 1.0.1 evidence passes;
 ordinary review success is not permission-denial evidence.
 
-### Run 6 — Cursor 1.0.1 acceptance (release-gating candidate)
+### Run 6 — Cursor 1.0.1 acceptance (required release gate)
 
 Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
 for the normative acceptance criteria. Run this only after the reviewer image
@@ -501,7 +506,7 @@ Run 5 cannot be reused as the release pass because they used an older reviewer i
    after all required paths are scoped `Status: passed` against the same `R` and
    final image pair. Repin both GitHub workflow copies and all three GitLab pin
    variables together. Cursor may remain disabled by default as an accepted
-   opt-in substitute.
+   opt-in substitute, but completing this gate is still required to ship 1.0.1.
 
 ## After the release-gating runs pass
 

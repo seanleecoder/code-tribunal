@@ -1,13 +1,14 @@
 # SPEC-21 — Cursor CLI as an opt-in substitute reviewer
 
-> **Status: implemented and shipping disabled; 1.0.1 acceptance pending.**
+> **Status: implemented and shipping disabled; 1.0.1 acceptance is required before
+> that release can ship.**
 > The implementation and unit-test sections below have landed — see
 > `ai-review/adapters/cursor.sh`, the `cursor` block in
 > [`review.yaml`](../../ai-review/config/review.yaml), and
 > `scripts/smoke_cursor_permissions.sh`. The supplied private GitLab pipeline
 > `185695` and [GitHub dogfood run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563)
 > prove real Cursor execution and valid finding/critique artifacts at historical
-> coordinates, but both record only `model: auto`. For 1.0.1, the
+> coordinates, but both record only `model: auto`. For 1.0.1, the required
 > exact Composer model id, smoke/CI alignment with that id, final-image
 > real-key evidence, the ask-mode product decision, and the hostile real-image
 > permission-denial check remain open. Keep the reviewer disabled in consuming
@@ -133,7 +134,7 @@ needed.**
   cursor:
     enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
-    model: "<exact-composer-slug>" # TODO(SPEC-21): unpinned; ships as auto until 1.0.1 acceptance; override: AI_REVIEW_CURSOR_MODEL
+    model: auto # Discovery-only placeholder; the 1.0.1 acceptance smoke rejects auto; override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
@@ -299,7 +300,7 @@ dashboard), plus the substitution recipe.
   verification block passes `cursor-agent --version`; and the permission smoke
   runs the exact pinned model against the final published reviewer image without
   a skip.
-- A 1.0.1 real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
+- A required 1.0.1 real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
   `CURSOR_API_KEY`, fixture MR) produces a valid finding batch within timeout
   against the frozen runtime source and final image pair. The artifact records
   the exact pinned Composer slug, `raw_finding_count > 0`, no dropped findings,
@@ -308,7 +309,7 @@ dashboard), plus the substitution recipe.
   valid-batch subclaim. The acceptance record must also state whether the
   product contract is prompt-bundle-only/non-blocking or requires a Cursor-backed
   blocking finding and a genuinely blocked required check.
-- A hostile real-image prompt asks Cursor to write a sentinel file and invoke a
+- A required hostile real-image prompt asks Cursor to write a sentinel file and invoke a
   shell command; neither side effect exists after the run, and the required
   permission policy remains intact. **Open:** neither supplied run exercised
   this prompt. Keep Cursor disabled in the consuming repository until this
@@ -322,8 +323,9 @@ resolution-eligible artifacts in a real project and in dogfood. It is historical
 supporting evidence, not 1.0.1 evidence, because it uses an older image
 and reports `model: auto`.
 
-Before marking SPEC-21 accepted for 1.0.1, complete all five outcomes below
-against one frozen runtime source `R` and the final reviewer digest:
+SPEC-21 is not complete for 1.0.1 until all five outcomes below are complete
+against one frozen runtime source `R` and the final reviewer digest. No
+candidate or optional acceptance path substitutes for this checklist:
 
 1. Discover and pin the exact Composer model slug supported by the pinned
    `cursor-agent` binary using `cursor-agent --list-models`; update the

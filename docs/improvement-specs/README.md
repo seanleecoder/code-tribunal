@@ -55,9 +55,10 @@ completed for `v1.0.0`. Remaining order:
    [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
-5. Prepare and close [SPEC-21](spec-21-cursor-cli-reviewer.md) for 1.0.1 before
-   advertising the Cursor reviewer. Its acceptance checklist is canonical; keep
-   the reviewer disabled until the complete scoped evidence set passes.
+5. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
+   shipping 1.0.1 or advertising the Cursor reviewer. Its acceptance checklist
+   is canonical; keep the reviewer disabled until the complete scoped evidence
+   set passes.
 
 ## Historical indexes
 

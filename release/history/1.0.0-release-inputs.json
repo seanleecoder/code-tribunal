@@ -6,13 +6,13 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "ac98a7f6cf3cd8ef9b24c1203ebc55c7b3acba57321f7271500a970ec080f434"
+      "sha256": "4c38cfc8df5d3de32066bed0e67a56b299b88b7cd470c785465e49a5ecd61990"
     },
     "configuration": {
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "ba012ef20558b233e944480ac9972e6e5f71d5147f4831c40653b47acf29a073"
+      "sha256": "95e599b693e1ad6ceebbc20f6417423daa63487f1f19713b49de5ca9ed4e0f54"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "a26733318a124269a7ea844e391000b7498b2375e7208654d4ea6006cb8749e9"
+      "sha256": "c328e2ad9e5c2883691305c6bdb8d989cd6846896b94958015518e3052ca0b31"
     },
     "image_recipes": {
       "files": [
@@ -54,27 +54,36 @@
         "ai-review/schemas/state.schema.json",
         "ai-review/schemas/state_aliases.schema.json"
       ],
-      "sha256": "5f7e9d43c0e368c7e0c3f870ee2995d424d43245b453b337d4fd21944e005f63"
+      "sha256": "1ecdbf5f83202a8be6c6a854bfcba91d3e66030a5f2e36cd2c21f4c5b2e21c05"
     }
   },
   "images": {
     "base": {
-      "digest": null,
+      "digest": "sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": null,
+      "digest": "sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "1.0.1",
-  "runtime_source": null,
+  "release_version": "1.0.0",
+  "runtime_source": "88bc9412b283d4a44328ab3ffd9f9708b0290f8e",
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "draft",
+  "status": "active",
   "verification": {
-    "ci_run_id": null,
-    "evidence_record_ids": [],
-    "evidence_waivers": {},
-    "publication_run_id": null
+    "ci_run_id": "30125523924",
+    "evidence_record_ids": [
+      "record-image-publication-verification.md",
+      "record-gitlab-hostile-mr.md",
+      "record-gitlab-current-image.md",
+      "record-github-current-image.md",
+      "record-github-revision-failures.md",
+      "record-github-default-model-smoke.md"
+    ],
+    "evidence_waivers": {
+      "record-github-revision-failures.md": "SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix."
+    },
+    "publication_run_id": "30125524008"
   }
 }

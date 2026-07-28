@@ -44,7 +44,10 @@ only after the new runs pass.
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
    binding; re-stamp older records with these explicit fields.
-8. Only then set the 1.0.1 `release-inputs.status` to `active`, cut release
+8. Complete the required SPEC-21 Cursor checklist before shipping 1.0.1. The
+   ask-mode decision must be explicit; if blocking findings are part of the
+   chosen contract, use a blocking fixture and verify a required check blocks.
+9. Only then set the 1.0.1 `release-inputs.status` to `active`, cut release
    commit `P`, build the external manifest, and create the `v1.0.1` tag.
 
 ## 1.0 historical evidence matrix
@@ -98,13 +101,13 @@ consumer flow but not the hostile-MR deployment boundary. See
 
 ## 1.0.1 acceptance queue
 
-These are not 1.0.0 results. Add Cursor to the 1.0.1 release-gating matrix only
-after the canonical [SPEC-21 closure checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
-is complete against one frozen runtime source `R` and final reviewer digest.
+These are not 1.0.0 results. SPEC-21 completion is a required 1.0.1 release
+gate. Complete the canonical [SPEC-21 closure checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
+against one frozen runtime source `R` and final reviewer digest before shipping.
 
 | Suite | Current state | Closure evidence |
 |---|---|---|
-| Cursor reviewer acceptance (SPEC-21) | **Pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), then create a sanitized, explicitly bound 1.0.1 evidence record. |
+| Cursor reviewer acceptance (SPEC-21) | **Required and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), then create a sanitized, explicitly bound 1.0.1 evidence record. |
 
 ### Known gaps and missing evidence
 
@@ -123,7 +126,8 @@ is complete against one frozen runtime source `R` and final reviewer digest.
   Composer model pin, the ask-mode product decision, a fresh final-image
   real-key fixture run, and the hostile write/shell denial smoke are still
   required. Do not add Cursor to release inputs or advertise it as
-  acceptance-complete until those checks pass.
+  acceptance-complete until those required checks pass. The literal `auto`
+  model is discovery-only and is never valid acceptance evidence.
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted

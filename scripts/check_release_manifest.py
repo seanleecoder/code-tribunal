@@ -46,7 +46,11 @@ def validate_manifest(
     inputs = load_json(release_inputs)
     validate_release_inputs(inputs, root)
     if manifest["release_version"] != inputs["release_version"]:
-        raise ReleaseValidationError("manifest release_version must match release inputs")
+        raise ReleaseValidationError(
+            "manifest release_version must match release inputs; for a historical "
+            "manifest, validate from a tagged worktree at its release tag as described in "
+            "docs/development/release-process.md#validating-a-historical-manifest"
+        )
     runtime_source = manifest["runtime_source"]
     release_commit = manifest["release_commit"]
     validate_release_coordinates(

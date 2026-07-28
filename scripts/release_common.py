@@ -148,7 +148,9 @@ def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT)
 def validate_release_version(value: object) -> str:
     if not isinstance(value, str) or not RELEASE_VERSION_RE.fullmatch(value):
         raise ReleaseValidationError(
-            "release_version must be a semantic version such as 1.0.1"
+            "release_version must be a semantic version in MAJOR.MINOR.PATCH format "
+            "with an optional prerelease suffix such as 1.0.1-rc.1; build metadata "
+            "is not supported"
         )
     return value
 

@@ -205,6 +205,8 @@ jobs:
     permissions:
       contents: read
     env:
+      # Keep this value synchronized with reviewers.cursor.model in
+      # ai-review/config/review.yaml; the unit contract checks that equality.
       CURSOR_SMOKE_MODEL: "auto"
     steps:
       - name: Checkout repository

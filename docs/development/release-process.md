@@ -6,6 +6,11 @@ those image digests. `R..P` may contain only the reviewed release-path
 allowlist; the generated external manifest records both commits without
 creating a commit self-reference.
 
+Release validators accept `MAJOR.MINOR.PATCH` with an optional prerelease suffix,
+for example `1.0.1-rc.1`. They reject build metadata such as `1.0.1+build.1`.
+The active release version also determines the required notes file:
+`release/<release_version>.md`.
+
 1. Land behavior, schema, migration, release tooling, and documentation changes
    on reviewed runtime source commit `R`. Keep
    `release/release-inputs.json` at `status: draft` until live evidence passes.
@@ -50,3 +55,21 @@ creating a commit self-reference.
 Do not describe 1.0.1 as stable until the required live evidence is complete.
 Never rebuild a release tag from a different source commit; publish a new patch
 release instead.
+
+## Validating a historical manifest
+
+An external manifest is bound to the release-inputs artifact and checked-file
+hashes from its own release. Do not validate a downloaded historical manifest
+from a newer branch, where `release/release-inputs.json` may already describe a
+new draft release. Create a worktree at the manifest's tag and run the validator
+there:
+
+```bash
+git worktree add /tmp/code-tribunal-v1.0.0 v1.0.0
+(cd /tmp/code-tribunal-v1.0.0 && \
+  python scripts/check_release_manifest.py /path/to/release-manifest.json)
+```
+
+Use the matching tag for an RC or another historical version. The validator's
+version-mismatch error points here when a manifest and the current checkout do
+not describe the same release.

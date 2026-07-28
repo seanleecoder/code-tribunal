@@ -660,13 +660,18 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "Verify Cursor denies write and shell tools",
             'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"',
             "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
-            'CURSOR_SMOKE_MODEL: "auto"',
+            "CURSOR_SMOKE_MODEL:",
             'if [[ -z "$CURSOR_API_KEY" ]]',
             "Keep Cursor disabled",
         ):
             self.assertIn(smoke_marker, cursor_smoke)
             self.assertNotIn(smoke_marker, build_preflight)
             self.assertNotIn(smoke_marker, publish)
+        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
+        configured_cursor_model = config["reviewers"]["cursor"]["model"]
+        smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
+        self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
+        self.assertEqual(smoke_model.group(1), configured_cursor_model)
         self.assertIn("needs: build-preflight", cursor_smoke)
         self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
         self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)

@@ -68,8 +68,8 @@ failing prepare.
 
 ### Cursor (experimental)
 
-Cursor is disabled by default and outside the 1.0.1 live-evidence scope until the
-[SPEC-21 acceptance queue](../evidence/README.md#101-acceptance-queue)
+Cursor is disabled by default and cannot be accepted for 1.0.1 until the
+required [SPEC-21 acceptance queue](../evidence/README.md#101-acceptance-queue)
 passes. Enabling it is a deliberate second egress destination to Cursor's
 backend.
 

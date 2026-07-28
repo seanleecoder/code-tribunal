@@ -5,17 +5,37 @@ if [ "$#" -ne 2 ]; then
   echo "usage: $0 <reviewer-image> <cursor-model>" >&2
   exit 2
 fi
-if [ -z "${CURSOR_API_KEY:-}" ]; then
-  echo "CURSOR_API_KEY is required for the Cursor permission smoke test" >&2
-  exit 2
-fi
+image="$1"
+cursor_model="$2"
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required for Cursor permission policy validation" >&2
   exit 2
 fi
 
-image="$1"
-cursor_model="$2"
+# Keep this grammar identical to ai_review.adapter_runner._MODEL_ID_RE. The
+# permission smoke is an acceptance gate, so the discovery placeholder `auto`
+# must fail before any Docker invocation can spend a real key.
+if [ -z "$cursor_model" ] || [ "$cursor_model" = "auto" ]; then
+  echo "Cursor permission smoke requires an exact Composer model slug for 1.0.1 acceptance; empty and 'auto' model arguments are invalid" >&2
+  exit 2
+fi
+if ! python3 - "$cursor_model" <<'PY'
+import re
+import sys
+
+if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", sys.argv[1]) is None:
+    raise SystemExit(1)
+PY
+then
+  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact Composer slug for 1.0.1 acceptance" >&2
+  exit 2
+fi
+
+if [ -z "${CURSOR_API_KEY:-}" ]; then
+  echo "CURSOR_API_KEY is required for the Cursor permission smoke test" >&2
+  exit 2
+fi
+
 smoke_dir="$(mktemp -d)"
 cleanup() {
   if rm -rf "$smoke_dir" 2>/dev/null; then
