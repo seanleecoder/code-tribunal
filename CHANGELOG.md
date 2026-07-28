@@ -14,6 +14,26 @@ versioning.
   with `model_error` before the reviewer CLI is invoked.
 - The Cursor permission smoke now requires an explicit exact model argument and
   rejects the discovery placeholder `auto` before invoking Docker.
+- Posted review output now uses `render-body.v3`: free-text and path-shaped model
+  values render as literal data, malformed suggestions remain visible as data, and
+  fragment-aware truncation keeps spans atomic, blocks closed, and trusted
+  footers/markers intact. Consensus artifacts remain `consensus.v1`. (These entries
+  were previously filed under 1.0.0; `render-body.v3` landed after that tag and has
+  never shipped in a release.)
+- Prose in posted reviews now wraps instead of scrolling horizontally. Bodies,
+  evidence, and critique rationale render as a paragraph of one code span per line
+  rather than a `text` fenced block, which reads the same but reflows at the comment
+  width on both GitLab and GitHub. Suggestions keep the fenced block, because they
+  are code. Every model-authored value still renders inside a `code` or `pre`
+  element — the boundary that also keeps model text away from both platforms'
+  post-render autolink, mention, and issue-reference filters.
+
+### Migration
+
+- The posted-body format is `render-body.v3`. Existing bot-authored inline threads
+  receive a one-time body update on the next review run; issue IDs, state records,
+  and marker grammar remain unchanged. Deployments tracking `main` before this
+  change see one further refresh, because the prose format changed within v3.
 
 ## [1.0.0] - 2026-07-25
 
@@ -104,11 +124,6 @@ versioning.
   findings surface critique dispute rationales in a Dissent section.
 - Posted findings and advisory summaries preserve complete model-authored content up to
   the GitLab or GitHub comment-size limit, with deterministic size-limit fallbacks.
-- Posted review output now uses `render-body.v3`: free-text and path-shaped model
-  values render as literal spans or fenced blocks, malformed suggestions remain
-  visible as data, and fragment-aware truncation keeps spans atomic, blocks closed,
-  and trusted footers/markers intact. Existing bot-owned inline threads receive one
-  refresh after upgrade; consensus artifacts remain `consensus.v1`.
 - Project description now covers GitLab merge requests and GitHub pull requests.
 - GitLab web/API pipelines create AI review jobs only when a merge request IID is
   present, and the trust auditor now reserves the shipped Cursor jobs.
@@ -176,9 +191,6 @@ versioning.
   representation.
 - Replace any remaining `GITLAB_READ_TOKEN` / `GITLAB_WRITE_TOKEN` CI variables with a
   single `GITLAB_TOKEN` project access token (`api` scope) used by prepare and post.
-- The posted-body format is now `render-body.v3`. Existing bot-authored inline
-  threads receive a one-time body update on the next review run; issue IDs, state
-  records, and marker grammar remain unchanged.
 - Consensus `category` inputs are now restricted to the finding-batch enum at the
   posting boundary. Pipeline-produced artifacts remain compatible; hand-edited or
   third-party artifacts with arbitrary categories must be corrected before posting.

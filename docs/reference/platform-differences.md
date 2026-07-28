@@ -23,28 +23,61 @@ credentials are never passed into reviewer subprocess environments.
 
 The shared posting renderer uses `render-body.v3`. Model-authored titles, paths,
 reviewer names, bodies, evidence, critique text, and suggestions are displayed as
-literal code spans or `text` fenced blocks on both platforms. Redaction and newline
-normalization happen before fencing; malformed suggestion fences remain visible as
-literal data. Only renderer-owned labels, the validated severity/category/decision
-presentation, and bot markers are Markdown structure.
+literal data on both platforms. The invariant is structural and single:
+**every model-authored value renders inside a `code` or `pre` element.** Redaction and
+newline normalization happen before that encoding; malformed suggestion fences remain
+visible as literal data. Only renderer-owned labels, the validated
+severity/category/decision presentation, and bot markers are Markdown structure.
 
-Fenced literals are a deliberate safety tradeoff: they prevent headings, quotes,
-lists, math-like text, HTML comments, and model fences from changing the review's
-layout, but prose is less readable and long lines may scroll horizontally. The
-renderer uses dynamic delimiters and fragment-aware limits so spans are never split,
-blocks are always closed, and the trusted footer and marker remain outside truncated
-model content. When a scalar begins or ends with a backtick, the renderer adds the
-standard one-space code-span padding on both sides; the padding is display syntax,
-not part of the normalized value. Scalar length caps are applied before newline
-encoding, delimiter selection, and that padding, while the platform limit applies
-to the final rendered comment. Inline `body_hash` also includes the canonical source
-finding hash as a renderer/marker identity input, so a same-looking finding from a
-different source set still refreshes its existing bot-owned discussion.
+That invariant is what makes the boundary hold, and it does more than protect layout.
+Both platforms render Markdown and then run a DOM filter pipeline over the result —
+autolinker, `@` mentions, issue/label/epic references, emoji — and those filters skip
+only `a`, `code`, `kbd`, `pre`, `script`, and `style` subtrees. On GitLab two of them
+have write side effects, creating notifications and cross-reference notes, so model
+text that escaped its `code` element could act *outside* the review comment rather
+than merely restyle it. A container chosen for readability alone (a raw-HTML
+`blockquote` or an escaped paragraph) satisfies CommonMark and still fails here, and
+re-arguing it against each new platform filter is exactly the open-ended completeness
+problem the literal renderer exists to avoid.
+
+Within that invariant the renderer picks the container by content shape:
+
+| Value | Container | Why |
+|---|---|---|
+| Titles, paths, reviewer names, severities | code span | scalars; already wrap |
+| Bodies, evidence, critique rationale | prose paragraph of one code span per line, joined by backslash hard breaks | inline `code` is an inline element, so long prose wraps instead of scrolling horizontally |
+| Suggestions | `text` fenced block | code, where monospace columns and horizontal scroll are correct |
+
+A blank model line renders as a line holding only the hard break: a genuinely empty
+line would end the paragraph and orphan the fragments after it. The last line never
+carries a break, which would otherwise render its backslash literally. Prose under a
+`- ` label is indented into that item's content column, matching the summary renderer.
+
+Wrapping reflows prose; it does not break tokens. A single unbroken run with no space
+in it — a long URL, path, or hash — still overflows its container in a prose paragraph
+exactly as it does in a suggestion, on both platforms.
+
+The renderer uses dynamic delimiters and fragment-aware limits so spans are never
+split, blocks are always closed, prose is shortened only by re-encoding a shortened
+final span, and the trusted footer and marker remain outside truncated model content.
+Because a code span owns two delimiters, the longest span that fits an arbitrary
+budget can leave a character of the platform limit unused; the guarantee is that the
+comment never exceeds the limit, not that it fills it exactly. When a scalar begins or
+ends with a backtick or a space, the renderer adds the standard one-space code-span
+padding on both sides; the padding is display syntax, not part of the normalized
+value. Scalar length caps are applied before newline encoding, delimiter selection,
+and that padding, while the platform limit applies to the final rendered comment.
+Inline `body_hash` also includes the canonical source finding hash as a
+renderer/marker identity input, so a same-looking finding from a different source set
+still refreshes its existing bot-owned discussion.
 
 Backslash-escaping prose was considered and rejected. It would preserve proportional
 text flow, but it would require a supposedly complete list of Markdown, math, HTML,
-autolink, and reference-link constructs that differs between GitHub and GitLab.
-Fencing is the safer structural boundary; its readability cost is intentional.
+autolink, and reference-link constructs that differs between GitHub and GitLab — and
+escaping Markdown constructs does nothing about the post-render filters above, since
+escaped prose still lands in a paragraph with no ignored ancestor. Keeping every value
+inside a `code` element is the safer structural boundary, and it costs only monospace
+presentation rather than proportional flow.
 
 The v3 renderer pre-lands an atomic renderer-owned `<details>` compositor for the
 future SPEC-45 disclosure sections. Its summary text is renderer-owned, its content

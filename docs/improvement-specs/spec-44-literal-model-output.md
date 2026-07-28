@@ -79,30 +79,60 @@ this specification addresses artifact integrity. A schema-valid altered
 finding between inline, summary, and dropped. Those consequences are out of scope here and
 are not claimed to be mitigated.
 
-## Design decision: fenced literals over selective escaping
+## Design decision: code-element containment over selective escaping
 
-Two mechanisms can make a dynamic value literal. This specification chooses
-fencing, and records the cost so the choice is not revisited by accident.
+Several mechanisms can make a dynamic value literal. This specification requires
+that **every model-authored value render inside a `code` or `pre` element**, and
+records the alternatives so the choice is not revisited by accident.
 
-**Chosen — wrap in renderer-owned code spans/fences.** Safety is structural: the
-delimiter is computed from the value, so correctness does not depend on
-enumerating Markdown constructs. The cost is real and affects every comment a
-maintainer reads: a prose `body` becomes a monospace block with no soft wrap, so
-long lines scroll horizontally, and any legitimate model paragraphing or emphasis
-is flattened. SPEC-45's disclosure-collapsed sections are the mitigation for the
-resulting vertical bulk.
+**Chosen — wrap in renderer-owned code spans/fences.** Safety is structural on two
+levels. The delimiter is computed from the value, so correctness does not depend on
+enumerating Markdown constructs. And the resulting element is one both platforms'
+post-render DOM filters ignore — see the rejection of raw-HTML containers below,
+which is the sharper reason this boundary and not a prettier one.
+
+Within that requirement the container is chosen by content shape. Prose (`body`,
+evidence, critique rationale) renders as a paragraph of one code span per line,
+joined by renderer-owned backslash hard breaks: inline `code` is an inline element,
+so long prose wraps at spaces instead of scrolling horizontally. Suggestions keep
+the `text` fenced block, because they are code and monospace columns with horizontal
+scroll are correct for them. The residual cost is monospace presentation and
+flattened model emphasis, not lost proportional flow. SPEC-45's
+disclosure-collapsed sections remain the mitigation for vertical bulk.
+
+**Rejected — a raw-HTML container (`blockquote`/`p`) with HTML-escaped text.** This
+looks like the strongest form of the escaping argument, because inside HTML
+character data only `<` and `&` are structurally meaningful — a closed,
+spec-defined, platform-independent set — and a single-line container cannot be
+terminated early by a blank line. The CommonMark reasoning holds; the platform
+reasoning does not. Both GitHub and GitLab render Markdown and then run a DOM
+filter pipeline over the *result*, where a raw-HTML block's text nodes are
+indistinguishable from Markdown-derived ones. Those filters skip only `a`, `code`,
+`kbd`, `pre`, `script`, and `style` ancestors, so inside a `blockquote` GitLab's
+autolinker, reference filters, and emoji filter all act on model text — and the
+`@mention` and `#123`/`!45` reference filters have **write side effects**, creating
+notifications and cross-reference notes. That escapes the comment entirely, which is
+worse than layout injection. Numeric character references do not help: the HTML
+parser decodes them before the filters run. The completeness list would simply move
+from character classes to filter classes, and would have to be re-argued for every
+filter either platform adds.
 
 **Rejected — backslash-escape prose, fence only code-shaped fields.** This
 preserves proportional text flow and reads better. It is rejected because
 correctness becomes a completeness argument over an open-ended construct list
 (line-leading `#`, `>`, `-`, `*`, `+`, `N.`, `|`, plus backticks, `$` math,
 autolinks, raw HTML, and reference-link syntax), and that list differs between
-GitHub and GitLab. A single missed construct is a silent injection. Escaping may
-be reconsidered only if it is expressed as a proven-complete transform with
-per-platform fixtures, not as a hand-maintained character list.
+GitHub and GitLab. A single missed construct is a silent injection. It also fails
+the filter problem above for the same reason the raw-HTML container does: escaped
+prose lands in a paragraph with no ignored ancestor, and escaping `#` and `>` does
+nothing about `@all`. Escaping may be reconsidered only if it is expressed as a
+proven-complete transform with per-platform fixtures *and* it accounts for
+post-render filters, not as a hand-maintained character list.
 
-Readability is therefore a known, accepted regression of this specification, not
-an oversight.
+**Rejected — hard-wrapping prose at a fixed column inside the fence.** Cheap and
+structurally inert, but lossy: what the maintainer reads would no longer equal
+`consensus.groups[].body`, the wrap would be baked into `body_hash`, and any later
+change to the width would force another refresh wave across open merge requests.
 
 ## Scope
 
@@ -153,11 +183,29 @@ The API has these invariants:
    this specification — `category`. The existing `**AI review: MAJOR correctness**`
    header line is therefore retained verbatim. Until the posting-stage validation lands,
    the exemption is not earned and these fields render through `literal_span`.
-3. `literal_block` is used for multiline values: body, evidence, rationale, and
-   suggestion. It emits a `text` fenced block using
-   `max(3, longest_backtick_run(value) + 1)` backticks for both delimiters. The
-   opening and closing delimiters, surrounding newlines, and field labels are
-   renderer-owned. A model-supplied fence can therefore never close the outer fence.
+3. Multiline values use one of two containers, and **both are `code` elements** —
+   that containment, not the specific container, is the invariant this
+   specification enforces.
+
+   `prose_block` is used for the readable multiline values: body, evidence, and
+   critique rationale. It emits one code span per source line, each with a
+   delimiter of `longest_backtick_run(line) + 1` backticks, joined by
+   renderer-owned backslash hard breaks. Inline `code` is an inline element, so
+   the paragraph wraps at the comment width instead of scrolling horizontally. A
+   blank source line contributes no span, leaving a line that holds only the hard
+   break: a genuinely empty line would end the paragraph and orphan every
+   fragment after it. The final line never carries a break, which CommonMark
+   would otherwise render as a literal backslash. Prose under a `- ` label is
+   indented to that item's content column; lazy continuation would keep it in the
+   item regardless, since a prose line always begins with a backtick or the hard
+   break, but indenting matches the summary renderer.
+
+   `literal_block` is used for `suggestion`. It emits a `text` fenced block using
+   `max(3, longest_backtick_run(value) + 1)` backticks for both delimiters.
+
+   In both cases the delimiters, surrounding newlines, indentation, and field
+   labels are renderer-owned, so a model-supplied fence can never close the outer
+   container.
 4. Empty optional values are omitted with their entire bot-owned field label. The
    renderer never substitutes a model-derived placeholder. A **required** scalar that
    normalizes to empty — for example a title that redacts to nothing — renders as the
@@ -180,9 +228,11 @@ The API has these invariants:
    with it and the permitted-structure list reverts to labels, delimiters, lists,
    emphasis, and markers.
 
-The following is illustrative output for a hostile body. The four-backtick wrapper
-is chosen by the renderer because the value contains a three-backtick run; the
-heading, quote, list, math-looking text, and comment-looking text remain literal.
+The following is actual renderer output for a hostile body, and must be regenerated
+from the renderer rather than hand-edited. Each source line becomes its own span;
+the four-backtick delimiters are chosen per line because those lines contain a
+three-backtick run. The heading, quote, list, math-looking text, and
+comment-looking text all remain literal, and the whole paragraph wraps.
 
 `````markdown
 **AI review: MAJOR correctness**
@@ -190,15 +240,13 @@ heading, quote, list, math-looking text, and comment-looking text remain literal
 Title: `PHP template output is literal`
 
 Body:
-````text
-# not a heading
-> # not a quoted heading
-- not a list
-```php
-echo "$total"; // $not_math$
-```
-<!-- not a bot marker -->
-````
+`# not a heading`\
+`> # not a quoted heading`\
+`- not a list`\
+```` ```php ````\
+`echo "$total"; // $not_math$`\
+```` ``` ````\
+`< !-- not a bot marker -- >`
 `````
 
 The same field must have the same literal treatment in an inline discussion and in
@@ -211,9 +259,14 @@ safe.
 Retire the posting decision that suppresses a suggestion because its
 model-supplied triple-backtick count is unbalanced. The obsolete
 `validate_suggestion` helper is removed; malformed suggestions are never filtered by
-fence balance. A suggestion is rendered through `literal_block` exactly like a body;
-malformed inner fences, HTML-comment-like text, and Markdown directives are visible as
-text rather than interpreted as syntax.
+fence balance. A suggestion is rendered through `literal_block`; malformed inner
+fences, HTML-comment-like text, and Markdown directives are visible as text rather
+than interpreted as syntax.
+
+Unlike a body, a suggestion keeps the fenced block rather than the wrapping prose
+paragraph, because it is code: monospace columns and horizontal scroll preserve its
+meaning, and it is the field most likely to carry long unbreakable tokens that would
+not reflow in any container. Both forms satisfy the same containment invariant.
 
 ### Limits, hashes, and markers
 
@@ -223,15 +276,33 @@ payload, before the bot marker and before `body_hash` is calculated.
 
 Replace the current raw backtick-count truncation heuristic with renderer-owned
 fragments or an equivalent token stream. It must never infer safety from model text.
-Truncation obeys two fragment rules:
+Truncation obeys three fragment rules:
 
 - A cut may land inside a `literal_block`. The renderer then appends that block's
   exact owned closing delimiter before the existing platform-truncation notice,
   trusted footer, and marker.
-- A cut may **never** land inside a `literal_span`. Spans are atomic: truncation
-  falls back to the preceding fragment boundary and drops the whole span with its
-  bot-owned label. A partially rendered span would leave an unmatched backtick run
-  and is never emitted.
+- A cut may **never** land inside a rendered `literal_span`. Spans are atomic: a
+  partially rendered span would leave an unmatched backtick run and is never
+  emitted. For a standalone span, truncation falls back to the preceding fragment
+  boundary and drops the whole span with its bot-owned label.
+- A cut may land inside a `prose_block`. Whole lines are kept, and the final
+  surviving line is **re-encoded from a shortened prefix of its source scalar**
+  with a freshly recomputed delimiter and padding — never by cutting the rendered
+  span, because a cut can land inside a backtick run and leave the closing
+  delimiter ambiguous. That re-encoding is what keeps a single unbroken paragraph
+  from losing all of its content. The renderer then drops the hard break the
+  removed remainder was breaking to, and the notice is separated by a blank line
+  because a prose paragraph does not end at a single newline.
+
+  Selecting the shortened prefix must not assume the encoded length grows with the
+  prefix: the delimiter widens with the longest backtick run, and boundary padding
+  appears and disappears as the final character changes. Stepping back by the
+  observed overshoot converges to nothing on backtick-dense text and drops the
+  field entirely.
+
+Because a span owns two delimiters, the longest one that fits an arbitrary budget
+may leave a character of the platform limit unused. The guarantee is that a rendered
+comment never exceeds its limit, not that it fills it exactly.
 
 Summary comments continue to drop whole rendered entries and append their existing
 size-limit trailer; they never cut an entry, a span, or a literal fence in half.

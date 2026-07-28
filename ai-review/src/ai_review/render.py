@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, overload
 
@@ -26,15 +26,20 @@ class RenderFragment:
 
     ``span`` fragments are atomic.  ``block`` fragments carry their owned
     opening/closing delimiters and may be shortened only in ``content``.
-    ``text`` fragments contain renderer-owned Markdown structure and are
-    atomic as a whole for the purposes of platform truncation.
+    ``prose`` fragments are a paragraph of one code span per model line; they
+    keep their sanitized source ``lines`` so truncation can re-encode a
+    shortened final line instead of dropping it.  ``text`` fragments contain
+    renderer-owned Markdown structure and are atomic as a whole for the
+    purposes of platform truncation.
     """
 
     text: str
-    kind: Literal["text", "span", "block"] = "text"
+    kind: Literal["text", "span", "block", "prose"] = "text"
     prefix: str = ""
     content: str = ""
     closing: str = ""
+    lines: tuple[str, ...] = ()
+    indent: str = ""
 
 
 def platform_comment_limit(posting_mode: str) -> int:
@@ -113,12 +118,25 @@ def literal_span(
     sanitized = _sanitized_literal(value, max_length=max_length)
     if not sanitized:
         return "(empty)" if required else None
-    scalar = sanitized.replace("\n", r"\n")
+    return _encode_span(sanitized.replace("\n", r"\n"))
+
+
+def _encode_span(scalar: str) -> str:
+    """Wrap an already-sanitized single-line scalar in an owned code span."""
+
     delimiter = "`" * (_longest_backtick_run(scalar) + 1)
-    if scalar.startswith("`") or scalar.endswith("`"):
+    if scalar.strip(" ") and (scalar.startswith(("`", " ")) or scalar.endswith(("`", " "))):
         # CommonMark removes one matching outer space from a code span. Add
-        # both sides when either boundary is a backtick so the displayed
-        # scalar remains unchanged while the delimiter is unambiguous.
+        # both sides when either boundary is a backtick or a space so the
+        # displayed scalar remains unchanged while the delimiter is
+        # unambiguous. The rule does not apply when the content is entirely
+        # U+0020 spaces, and padding one of those would add spaces that survive
+        # into the displayed value — so leave it alone.
+        #
+        # The exception is U+0020-only, so this must strip spaces rather than
+        # whitespace: ``str.strip()`` would classify a truncated " \t " prefix
+        # as all-blank, skip the padding, and let the platform eat both of its
+        # boundary spaces. ``_unwrap_span`` mirrors this predicate exactly.
         scalar = f" {scalar} "
     return f"{delimiter}{scalar}{delimiter}"
 
@@ -143,6 +161,64 @@ def literal_block(value: str, *, required: bool = False) -> str | None:
         return parts
     opening, content, closing = parts
     return f"{opening}text\n{content}\n{closing}"
+
+
+# A prose paragraph joins its per-line code spans with a CommonMark backslash
+# hard break.  The break belongs to the renderer and always sits outside the
+# closing delimiter, so a model line that itself ends in a backslash stays
+# unambiguous both when rendered and when read back.
+PROSE_LINE_BREAK = "\\"
+_PROSE_JOIN = PROSE_LINE_BREAK + "\n"
+# Content column of a ``- `` list item, for prose rendered under one.
+_LIST_INDENT = "  "
+
+
+def prose_lines(value: str, *, required: bool = False) -> list[str] | str | None:
+    """Render multiline data as one owned code span per line.
+
+    Inline code spans wrap at spaces on both platforms, unlike a fenced block,
+    while remaining ``code`` elements. That matters for more than layout: both
+    GitHub and GitLab run post-render DOM filters (autolinker, mentions, issue
+    and label references, emoji) that skip ``code``/``pre`` subtrees, so the
+    literal value cannot become a live link, a notification, or a
+    cross-reference.
+    """
+
+    sources = _prose_source_lines(value, required=required)
+    if sources is None or isinstance(sources, str):
+        return sources
+    return [_encode_span(line) if line else "" for line in sources]
+
+
+def _prose_source_lines(value: str, *, required: bool = False) -> list[str] | str | None:
+    """Split sanitized prose into the source lines each span is built from.
+
+    A blank line becomes the empty string: it contributes no span, so the join
+    gives it a line holding only the hard break. A genuinely empty output line
+    would end the paragraph and orphan the rest of the fragment.
+    """
+
+    sanitized = _sanitized_literal(value)
+    if not sanitized:
+        return "(empty)" if required else None
+    return [line if line.strip() else "" for line in sanitized.split("\n")]
+
+
+def prose_block(value: str, *, required: bool = False) -> str | None:
+    """Render multiline data as a renderer-owned wrapping prose paragraph."""
+
+    lines = prose_lines(value, required=required)
+    if lines is None or isinstance(lines, str):
+        return lines
+    return _join_prose_lines(lines)
+
+
+def _join_prose_lines(lines: Sequence[str], indent: str = "") -> str:
+    # ``sanitize_model_text`` strips the value, so the final line always
+    # carries content. A trailing hard break would have nothing to break to
+    # and CommonMark would render the backslash literally.
+    assert lines and lines[-1], "prose must not end in a hard break"
+    return indent + (_PROSE_JOIN + indent).join(lines)
 
 
 def _text_fragment(text: str) -> RenderFragment:
@@ -177,6 +253,41 @@ def _block_fragment(label: str, value: str, *, required: bool = False) -> Render
         prefix=prefix,
         content=content,
         closing=closing,
+    )
+
+
+def _prose_fragment(
+    label: str,
+    value: str,
+    *,
+    required: bool = False,
+    indent: str = "",
+) -> RenderFragment | None:
+    """Render prose under a label.
+
+    ``indent`` places the paragraph in its label's list-item content column.
+    Lazy continuation would keep unindented lines in the item anyway — a prose
+    line always starts with a backtick or the hard break, neither of which
+    begins a block — but indenting matches the summary renderer and spares a
+    reader that derivation.
+    """
+
+    sources = _prose_source_lines(value, required=required)
+    if sources is None:
+        return None
+    if isinstance(sources, str):
+        return _text_fragment(f"{label}\n{indent}{sources}")
+    prefix = f"{label}\n"
+    content = _join_prose_lines(
+        [_encode_span(line) if line else "" for line in sources], indent
+    )
+    return RenderFragment(
+        text=f"{prefix}{content}",
+        kind="prose",
+        prefix=prefix,
+        content=content,
+        lines=tuple(sources),
+        indent=indent,
     )
 
 
@@ -225,6 +336,110 @@ def _partial_block(fragment: RenderFragment, available: int) -> str | None:
     return f"{fragment.prefix}{fragment.content[:content_length]}\n{fragment.closing}"
 
 
+def _shorten_span(scalar: str, room: int) -> str | None:
+    """Re-encode the longest prefix of ``scalar`` that fits in ``room``.
+
+    Cutting the rendered span directly is unsafe: the cut can end inside a
+    backtick run and leave the closing delimiter ambiguous. Re-encoding from
+    the source recomputes the delimiter and the boundary padding, so the
+    shortened span is well formed for whatever it now ends with.
+    """
+
+    # The shortest possible span is a delimiter, one character, and a delimiter.
+    if room < 3:
+        return None
+    limit = min(len(scalar), room)
+
+    # The actual encoded length is not monotone in the prefix length: a prefix
+    # ending in a space is padded, and extending it past that space drops the
+    # padding again. So bound it from both sides with functions that *are*
+    # monotone — the longest backtick run of a prefix is non-decreasing — and
+    # search those. Stepping by the overshoot instead cannot work at all: a
+    # growing delimiter makes the overshoot exceed the length itself, which
+    # discards a prefix that would have fit comfortably.
+    def unpadded(length: int) -> int:
+        return 2 * (_longest_backtick_run(scalar[:length]) + 1) + length
+
+    def search(cost: Callable[[int], int]) -> int:
+        low, high = 0, limit
+        while low < high:
+            middle = (low + high + 1) // 2
+            if cost(middle) <= room:
+                low = middle
+            else:
+                high = middle - 1
+        return low
+
+    # Padding costs a constant two characters, so the two bounds are at most
+    # two prefix characters apart and this scan runs a handful of times.
+    always_padded = search(lambda length: unpadded(length) + 2)
+    for length in range(search(unpadded), always_padded, -1):
+        if len(_encode_span(scalar[:length])) <= room:
+            return _encode_span(scalar[:length])
+    return _encode_span(scalar[:always_padded]) if always_padded else None
+
+
+def _partial_prose(fragment: RenderFragment, available: int) -> str | None:
+    if fragment.kind != "prose":
+        return None
+    budget = available - len(fragment.prefix)
+    if budget <= 0:
+        return None
+    # Each line after the first costs two extra characters: the hard break
+    # appended to the preceding line, and the newline of the join. Every line
+    # also carries the fragment's indent.
+    join_cost = len(PROSE_LINE_BREAK) + 1
+    surviving: list[str] = []
+    used = len(fragment.indent)
+    for source in fragment.lines:
+        rendered = _encode_span(source) if source else ""
+        overhead = (join_cost + len(fragment.indent)) if surviving else 0
+        if used + overhead + len(rendered) <= budget:
+            surviving.append(rendered)
+            used += overhead + len(rendered)
+            continue
+        # A line too long to keep whole is still worth shortening — a single
+        # unbroken paragraph must not lose all of its content.
+        partial = _shorten_span(source, budget - used - overhead) if source else None
+        if partial is not None:
+            surviving.append(partial)
+        break
+    # Any line but the last carries the join's hard break, and the removed
+    # remainder is no longer there to break to. A blank model line rendered
+    # nothing but that break, so it cannot end the surviving paragraph.
+    while surviving and not surviving[-1]:
+        surviving.pop()
+    if not surviving:
+        return None
+    return fragment.prefix + _join_prose_lines(surviving, fragment.indent)
+
+
+def _fit_fragments(
+    fragments: Sequence[RenderFragment], budget: int
+) -> tuple[list[str], str]:
+    """Fit as many whole fragments as possible, then shorten the next one."""
+
+    surviving: list[str] = []
+    last_kind = "text"
+    used = 0
+    for fragment in fragments:
+        separator_length = len(_FRAGMENT_SEPARATOR) if surviving else 0
+        available = budget - used - separator_length
+        if available < 0:
+            break
+        if len(fragment.text) <= available:
+            surviving.append(fragment.text)
+            last_kind = fragment.kind
+            used += separator_length + len(fragment.text)
+            continue
+        partial = _partial_block(fragment, available) or _partial_prose(fragment, available)
+        if partial is not None:
+            surviving.append(partial)
+            last_kind = fragment.kind
+        break
+    return surviving, last_kind
+
+
 def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> str:
     """Fit fragments while keeping spans atomic and blocks closed."""
 
@@ -239,24 +454,22 @@ def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> st
     # The notice follows the final fragment on the next line.  A single
     # newline is intentional: a block's exact closing fence is immediately
     # followed by the trusted truncation notice rather than another blank
-    # paragraph.
-    truncation_separator = "\n"
-    surviving_budget = max_length - notice_length - len(truncation_separator)
-    surviving: list[str] = []
-    used = 0
-    for fragment in fragments:
-        separator_length = len(_FRAGMENT_SEPARATOR) if surviving else 0
-        available = surviving_budget - used - separator_length
-        if available < 0:
-            break
-        if len(fragment.text) <= available:
-            surviving.append(fragment.text)
-            used += separator_length + len(fragment.text)
-            continue
-        partial = _partial_block(fragment, available)
-        if partial is not None:
-            surviving.append(partial)
-        break
+    # paragraph.  A prose paragraph does not end at a single newline — the
+    # notice would be absorbed into it as a lazy continuation line — so it
+    # needs the blank-line separator instead.  Which one applies is only known
+    # once the last surviving fragment is known, so fit for the shorter
+    # separator and refit if the answer turns out to be prose.
+    surviving, last_kind = _fit_fragments(
+        fragments, max_length - notice_length - len("\n")
+    )
+    if last_kind == "prose":
+        surviving, last_kind = _fit_fragments(
+            fragments, max_length - notice_length - len(_FRAGMENT_SEPARATOR)
+        )
+    # Derived after the refit, never before it: the tighter budget can change
+    # which fragment ends up last, and a separator chosen from the first pass
+    # would then describe a fragment that is no longer there.
+    truncation_separator = _FRAGMENT_SEPARATOR if last_kind == "prose" else "\n"
 
     if surviving:
         return (
@@ -356,7 +569,7 @@ def render_body(
     title_fragment = _span_fragment("Title: ", title, max_length=240, required=True)
     if title_fragment is not None:
         variable_fragments.append(title_fragment)
-    body_fragment = _block_fragment("Body:", summary, required=True)
+    body_fragment = _prose_fragment("Body:", summary, required=True)
     if body_fragment is not None:
         variable_fragments.append(body_fragment)
 
@@ -382,7 +595,7 @@ def render_body(
         reviewer_span = literal_span(", ".join(evidence_reviewers), required=True)
         if reviewer_span is None:
             continue
-        fragment = _block_fragment(f"- {reviewer_span}:", evidence)
+        fragment = _prose_fragment(f"- {reviewer_span}:", evidence, indent=_LIST_INDENT)
         if fragment is not None:
             evidence_fragments.append(fragment)
     if evidence_fragments:
@@ -405,7 +618,9 @@ def render_body(
             label = f"- {critic_span} disputes:"
             if adjusted_span is not None:
                 label += f" (suggested severity: {adjusted_span})"
-            fragment = _block_fragment(label, str(dispute.get("rationale", "")))
+            fragment = _prose_fragment(
+                label, str(dispute.get("rationale", "")), indent=_LIST_INDENT
+            )
             if fragment is not None:
                 dissent_fragments.append(fragment)
     if dissent_fragments:
@@ -414,6 +629,9 @@ def render_body(
 
     suggestion = group.get("suggestion")
     if isinstance(suggestion, str):
+        # A suggestion is code, so it keeps the fenced block: monospace columns
+        # and horizontal scroll are correct for it, and it is the field most
+        # likely to carry long unbreakable tokens that would not wrap anyway.
         suggestion_fragment = _block_fragment("Suggestion:", suggestion)
         if suggestion_fragment is not None:
             variable_fragments.append(suggestion_fragment)
