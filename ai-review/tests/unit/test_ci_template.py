@@ -697,6 +697,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(publish_needs.group(1), "build-preflight")
 
     def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
+        if not _PUBLISH_WORKFLOW.exists():
+            self.skipTest("GitHub publish workflow is not present in this checkout")
+
         placeholder = "auto"
         config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
         workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
