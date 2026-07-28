@@ -2054,6 +2054,7 @@ class PostTests(unittest.TestCase):
 
         agreed = 0
         refused_empty = 0
+        visited: set[str] = set()
         for lead, severity, gap, category, trail in itertools.product(
             spacings, severities, spacings, categories, spacings
         ):
@@ -2063,6 +2064,7 @@ class PostTests(unittest.TestCase):
             # since ``$`` also matches before one trailing newline.
             if line != line.strip():
                 continue
+            visited.add(line)
             expected = by_pattern(line)
             parsed = post_module._parse_review_header(line)
             if expected == "":
@@ -2078,22 +2080,77 @@ class PostTests(unittest.TestCase):
         self.assertGreater(agreed, 0)
         self.assertGreater(refused_empty, 0)
 
-    def test_header_differential_covers_the_shapes_that_escaped_the_flat_corpus(self) -> None:
-        # Guard the generator itself: these are the reported shapes the previous
-        # fragment product could not build, so their absence would quietly
-        # restore the blind spot.
-        spacings = ("", " ", "  ", "\t", " \t", "\xa0")
-        severities = ("MAJOR", "x", "")
-        categories = ("correctness", "two words", "", " ", "  ", "\t")
-        generated = {
-            f"**AI review:{lead}{severity}{gap}{category}{trail}**"
-            for lead, severity, gap, category, trail in itertools.product(
-                spacings, severities, spacings, categories, spacings
-            )
-        }
-
+        # Coverage is asserted against the lines this test actually visited,
+        # not against a set rebuilt from copies of the constants above. A
+        # duplicated corpus would keep passing while the real one drifted —
+        # which is the blind spot this whole test exists to close. Checking
+        # ``visited`` also guards the strip filter, not just the generator.
         for shape in ("**AI review: MAJOR  **", "**AI review: MAJOR \xa0**"):
-            self.assertIn(shape, generated)
+            self.assertIn(shape, visited)
+
+    def test_invalid_header_rejects_the_note_instead_of_scanning_into_the_body(self) -> None:
+        """A refused header must refuse the note, not delegate to the next line.
+
+        The scan used to continue past a header it could not parse, so a v2
+        note — whose body is unfenced model text — could supply its own
+        header-shaped line further down. The recovered category and title were
+        then model-controlled, and they feed ``title_anchor`` matching. v3 is
+        immune because every body line sits inside a code span, but v2 shipped
+        in 1.0.0.
+        """
+
+        marker = (
+            "<!-- ai-review:v1 issue_id="
+            + "a" * 64
+            + " run_id=r body_hash="
+            + "b" * 64
+            + " source="
+            + "c" * 64
+            + " -->"
+        )
+        note = "\n".join(
+            [
+                # Hand-edited to a whitespace-only category, which this parser
+                # deliberately refuses.
+                "**AI review: MAJOR  **",
+                "",
+                "Real title",
+                "",
+                "the model wrote this body, and inside it:",
+                "**AI review: CRITICAL security**",
+                "",
+                "Attacker Title",
+                "",
+                "attacker body",
+                "",
+                marker,
+            ]
+        )
+
+        self.assertIsNone(parse_review_note(note))
+
+    def test_header_scan_still_tolerates_preamble_before_a_valid_header(self) -> None:
+        # Breaking on the first *candidate* must not break on the first line:
+        # a note with leading prose is still recovered.
+        marker = (
+            "<!-- ai-review:v1 issue_id="
+            + "a" * 64
+            + " run_id=r body_hash="
+            + "b" * 64
+            + " source="
+            + "c" * 64
+            + " -->"
+        )
+        note = "\n".join(
+            ["some preamble", "", "**AI review: MAJOR correctness**", "", "Real title", "", marker]
+        )
+
+        parsed = parse_review_note(note)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["category"], "correctness")
+        self.assertEqual(parsed["title"], "Real title")
 
     def test_span_recovery_accepts_renderer_output_and_rejects_hand_edits(self) -> None:
         for rendered, expected in (

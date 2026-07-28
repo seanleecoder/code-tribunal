@@ -141,6 +141,16 @@ def parse_marker(body: str) -> dict[str, str] | None:
     return matches[-1].groupdict()
 
 
+def _is_review_header_candidate(line: str) -> bool:
+    """Whether a stripped line is shaped like the review header at all.
+
+    Separate from parsing it, so ``parse_review_note`` can tell an invalid
+    header from no header. See ``_parse_review_header`` for why that matters.
+    """
+
+    return line.startswith(REVIEW_HEADER_PREFIX) and line.endswith(REVIEW_HEADER_SUFFIX)
+
+
 def _parse_review_header(line: str) -> str | None:
     """Return the category from a ``**AI review: <SEVERITY> <category>**`` line.
 
@@ -167,9 +177,15 @@ def _parse_review_header(line: str) -> str | None:
     emit this shape — an empty category would produce a single space, which
     both this parser and the pattern reject. The differential test asserts the
     difference as a property rather than a list of cases.
+
+    That refusal is only meaningful because ``parse_review_note`` stops at the
+    first header-*shaped* line rather than the first line that parses. Scanning
+    on would not refuse the note at all: it would hand the choice to the next
+    header-shaped line, and in a v2 note the body is unfenced model text, so
+    the model could supply one. Do not turn that break back into a continue.
     """
 
-    if not (line.startswith(REVIEW_HEADER_PREFIX) and line.endswith(REVIEW_HEADER_SUFFIX)):
+    if not _is_review_header_candidate(line):
         return None
     inner = line[len(REVIEW_HEADER_PREFIX) : -len(REVIEW_HEADER_SUFFIX)]
     # The separator after the colon is mandatory, as the pattern's first
@@ -332,10 +348,18 @@ def parse_review_note(body: str) -> dict[str, str] | None:
     header_index = None
     header_category = None
     for index, line in enumerate(lines):
-        header_category = _parse_review_header(line.strip())
+        stripped = line.strip()
+        if not _is_review_header_candidate(stripped):
+            continue
+        # The first header-shaped line decides, whether or not it parses. A
+        # refused header must refuse the note: scanning on would let a v2
+        # note's unfenced model body supply its own header further down, and
+        # the recovered category and title feed ``title_anchor`` matching.
+        # Skipping non-candidates keeps the tolerance for leading preamble.
+        header_category = _parse_review_header(stripped)
         if header_category is not None:
             header_index = index
-            break
+        break
     if header_index is None or header_category is None:
         return None
 
