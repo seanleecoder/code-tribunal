@@ -1,12 +1,12 @@
 # Evidence record: Cursor reviewer real runs / 2026-07-24
 
-Status: historical supporting (non-release; SPEC-21 1.0.1 acceptance partial)
+Status: historical supporting (non-release; SPEC-21 Cursor-enablement partial)
 
 Release-binding: none (supporting evidence; not cited by release inputs)
 
 This supplemental record captures the supplied real-project and dogfood runs. It
 is not cited by `release/release-inputs.json` and does not add Cursor to the 1.0
-or 1.0.1 release-gating matrix. It must not be promoted as 1.0.1
+or 1.0.1 release-gating matrix. It must not be promoted as Cursor-enablement
 evidence because both runs used a historical reviewer image and reported
 `model: auto`.
 
@@ -73,14 +73,14 @@ Observed and now closed as a supporting live-evidence subclaim:
   post, and gate stages on the observed non-blocking paths. These runs do not
   prove that a Cursor-backed blocking finding makes a required check block.
 
-Still open for 1.0.1 SPEC-21 acceptance:
+Still open for SPEC-21 Cursor enablement:
 
 - Both artifacts record only `model: auto`; neither identifies the exact Composer
   model slug. The exact model must still be discovered and pinned before this
   acceptance gate is closed.
-- The 1.0.1 permission smoke now accepts an explicit model argument; the 1.0.1
-  run must pass the exact pinned slug rather than the historical `auto` value.
-- 1.0.1 still needs a fresh real-key fixture review/critique against the final
+- The permission smoke accepts an explicit model argument; the enablement run
+  must pass the exact pinned slug rather than the historical `auto` value.
+- Cursor still needs a fresh real-key fixture review/critique against the final
   image pair, with the exact model in the artifact and the runtime/image/config
   coordinates recorded.
 - The product contract must explicitly accept prompt-bundle-only ask-mode
@@ -110,6 +110,6 @@ Still open for 1.0.1 SPEC-21 acceptance:
 
 Supporting pass for real Cursor integration at the two recorded historical
 source/image coordinates. This closes the live execution/artifact-validity
-subclaim but does not close 1.0.1 SPEC-21 acceptance, establish the exact
+subclaim but does not close SPEC-21 Cursor enablement, establish the exact
 Composer model id, or prove real-image write/shell denial. Keep Cursor disabled
 for consumers.

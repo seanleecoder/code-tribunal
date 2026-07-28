@@ -6,10 +6,14 @@ those image digests. `R..P` may contain only the reviewed release-path
 allowlist; the generated external manifest records both commits without
 creating a commit self-reference.
 
+## Release version contract
+
 Release validators accept `MAJOR.MINOR.PATCH` with an optional prerelease suffix,
 for example `1.0.1-rc.1`. They reject build metadata such as `1.0.1+build.1`.
 The active release version also determines the required notes file:
 `release/<release_version>.md`.
+
+## Release sequence
 
 1. Land behavior, schema, migration, release tooling, and documentation changes
    on reviewed runtime source commit `R`. Keep

@@ -30,7 +30,7 @@ In **Settings → Secrets and variables → Actions**, create:
 | Kind | Name | Required | Purpose |
 |---|---|---:|---|
 | Secret | `OPENROUTER_API_KEY` | yes | Claude, Codex, and OpenCode model calls |
-| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Experimental Cursor substitute; not 1.0.1 evidence-backed until SPEC-21 passes |
+| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Experimental Cursor substitute; do not enable until SPEC-21 passes |
 | Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | conditional | Fine-grained token for resolve/unresolve; configure it for organization-repository command authorization or whenever the built-in token is rejected |
 | Variable | `AI_REVIEW_MANUAL` | optional | Exact `true` disables automatic review jobs; use manual dispatch |
 
@@ -59,8 +59,8 @@ failing prepare.
 Cursor is disabled by default. Enabling it sends review prompts, diffs, and any
 snapshot content the Cursor CLI reads to Cursor's backend as a second egress
 destination. Leave it disabled unless you deliberately accept that path; it
-cannot be accepted for 1.0.1 until the required [SPEC-21 acceptance
-queue](../evidence/README.md#101-acceptance-queue) passes.
+cannot be enabled until the required [SPEC-21 enablement
+queue](../evidence/README.md#cursor-enablement-queue-spec-21) passes.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them

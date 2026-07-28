@@ -314,22 +314,19 @@ class DocumentationContractTests(unittest.TestCase):
             saved = (
                 checker.ROOT,
                 checker.RELEASE_INPUTS,
-                checker.RELEASE_NOTES,
                 checker.EVIDENCE_INDEX,
                 checker.RELEASE_STATE_DOCS,
             )
             checker.ROOT = root
             checker.RELEASE_INPUTS = root / "release/release-inputs.json"
-            checker.RELEASE_NOTES = notes
             checker.EVIDENCE_INDEX = evidence
-            checker.RELEASE_STATE_DOCS = (readme, notes)
+            checker.RELEASE_STATE_DOCS = (readme,)
             try:
                 return checker._release_state_issues()
             finally:
                 (
                     checker.ROOT,
                     checker.RELEASE_INPUTS,
-                    checker.RELEASE_NOTES,
                     checker.EVIDENCE_INDEX,
                     checker.RELEASE_STATE_DOCS,
                 ) = saved
@@ -436,6 +433,24 @@ class DocumentationContractTests(unittest.TestCase):
                 release_version="1.0.2-rc.1",
             ),
             [],
+        )
+
+    def test_active_release_uses_shared_version_contract_error(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._release_state_issues_for(
+            checker,
+            status="active",
+            readme_body="Released.\n",
+            release_version="1.0.2+build.1",
+        )
+
+        self.assertEqual(
+            issues,
+            [
+                "release/release-inputs.json: active release_version must be a semantic "
+                "version in MAJOR.MINOR.PATCH format with an optional prerelease suffix "
+                "such as 1.0.1-rc.1; build metadata is not supported"
+            ],
         )
 
     def test_directory_readme_issues_flags_missing_index(self) -> None:

@@ -18,9 +18,8 @@ branch is the 1.0.1 draft release candidate: `release/release-inputs.json` is
 digests unset pending rebuild. These values remain historical until a new pair
 is published.
 
-Release versions use `MAJOR.MINOR.PATCH` with an optional prerelease suffix such
-as `-rc.1`; build metadata is not supported. The corresponding release notes
-file is derived as `release/<release_version>.md`.
+For the accepted release-version grammar and derived notes path, see the
+[release version contract](../development/release-process.md#release-version-contract).
 
 Its guiding principle is **spend real tokens only on what genuinely requires a
 live model or a live platform.** Most matrix logic is already proven by the
@@ -354,7 +353,7 @@ Start 1.0.1 from this list rather than rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before 1.0.1, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
+| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -369,14 +368,14 @@ Actual result / Audit / Verdict.
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor 1.0.1 acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist) plus a new 1.0.1 record | release-gating (required) | final-image real run and permission smoke |
+| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
-evidence; Run 6 is a required 1.0.1 release-gating row. The product decision
-must choose and record the ask-mode/blocking contract; it does not make the
-acceptance row optional.
+evidence; Run 6 is a required Cursor-enablement gate, not a release-gating row.
+The product decision must choose and record the ask-mode/blocking contract; it
+does not make the acceptance row optional.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -475,16 +474,17 @@ validity only.
 
 The remaining enablement sequence is intentionally separate: identify and pin
 the exact Composer model slug (the recorded runs only say `model: auto`), then
-complete Run 6 below. Keep Cursor disabled until the 1.0.1 evidence passes;
+complete Run 6 below. Keep Cursor disabled until the enablement evidence passes;
 ordinary review success is not permission-denial evidence.
 
-### Run 6 — Cursor 1.0.1 acceptance (required release gate)
+### Run 6 — Cursor enablement acceptance (required before enablement)
 
 Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
 for the normative acceptance criteria. Run this only after the reviewer image
-and runtime source for 1.0.1 are frozen. The historical GitLab/GitHub runs in
-Run 5 cannot be reused as the release pass because they used an older reviewer image and reported
-`model: auto`.
+and runtime source proposed for enablement are frozen. It does not block the
+1.0.1 tag while Cursor remains disabled. The historical GitLab/GitHub runs in
+Run 5 cannot be reused as the enablement pass because they used an older reviewer
+image and reported `model: auto`.
 
 1. Freeze `R`, build and attest the final base/reviewer pair, validate
    `cursor-agent.pin`, and record immutable digests/provenance.
@@ -502,11 +502,12 @@ Run 5 cannot be reused as the release pass because they used an older reviewer i
    record exact model, counts, config digest, runtime/image coordinates,
    provenance, job IDs, and consensus/post/gate outcomes without secrets or model
    text.
-6. Add the sanitized record to the 1.0.1 evidence matrix and release inputs only
-   after all required paths are scoped `Status: passed` against the same `R` and
-   final image pair. Repin both GitHub workflow copies and all three GitLab pin
-   variables together. Cursor may remain disabled by default as an accepted
-   opt-in substitute, but completing this gate is still required to ship 1.0.1.
+6. Add the sanitized supplemental record only after all required paths are scoped
+   `Status: passed` against the same `R` and final image pair. Repin the
+   configuration and publisher workflow to the same exact model slug. Do not add
+   this record to release inputs. Cursor may remain disabled by default as an
+   accepted opt-in substitute; completing this gate is required only before
+   enabling Cursor.
 
 ## After the release-gating runs pass
 

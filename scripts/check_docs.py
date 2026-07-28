@@ -14,6 +14,11 @@ from urllib.parse import unquote
 import yaml
 from ai_review.pipeline_trust import find_trust_issues
 
+try:
+    from release_common import ReleaseValidationError, validate_release_version
+except ModuleNotFoundError:  # Imported as scripts.check_docs from repository-root tests.
+    from scripts.release_common import ReleaseValidationError, validate_release_version
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
 CONFIG_DOC = ROOT / "docs/configuration.md"
@@ -24,7 +29,6 @@ GITHUB_INSTALL_SOURCE = "../../ai-review/ci/review.github-actions.yml"
 GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
-RELEASE_NOTES = ROOT / "release/1.0.1.md"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 # Docs that describe the *current* release state. A historical RC note or the
 # changelog may legitimately say "draft"; these may not, once inputs are active.
@@ -60,11 +64,6 @@ DRAFT_CLAIM_PATTERNS = (
     r"\bdraft\s+notes\b",
 )
 DRAFT_CLAIM_RE = re.compile("|".join(DRAFT_CLAIM_PATTERNS), re.IGNORECASE)
-
-_RELEASE_VERSION_RE = re.compile(
-    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
-)
 
 CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
 
@@ -417,14 +416,10 @@ def _release_state_issues() -> list[str]:
     if inputs.get("status") != "active":
         return issues
 
-    release_version = inputs.get("release_version")
-    if not isinstance(release_version, str) or not _RELEASE_VERSION_RE.fullmatch(
-        release_version
-    ):
-        issues.append(
-            "release/release-inputs.json: active release_version must be a semantic "
-            "version with an optional prerelease suffix"
-        )
+    try:
+        release_version = validate_release_version(inputs.get("release_version"))
+    except ReleaseValidationError as exc:
+        issues.append(f"release/release-inputs.json: active {exc}")
         release_notes = None
     else:
         release_notes = ROOT / "release" / f"{release_version}.md"

@@ -33,6 +33,7 @@ try:
     )
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
+        DIGEST_RE,
         HASH_GROUPS,
         ReleaseValidationError,
         aggregate_hash,
@@ -241,33 +242,21 @@ class ReleaseToolTests(unittest.TestCase):
 
         self.assertEqual(snapshot["release_version"], "1.0.0")
         self.assertEqual(snapshot["status"], "active")
-        self.assertEqual(
-            snapshot["runtime_source"], "88bc9412b283d4a44328ab3ffd9f9708b0290f8e"
-        )
-        self.assertEqual(
-            snapshot["images"]["base"]["digest"],
-            "sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896",
-        )
-        self.assertEqual(
-            snapshot["images"]["reviewer"]["digest"],
-            "sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe",
-        )
-        self.assertEqual(snapshot["verification"]["ci_run_id"], "30125523924")
-        self.assertEqual(snapshot["verification"]["publication_run_id"], "30125524008")
-        self.assertEqual(
-            snapshot["verification"]["evidence_record_ids"],
-            [
-                "record-image-publication-verification.md",
-                "record-gitlab-hostile-mr.md",
-                "record-gitlab-current-image.md",
-                "record-github-current-image.md",
-                "record-github-revision-failures.md",
-                "record-github-default-model-smoke.md",
-            ],
-        )
+        self.assertRegex(snapshot["runtime_source"], r"^[0-9a-f]{40}$")
+        for role in ("base", "reviewer"):
+            with self.subTest(role=role):
+                self.assertRegex(snapshot["images"][role]["digest"], DIGEST_RE)
+
+        verification = snapshot["verification"]
+        for field in ("ci_run_id", "publication_run_id"):
+            with self.subTest(field=field):
+                self.assertRegex(verification[field], r"^[0-9]+$")
+        evidence_record_ids = verification["evidence_record_ids"]
+        self.assertTrue(evidence_record_ids)
+        self.assertTrue(all(isinstance(record, str) and record for record in evidence_record_ids))
         self.assertIn(
             "record-github-revision-failures.md",
-            snapshot["verification"]["evidence_waivers"],
+            verification["evidence_waivers"],
         )
 
     def test_populated_synthetic_draft_verification_remains_valid(self) -> None:

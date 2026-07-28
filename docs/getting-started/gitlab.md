@@ -46,7 +46,7 @@ In **Settings → CI/CD → Variables**, configure:
 |---|---:|---:|---:|---|
 | `OPENROUTER_API_KEY` | yes | yes | yes | Reviewer provider calls |
 | `GITLAB_TOKEN` | yes | yes | yes | Prepare, discussions, state, and commands |
-| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Experimental Cursor substitute; not 1.0.1 evidence-backed until SPEC-21 passes |
+| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Experimental Cursor substitute; do not enable until SPEC-21 passes |
 
 Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
 Configure runtime overrides as protected project/group variables so every stage
@@ -68,8 +68,8 @@ failing prepare.
 
 ### Cursor (experimental)
 
-Cursor is disabled by default and cannot be accepted for 1.0.1 until the
-required [SPEC-21 acceptance queue](../evidence/README.md#101-acceptance-queue)
+Cursor is disabled by default and cannot be enabled until the required
+[SPEC-21 enablement queue](../evidence/README.md#cursor-enablement-queue-spec-21)
 passes. Enabling it is a deliberate second egress destination to Cursor's
 backend.
 

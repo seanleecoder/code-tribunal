@@ -36,9 +36,10 @@ internal container implementation, not a supported Python package or API.
   required check. GitLab requires **Pipelines must succeed**.
 - Cursor is an experimental opt-in substitute reviewer with a separate credential
   and egress path. Supplemental real runs close the historical real-route and
-  artifact-validity subclaim, but Cursor remains disabled and outside the
-  1.0.1 live-evidence matrix until the required SPEC-21 gate passes: the exact
-  Composer model, final-image real-key run, and hostile permission smoke.
+  artifact-validity subclaim, but Cursor remains disabled until the required
+  SPEC-21 enablement gate passes: the exact Composer model, final-image real-key
+  run, and hostile permission smoke. This does not block the 1.0.1 tag while
+  Cursor remains disabled.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the

@@ -662,6 +662,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
             "CURSOR_SMOKE_MODEL:",
             'if [[ -z "$CURSOR_API_KEY" ]]',
+            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]',
+            "discovery-only 'auto' placeholder",
+            "Pin an exact Composer model slug",
             "Keep Cursor disabled",
         ):
             self.assertIn(smoke_marker, cursor_smoke)
@@ -672,6 +675,13 @@ class GitLabCiTemplateTests(unittest.TestCase):
         smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
         self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
         self.assertEqual(smoke_model.group(1), configured_cursor_model)
+        auto_skip = cursor_smoke.index('if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]')
+        smoke_invocation = cursor_smoke.index(
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" '
+            '"$CURSOR_SMOKE_MODEL"'
+        )
+        self.assertLess(auto_skip, smoke_invocation)
+        self.assertIn("exit 0", cursor_smoke[auto_skip:smoke_invocation])
         self.assertIn("needs: build-preflight", cursor_smoke)
         self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
         self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)

@@ -13,7 +13,7 @@ wins.
 | SPEC-06 | Complete | Trust auditor/template tests plus the recorded 1.0.0 [hostile-MR evidence](../evidence/record-gitlab-hostile-mr.md) (scoped: unprotected-ref MR in the hardened child). |
 | SPEC-07–19 | Complete | State, consensus, correctness, platform, supply-chain, and reviewer optimization changes are represented by tests/changelog. |
 | [SPEC-20](spec-20-reviewer-usage-accounting.md), [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed | Reviewer usage accounting and project learning/rules are not advertised product features. |
-| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental); historical supporting evidence; 1.0.1 acceptance outstanding | The opt-in Cursor reviewer ships disabled: adapter, config block, `CURSOR_API_KEY` credential separation, supply-chain notes, and the permission smoke harness landed with unit coverage. Historical private GitLab pipeline `185695` and [public GitHub run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563) prove real execution and valid finding/critique artifacts at historical coordinates. The canonical [SPEC-21 acceptance checklist](spec-21-cursor-cli-reviewer.md#101-closure-checklist) covers the remaining 1.0.1 decisions and evidence. The [supplemental record](../evidence/record-cursor-real-runs.md) is not a release-gating record. |
+| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental); historical supporting evidence; Cursor enablement outstanding | The opt-in Cursor reviewer ships disabled: adapter, config block, `CURSOR_API_KEY` credential separation, supply-chain notes, and the permission smoke harness landed with unit coverage. Historical private GitLab pipeline `185695` and [public GitHub run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563) prove real execution and valid finding/critique artifacts at historical coordinates. The canonical [SPEC-21 acceptance checklist](spec-21-cursor-cli-reviewer.md#101-closure-checklist) covers the remaining enablement decisions and evidence. The [supplemental record](../evidence/record-cursor-real-runs.md) is not a release-gating record. |
 | [SPEC-23–30](../history/specs/README.md#completed-specifications) | Complete history | Implemented on `main`; requirements archived in [history specs](../history/specs/README.md) for provenance. |
 | [SPEC-31–36](../history/specs/README.md#completed-specifications) | Complete on `main` | Snapshot containment, reviewer validity, artifact/config integrity, revision binding, distribution contract, and quality/type gates landed. |
 | [SPEC-37](../history/specs/spec-37-final-release-artifacts.md) | Complete at `v1.0.0` | Runtime source `88bc941` frozen, images published and attested, release commit `3ad443e` tagged with a validated external manifest. |
@@ -56,9 +56,9 @@ completed for `v1.0.0`. Remaining order:
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
 5. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
-   shipping 1.0.1 or advertising the Cursor reviewer. Its acceptance checklist
-   is canonical; keep the reviewer disabled until the complete scoped evidence
-   set passes.
+   enabling or advertising the Cursor reviewer. It does not block shipping
+   1.0.1 while Cursor stays disabled. Its acceptance checklist is canonical;
+   keep the reviewer disabled until the complete scoped evidence set passes.
 
 ## Historical indexes
 

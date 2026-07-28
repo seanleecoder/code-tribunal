@@ -1,18 +1,18 @@
 # SPEC-21 — Cursor CLI as an opt-in substitute reviewer
 
-> **Status: implemented and shipping disabled; 1.0.1 acceptance is required before
-> that release can ship.**
+> **Status: implemented and shipping disabled; SPEC-21 acceptance is required
+> before Cursor can be enabled, not before v1.0.1 ships.**
 > The implementation and unit-test sections below have landed — see
 > `ai-review/adapters/cursor.sh`, the `cursor` block in
 > [`review.yaml`](../../ai-review/config/review.yaml), and
 > `scripts/smoke_cursor_permissions.sh`. The supplied private GitLab pipeline
 > `185695` and [GitHub dogfood run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563)
 > prove real Cursor execution and valid finding/critique artifacts at historical
-> coordinates, but both record only `model: auto`. For 1.0.1, the required
+> coordinates, but both record only `model: auto`. For Cursor enablement, the required
 > exact Composer model id, smoke/CI alignment with that id, final-image
 > real-key evidence, the ask-mode product decision, and the hostile real-image
 > permission-denial check remain open. Keep the reviewer disabled in consuming
-> repositories until the 1.0.1 evidence is complete. See the [supplemental evidence
+> repositories until the enablement evidence is complete. See the [supplemental evidence
 > record](../evidence/record-cursor-real-runs.md); current operator documentation
 > is the [configuration reference](../configuration.md), not this file.
 
@@ -134,7 +134,7 @@ needed.**
   cursor:
     enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
-    model: auto # Discovery-only placeholder; the 1.0.1 acceptance smoke rejects auto; override: AI_REVIEW_CURSOR_MODEL
+    model: auto # Discovery-only placeholder; the enablement smoke rejects auto; override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
@@ -298,11 +298,11 @@ dashboard), plus the substitution recipe.
   spawning.
 - Image build succeeds with the pinned cursor binary; the existing Dockerfile
   verification block passes `cursor-agent --version`; and the permission smoke
-  runs the exact pinned model against the final published reviewer image without
+  runs the exact pinned model against the reviewer image proposed for enablement without
   a skip.
-- A required 1.0.1 real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
+- A required Cursor-enablement real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
   `CURSOR_API_KEY`, fixture MR) produces a valid finding batch within timeout
-  against the frozen runtime source and final image pair. The artifact records
+  against the runtime source and final image pair proposed for enablement. The artifact records
   the exact pinned Composer slug, `raw_finding_count > 0`, no dropped findings,
   `usable_for_resolution: true`, and a successful critique/panel path. The
   supplied runs establish only the historical real-key execution and
@@ -320,12 +320,13 @@ dashboard), plus the substitution recipe.
 The supplied [real-run record](../evidence/record-cursor-real-runs.md) closes
 one subclaim: the adapter can execute with a real key and emit valid,
 resolution-eligible artifacts in a real project and in dogfood. It is historical
-supporting evidence, not 1.0.1 evidence, because it uses an older image
+supporting evidence, not current enablement evidence, because it uses an older image
 and reports `model: auto`.
 
-SPEC-21 is not complete for 1.0.1 until all five outcomes below are complete
-against one frozen runtime source `R` and the final reviewer digest. No
-candidate or optional acceptance path substitutes for this checklist:
+SPEC-21 is not complete for Cursor enablement until all five outcomes below are
+complete against one frozen runtime source `R` and the final reviewer digest.
+It is not a v1.0.1 release gate while Cursor stays disabled. No candidate or
+optional acceptance path substitutes for this checklist:
 
 1. Discover and pin the exact Composer model slug supported by the pinned
    `cursor-agent` binary using `cursor-agent --list-models`; update the
@@ -338,17 +339,17 @@ candidate or optional acceptance path substitutes for this checklist:
    merge-blocking findings, require a blocking fixture and a genuinely blocked
    required check; otherwise do not claim that this evidence proves merge-block
    enforcement.
-3. Make the permission smoke exercise the exact pinned slug against the final
-   published image and preserve the required read/write/shell policy. The
+3. Make the permission smoke exercise the exact pinned slug against the image
+   proposed for enablement and preserve the required read/write/shell policy. The
    existing Dockerfile already verifies `cursor-agent --version`; that build-time
    check is not an outstanding acceptance item. A skipped smoke is not a pass.
-4. Run the 1.0.1 real-key fixture review and critique with a non-empty finding
+4. Run the real-key fixture review and critique with a non-empty finding
    batch, exact model identity, zero dropped findings, valid artifacts, and the
    downstream panel path required by the chosen ask-mode/blocking contract.
-5. Add the scoped Cursor pass to the 1.0.1 evidence matrix and release inputs
-   only after the runtime source, image digests, config digest, and job URLs all
-   match. Keep the default disabled unless the product decision is to opt every
-   consumer in.
+5. Add a scoped supplemental Cursor-enablement record only after the runtime
+   source, image digests, config digest, and job URLs all match. Do not add it
+   to release inputs; keep the default disabled unless the product decision is
+   to opt every consumer in.
 
 ## Tests
 

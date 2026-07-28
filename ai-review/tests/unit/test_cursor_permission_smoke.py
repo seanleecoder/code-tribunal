@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from ai_review.adapter_runner import _MODEL_ID_RE
 
 _SMOKE = Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 
@@ -225,8 +228,18 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
 
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(expected_error, result.stderr)
-                self.assertIn("1.0.1 acceptance", result.stderr)
+                self.assertIn("before Cursor can be enabled", result.stderr)
                 self.assertEqual(result.invocation_count, 0)
+
+    def test_model_id_grammar_matches_adapter_contract(self) -> None:
+        match = re.search(
+            r"(?m)^model_id_pattern='([^']+)'$",
+            _SMOKE.read_text(encoding="utf-8"),
+        )
+
+        self.assertIsNotNone(match, "smoke script must name its model-id pattern")
+        assert match is not None
+        self.assertEqual(match.group(1), _MODEL_ID_RE.pattern)
 
     def test_success_requires_read_control_then_hostile_probe(self) -> None:
         result = self._run_smoke()

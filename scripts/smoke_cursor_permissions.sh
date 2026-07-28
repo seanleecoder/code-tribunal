@@ -7,27 +7,28 @@ if [ "$#" -ne 2 ]; then
 fi
 image="$1"
 cursor_model="$2"
+model_id_pattern='^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required for Cursor permission policy validation" >&2
   exit 2
 fi
 
-# Keep this grammar identical to ai_review.adapter_runner._MODEL_ID_RE. The
-# permission smoke is an acceptance gate, so the discovery placeholder `auto`
+# This literal is contract-tested against ai_review.adapter_runner._MODEL_ID_RE.
+# The permission smoke is an enablement gate, so the discovery placeholder `auto`
 # must fail before any Docker invocation can spend a real key.
 if [ -z "$cursor_model" ] || [ "$cursor_model" = "auto" ]; then
-  echo "Cursor permission smoke requires an exact Composer model slug for 1.0.1 acceptance; empty and 'auto' model arguments are invalid" >&2
+  echo "Cursor permission smoke requires an exact Composer model slug before Cursor can be enabled; empty and 'auto' model arguments are invalid" >&2
   exit 2
 fi
-if ! python3 - "$cursor_model" <<'PY'
+if ! python3 - "$cursor_model" "$model_id_pattern" <<'PY'
 import re
 import sys
 
-if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", sys.argv[1]) is None:
+if re.fullmatch(sys.argv[2], sys.argv[1]) is None:
     raise SystemExit(1)
 PY
 then
-  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact Composer slug for 1.0.1 acceptance" >&2
+  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact Composer slug before Cursor can be enabled" >&2
   exit 2
 fi
 

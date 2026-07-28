@@ -44,10 +44,7 @@ only after the new runs pass.
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
    binding; re-stamp older records with these explicit fields.
-8. Complete the required SPEC-21 Cursor checklist before shipping 1.0.1. The
-   ask-mode decision must be explicit; if blocking findings are part of the
-   chosen contract, use a blocking fixture and verify a required check blocks.
-9. Only then set the 1.0.1 `release-inputs.status` to `active`, cut release
+8. Only then set the 1.0.1 `release-inputs.status` to `active`, cut release
    commit `P`, build the external manifest, and create the `v1.0.1` tag.
 
 ## 1.0 historical evidence matrix
@@ -99,15 +96,17 @@ check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
 [legacy acceptance](../history/README.md#legacy-milestone-acceptance).
 
-## 1.0.1 acceptance queue
+## Cursor enablement queue (SPEC-21)
 
-These are not 1.0.0 results. SPEC-21 completion is a required 1.0.1 release
-gate. Complete the canonical [SPEC-21 closure checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
-against one frozen runtime source `R` and final reviewer digest before shipping.
+These are not 1.0.0 results. SPEC-21 completion is required before enabling
+Cursor, not before shipping 1.0.1. Complete the canonical [SPEC-21 closure
+checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist)
+against one frozen runtime source `R` and final reviewer digest before changing
+the disabled default.
 
 | Suite | Current state | Closure evidence |
 |---|---|---|
-| Cursor reviewer acceptance (SPEC-21) | **Required and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), then create a sanitized, explicitly bound 1.0.1 evidence record. |
+| Cursor reviewer enablement (SPEC-21) | **Required before enablement and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#101-closure-checklist), then create a sanitized, explicitly bound supplemental enablement record. |
 
 ### Known gaps and missing evidence
 
@@ -119,15 +118,15 @@ against one frozen runtime source `R` and final reviewer digest before shipping.
   `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
-- **Cursor reviewer is not yet accepted for 1.0.1.** It is an
+- **Cursor reviewer is not yet accepted for enablement.** It is an
   experimental opt-in substitute with a separate credential and egress path.
   The supplemental [real-run record](record-cursor-real-runs.md) proves real
   execution and valid artifacts at historical coordinates only. The exact
   Composer model pin, the ask-mode product decision, a fresh final-image
   real-key fixture run, and the hostile write/shell denial smoke are still
-  required. Do not add Cursor to release inputs or advertise it as
+  required. Do not add Cursor to release inputs, enable it, or advertise it as
   acceptance-complete until those required checks pass. The literal `auto`
-  model is discovery-only and is never valid acceptance evidence.
+  model is discovery-only and is never valid enablement evidence.
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted
@@ -146,8 +145,8 @@ against one frozen runtime source `R` and final reviewer digest before shipping.
   sense — protected credentials withheld from an unprotected-ref MR in the
   hardened child topology — and not as a product-wide property. Network egress is
   still unenforced at the container/runner boundary, forks are untested on GitLab,
-  and Cursor remains outside the 1.0.1 matrix pending the SPEC-21 queue above.
-  The regression-covered rows do not block the release.
+  and Cursor remains disabled pending the SPEC-21 queue above. The
+  regression-covered rows do not block the release.
 
 ## Record format
 
