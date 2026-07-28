@@ -3,8 +3,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from ai_review.post import parse_marker, render_body
-from ai_review.render import PLATFORM_COMMENT_LIMITS, literal_span, platform_comment_limit
+from ai_review.post import parse_marker, parse_review_note, render_body
+from ai_review.render import (
+    PLATFORM_COMMENT_LIMITS,
+    literal_span,
+    platform_comment_limit,
+    prose_block,
+)
 
 
 class BodyHashTests(unittest.TestCase):
@@ -104,9 +109,7 @@ class BodyHashTests(unittest.TestCase):
                     "Title: `Validate empty records`",
                     "",
                     "Body:",
-                    "```text",
-                    "The code indexes records before checking emptiness.",
-                    "```",
+                    "`The code indexes records before checking emptiness.`",
                     "",
                     "Consensus:",
                     "- Reviewers: `claude, codex`",
@@ -120,7 +123,7 @@ class BodyHashTests(unittest.TestCase):
         )
         self.assertEqual(
             body_hash,
-            "bde28f1c8b768f14f2443f6f62b5710bd29df2a3bf2d6744b73822b16a8b2029",
+            "12f72479accfdeb245a1ff686692e115b6c656abaf9be0e7bec10769b515c1c7",
         )
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
@@ -133,7 +136,7 @@ class BodyHashTests(unittest.TestCase):
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
-            "Evidence:\n\n- `codex`:\n```text\nrecords[0] executes before the guard\n```",
+            "Evidence:\n\n- `codex`:\n`records[0] executes before the guard`",
             body,
         )
         self.assertNotIn("- claude:", body)
@@ -148,7 +151,7 @@ class BodyHashTests(unittest.TestCase):
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
-            "Evidence:\n\n- `claude, codex`:\n```text\nrecords[0] executes before the guard\n```",
+            "Evidence:\n\n- `claude, codex`:\n`records[0] executes before the guard`",
             body,
         )
         self.assertEqual(body.count("records[0] executes before the guard"), 1)
@@ -162,8 +165,8 @@ class BodyHashTests(unittest.TestCase):
 
         body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
 
-        self.assertIn("- `claude`:\n```text\nrecords[0] executes before the guard\n```", body)
-        self.assertIn("- `codex`:\n```text\nthe empty check occurs on the next line\n```", body)
+        self.assertIn("- `claude`:\n`records[0] executes before the guard`", body)
+        self.assertIn("- `codex`:\n`the empty check occurs on the next line`", body)
 
     def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
         group = self._group()
@@ -186,12 +189,12 @@ class BodyHashTests(unittest.TestCase):
 
         self.assertIn("Dissent:", body)
         self.assertIn(
-            "- `codex` disputes: (suggested severity: `minor`)\n```text\n"
-            "The caller already checks emptiness.\n```",
+            "- `codex` disputes: (suggested severity: `minor`)\n"
+            "`The caller already checks emptiness.`",
             body,
         )
         self.assertIn(
-            "- `opencode` disputes:\n```text\nThis path is unreachable.\n```",
+            "- `opencode` disputes:\n`This path is unreachable.`",
             body,
         )
         self.assertIn("- Blocking: yes", body)
@@ -268,7 +271,8 @@ class BodyHashTests(unittest.TestCase):
             posting_mode="github_reviews",
         )
 
-        self.assertEqual(len(first), 65_536)
+        self.assertLessEqual(len(first), 65_536)
+        self.assertGreater(len(first), 65_000)
         self.assertIn("…[truncated: platform comment size limit]", first)
         self.assertIn("Consensus:", first)
         self.assertIn("- Decision: surface", first)
@@ -291,13 +295,20 @@ class BodyHashTests(unittest.TestCase):
                     group, 3, "run", posting_mode=posting_mode
                 )
 
-                self.assertEqual(len(first), platform_comment_limit(posting_mode))
+                limit = platform_comment_limit(posting_mode)
+                # A prose span cannot always fill an arbitrary budget to
+                # the character: it owns two delimiters, so the longest
+                # span that fits may leave a byte unusable.
+                self.assertLessEqual(len(first), limit)
+                self.assertGreater(len(first), limit - 8)
                 self.assertEqual(first, second)
                 self.assertEqual(first_hash, second_hash)
                 self.assertIn("…[truncated: platform comment size limit]", first)
                 self.assertIn("\nConsensus:", first)
                 self.assertIsNotNone(parse_marker(first))
-                self.assertIn("\n```\n…[truncated", first)
+                # The body is prose now, so truncation ends at a re-encoded
+                # span and the notice needs its own paragraph.
+                self.assertRegex(first, r"`\n\n…\[truncated")
 
     def test_truncation_drops_whole_literal_span_instead_of_splitting_it(self) -> None:
         group = self._group()
@@ -315,7 +326,10 @@ class BodyHashTests(unittest.TestCase):
 
     def test_platform_truncation_closes_open_code_fence_before_footer(self) -> None:
         group = self._group()
-        group["body"] = "```python\n" + ("x" * 70_000)
+        # A suggestion keeps the fenced block, so it is the field that exercises
+        # closing an owned fence before the trusted footer.
+        group["body"] = "short body"
+        group["suggestion"] = "```python\n" + ("x" * 70_000)
 
         body, _body_hash = render_body(
             group,
@@ -324,10 +338,77 @@ class BodyHashTests(unittest.TestCase):
             posting_mode="github_reviews",
         )
 
-        self.assertEqual(len(body), 65_536)
+        self.assertLessEqual(len(body), 65_536)
         self.assertIn("\n````\n…[truncated: platform comment size limit]", body)
         self.assertLess(body.index("…[truncated"), body.index("Consensus:"))
         self.assertLess(body.index("Consensus:"), body.index("<!-- ai-review:v1"))
+
+    def test_prose_body_round_trips_through_the_review_note_parser(self) -> None:
+        cases = [
+            "one line",
+            "first line\nsecond line",
+            "paragraph one\n\nparagraph two",
+            "trailing spaces  \nnext",
+            "ends with a backslash\\",
+            "a backslash line\\\nfollowed by more",
+            "`already a span`",
+            "``\n``",
+            "@all #123 !45 ~label https://evil.example :tada:",
+            "- not a list\n> not a quote\n# not a heading",
+        ]
+        for body in cases:
+            with self.subTest(body=body):
+                group = self._group()
+                group["body"] = body
+                rendered, _body_hash = render_body(
+                    group, 3, "run", posting_mode="gitlab_discussions"
+                )
+                parsed = parse_review_note(rendered)
+                self.assertIsNotNone(parsed)
+                assert parsed is not None
+                # Only whitespace-only lines normalize; a line's own trailing
+                # spaces survive the span's boundary padding.
+                expected = "\n".join(
+                    line if line.strip() else "" for line in body.strip().split("\n")
+                )
+                self.assertEqual(parsed["summary"], expected)
+
+    def test_prose_paragraph_never_emits_a_blank_or_dangling_break(self) -> None:
+        # An empty line would end the paragraph and orphan later fragments; a
+        # trailing hard break would render its backslash literally.
+        rendered = prose_block("a\n\n\nb\n \nc")
+        self.assertIsNotNone(rendered)
+        assert rendered is not None
+        lines = rendered.split("\n")
+        self.assertTrue(all(lines), f"blank line in prose paragraph: {lines!r}")
+        self.assertFalse(lines[-1].endswith("\\"))
+        self.assertEqual(lines, ["`a`\\", "\\", "\\", "`b`\\", "\\", "`c`"])
+
+    def test_suggestion_keeps_its_fenced_block_while_prose_wraps(self) -> None:
+        group = self._group()
+        group["body"] = "prose that should wrap"
+        group["suggestion"] = "if not records:\n    return"
+
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+
+        self.assertIn("Body:\n`prose that should wrap`", body)
+        self.assertIn("Suggestion:\n```text\nif not records:\n    return\n```", body)
+
+    def test_truncated_prose_keeps_content_and_closes_cleanly(self) -> None:
+        group = self._group()
+        # A single unbroken line has no line boundary to cut at, so truncation
+        # must re-encode a shortened span rather than drop the whole body.
+        group["body"] = "y" * 70_000
+
+        with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 900}):
+            body, _body_hash = render_body(group, 3, "run", posting_mode="github_reviews")
+
+        self.assertLessEqual(len(body), 900)
+        self.assertGreater(body.count("y"), 300)
+        prose = body.split("Body:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertTrue(prose.startswith("`") and prose.endswith("`"))
+        self.assertIn("\n\n…[truncated: platform comment size limit]", body)
+        self.assertIsNotNone(parse_marker(body))
 
     def test_unknown_posting_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):

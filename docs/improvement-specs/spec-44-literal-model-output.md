@@ -79,30 +79,60 @@ this specification addresses artifact integrity. A schema-valid altered
 finding between inline, summary, and dropped. Those consequences are out of scope here and
 are not claimed to be mitigated.
 
-## Design decision: fenced literals over selective escaping
+## Design decision: code-element containment over selective escaping
 
-Two mechanisms can make a dynamic value literal. This specification chooses
-fencing, and records the cost so the choice is not revisited by accident.
+Several mechanisms can make a dynamic value literal. This specification requires
+that **every model-authored value render inside a `code` or `pre` element**, and
+records the alternatives so the choice is not revisited by accident.
 
-**Chosen — wrap in renderer-owned code spans/fences.** Safety is structural: the
-delimiter is computed from the value, so correctness does not depend on
-enumerating Markdown constructs. The cost is real and affects every comment a
-maintainer reads: a prose `body` becomes a monospace block with no soft wrap, so
-long lines scroll horizontally, and any legitimate model paragraphing or emphasis
-is flattened. SPEC-45's disclosure-collapsed sections are the mitigation for the
-resulting vertical bulk.
+**Chosen — wrap in renderer-owned code spans/fences.** Safety is structural on two
+levels. The delimiter is computed from the value, so correctness does not depend on
+enumerating Markdown constructs. And the resulting element is one both platforms'
+post-render DOM filters ignore — see the rejection of raw-HTML containers below,
+which is the sharper reason this boundary and not a prettier one.
+
+Within that requirement the container is chosen by content shape. Prose (`body`,
+evidence, critique rationale) renders as a paragraph of one code span per line,
+joined by renderer-owned backslash hard breaks: inline `code` is an inline element,
+so long prose wraps at spaces instead of scrolling horizontally. Suggestions keep
+the `text` fenced block, because they are code and monospace columns with horizontal
+scroll are correct for them. The residual cost is monospace presentation and
+flattened model emphasis, not lost proportional flow. SPEC-45's
+disclosure-collapsed sections remain the mitigation for vertical bulk.
+
+**Rejected — a raw-HTML container (`blockquote`/`p`) with HTML-escaped text.** This
+looks like the strongest form of the escaping argument, because inside HTML
+character data only `<` and `&` are structurally meaningful — a closed,
+spec-defined, platform-independent set — and a single-line container cannot be
+terminated early by a blank line. The CommonMark reasoning holds; the platform
+reasoning does not. Both GitHub and GitLab render Markdown and then run a DOM
+filter pipeline over the *result*, where a raw-HTML block's text nodes are
+indistinguishable from Markdown-derived ones. Those filters skip only `a`, `code`,
+`kbd`, `pre`, `script`, and `style` ancestors, so inside a `blockquote` GitLab's
+autolinker, reference filters, and emoji filter all act on model text — and the
+`@mention` and `#123`/`!45` reference filters have **write side effects**, creating
+notifications and cross-reference notes. That escapes the comment entirely, which is
+worse than layout injection. Numeric character references do not help: the HTML
+parser decodes them before the filters run. The completeness list would simply move
+from character classes to filter classes, and would have to be re-argued for every
+filter either platform adds.
 
 **Rejected — backslash-escape prose, fence only code-shaped fields.** This
 preserves proportional text flow and reads better. It is rejected because
 correctness becomes a completeness argument over an open-ended construct list
 (line-leading `#`, `>`, `-`, `*`, `+`, `N.`, `|`, plus backticks, `$` math,
 autolinks, raw HTML, and reference-link syntax), and that list differs between
-GitHub and GitLab. A single missed construct is a silent injection. Escaping may
-be reconsidered only if it is expressed as a proven-complete transform with
-per-platform fixtures, not as a hand-maintained character list.
+GitHub and GitLab. A single missed construct is a silent injection. It also fails
+the filter problem above for the same reason the raw-HTML container does: escaped
+prose lands in a paragraph with no ignored ancestor, and escaping `#` and `>` does
+nothing about `@all`. Escaping may be reconsidered only if it is expressed as a
+proven-complete transform with per-platform fixtures *and* it accounts for
+post-render filters, not as a hand-maintained character list.
 
-Readability is therefore a known, accepted regression of this specification, not
-an oversight.
+**Rejected — hard-wrapping prose at a fixed column inside the fence.** Cheap and
+structurally inert, but lossy: what the maintainer reads would no longer equal
+`consensus.groups[].body`, the wrap would be baked into `body_hash`, and any later
+change to the width would force another refresh wave across open merge requests.
 
 ## Scope
 

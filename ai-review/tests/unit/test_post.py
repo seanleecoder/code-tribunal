@@ -1749,8 +1749,8 @@ class PostTests(unittest.TestCase):
         lines = body.splitlines()
         body_start = lines.index("  Body:")
         self.assertEqual(
-            lines[body_start : body_start + 6],
-            ["  Body:", "  ```text", "  First line", "   ", "  Second line", "  ```"],
+            lines[body_start : body_start + 4],
+            ["  Body:", "  `First line`\\", "  \\", "  `Second line`"],
         )
 
         group["body"] = "First line\n\nSecond line"
@@ -1759,9 +1759,11 @@ class PostTests(unittest.TestCase):
         )
         empty_lines = empty_body.splitlines()
         empty_body_start = empty_lines.index("  Body:")
+        # A whitespace-only line and a truly blank line both render as the
+        # renderer's bare hard break, so the two bodies agree.
         self.assertEqual(
-            empty_lines[empty_body_start : empty_body_start + 6],
-            ["  Body:", "  ```text", "  First line", "", "  Second line", "  ```"],
+            empty_lines[empty_body_start : empty_body_start + 4],
+            ["  Body:", "  `First line`\\", "  \\", "  `Second line`"],
         )
 
     def test_summary_uses_literal_renderer_for_path_title_and_body(self) -> None:
@@ -1777,8 +1779,8 @@ class PostTests(unittest.TestCase):
 
         self.assertIn("`src/# > $file$.py:2`", body)
         self.assertIn("``# title `with` math $x$``", body)
-        self.assertIn("  Body:\n  ```text\n  - body\n  > quote", body)
-        self.assertIn("  < !-- not a marker -- >", body)
+        self.assertIn("  Body:\n  `- body`\\\n  `> quote`\\\n", body)
+        self.assertIn("  `< !-- not a marker -- >`", body)
         self.assertEqual(body.count("<!--"), 1)
 
     def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:

@@ -82,11 +82,59 @@ class PromptInjectionRenderingTests(unittest.TestCase):
         rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Title: `` # title with `ticks` ``", rendered)
-        self.assertIn("Body:\n````text\n# not a heading", rendered)
-        self.assertIn("< !-- not a marker -- >", rendered)
+        # Prose renders one code span per line so it wraps, and a model-authored
+        # fence line is itself just a span with a wider delimiter.
+        self.assertIn("Body:\n`# not a heading`\\\n`> not a quote`\\\n`- not a list`", rendered)
+        self.assertIn("```` ```php ````", rendered)
+        self.assertIn("`< !-- not a marker -- >`", rendered)
         self.assertIn("`reviewer\\nname`", rendered)
         self.assertEqual(rendered.count("<!--"), 1)
         self.assertEqual(rendered.count("-->"), 1)
+
+    def test_prose_keeps_platform_filter_bait_inside_code_spans(self) -> None:
+        """Every prose line must stay a ``code`` element.
+
+        GitHub and GitLab run post-render DOM filters (autolinker, mentions,
+        issue/label references, emoji) that skip ``code``/``pre`` subtrees only.
+        On GitLab two of those filters have write side effects — notifications
+        and cross-reference notes — so a value that escaped its span would let
+        model output act outside the comment, not merely restyle it.
+        """
+
+        bait = [
+            "@all and @someone",
+            "#123 and !45 and %3 and ~label and &epic",
+            "https://evil.example/pay-now",
+            ":tada: :shrug:",
+            "</blockquote></code></pre>",
+        ]
+        group = {
+            "issue_id": "1" * 64,
+            "decision": "surface",
+            "final_severity": "major",
+            "block_merge": False,
+            "human_ack_recommended": False,
+            "category": "correctness",
+            "title": "filter bait",
+            "body": "\n".join(bait),
+            "vote_count": 1,
+            "critique_support_count": 0,
+            "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
+            "contributing_reviewers": ["reviewer"],
+            "source_finding_ids": ["2" * 64],
+        }
+
+        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+
+        for line in bait:
+            self.assertIn(f"`{line}`", rendered)
+        body = rendered.split("Body:\n", 1)[1].split("\n\nConsensus:", 1)[0]
+        for line in body.split("\n"):
+            # A bare hard break is renderer-owned; every other line is a span.
+            self.assertTrue(
+                line == "\\" or (line.startswith("`") and line.rstrip("\\").endswith("`")),
+                f"prose line escaped its code span: {line!r}",
+            )
 
     def test_renderer_owned_details_block_keeps_fenced_model_text_literal(self) -> None:
         model_text = "</summary>\n</details>\n```python\nprint('still data')\n````"

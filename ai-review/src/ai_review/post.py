@@ -27,13 +27,14 @@ from .platform import ReviewPlatform, ReviewPlatformError
 from .platform.runtime import create_runtime_platform
 from .redact import redact_text
 from .render import (
-    compute_body_hash as _compute_body_hash,
-)
-from .render import (
+    PROSE_LINE_BREAK,
     encode_marker_token,
-    literal_block,
     literal_span,
     platform_comment_limit,
+    prose_block,
+)
+from .render import (
+    compute_body_hash as _compute_body_hash,
 )
 from .render import (
     render_body as _render_body,
@@ -92,6 +93,10 @@ REVIEW_SECTION_BOUNDARIES = frozenset(
     {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
 )
 BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
+SPAN_RE = re.compile(r"(?P<delimiter>`+)(?P<value>.*)(?P=delimiter)")
+# A rendered prose line is one code span, optionally followed by the renderer's
+# hard break; a line holding only the break came from a blank model line.
+PROSE_LINE_RE = re.compile(r"^(?P<span>(?P<delimiter>`+).*(?P=delimiter))\\?$|^\\$")
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
 LOGGER = logging.getLogger(__name__)
@@ -148,21 +153,28 @@ def _parse_review_title(line: str) -> tuple[str, bool]:
     rendered_title = title_line.removeprefix("Title:").strip()
     if rendered_title == "(empty)":
         return "", True
-    span_match = re.fullmatch(
-        r"(?P<delimiter>`+)(?P<value>.*)(?P=delimiter)", rendered_title
-    )
-    if span_match is None:
+    value = _unwrap_span(rendered_title)
+    if value is None:
         # A hand-edited or older note may retain the label without a valid
         # code span. The text after the label is still useful state data.
         return rendered_title, True
-    value = span_match.group("value")
-    if value.startswith(" ") and value.endswith(" ") and value.strip():
-        value = value[1:-1]
     # v3 encodes a newline as the two literal characters ``\n`` inside the
     # title span. Recovery cannot distinguish that encoding from a literal
     # backslash followed by ``n`` without changing the wire format, so retain
     # the existing compatibility behavior.
     return value.replace(r"\n", "\n"), True
+
+
+def _unwrap_span(rendered: str) -> str | None:
+    """Recover the value inside a renderer-owned code span, or ``None``."""
+
+    span_match = SPAN_RE.fullmatch(rendered)
+    if span_match is None:
+        return None
+    value = span_match.group("value")
+    if value.startswith(" ") and value.endswith(" ") and value.strip():
+        value = value[1:-1]
+    return value
 
 
 def _read_review_body(lines: list[str]) -> list[str]:
@@ -185,7 +197,37 @@ def _read_review_body(lines: list[str]) -> list[str]:
         # footer section is not folded into the stored body summary.
         return _read_unfenced_review_body(lines[start + 1 :])
 
+    prose = _read_prose_review_body(lines[start:])
+    if prose is not None:
+        return prose
+
     return _read_unfenced_review_body(lines[start:])
+
+
+def _read_prose_review_body(lines: list[str]) -> list[str] | None:
+    """Read a prose paragraph of per-line code spans, or ``None``.
+
+    The paragraph ends at the blank line that separates it from the next
+    renderer-owned fragment. ``None`` means the first line is not a rendered
+    prose line, so an older or hand-edited note falls back to the
+    line-oriented rules.
+    """
+
+    content: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped in REVIEW_SECTION_BOUNDARIES:
+            break
+        if PROSE_LINE_RE.fullmatch(stripped) is None:
+            return content or None
+        if stripped == PROSE_LINE_BREAK:
+            content.append("")
+            continue
+        value = _unwrap_span(stripped.removesuffix(PROSE_LINE_BREAK))
+        if value is None:
+            return content or None
+        content.append(value)
+    return content or None
 
 
 def _read_unfenced_review_body(lines: list[str]) -> list[str]:
@@ -683,7 +725,7 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
     category_part = f" {category}" if category else ""
     header = f"- **{severity}**{category_part} — {location}: {title}"
-    detail = literal_block(str(group.get("body") or ""))
+    detail = prose_block(str(group.get("body") or ""))
     if detail is None:
         return header
     indented_detail = "\n".join(f"  {line}" if line else "" for line in detail.split("\n"))
