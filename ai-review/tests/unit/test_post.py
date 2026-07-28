@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -1942,6 +1943,41 @@ class PostTests(unittest.TestCase):
         # any run inside the value.
         self.assertEqual(post_module._unwrap_span("`` `x` ``"), "`x`")
         self.assertEqual(post_module._unwrap_span("```` ```php ````"), "```php")
+
+    def test_span_parsing_is_linear_on_adversarial_backtick_runs(self) -> None:
+        """Span recovery must not backtrack on attacker-controlled input.
+
+        ``index_ai_review_discussions`` parses any note carrying a marker, and a
+        marker is a plain HTML comment any commenter can write — the author
+        check runs a full pass later and nothing caps the body length. A
+        ``(`+)(.*)\\1`` backreference took 2.3s on 4,000 backticks and is
+        superquadratic, so a crafted note near GitLab's 1,000,000-character
+        body limit could stall the posting job. The bound is the assertion:
+        a backtracking implementation does not fail here, it hangs.
+        """
+
+        line = "`" * 200_000 + "x"
+
+        started = time.perf_counter()
+        self.assertIsNone(post_module._unwrap_span(line))
+        self.assertIsNone(post_module._read_prose_review_body([line]))
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 2.0)
+
+    def test_span_recovery_accepts_renderer_output_and_rejects_hand_edits(self) -> None:
+        for rendered, expected in (
+            ("`hello`", "hello"),
+            ("`` `x` ``", "`x`"),
+            ("```` ```php ````", "```php"),
+            ("`foo\\`", "foo\\"),
+        ):
+            with self.subTest(rendered=rendered):
+                self.assertEqual(post_module._unwrap_span(rendered), expected)
+
+        for rendered in ("`foo` and `bar`", "````", "``", "", "no span", "`unclosed"):
+            with self.subTest(rendered=rendered):
+                self.assertIsNone(post_module._unwrap_span(rendered))
 
     def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
         for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):

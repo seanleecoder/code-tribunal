@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import random
 import unittest
 from unittest.mock import patch
 
-from ai_review.post import parse_marker, parse_review_note, render_body
+from ai_review.post import _unwrap_span, parse_marker, parse_review_note, render_body
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
     _encode_span,
@@ -464,10 +465,61 @@ class BodyHashTests(unittest.TestCase):
                     assert shortened is not None
                     self.assertLessEqual(len(shortened), room)
 
-    def test_all_space_scalar_is_not_padded(self) -> None:
-        # CommonMark does not strip boundary spaces when a code span's content
-        # is entirely spaces, so padding one would change the displayed value.
+    def test_padding_exception_is_u0020_only(self) -> None:
+        """CommonMark's all-spaces exception counts U+0020, not whitespace.
+
+        ``str.strip()`` would classify " \\t " as all-blank and skip the
+        padding, and the platform would then remove both boundary spaces and
+        render the value as a bare tab. Truncation reaches this: a retained
+        prefix of a line beginning space-tab is exactly that shape.
+        """
+
+        # Entirely U+0020: the exception applies, so no padding.
         self.assertEqual(_encode_span("   "), "`   `")
+        self.assertEqual(_encode_span(" "), "` `")
+        # Blank but not all-U+0020: the exception does not apply, so pad.
+        self.assertEqual(_encode_span(" \t "), "`  \t  `")
+
+        for scalar in (" \t ", "   ", " ", " \t abc", "a\tb"):
+            with self.subTest(scalar=scalar):
+                self.assertEqual(_unwrap_span(_encode_span(scalar)), scalar)
+
+        # The reported case: a cut landing inside a leading space-tab run.
+        shortened = _shorten_span(" \t abcdefghij", 6)
+        assert shortened is not None
+        self.assertLessEqual(len(shortened), 6)
+        self.assertEqual(_unwrap_span(shortened), " \t")
+
+    def test_shorten_span_property_over_random_scalars(self) -> None:
+        """Seeded property check that the table above only samples by hand.
+
+        Encoded length is not monotone in the prefix length, so the search has
+        to be exactly right rather than approximately right; brute-force the
+        true maximum and demand equality.
+        """
+
+        generator = random.Random(20260728)
+        for _ in range(2_000):
+            scalar = "".join(
+                generator.choice("ab` \t") for _ in range(generator.randint(1, 30))
+            )
+            room = generator.randint(0, 40)
+            with self.subTest(scalar=scalar, room=room):
+                shortened = _shorten_span(scalar, room)
+                best = max(
+                    (
+                        length
+                        for length in range(1, len(scalar) + 1)
+                        if len(_encode_span(scalar[:length])) <= room
+                    ),
+                    default=0,
+                )
+                if not best:
+                    self.assertIsNone(shortened)
+                    continue
+                self.assertEqual(shortened, _encode_span(scalar[:best]))
+                assert shortened is not None
+                self.assertLessEqual(len(shortened), room)
 
     def test_unknown_posting_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):

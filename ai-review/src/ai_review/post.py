@@ -93,10 +93,6 @@ REVIEW_SECTION_BOUNDARIES = frozenset(
     {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
 )
 BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
-SPAN_RE = re.compile(r"(?P<delimiter>`+)(?P<value>.*)(?P=delimiter)")
-# A rendered prose line is one code span, optionally followed by the renderer's
-# hard break; a line holding only the break came from a blank model line.
-PROSE_LINE_RE = re.compile(r"^(?P<span>(?P<delimiter>`+).*(?P=delimiter))\\?$|^\\$")
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
 LOGGER = logging.getLogger(__name__)
@@ -166,23 +162,36 @@ def _parse_review_title(line: str) -> tuple[str, bool]:
 
 
 def _unwrap_span(rendered: str) -> str | None:
-    """Recover the value inside a renderer-owned code span, or ``None``."""
+    """Recover the value inside a renderer-owned code span, or ``None``.
 
-    span_match = SPAN_RE.fullmatch(rendered)
-    if span_match is None:
+    Scanned rather than matched with a backreference. ``(`+)(.*)\\1`` looks
+    natural here but backtracks superquadratically on a long run of backticks
+    followed by anything else, and this parser runs on **unauthenticated**
+    input: ``index_ai_review_discussions`` reaches it for any note carrying a
+    marker, and a marker is a plain HTML comment any commenter can type. The
+    author check lives a full pass downstream, and nothing caps the body
+    length, so a crafted note could otherwise stall the posting job.
+    """
+
+    leading = len(rendered) - len(rendered.lstrip("`"))
+    if not leading or len(rendered) < 2 * leading:
         return None
-    delimiter = span_match.group("delimiter")
-    value = span_match.group("value")
-    # The delimiter match is greedy, so two adjacent spans on one line look
-    # like a single span wrapping the text between them. Renderer output can
-    # never do that — the delimiter is always one backtick longer than any run
-    # inside the value — so a standalone run of exactly the delimiter's length
-    # means this line was hand-edited and is not safe to unwrap.
-    if re.search(rf"(?<!`){re.escape(delimiter)}(?!`)", value):
+    trailing = len(rendered) - len(rendered.rstrip("`"))
+    if trailing != leading:
         return None
-    # CommonMark strips one boundary space from each side, but not when the
-    # content is entirely spaces. ``_encode_span`` pads on the same condition.
-    if value.startswith(" ") and value.endswith(" ") and value.strip():
+    value = rendered[leading:-leading]
+    # Two adjacent spans on one line would otherwise look like a single span
+    # wrapping the text between them. Renderer output can never do that — the
+    # delimiter is always one backtick longer than any run inside the value —
+    # so a standalone run of exactly the delimiter's length means this line was
+    # hand-edited and is not safe to unwrap. This search is a fixed literal
+    # with lookarounds: linear, and it must not be rewritten as a backreference.
+    if re.search(rf"(?<!`){'`' * leading}(?!`)", value):
+        return None
+    # CommonMark strips one boundary space from each side unless the content is
+    # entirely U+0020 spaces. ``_encode_span`` pads on the same condition, and
+    # the two must stay in sync — they are halves of one round-trip.
+    if value.startswith(" ") and value.endswith(" ") and value.strip(" "):
         value = value[1:-1]
     return value
 
@@ -233,8 +242,6 @@ def _read_prose_review_body(lines: list[str]) -> list[str] | None:
         stripped = line.strip()
         if not stripped or stripped in REVIEW_SECTION_BOUNDARIES:
             break
-        if PROSE_LINE_RE.fullmatch(stripped) is None:
-            return None
         if stripped == PROSE_LINE_BREAK:
             content.append("")
             continue

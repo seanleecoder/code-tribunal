@@ -125,13 +125,18 @@ def _encode_span(scalar: str) -> str:
     """Wrap an already-sanitized single-line scalar in an owned code span."""
 
     delimiter = "`" * (_longest_backtick_run(scalar) + 1)
-    if scalar.strip() and (scalar.startswith(("`", " ")) or scalar.endswith(("`", " "))):
+    if scalar.strip(" ") and (scalar.startswith(("`", " ")) or scalar.endswith(("`", " "))):
         # CommonMark removes one matching outer space from a code span. Add
         # both sides when either boundary is a backtick or a space so the
         # displayed scalar remains unchanged while the delimiter is
-        # unambiguous. The rule does not apply when the content is all spaces,
-        # and padding one of those would add spaces that survive into the
-        # displayed value — so leave it alone, matching ``_unwrap_span``.
+        # unambiguous. The rule does not apply when the content is entirely
+        # U+0020 spaces, and padding one of those would add spaces that survive
+        # into the displayed value — so leave it alone.
+        #
+        # The exception is U+0020-only, so this must strip spaces rather than
+        # whitespace: ``str.strip()`` would classify a truncated " \t " prefix
+        # as all-blank, skip the padding, and let the platform eat both of its
+        # boundary spaces. ``_unwrap_span`` mirrors this predicate exactly.
         scalar = f" {scalar} "
     return f"{delimiter}{scalar}{delimiter}"
 
