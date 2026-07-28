@@ -69,7 +69,11 @@ def _is_packaged_runtime() -> bool:
 
 
 def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW) -> str | None:
-    """Return the sole packaged-runtime skip condition for the Cursor contract."""
+    """Return a skip reason only when a packaged runtime lacks the publish workflow.
+
+    Raise AssertionError if the marker is set with the checkout workflow present,
+    or if a checkout lacks the workflow without the marker.
+    """
     packaged_runtime = _is_packaged_runtime()
     if packaged_runtime and workflow_path.exists():
         raise AssertionError(

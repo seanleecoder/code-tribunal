@@ -200,7 +200,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
 | `AI_REVIEW_TRUSTED_ROOT` | Trusted in-image root, `/opt/ai-review`. |
-| `AI_REVIEW_PACKAGED_RUNTIME` | Test-only base-image packaging marker with no production runtime behavior; set by the image and never override it in checkout-based tests. |
+| `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |

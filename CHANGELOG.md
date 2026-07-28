@@ -9,16 +9,11 @@ versioning.
 
 ### Changed
 
-- Effective reviewer model IDs must fully match the supported model-ID grammar
-  before the reviewer CLI is invoked. This covers `review.yaml` and
-  `AI_REVIEW_CLAUDE_MODEL`, `AI_REVIEW_CODEX_MODEL`, `AI_REVIEW_OPENCODE_MODEL`,
-  and `AI_REVIEW_CURSOR_MODEL` after their existing whitespace normalization;
-  malformed effective values report `model_error`.
+- Reviewer model IDs in `review.yaml` must fully match the supported model-ID
+  grammar. A malformed YAML value, including a trailing newline, is rejected
+  with `model_error` before the reviewer CLI is invoked.
 - The Cursor permission smoke now requires an explicit exact model argument and
   rejects the discovery placeholder `auto` before invoking Docker.
-- Current release inputs are the `1.0.1` draft, while
-  `release/history/1.0.0-release-inputs.json` preserves the exact active `1.0.0`
-  provenance input.
 
 ## [1.0.0] - 2026-07-25
 
