@@ -40,7 +40,7 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
-  # Cursor is an experimental opt-in substitute reviewer outside the 1.0
+  # Cursor is an experimental opt-in substitute reviewer outside the 1.0.1
   # live-evidence matrix. Cursor CLI cannot route through
   # OpenRouter/BYOK/custom-base-URL; enabling it sends review prompts, diffs,
   # and any repo snapshot content it reads to Cursor's backend as a deliberate

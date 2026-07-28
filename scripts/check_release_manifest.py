@@ -43,15 +43,20 @@ def validate_manifest(
         raise ReleaseValidationError("release manifest has unexpected or missing keys")
     if manifest["schema_version"] != "code_tribunal.release_manifest.v1":
         raise ReleaseValidationError("unsupported manifest schema version")
-    if manifest["release_version"] != "1.0.0":
-        raise ReleaseValidationError("manifest release_version must be 1.0.0")
-    runtime_source = manifest["runtime_source"]
-    release_commit = manifest["release_commit"]
-    validate_release_coordinates(manifest["tag"], runtime_source, release_commit)
-    assert isinstance(runtime_source, str)
-    assert isinstance(release_commit, str)
     inputs = load_json(release_inputs)
     validate_release_inputs(inputs, root)
+    if manifest["release_version"] != inputs["release_version"]:
+        raise ReleaseValidationError("manifest release_version must match release inputs")
+    runtime_source = manifest["runtime_source"]
+    release_commit = manifest["release_commit"]
+    validate_release_coordinates(
+        manifest["tag"],
+        runtime_source,
+        release_commit,
+        inputs["release_version"],
+    )
+    assert isinstance(runtime_source, str)
+    assert isinstance(release_commit, str)
     if inputs["status"] != "active":
         raise ReleaseValidationError("release inputs must be active when validating a manifest")
     if manifest["release_inputs_sha256"] != sha256_bytes(release_inputs.read_bytes()):

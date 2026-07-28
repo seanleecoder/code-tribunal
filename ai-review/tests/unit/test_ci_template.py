@@ -658,8 +658,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
         # the probe can be iterated without merging to main.
         for smoke_marker in (
             "Verify Cursor denies write and shell tools",
-            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG"',
+            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"',
             "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
+            'CURSOR_SMOKE_MODEL: "auto"',
             'if [[ -z "$CURSOR_API_KEY" ]]',
             "Keep Cursor disabled",
         ):

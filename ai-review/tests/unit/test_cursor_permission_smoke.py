@@ -191,7 +191,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
                 }
             )
             result = subprocess.run(
-                [str(_SMOKE), "reviewer:test"],
+                [str(_SMOKE), "reviewer:test", "composer-test"],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -219,6 +219,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         self.assertEqual(result.invocations.count("--mode ask"), 2)
         self.assertEqual(result.invocations.count("--sandbox disabled"), 2)
         self.assertEqual(result.invocations.count("--trust"), 2)
+        self.assertEqual(result.invocations.count("composer-test"), 2)
         self.assertIn("returned the fixture nonce", result.stdout)
         self.assertIn("permission smoke passed", result.stdout)
 

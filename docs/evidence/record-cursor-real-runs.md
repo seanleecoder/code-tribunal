@@ -1,20 +1,22 @@
 # Evidence record: Cursor reviewer real runs / 2026-07-24
 
-Status: historical supporting (non-release; SPEC-21 next-release acceptance partial)
+Status: historical supporting (non-release; SPEC-21 1.0.1 acceptance partial)
+
+Release-binding: none (supporting evidence; not cited by release inputs)
 
 This supplemental record captures the supplied real-project and dogfood runs. It
 is not cited by `release/release-inputs.json` and does not add Cursor to the 1.0
-or next-release release-gating matrix. It must not be promoted as next-release
+or 1.0.1 release-gating matrix. It must not be promoted as 1.0.1
 evidence because both runs used a historical reviewer image and reported
 `model: auto`.
 
 ## Identity
 
-- GitLab real project: [pipeline 185695](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/pipelines/185695), MR !772, source SHA
-  `2e7e54aab20d25f7e5dc2c099a591ce25a8d7285`.
-- GitLab Cursor review job: [2591633](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/jobs/2591633).
-- GitLab Cursor critique job: [2591637](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/jobs/2591637).
-- GitLab consensus job: [2591638](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/jobs/2591638).
+- GitLab real project: private consumer, internal pipeline `185695` (project,
+  host, MR number, and source SHA intentionally omitted from this public record).
+- GitLab Cursor review job: internal job `2591633`.
+- GitLab Cursor critique job: internal job `2591637`.
+- GitLab consensus job: internal job `2591638`.
 - GitHub dogfood: [workflow run 30080420563](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563), source SHA
   `22b965f2f71bccc083e72c2cd2e8ff96c1d5e65f`.
 - GitHub Cursor review job: [89440587942](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563/job/89440587942).
@@ -24,6 +26,20 @@ evidence because both runs used a historical reviewer image and reported
 - GitLab effective-config digest: `affeba28eada0072c198c538ce6afacd6f8367b09ba2cc2ec85b51ee6e337d14`.
 - GitHub effective-config digest: `cf2d0e8a44b6688de1d6c01150a9ef572e078d1bf99e3d7c199e2b854a995ef1`.
 
+## Topology and auditability
+
+- GitLab used a private consumer with the canonical GitLab template; GitHub used
+  the public dogfood repository and canonical workflow. Private template/project
+  coordinates are intentionally omitted.
+- An internal operator inspected the GitLab review, critique, consensus, post,
+  and gate traces plus downloaded artifacts. Both job traces reported the shared
+  reviewer image reference and digest recorded below; the public GitHub run is
+  independently inspectable, but the GitLab counts and digests are not publicly
+  independently verifiable.
+- No private source, credentials, proprietary model content, or private GitLab
+  URLs are reproduced here. Internal operators can reconcile the sanitized job
+  IDs above in the private CI system.
+
 ## Preconditions
 
 - Both runs used the Cursor-enabled reviewer job and the real-only Cursor guard
@@ -31,7 +47,7 @@ evidence because both runs used a historical reviewer image and reported
 - The successful Cursor finding batches, rather than skipped artifacts, show that
   the adapter took the real execution path and returned usable output.
 - The reviewer image is a historical pinned image, not the final 1.0 image pair
-  or the next-release pair; this record is therefore supporting evidence only.
+  or the 1.0.1 pair; this record is therefore supporting evidence only.
 
 ## Actual result
 
@@ -47,25 +63,31 @@ and successful findings/critiques artifact uploads.
 
 ## Acceptance accounting
 
-Observed and now closed as a live-evidence subclaim:
+Observed and now closed as a supporting live-evidence subclaim:
 
 - the real-key Cursor route can execute in a real consumer and in the dogfood
   repository;
 - the adapter emits schema-valid, resolution-eligible finding batches and
   critique artifacts; and
-- Cursor can participate in a full panel without breaking consensus, posting, or
-  gate stages.
+- Cursor can participate in a full panel and complete the downstream consensus,
+  post, and gate stages on the observed non-blocking paths. These runs do not
+  prove that a Cursor-backed blocking finding makes a required check block.
 
-Still open for next-release SPEC-21 acceptance:
+Still open for 1.0.1 SPEC-21 acceptance:
 
 - Both artifacts record only `model: auto`; neither identifies the exact Composer
   model slug. The exact model must still be discovered and pinned before this
   acceptance gate is closed.
-- The permission smoke currently invokes `--model auto`, so it must be aligned
-  with the exact pinned slug before it can prove the intended model's behavior.
-- The next release still needs a reviewer-image version preflight and a fresh
-  real-key fixture review/critique against the final image pair, with the exact
-  model in the artifact and the runtime/image/config coordinates recorded.
+- The 1.0.1 permission smoke now accepts an explicit model argument; the 1.0.1
+  run must pass the exact pinned slug rather than the historical `auto` value.
+- 1.0.1 still needs a fresh real-key fixture review/critique against the final
+  image pair, with the exact model in the artifact and the runtime/image/config
+  coordinates recorded.
+- The product contract must explicitly accept prompt-bundle-only ask-mode
+  reviews, or the adapter must move to an execution mode whose reads work and
+  the permission/real-run evidence must be repeated. If Cursor is expected to
+  contribute merge-blocking findings, a blocking fixture and genuinely blocking
+  required-check result are also required.
 - Neither run included the hostile prompt that requests a sentinel write and a
   shell command. The real-image permission-denial gate remains open.
 
@@ -88,6 +110,6 @@ Still open for next-release SPEC-21 acceptance:
 
 Supporting pass for real Cursor integration at the two recorded historical
 source/image coordinates. This closes the live execution/artifact-validity
-subclaim but does not close next-release SPEC-21 acceptance, establish the exact
+subclaim but does not close 1.0.1 SPEC-21 acceptance, establish the exact
 Composer model id, or prove real-image write/shell denial. Keep Cursor disabled
 for consumers.

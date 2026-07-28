@@ -1,6 +1,6 @@
 # Release process
 
-The 1.0 release uses the two-commit sequence in SPEC-40: immutable runtime
+The 1.0.1 release uses the two-commit sequence in SPEC-40: immutable runtime
 source `R` produces both images, then release commit `P` pins every template to
 those image digests. `R..P` may contain only the reviewed release-path
 allowlist; the generated external manifest records both commits without
@@ -30,14 +30,14 @@ creating a commit self-reference.
    Only then set `release-inputs.status` to `active` and re-run
    `python scripts/check_release_inputs.py` (active status rejects partial,
    SHA/digest-mismatched, or undeclared-waiver evidence).
-6. After final release commit `P` and tag `v1.0.0` exist, move
-   `CHANGELOG` `[Unreleased]` to `[1.0.0]`, finalize
-   [`release/1.0.0.md`](../../release/1.0.0.md), and build/validate the external
+6. After final release commit `P` and tag `v1.0.1` exist, move
+   `CHANGELOG` `[Unreleased]` to `[1.0.1]`, finalize
+   [`release/1.0.1.md`](../../release/1.0.1.md), and build/validate the external
    asset:
 
    ```bash
    python scripts/build_release_manifest.py \
-     --tag v1.0.0 --runtime-source "$R" --release-commit "$P" \
+     --tag v1.0.1 --runtime-source "$R" --release-commit "$P" \
      --out /tmp/release-manifest.json
    python scripts/check_release_manifest.py /tmp/release-manifest.json
    sha256sum /tmp/release-manifest.json > /tmp/release-manifest.json.sha256
@@ -47,6 +47,6 @@ creating a commit self-reference.
    path-level allowlist cannot prove. Then publish the reviewed tag, manifest,
    checksum, and release notes.
 
-Do not describe 1.0 as stable until the required live evidence is complete.
+Do not describe 1.0.1 as stable until the required live evidence is complete.
 Never rebuild a release tag from a different source commit; publish a new patch
 release instead.

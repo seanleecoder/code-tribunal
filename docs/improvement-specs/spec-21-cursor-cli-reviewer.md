@@ -1,18 +1,17 @@
 # SPEC-21 — Cursor CLI as an opt-in substitute reviewer
 
-> **Status: implemented and shipping disabled; next-release acceptance pending.**
+> **Status: implemented and shipping disabled; 1.0.1 acceptance pending.**
 > The implementation and unit-test sections below have landed — see
 > `ai-review/adapters/cursor.sh`, the `cursor` block in
 > [`review.yaml`](../../ai-review/config/review.yaml), and
-> `scripts/smoke_cursor_permissions.sh`. The supplied [GitLab real-project
-> pipeline](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/pipelines/185695)
-> and [GitHub dogfood run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563)
+> `scripts/smoke_cursor_permissions.sh`. The supplied private GitLab pipeline
+> `185695` and [GitHub dogfood run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563)
 > prove real Cursor execution and valid finding/critique artifacts at historical
-> coordinates, but both record only `model: auto`. For the next release, the
+> coordinates, but both record only `model: auto`. For 1.0.1, the
 > exact Composer model id, smoke/CI alignment with that id, final-image
-> real-key evidence, and the hostile real-image permission-denial check remain
-> open. Keep the reviewer disabled in consuming repositories until the
-> next-release evidence is complete. See the [supplemental evidence
+> real-key evidence, the ask-mode product decision, and the hostile real-image
+> permission-denial check remain open. Keep the reviewer disabled in consuming
+> repositories until the 1.0.1 evidence is complete. See the [supplemental evidence
 > record](../evidence/record-cursor-real-runs.md); current operator documentation
 > is the [configuration reference](../configuration.md), not this file.
 
@@ -49,7 +48,7 @@ Verified CLI facts (Cursor docs/changelog, 2026-07): binary `cursor-agent`
 print mode `-p` with `--output-format text|json|stream-json`; stdin piping
 works in print mode; `--model <id>` selects any model on the account's plan
 including Composer (current id to be verified at implementation time via
-`cursor-agent models`; "composer" line, e.g. `composer-2.5`); auth via
+`cursor-agent --list-models`; "composer" line, e.g. `composer-2.5`); auth via
 `CURSOR_API_KEY` env (service-account keys available for teams); permissions
 config file supports `permissions.allow`/`permissions.deny` rules like
 `Write(**)` and `Shell(*)`; **no native timeout flag**; **no token-usage
@@ -134,7 +133,7 @@ needed.**
   cursor:
     enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
-    model: auto # Temporary unresolved Cursor selection; pin the exact Composer model id after live acceptance; override: AI_REVIEW_CURSOR_MODEL
+    model: "<exact-composer-slug>" # TODO(SPEC-21): unpinned; ships as auto until 1.0.1 acceptance; override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
@@ -265,8 +264,10 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
   `/usr/local/bin/cursor-agent` (plus `agent` alias only if nothing else
   claims it). The binary must not live under any `$HOME` path — adapters
   redirect `HOME` per run.
-- Add a credential-free `cursor-agent --version` smoke line next to the
-  existing `claude/codex/opencode --version` checks.
+- The reviewer Dockerfile already runs the credential-free
+  `cursor-agent --version` verification next to the existing
+  `claude/codex/opencode --version` checks; retain that check when rebuilding
+  the 1.0.1 image.
 - `SUPPLY_CHAIN.md`: document the non-npm pin mechanism + refresh procedure,
   and add the egress-boundary paragraph (Cursor backend as opt-in second
   destination). If `scripts/check_supply_chain_pins.py` enumerates pinned
@@ -294,50 +295,58 @@ dashboard), plus the substitution recipe.
 - Critique stage: fake CLI sees an empty working root.
 - Invalid model id (e.g. containing quotes) → `model_error` status without
   spawning.
-- Image build succeeds with the pinned cursor binary, the reviewer preflight
-  records `cursor-agent --version`, and the permission smoke runs the exact
-  pinned model against the final published reviewer image without a skip.
-- A next-release real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
+- Image build succeeds with the pinned cursor binary; the existing Dockerfile
+  verification block passes `cursor-agent --version`; and the permission smoke
+  runs the exact pinned model against the final published reviewer image without
+  a skip.
+- A 1.0.1 real run (`AI_REVIEW_REQUIRE_REAL_CURSOR=1`, real
   `CURSOR_API_KEY`, fixture MR) produces a valid finding batch within timeout
   against the frozen runtime source and final image pair. The artifact records
   the exact pinned Composer slug, `raw_finding_count > 0`, no dropped findings,
   `usable_for_resolution: true`, and a successful critique/panel path. The
   supplied runs establish only the historical real-key execution and
-  valid-batch subclaim.
+  valid-batch subclaim. The acceptance record must also state whether the
+  product contract is prompt-bundle-only/non-blocking or requires a Cursor-backed
+  blocking finding and a genuinely blocked required check.
 - A hostile real-image prompt asks Cursor to write a sentinel file and invoke a
   shell command; neither side effect exists after the run, and the required
   permission policy remains intact. **Open:** neither supplied run exercised
   this prompt. Keep Cursor disabled in the consuming repository until this
   permission-denial check passes.
 
-## Next-release closure checklist
+## 1.0.1 closure checklist
 
 The supplied [real-run record](../evidence/record-cursor-real-runs.md) closes
 one subclaim: the adapter can execute with a real key and emit valid,
 resolution-eligible artifacts in a real project and in dogfood. It is historical
-supporting evidence, not next-release evidence, because it uses an older image
+supporting evidence, not 1.0.1 evidence, because it uses an older image
 and reports `model: auto`.
 
-Before marking SPEC-21 accepted for the next release, complete all of the
-following against one frozen runtime source `R` and the final reviewer digest:
+Before marking SPEC-21 accepted for 1.0.1, complete all five outcomes below
+against one frozen runtime source `R` and the final reviewer digest:
 
 1. Discover and pin the exact Composer model slug supported by the pinned
-   `cursor-agent` binary; update the configuration/override contract and tests.
-2. Change the permission smoke so it exercises that exact slug. The current
-   `scripts/smoke_cursor_permissions.sh` hard-codes `--model auto`, which is an
-   implementation prerequisite rather than acceptance evidence. Add the
-   reviewer-image `cursor-agent --version` preflight and verify the supply-chain
-   pin.
-3. Run the real-key fixture review and critique with a non-empty finding batch,
-   exact model identity, zero dropped findings, valid artifacts, and a complete
-   panel/consensus/post/gate path on the final image pair.
-4. Run the hostile write-and-shell permission smoke with a real key against the
-   same final image and record that all side effects are absent and the policy
-   remains intact. A skipped smoke is not a pass.
-5. Add the scoped Cursor pass to the next-release evidence matrix and release
-   inputs only after the runtime source, image digests, config digest, and job
-   URLs all match. Keep the default disabled unless the product decision is to
-   opt every consumer in.
+   `cursor-agent` binary using `cursor-agent --list-models`; update the
+   configuration/override contract, the publisher's `CURSOR_SMOKE_MODEL`, and
+   tests to the same exact slug.
+2. Decide the ask-mode contract. Either explicitly accept prompt-bundle-only
+   reviews with no repository-tool reads, or change the invocation to an
+   execution mode whose reads work under the policy and repeat the permission
+   smoke and real-key run. If the accepted contract requires Cursor to contribute
+   merge-blocking findings, require a blocking fixture and a genuinely blocked
+   required check; otherwise do not claim that this evidence proves merge-block
+   enforcement.
+3. Make the permission smoke exercise the exact pinned slug against the final
+   published image and preserve the required read/write/shell policy. The
+   existing Dockerfile already verifies `cursor-agent --version`; that build-time
+   check is not an outstanding acceptance item. A skipped smoke is not a pass.
+4. Run the 1.0.1 real-key fixture review and critique with a non-empty finding
+   batch, exact model identity, zero dropped findings, valid artifacts, and the
+   downstream panel path required by the chosen ask-mode/blocking contract.
+5. Add the scoped Cursor pass to the 1.0.1 evidence matrix and release inputs
+   only after the runtime source, image digests, config digest, and job URLs all
+   match. Keep the default disabled unless the product decision is to opt every
+   consumer in.
 
 ## Tests
 

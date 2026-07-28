@@ -295,7 +295,7 @@ class DocumentationContractTests(unittest.TestCase):
             )
             readme = root / "README.md"
             readme.write_text(readme_body, encoding="utf-8")
-            notes = root / "release/1.0.0.md"
+            notes = root / "release/1.0.1.md"
             notes.write_text(
                 runtime_source if notes_body is None else notes_body, encoding="utf-8"
             )

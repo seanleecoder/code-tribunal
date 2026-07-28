@@ -24,7 +24,7 @@ GITHUB_INSTALL_SOURCE = "../../ai-review/ci/review.github-actions.yml"
 GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
-RELEASE_NOTES = ROOT / "release/1.0.0.md"
+RELEASE_NOTES = ROOT / "release/1.0.1.md"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 # Docs that describe the *current* release state. A historical RC note or the
 # changelog may legitimately say "draft"; these may not, once inputs are active.
@@ -437,7 +437,8 @@ def _release_state_issues() -> list[str]:
         and runtime_source not in RELEASE_NOTES.read_text(encoding="utf-8")
     ):
         issues.append(
-            f"release/1.0.0.md: must name the active runtime_source {runtime_source[:12]}…"
+            f"{RELEASE_NOTES.relative_to(ROOT)}: must name the active "
+            f"runtime_source {runtime_source[:12]}…"
         )
     return issues
 

@@ -12,7 +12,7 @@
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "e53200dd8edf950a50b54c1c0cc0434b03aa470bed5de3bae4c2e841378d6947"
+      "sha256": "c1afd4ac30588f5e01c8c00f813ecbe797ef71eaaf1c7fa7f416bdd0e79772ad"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "43efe8ad0b3009ba8308c43e72f6497bbd6fe21902b86efa4993c6d4be8f56ad"
+      "sha256": "1b6353a8a506d73fee01089df5d72697aa5348ba7849e339debc1dd57dca4538"
     },
     "image_recipes": {
       "files": [
@@ -67,23 +67,14 @@
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "1.0.0",
+  "release_version": "1.0.1",
   "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v1",
   "status": "draft",
   "verification": {
-    "ci_run_id": "30125523924",
-    "evidence_record_ids": [
-      "record-image-publication-verification.md",
-      "record-gitlab-hostile-mr.md",
-      "record-gitlab-current-image.md",
-      "record-github-current-image.md",
-      "record-github-revision-failures.md",
-      "record-github-default-model-smoke.md"
-    ],
-    "evidence_waivers": {
-      "record-github-revision-failures.md": "SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix."
-    },
-    "publication_run_id": "30125524008"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "evidence_waivers": {},
+    "publication_run_id": null
   }
 }

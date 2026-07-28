@@ -37,7 +37,7 @@ internal container implementation, not a supported Python package or API.
 - Cursor is an experimental opt-in substitute reviewer with a separate credential
   and egress path. Supplemental real runs close the historical real-route and
   artifact-validity subclaim, but Cursor remains disabled and outside the
-  next-release live-evidence matrix until the exact Composer model, final-image
+  1.0.1 live-evidence matrix until the exact Composer model, final-image
   real-key run, and hostile permission smoke all pass.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
@@ -54,7 +54,7 @@ internal container implementation, not a supported Python package or API.
 - The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
   attested image pair, and `v1.0.0` was released. Each row is a **scoped** pass
   with its own recorded limits, and some paths remain regression-covered only.
-  The next release needs a fresh draft release-inputs artifact and new
+  Release 1.0.1 uses the checked-in draft release-inputs artifact and needs new
   source/image-bound evidence — read
   [documentation history](docs/history/README.md) before making a maturity or
   security claim.

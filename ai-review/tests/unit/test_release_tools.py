@@ -196,7 +196,7 @@ class ReleaseToolTests(unittest.TestCase):
         self, root: Path
     ) -> tuple[dict[str, object], dict[str, object], Path, list[str]]:
         inputs, release_inputs = self._write_active_inputs(root)
-        changed_paths = ["CHANGELOG.md", "release/1.0.0.md"]
+        changed_paths = ["CHANGELOG.md", "release/1.0.1.md"]
         with (
             mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
             mock.patch(
@@ -204,7 +204,7 @@ class ReleaseToolTests(unittest.TestCase):
             ),
         ):
             manifest = build_manifest(
-                "v1.0.0",
+                "v1.0.1",
                 inputs["runtime_source"],
                 "d" * 40,
                 release_inputs,
@@ -218,36 +218,14 @@ class ReleaseToolTests(unittest.TestCase):
         )
         validate_release_inputs(data, REPO_ROOT)
 
-    def test_draft_preserves_populated_verification_metadata(self) -> None:
+    def test_draft_has_no_historical_verification_binding(self) -> None:
         data = json.loads(
             (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
         )
-        # Draft inputs may retain populated verification metadata: status is the
-        # activation switch, while preserving the fields keeps historical evidence
-        # inspectable without rebinding it to a new runtime or image pair.
-        data["verification"] = {
-            "ci_run_id": "30125523924",
-            "publication_run_id": "30125524008",
-            "evidence_record_ids": [
-                "record-image-publication-verification.md",
-                "record-gitlab-hostile-mr.md",
-                "record-gitlab-current-image.md",
-                "record-github-current-image.md",
-                "record-github-revision-failures.md",
-                "record-github-default-model-smoke.md",
-            ],
-            "evidence_waivers": {
-                "record-github-revision-failures.md": (
-                    "SPEC-34 revision races and oversized-diff HTTP 406 are "
-                    "regression-covered by test_input_bundle.py and "
-                    "test_github_platform.py across all three prepare boundaries "
-                    "plus the 406 path; the live windows are milliseconds wide "
-                    "and two were never reproducible live, and this row is "
-                    "classified live-optional and non-gating in the evidence "
-                    "matrix."
-                )
-            },
-        }
+        self.assertIsNone(data["verification"]["ci_run_id"])
+        self.assertIsNone(data["verification"]["publication_run_id"])
+        self.assertEqual(data["verification"]["evidence_record_ids"], [])
+        self.assertEqual(data["verification"]["evidence_waivers"], {})
         self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
 
     def test_active_happy_path_matches_every_template(self) -> None:
@@ -630,7 +608,7 @@ class ReleaseToolTests(unittest.TestCase):
 
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
-            "release/1.0.0.md",
+            "release/1.0.1.md",
             "docs/evidence/github.md",
             "ai-review/src/ai_review/config.py",
         ]
@@ -676,7 +654,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "disallowed paths"),
             ):
                 build_manifest(
-                    "v1.0.0",
+                    "v1.0.1",
                     inputs["runtime_source"],
                     "d" * 40,
                     release_inputs,
@@ -690,9 +668,9 @@ class ReleaseToolTests(unittest.TestCase):
             inputs, release_inputs = self._write_active_inputs(root)
             runtime_source = inputs["runtime_source"]
             for tag, release_commit, message in (
-                ("v1.0.1", "d" * 40, "tag must be v1.0.0"),
-                ("v1.0.0", "BAD", "release commit must be"),
-                ("v1.0.0", runtime_source, "must differ"),
+                ("v1.0.0", "d" * 40, "release tag must be v1.0.1"),
+                ("v1.0.1", "BAD", "release commit must be"),
+                ("v1.0.1", runtime_source, "must differ"),
             ):
                 with (
                     self.subTest(tag=tag, release_commit=release_commit),
@@ -710,7 +688,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "must descend"),
             ):
                 build_manifest(
-                    "v1.0.0",
+                    "v1.0.1",
                     runtime_source,
                     "d" * 40,
                     release_inputs,
@@ -725,7 +703,7 @@ class ReleaseToolTests(unittest.TestCase):
             cases = (
                 ("release_inputs_sha256", "0" * 64, "release-input hash"),
                 ("changed_paths", [], "changed_paths"),
-                ("tag", "v1.0.1", "tag must be v1.0.0"),
+                ("tag", "v1.0.0", "release tag must be v1.0.1"),
                 ("release_commit", "BAD", "release commit must be"),
                 ("release_commit", manifest["runtime_source"], "must differ"),
             )

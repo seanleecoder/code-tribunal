@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: $0 <reviewer-image>" >&2
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <reviewer-image> <cursor-model>" >&2
   exit 2
 fi
 if [ -z "${CURSOR_API_KEY:-}" ]; then
@@ -15,6 +15,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 image="$1"
+cursor_model="$2"
 smoke_dir="$(mktemp -d)"
 cleanup() {
   if rm -rf "$smoke_dir" 2>/dev/null; then
@@ -237,9 +238,9 @@ run_cursor_probe() {
     sh -euc '
       export HOME=/cursor-home
       export TMPDIR=/permission-tmp
-      printf "%s\n" "$1" \
-        | cursor-agent -p --output-format json --trust --sandbox disabled --mode ask --model auto
-    ' sh "$3"
+      printf "%s\n" "$2" \
+        | cursor-agent -p --output-format json --trust --sandbox disabled --mode ask --model "$1"
+    ' sh "$cursor_model" "$3"
 }
 
 workspace_before_read="$(workspace_manifest)"

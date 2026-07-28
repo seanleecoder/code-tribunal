@@ -13,7 +13,7 @@ wins.
 | SPEC-06 | Complete | Trust auditor/template tests plus the recorded 1.0.0 [hostile-MR evidence](../evidence/record-gitlab-hostile-mr.md) (scoped: unprotected-ref MR in the hardened child). |
 | SPEC-07–19 | Complete | State, consensus, correctness, platform, supply-chain, and reviewer optimization changes are represented by tests/changelog. |
 | [SPEC-20](spec-20-reviewer-usage-accounting.md), [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed | Reviewer usage accounting and project learning/rules are not advertised product features. |
-| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental); historical supporting evidence; next-release acceptance outstanding | The opt-in Cursor reviewer ships disabled: adapter, config block, `CURSOR_API_KEY` credential separation, supply-chain notes, and the permission smoke harness landed with unit coverage. The supplied [GitLab](https://gitlab.burdaverlag.dev/tracdelight/clicktracking/-/pipelines/185695) and [GitHub](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563) runs prove real execution and valid finding/critique artifacts at historical coordinates. Before the next release, pin the exact Composer model id, align the smoke/preflight with it, run fresh final-image real-key evidence, and complete the hostile real-image permission-denial check. The [supplemental record](../evidence/record-cursor-real-runs.md) is not a release-gating record. |
+| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental); historical supporting evidence; 1.0.1 acceptance outstanding | The opt-in Cursor reviewer ships disabled: adapter, config block, `CURSOR_API_KEY` credential separation, supply-chain notes, and the permission smoke harness landed with unit coverage. Historical private GitLab pipeline `185695` and [public GitHub run](https://github.com/seanleecoder/code-tribunal/actions/runs/30080420563) prove real execution and valid finding/critique artifacts at historical coordinates. The canonical [SPEC-21 acceptance checklist](spec-21-cursor-cli-reviewer.md#101-closure-checklist) covers the remaining 1.0.1 decisions and evidence. The [supplemental record](../evidence/record-cursor-real-runs.md) is not a release-gating record. |
 | [SPEC-23–30](../history/specs/README.md#completed-specifications) | Complete history | Implemented on `main`; requirements archived in [history specs](../history/specs/README.md) for provenance. |
 | [SPEC-31–36](../history/specs/README.md#completed-specifications) | Complete on `main` | Snapshot containment, reviewer validity, artifact/config integrity, revision binding, distribution contract, and quality/type gates landed. |
 | [SPEC-37](../history/specs/spec-37-final-release-artifacts.md) | Complete at `v1.0.0` | Runtime source `88bc941` frozen, images published and attested, release commit `3ad443e` tagged with a validated external manifest. |
@@ -35,7 +35,7 @@ completed for `v1.0.0`. Remaining order:
 
 1. Keep SPEC-31–36 and SPEC-39 milestone A regression tests green.
 2. Ship the `/dev/null` anchor fix and prove the added-file path live (see the
-   1.0.1 follow-ups in [`release/1.0.0.md`](../../release/1.0.0.md)).
+   1.0.1 follow-ups in [`release/1.0.1.md`](../../release/1.0.1.md)).
 3. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
    in-pipeline trusted-image enforcement).
 4. Continue the post-1.0 review-output sequence in order: SPEC-44 literal-safe
@@ -55,12 +55,9 @@ completed for `v1.0.0`. Remaining order:
    [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
-5. Prepare and close SPEC-21 for the next release before advertising the Cursor
-   reviewer: use the [supplemental real-run record](../evidence/record-cursor-real-runs.md)
-   as historical starting evidence, pin the exact Composer model id, align the
-   smoke/preflight with that id, run fresh final-image real-key review evidence,
-   and pass the hostile real-image permission-denial check. Keep the reviewer
-   disabled until the complete scoped evidence set passes.
+5. Prepare and close [SPEC-21](spec-21-cursor-cli-reviewer.md) for 1.0.1 before
+   advertising the Cursor reviewer. Its acceptance checklist is canonical; keep
+   the reviewer disabled until the complete scoped evidence set passes.
 
 ## Historical indexes
 
