@@ -16,9 +16,8 @@ _CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.
 _BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _GITHUB_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
-_PUBLISH_WORKFLOW = (
-    Path(__file__).resolve().parents[3] / ".github" / "workflows" / "publish-ai-review-images.yml"
-)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
@@ -663,8 +662,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "CURSOR_SMOKE_MODEL:",
             'if [[ -z "$CURSOR_API_KEY" ]]',
             "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
+            (
+                "Cursor permission smoke skipped: CURSOR_API_KEY is not configured. "
+                "Keep Cursor disabled."
+            ),
             'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]',
             "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
+            (
+                "Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only "
+                "'auto' placeholder. Keep Cursor disabled."
+            ),
             "discovery-only 'auto' placeholder",
             "Pin an exact Composer model slug",
             "Keep Cursor disabled",
@@ -677,11 +684,38 @@ class GitLabCiTemplateTests(unittest.TestCase):
         smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
         self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
         self.assertEqual(smoke_model.group(1), configured_cursor_model)
+        missing_key_skip = cursor_smoke.index('if [[ -z "$CURSOR_API_KEY" ]]')
+        missing_key_annotation = cursor_smoke.index(
+            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
+            missing_key_skip,
+        )
+        missing_key_summary = cursor_smoke.index(
+            'echo "- Cursor permission smoke skipped: CURSOR_API_KEY is not configured. '
+            'Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"',
+            missing_key_skip,
+        )
+        missing_key_exit = cursor_smoke.index("exit 0", missing_key_skip)
+        self.assertLess(missing_key_skip, missing_key_annotation)
+        self.assertLess(missing_key_annotation, missing_key_summary)
+        self.assertLess(missing_key_summary, missing_key_exit)
         auto_skip = cursor_smoke.index('if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]')
+        auto_annotation = cursor_smoke.index(
+            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
+            auto_skip,
+        )
+        auto_summary = cursor_smoke.index(
+            'echo "- Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only '
+            "'auto' placeholder. Keep Cursor disabled.\" >> \"$GITHUB_STEP_SUMMARY\"",
+            auto_skip,
+        )
+        auto_exit = cursor_smoke.index("exit 0", auto_skip)
         smoke_invocation = cursor_smoke.index(
             'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" '
             '"$CURSOR_SMOKE_MODEL"'
         )
+        self.assertLess(auto_skip, auto_annotation)
+        self.assertLess(auto_annotation, auto_summary)
+        self.assertLess(auto_summary, auto_exit)
         self.assertLess(auto_skip, smoke_invocation)
         self.assertIn("exit 0", cursor_smoke[auto_skip:smoke_invocation])
         self.assertIn("needs: build-preflight", cursor_smoke)
@@ -698,7 +732,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
     def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
-            self.skipTest("GitHub publish workflow is not present in this checkout")
+            if Path("/opt") == _REPO_ROOT:
+                self.skipTest("GitHub publish workflow is absent from the /opt runtime image")
+            self.fail(f"GitHub publish workflow is missing from checkout: {_PUBLISH_WORKFLOW}")
 
         placeholder = "auto"
         config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))

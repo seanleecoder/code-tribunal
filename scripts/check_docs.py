@@ -15,6 +15,7 @@ import yaml
 from ai_review.pipeline_trust import find_trust_issues
 
 SCRIPTS = Path(__file__).resolve().parent
+# Support importlib/module loading when scripts/ is not already on sys.path.
 sys.path.insert(0, str(SCRIPTS))
 
 from release_common import ReleaseValidationError, validate_release_version  # noqa: E402

@@ -102,6 +102,12 @@ class AdapterEndpointValidationTests(unittest.TestCase):
 
         self.assertIsNone(error)
 
+    def test_model_id_requires_full_match(self) -> None:
+        error = _cli_reviewer_validation_error("codex", "openai/gpt-5.6-luna\n")
+
+        self.assertIsNotNone(error)
+        self.assertIn("unsupported characters", error)
+
 
 class AdapterRunnerOutputTests(unittest.TestCase):
     def test_loads_direct_reviewer_json(self) -> None:
@@ -702,6 +708,35 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "broken.json")
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
+
+    def test_trailing_newline_model_is_rejected_before_adapter_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8").replace(
+                    "    model: codex-model",
+                    "    model: |\n      openai/gpt-5.6-luna\n",
+                ),
+                encoding="utf-8",
+            )
+            sentinel = Path(tmp) / "adapter-invoked"
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertFalse(sentinel.exists())
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "model_error")
+            self.assertEqual(batch["model"], "openai/gpt-5.6-luna\n")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "ReviewerConfigValidation")
 
     def test_local_mock_without_allow_flag_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -220,6 +220,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
         cases = (
             ("", "exact Composer model slug"),
             ("composer model", "unsupported characters"),
+            ("cursor/composer-1\n", "unsupported characters"),
             ("auto", "exact Composer model slug"),
         )
         for model, expected_error in cases:

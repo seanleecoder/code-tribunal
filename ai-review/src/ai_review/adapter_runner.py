@@ -578,7 +578,7 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     # and, for opencode, is interpolated into a generated JSON config, so a value
     # containing quotes/backslashes/whitespace could corrupt or inject config.
     # Rejecting here writes a clean model_error and the adapter is never spawned.
-    if not _MODEL_ID_RE.match(model or ""):
+    if not _MODEL_ID_RE.fullmatch(model or ""):
         return f"model id has unsupported characters: {model!r}"
     # The OpenRouter endpoint remains a hard exfiltration boundary for the CLI
     # reviewers and must stay the canonical host. Claude uses Anthropic's
