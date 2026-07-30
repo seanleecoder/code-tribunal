@@ -5,6 +5,7 @@ Status: passed
 Release-runtime-source: 88bc9412b283d4a44328ab3ffd9f9708b0290f8e
 Release-base-digest: sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
 Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
+Release-evidence-waived: Credential withholding, prepare fail-closed behavior, and trusted-composition auditing are unchanged between R(1.0.0) 88bc9412b283d4a44328ab3ffd9f9708b0290f8e and R(1.0.1) 5817e99f8d831a816056feb2dfd44fac85b5196c: input_bundle.py, gitlab_platform.py, gate.py, and scripts/verify_pipeline_trust.py carry no diff. The row is regression-covered by test_verify_pipeline_trust.py and the fork-secret withholding cases in test_input_bundle.py, and it passed live at 1.0.0 against the prior image pair recorded above.
 > **1.0.1 disposition: to be waived, not re-run.** The pass below is scoped to the
 > 1.0.0 source and image pair and does not certify the 1.0.1 pair. The intended
 > waiver basis is that `input_bundle.py`, `gitlab_platform.py`, `gate.py`, and
@@ -14,7 +15,7 @@ Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2
 > `Release-evidence-waived:` line is added **at activation**, together with its
 > registration under `verification.evidence_waivers` — the draft artifact must carry
 > no verification binding. See the
-> [1.0.1 scoped campaign](README.md#101-scoped-campaign) and the
+> [1.0.1 scoped campaign](README.md#101-evidence-matrix) and the
 > [change-impact triage rule](../development/release-process.md#scoping-the-live-campaign).
 
 > Sanitized record. Never record credentials, CLI session material, proprietary

@@ -11,6 +11,7 @@ Status: pending
 Release-runtime-source: `<40-character-runtime-source-sha>`
 Release-base-digest: `sha256:<64-character-base-image-digest>`
 Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
+Release-evidence-waived: The Codex max and OpenCode xhigh routes are unvalidated at the real providers for 1.0.1. Effort levels are passed through without coercion, and a malformed model or effort value is rejected with model_error before the reviewer CLI is invoked, so a provider-side rejection surfaces as an adapter failure rather than a silent degradation to a different effort level. This record remains pending and must be completed before either route is advertised as validated.
 > **1.0.1 disposition: to be waived, not run.** These routes stay unproven at real
 > providers for this release. The intended waiver basis is that effort levels are
 > passed through without coercion and a malformed model or effort value is rejected
@@ -20,7 +21,7 @@ Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
 > activation**, together with its registration under
 > `verification.evidence_waivers`. Provider rejection, when the checks do run, is a
 > failed validation — never a reason to omit or coerce the effort level. See the
-> [1.0.1 scoped campaign](README.md#101-scoped-campaign).
+> [1.0.1 scoped campaign](README.md#101-evidence-matrix).
 
 This record covers the first real-provider route checks for the non-default
 effort settings: Codex with requested effort `max` and OpenCode with requested
