@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project follows semantic
 versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- `test_release_tools.py` no longer assumes the checked-in release artifact is an
+  unbound draft. The repo-state guard is scoped by declared status — a draft must carry
+  no verification binding, an active release must carry one — and the manifest tests
+  derive the release version from the artifact instead of hardcoding it. The first
+  assumption broke `make quality` on any release commit; the second broke it on every
+  post-release draft reset.
+
 ## [1.0.1] - 2026-07-30
 
 ### Known issues

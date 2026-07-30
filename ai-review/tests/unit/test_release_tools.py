@@ -22,6 +22,15 @@ REQUIRED_RELEASE_SCRIPTS = (
     "release_common.py",
 )
 V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290afeda41156616fd"
+
+# Derived from the checked-in artifact rather than hardcoded, so these tests survive
+# the per-release version bump and the draft reset that follows a release. Hardcoding
+# the version made the manifest tests fail on every reset.
+DRAFT_RELEASE_VERSION = json.loads(
+    (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
+)["release_version"]
+DRAFT_RELEASE_TAG = f"v{DRAFT_RELEASE_VERSION}"
+DRAFT_RELEASE_NOTES = f"release/{DRAFT_RELEASE_VERSION}.md"
 if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
 ORIGINAL_SYS_PATH = sys.path.copy()
@@ -201,7 +210,7 @@ class ReleaseToolTests(unittest.TestCase):
         self, root: Path
     ) -> tuple[dict[str, object], dict[str, object], Path, list[str]]:
         inputs, release_inputs = self._write_active_inputs(root)
-        changed_paths = ["CHANGELOG.md", "release/1.0.1.md"]
+        changed_paths = ["CHANGELOG.md", DRAFT_RELEASE_NOTES]
         with (
             mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
             mock.patch(
@@ -209,7 +218,7 @@ class ReleaseToolTests(unittest.TestCase):
             ),
         ):
             manifest = build_manifest(
-                "v1.0.1",
+                DRAFT_RELEASE_TAG,
                 inputs["runtime_source"],
                 "d" * 40,
                 release_inputs,
@@ -223,15 +232,39 @@ class ReleaseToolTests(unittest.TestCase):
         )
         validate_release_inputs(data, REPO_ROOT)
 
-    def test_draft_has_no_historical_verification_binding(self) -> None:
+    def test_checked_in_artifact_matches_its_declared_status(self) -> None:
+        """A draft must carry no verification binding; an active release must.
+
+        Between releases the checked-in artifact is a draft, and it must not carry a
+        stale verification binding — that is the failure mode where `main` claims
+        evidence for a release it does not have. Inside a release commit the same file
+        is `active` and must carry the binding, so this guard is scoped by status
+        rather than asserting the draft shape unconditionally.
+        """
         data = json.loads(
             (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
         )
-        self.assertIsNone(data["verification"]["ci_run_id"])
-        self.assertIsNone(data["verification"]["publication_run_id"])
-        self.assertEqual(data["verification"]["evidence_record_ids"], [])
-        self.assertEqual(data["verification"]["evidence_waivers"], {})
-        self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
+        verification = data["verification"]
+
+        if data["status"] == "draft":
+            self.assertIsNone(verification["ci_run_id"])
+            self.assertIsNone(verification["publication_run_id"])
+            self.assertEqual(verification["evidence_record_ids"], [])
+            self.assertEqual(verification["evidence_waivers"], {})
+            self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
+            return
+
+        self.assertEqual(data["status"], "active")
+        self.assertIsNotNone(verification["ci_run_id"])
+        self.assertIsNotNone(verification["publication_run_id"])
+        self.assertNotEqual(verification["evidence_record_ids"], [])
+        # Active validation returns the declared waivers, so it is not necessarily
+        # empty; it raises on partial, mismatched, or unregistered-waiver evidence.
+        waivers = validate_release_inputs(data, REPO_ROOT)
+        self.assertEqual(
+            sorted(record_id for record_id, _reason in waivers),
+            sorted(verification["evidence_waivers"]),
+        )
 
     def test_1_0_0_release_notes_remain_tag_identical(self) -> None:
         release_notes = (REPO_ROOT / "release/1.0.0.md").read_bytes()
@@ -275,6 +308,10 @@ class ReleaseToolTests(unittest.TestCase):
             root = Path(temporary)
             self._tree(root)
             data = self._draft(root)
+            # Pin the status: this exercises the draft validator against a synthetic
+            # tree, and _draft() inherits status from the real checked-in artifact,
+            # which is `active` inside a release commit.
+            data["status"] = "draft"
             data["release_version"] = "1.0.2-rc.1"
             data["verification"] = {
                 "ci_run_id": "synthetic-ci-1",
@@ -671,7 +708,7 @@ class ReleaseToolTests(unittest.TestCase):
 
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
-            "release/1.0.1.md",
+            DRAFT_RELEASE_NOTES,
             "docs/evidence/github.md",
             "ai-review/src/ai_review/config.py",
         ]
@@ -717,7 +754,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "disallowed paths"),
             ):
                 build_manifest(
-                    "v1.0.1",
+                    DRAFT_RELEASE_TAG,
                     inputs["runtime_source"],
                     "d" * 40,
                     release_inputs,
@@ -731,9 +768,9 @@ class ReleaseToolTests(unittest.TestCase):
             inputs, release_inputs = self._write_active_inputs(root)
             runtime_source = inputs["runtime_source"]
             for tag, release_commit, message in (
-                ("v1.0.0", "d" * 40, "release tag must be v1.0.1"),
-                ("v1.0.1", "BAD", "release commit must be"),
-                ("v1.0.1", runtime_source, "must differ"),
+                ("v0.0.0", "d" * 40, f"release tag must be {DRAFT_RELEASE_TAG}"),
+                (DRAFT_RELEASE_TAG, "BAD", "release commit must be"),
+                (DRAFT_RELEASE_TAG, runtime_source, "must differ"),
             ):
                 with (
                     self.subTest(tag=tag, release_commit=release_commit),
@@ -751,7 +788,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "must descend"),
             ):
                 build_manifest(
-                    "v1.0.1",
+                    DRAFT_RELEASE_TAG,
                     runtime_source,
                     "d" * 40,
                     release_inputs,
@@ -766,7 +803,7 @@ class ReleaseToolTests(unittest.TestCase):
             cases = (
                 ("release_inputs_sha256", "0" * 64, "release-input hash"),
                 ("changed_paths", [], "changed_paths"),
-                ("tag", "v1.0.0", "release tag must be v1.0.1"),
+                ("tag", "v0.0.0", f"release tag must be {DRAFT_RELEASE_TAG}"),
                 ("release_commit", "BAD", "release commit must be"),
                 ("release_commit", manifest["runtime_source"], "must differ"),
             )
@@ -799,7 +836,7 @@ class ReleaseToolTests(unittest.TestCase):
             root = Path(temporary)
             self._tree(root)
             manifest, _inputs, release_inputs, _changed_paths = self._build_valid_manifest(root)
-            manifest["release_version"] = "1.0.0"
+            manifest["release_version"] = "0.0.0"
 
             with self.assertRaisesRegex(ReleaseValidationError, "tagged worktree"):
                 validate_manifest(manifest, release_inputs, root)
