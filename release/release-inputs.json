@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "ac98a7f6cf3cd8ef9b24c1203ebc55c7b3acba57321f7271500a970ec080f434"
+      "sha256": "650cdde3fa38a78f14d7dca33e4f8d511b622f89fc1a83121418008ae02bf848"
     },
     "configuration": {
       "files": [
@@ -59,16 +59,16 @@
   },
   "images": {
     "base": {
-      "digest": null,
+      "digest": "sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": null,
+      "digest": "sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.1",
-  "runtime_source": null,
+  "runtime_source": "5817e99f8d831a816056feb2dfd44fac85b5196c",
   "schema_version": "code_tribunal.release_inputs.v1",
   "status": "draft",
   "verification": {
