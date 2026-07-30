@@ -11,7 +11,7 @@ pre-v3 threads that the body-refresh check depends on.
 |---|---|---|
 | GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, required-check ruleset |
 | GitLab | <https://gitlab.com/seanleecoder/code-tribunal-demo> (project id `84667714`) | consumer: `.gitlab-ci.yml`, protected/masked variables, runner |
-| GitLab | `seanleecoder/code-tribunal-ci-template` | protected template project holding `ai-review/ci/` |
+| GitLab | `seanleecoder/code-tribunal-ci-template` (project id `84667707`) | protected template project holding `ai-review/ci/` |
 
 Both consumers are deliberately public and hold no proprietary content, which is why
 naming them here does not violate the sanitization rule in
@@ -87,29 +87,56 @@ note below). Closing the PR is fine; deleting the comment or the branch is not.
 
 ## GitLab consumer — `seanleecoder/code-tribunal-demo`
 
-Public, project id `84667714`. Requires, and already has:
+Public, project id `84667714`. Verified present:
 
 - A runner.
-- Protected **and** masked `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope).
-- **Pipelines must succeed** enabled, which is what withholds the merge
-  (`detailed_merge_status: ci_must_pass`).
-- A `.gitlab-ci.yml` referencing the protected template project
-  `seanleecoder/code-tribunal-ci-template` at one pinned SHA — **the same SHA for
-  both includes**. 1.0.0 used `97e05fddf9f5466ccee385344a7aaeac500e4aa2`. The
-  hardened child topology requires exactly two same-project, same-SHA includes with
-  `inherit.variables: false` and both forwarding flags disabled.
+- `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
+  masked**. The four behavioral toggles — `AI_REVIEW_CRITIQUE_ENABLED=true`,
+  `AI_REVIEW_MERGE_GATE_ENABLED=true`, `AI_REVIEW_OPENCODE_ENABLED=true`,
+  `AI_REVIEW_CURSOR_ENABLED=false` — are deliberately *unprotected*, so they apply on
+  any ref including the hostile probe.
+- `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge
+  (`detailed_merge_status: ci_must_pass`). `merge_method = merge`.
+- **Mock variables absent.** `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_ALLOW_LOCAL_MOCK`,
+  `AI_REVIEW_REQUIRE_REAL_*`, and `AI_REVIEW_MOCK_SCENARIO` are all gone, which is
+  the correct resting state and means 1.0.0's demo-hygiene item was completed here.
+  Re-verify before every Chain A run regardless — these are project-wide and sticky,
+  and a stale `AI_REVIEW_LOCAL_MOCK=1` silently invalidates a real run.
+- A `.gitlab-ci.yml` in the hardened child topology: a single `ai_review` trigger job
+  with `inherit.variables: false`, `strategy: mirror`, both
+  `forward.yaml_variables` and `forward.pipeline_variables` false, and exactly two
+  same-project includes — `review-child.gitlab-ci.yml` and `review.gitlab-ci.yml` —
+  at **one identical SHA**, currently `97e05fddf9f5466ccee385344a7aaeac500e4aa2`.
+
+The **three GitLab pin variables** live in the template project's
+`ai-review/ci/review.gitlab-ci.yml` `variables:` block, not in the consumer, and must
+be replaced together: `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and
+`AI_REVIEW_TRUSTED_IMAGE_SHA`. All three still carry the 1.0.0 pair. Push the update
+as a new template commit and then point **both** consumer includes at that new SHA.
 
 **Two branch classes, and the distinction is load-bearing:**
 
 - **Protected** scratch source branch for every lifecycle MR (Chain A and Chain B).
   The protected `GITLAB_TOKEN` injects only on protected refs; from an unprotected
-  branch it is withheld and prepare and posting fail outright.
+  branch it is withheld and prepare and posting fail outright. Protected today:
+  `main`, `evidence/chain-a-88bc941`, `evidence/chain-b-88bc941`,
+  `evidence/gitlab-lifecycle`, `evidence/gitlab-symlink-containment`, and the five
+  `evidence/p0-symlink-{relative,parent,dangling,directory,proc-environ}` branches.
+  **Protect each new `evidence/chain-*` branch before opening its MR** — this is the
+  single most common cause of a lifecycle chain failing for the wrong reason.
 - **Unprotected** source branch (or a fork) for the hostile-MR probe, where the
-  withholding *is* the result being measured. 1.0.0 used MR `!11` (protected,
-  lifecycle) and MR `!12` (unprotected, hostile), plus the pre-existing
-  `evidence/p0-symlink-*` branches which already carry `120000` symlink tree entries
-  — reuse those rather than trying to create one through the commits API, which
-  cannot make a symlink entry.
+  withholding *is* the result being measured. Unprotected today:
+  `hostile/unprotected-88bc941`, `evidence/p0-hostile-forwarding`, and
+  `evidence/gitlab-hostile-boundary`.
+
+The `evidence/p0-symlink-*` branches already carry `120000` symlink tree entries —
+reuse them rather than trying to create one through the commits API, which cannot make
+a symlink entry. That is the recorded way to close the live symlink-variant gap
+without SSH push access.
+
+MR history: 1.0.0 used `!10` (Chain A, protected), `!11` (Chain B, protected), and
+`!12` (hostile, unprotected `hostile/unprotected-88bc941`). `!1`–`!9` are the earlier
+P0 symlink and hostile-forwarding fixtures. All are closed; none should be deleted.
 
 Mock toggles go in as **project** CI/CD variables, not manual "Run pipeline"
 variables: project variables apply to push-triggered `merge_request_event` pipelines
@@ -121,23 +148,24 @@ with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
 re-driving prepare→post. Project variables are sticky and project-wide: delete them
 before any Chain A run and after every Chain B campaign.
 
-Preserve GitLab note `3601861614` (created `2026-07-25 20:47:29`, updated
+Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, updated
 `20:59:24`) for the same body-refresh reason as the GitHub comment above.
-
-**1.0.0 left one hygiene item unmet here:** stale mock CI/CD variables were not
-confirmed deleted from this project. Verify and delete them before the next Chain A
-run — a stale `AI_REVIEW_LOCAL_MOCK=1` silently invalidates a real run.
 
 ## Per-release setup checklist
 
-1. Confirm the mock variables are absent on **both** consumers.
-2. Copy the workflow / CI template from the new `R`; repin the six GitHub digests and
-   the three GitLab pin variables to the new pair.
-3. Land the adoption change as a PR/MR (required checks block direct pushes); run
-   that PR in mock mode.
-4. Push the new template SHA to `code-tribunal-ci-template` and update **both**
-   includes in the GitLab consumer to it.
-5. Confirm the GitHub ruleset still lists `gate` as required, and that GitLab
-   **Pipelines must succeed** is still on. Enforcement being off silently turns the
-   blocking step into a self-report.
-6. Run Chain A first, then Chain B; delete the mock variables afterwards.
+1. Confirm the mock variables are absent on **both** consumers. Both are currently
+   clean; verify anyway, because a leftover toggle turns a real run into a fake one.
+2. Copy the workflow / CI template from the new `R`; repin the six GitHub container
+   digests and the three GitLab pin variables (`AI_REVIEW_BASE_IMAGE`,
+   `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the new pair.
+3. Land the GitHub adoption change as a PR — the required check blocks direct pushes
+   to `main` — and run that PR in mock mode so it costs nothing.
+4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then
+   point **both** consumer includes at that new SHA. Two different SHAs, or a stale
+   template pin, means the evidence exercised the wrong images.
+5. Confirm the GitHub ruleset still lists `gate` as required and GitLab
+   `only_allow_merge_if_pipeline_succeeds` is still true. Enforcement being off
+   silently turns the blocking step into a self-report.
+6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
+7. Run Chain A first, then Chain B; delete the mock variables afterwards and confirm
+   they are gone.
