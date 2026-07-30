@@ -1,82 +1,68 @@
-# Evidence record: image publication verification / 2026-07-25
+# Evidence record: registry / image publication verification / 2026-07-30
 
 Status: passed
 
-Release-runtime-source: 88bc9412b283d4a44328ab3ffd9f9708b0290f8e
-Release-base-digest: sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
-Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
+Release-runtime-source: 5817e99f8d831a816056feb2dfd44fac85b5196c
+Release-base-digest: sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+Release-reviewer-digest: sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d
+
+> Sanitized record. Never record credentials, CLI session material, proprietary
+> source, or sensitive model content.
+
+Step 0 of the runbook. This row is **never waivable** — the digests change on every
+release by construction.
 
 ## Identity
 
-- Registry: GitHub Container Registry
-- Repository: `seanleecoder/code-tribunal`
-- Runtime source `R`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
-- Publication workflow run: `30125524008` (`publish-ai-review-images.yml`, `push` to `main`, attempt 1)
-- Quality (CI) run for `R`: `30125523924`
-- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
-- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
-- Platform: single-platform `linux/amd64` manifest per subject
+- Registry: GHCR (`ghcr.io/seanleecoder/code-tribunal`), public
+- Date/time: 2026-07-30, ~11:35–11:40 UTC
+- Runtime source `R`: `5817e99f8d831a816056feb2dfd44fac85b5196c`
+- Publication run: `30536734285` (`publish-ai-review-images.yml`, on push to `main`)
+- Quality run for `R`: `30536734260` (`ci.yml`, `make quality`, success)
+- Image tag: `1.0-5817e99f8d831a816056feb2dfd44fac85b5196c` on both subjects
 
-## Anonymous pull result
+## Preconditions
 
-On 2026-07-25, both subjects were resolved with `DOCKER_CONFIG` pointed at a
-freshly created directory containing only `{}` — no stored GHCR credentials and
-no credential helper. `docker manifest inspect --verbose` against
-`ai-review-base:1.0-<R>` and `ai-review-reviewer:1.0-<R>` succeeded and returned
-descriptor digests `sha256:f2a433ac…b403896` and `sha256:2fd84c43…02591fe`
-respectively, each with platform `linux/amd64`. The tag-to-digest mapping
-therefore resolves anonymously and matches the digests pinned in
-`release/release-inputs.json`.
+`ai-review/src` is copied into the **base** image and the reviewer is built `FROM`
+that base, so both images had to be rebuilt from `R` together. The 1.0.1 anchor,
+render, and mock changes all live in `ai-review/src`; a reviewer-only rebuild would
+have contained none of them.
 
-## Revision-label result
+## Actual result
 
-`docker buildx imagetools inspect --format '{{json .Image}}'` on each
-digest-pinned subject returned exactly two labels:
+Both subjects verified independently:
 
-- `org.opencontainers.image.revision = 88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
-- `org.opencontainers.image.source = https://github.com/seanleecoder/code-tribunal`
+| Check | base | reviewer |
+|---|---|---|
+| Digest | `sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03` | `sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d` |
+| Anonymous resolution | matches | matches |
+| `org.opencontainers.image.revision` | `= R` | `= R` |
+| Provenance attestation | verified | verified |
 
-Both the base and reviewer subjects carry the same revision, equal to `R`.
-
-## Attestation result
-
-`gh attestation verify oci://…@<digest> --repo seanleecoder/code-tribunal
---format json` exited 0 for both subjects. The verified provenance certificates
-reported, identically for base and reviewer:
-
-- `sourceRepositoryURI`: `https://github.com/seanleecoder/code-tribunal`
-- `sourceRepositoryDigest`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
-- `buildConfigURI`: `…/.github/workflows/publish-ai-review-images.yml@refs/heads/main`
-- `runInvocationURI`: `…/actions/runs/30125524008/attempts/1`
-- Statement subject name: `ghcr.io/seanleecoder/code-tribunal/ai-review-<role>`
-
-The `runInvocationURI` matches the recorded publication run, and the
-`sourceRepositoryDigest` matches `R`, so both images are attested as built from
-exactly `R` by the expected workflow on `refs/heads/main`.
+- **Anonymous resolution** used `DOCKER_CONFIG` pointed at a fresh directory
+  containing only `{}`, with `docker manifest inspect --verbose`, so no stored
+  credential could have been consulted. Both tags resolved to the digests above.
+- **Revision labels** read with
+  `docker buildx imagetools inspect --format '{{json .Image}}'` (the normal config,
+  because an empty `DOCKER_CONFIG` also hides CLI plugins). Both equal `R` exactly.
+- **Attestations** verified with `gh attestation verify oci://… --repo
+  seanleecoder/code-tribunal`, one attestation per subject, each with
+  `runInvocationURI` = `…/actions/runs/30536734285/attempts/1`,
+  `sourceRepositoryURI` = the product repository, and `sourceRepositoryDigest` = `R`.
+  Each statement's `subject` names its own image and digest.
 
 ## Audit
 
-- Artifacts inspected: registry manifests for both subjects, image config labels
-  for both subjects, provenance attestation bundles for both subjects.
-- Credential values absent: the anonymous resolution used an empty Docker config;
-  no credential values appear in this record. The attestation JSON contains only
-  public certificate and provenance fields.
-- Known unexercised paths: no multi-architecture manifest list is published (both
-  subjects are single-platform `linux/amd64`); registry deletion/immutability
-  policy and cosign-style keyed signatures are not exercised.
+- No credential values were passed on any command line; the anonymous check
+  deliberately isolated the Docker config rather than unsetting it.
+- **Known unexercised paths:** the `1.0` floating tag is mutable and was not
+  validated; consumers must pin by `sha256:` digest. Only `linux/amd64` was
+  inspected.
 
 ## Verdict
 
-Scoped pass for these exact immutable subjects at runtime source
-`88bc9412b283d4a44328ab3ffd9f9708b0290f8e`: both images are anonymously
-resolvable by digest, carry an OCI revision label equal to `R`, and have GitHub
-provenance attestations bound to publication run `30125524008` on this
-repository. This proves publication and provenance only; it makes no claim about
-runtime review behavior, which the lifecycle and hostile-MR records cover.
-
-## Superseded candidates
-
-Historical provenance only, not a release binding: runtime source
-`15d424feea730a04338ed423bf93b8797d807bbc` (publication run `29845398524`, base
-`sha256:28ddb7ed…f97eee`, reviewer `sha256:cba20164…dbe7a8d`) and the earlier
-`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` candidate.
+Scoped pass. Both 1.0.1 candidate images resolve anonymously to the recorded digests,
+carry an OCI revision label equal to the frozen runtime source `5817e99`, and bear
+provenance attestations bound to publication run `30536734285` and to that same source
+commit. It does not establish anything about image contents beyond the labels and
+attestations, nor about non-amd64 platforms.
