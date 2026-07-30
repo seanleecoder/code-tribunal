@@ -110,6 +110,47 @@ Two invariants that have caught operators out, and that no path-level check prov
   earlier `Release-runtime-source` never certifies a later runtime source, however
   small the diff. Re-stamp or waive; do not reinterpret.
 
+## Tag signing
+
+Release tags are signed with SSH, not OpenPGP. `v1.0.0` and `v1.0.1` are annotated but
+**unsigned** — the process prescribed `git tag -s` while no signing key was configured,
+so the command silently could not be honoured. Signing is established from `v1.0.2`
+onward; do not retag a published release to add a signature.
+
+Repository-scoped configuration (already applied in this checkout; re-apply after a
+fresh clone):
+
+```bash
+git config gpg.format ssh
+git config user.signingkey ~/.ssh/<your-key>.pub
+git config tag.gpgsign true
+git config gpg.ssh.allowedSignersFile .github/allowed_signers
+```
+
+The signing key must be loaded in `ssh-agent`, or `git tag -s` fails with
+`unable to sign the tag`. A passphrase-protected key that is not in the agent is the
+usual cause; `ssh-add` it first.
+
+Verify a tag locally:
+
+```bash
+git verify-tag v1.0.2     # expects: Good "git" signature for <signer>
+```
+
+Verification resolves signers from [`.github/allowed_signers`](../../.github/allowed_signers).
+Add an entry when a new releaser joins, and remove one when they leave — an
+unlisted key verifies as `No principal matched`, not as a bad signature.
+
+For GitHub to display the tag as **Verified**, the same public key must be registered
+on the account as a *signing* key (distinct from an authentication key):
+
+```bash
+gh auth refresh -h github.com -s admin:ssh_signing_key
+gh api --method POST user/ssh_signing_keys -f title=<name> -f key="$(cat ~/.ssh/<your-key>.pub)"
+```
+
+That is an account-level action and is not automated here.
+
 ## Validating a historical manifest
 
 An external manifest is bound to the release-inputs artifact and checked-file

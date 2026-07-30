@@ -23,6 +23,8 @@ REQUIRED_RELEASE_SCRIPTS = (
 )
 V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290afeda41156616fd"
 
+if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
+    raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
 # Derived from the checked-in artifact rather than hardcoded, so these tests survive
 # the per-release version bump and the draft reset that follows a release. Hardcoding
 # the version made the manifest tests fail on every reset.
@@ -31,8 +33,6 @@ DRAFT_RELEASE_VERSION = json.loads(
 )["release_version"]
 DRAFT_RELEASE_TAG = f"v{DRAFT_RELEASE_VERSION}"
 DRAFT_RELEASE_NOTES = f"release/{DRAFT_RELEASE_VERSION}.md"
-if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
-    raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
 ORIGINAL_SYS_PATH = sys.path.copy()
 sys.path.insert(0, str(SCRIPTS))
 try:

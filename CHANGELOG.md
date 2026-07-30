@@ -7,6 +7,18 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- The runtime images no longer ship test code. `base.Dockerfile` copies only
+  `ai-review/tests/fixtures`, which is all the preflight resolves paths from, and the
+  build-time in-image test run is removed. Both CI preflights now bind-mount the
+  checkout's tests into the built image, which still proves that exact image passes the
+  suite — and proves it against the current tests rather than a frozen copy. A
+  test-only change no longer alters image identity.
+- Release tags are signed with SSH from `v1.0.2` onward, verified against
+  `.github/allowed_signers`. `v1.0.0` and `v1.0.1` are annotated but unsigned and are
+  not being retagged.
+
 ### Fixed
 
 - `test_release_tools.py` no longer assumes the checked-in release artifact is an
@@ -14,7 +26,10 @@ versioning.
   no verification binding, an active release must carry one — and the manifest tests
   derive the release version from the artifact instead of hardcoding it. The first
   assumption broke `make quality` on any release commit; the second broke it on every
-  post-release draft reset.
+  post-release draft reset. Its release-version derivation is also placed after the
+  runtime-image skip guard, so importing the module inside an image that has no
+  `release/` directory skips cleanly instead of raising `ImportError` — which broke the
+  image build once before it was caught.
 
 ## [1.0.1] - 2026-07-30
 

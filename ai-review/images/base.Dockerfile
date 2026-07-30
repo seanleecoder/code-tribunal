@@ -27,14 +27,17 @@ COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
-COPY ai-review/tests /opt/ai-review/tests
+# Only the fixtures ship. Preflight resolves diffs and repos from here; the test
+# code itself is mounted at verification time instead, so a production image that
+# processes untrusted diffs and model output carries no test code, and a test-only
+# change no longer alters the image.
+COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
 COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
 
 RUN chmod +x /opt/ai-review/adapters/*.sh \
-    && python -m compileall -q /opt/ai-review/src \
-    && python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+    && python -m compileall -q /opt/ai-review/src
 
 WORKDIR /workspace

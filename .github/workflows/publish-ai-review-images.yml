@@ -64,8 +64,13 @@ jobs:
           set -euo pipefail
           # The suite creates executable fake reviewer CLIs under /tmp. Keep it
           # checkout-independent, but do not mount /tmp noexec for this command.
-          docker run --rm --workdir /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+          # Mount the checkout's tests rather than shipping them in the image. This
+          # still proves "this exact image passes the suite", and it proves it against
+          # the current tests instead of whatever was frozen into the layers.
+          docker run --rm --workdir /tmp \
+            -v "$GITHUB_WORKSPACE/ai-review/tests:/mnt/ai-review-tests:ro" \
+            "$AI_REVIEW_BASE_TAG" \
+            python -m unittest discover -s /mnt/ai-review-tests -p 'test_*.py'
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
           # Run this as early as possible because the complete checkout validator
