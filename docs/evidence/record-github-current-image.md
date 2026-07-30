@@ -1,161 +1,151 @@
-# Evidence record: GitHub current-image lifecycle / 2026-07-25
+# Evidence record: GitHub / current-image lifecycle (Chain B, adding fixture) / 2026-07-30
 
 Status: passed
 
-Release-runtime-source: 88bc9412b283d4a44328ab3ffd9f9708b0290f8e
-Release-base-digest: sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
-Release-reviewer-digest: sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
+Release-runtime-source: 5817e99f8d831a816056feb2dfd44fac85b5196c
+Release-base-digest: sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+Release-reviewer-digest: sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d
 
-Covers evidence-matrix row **GitHub current image**: inline create/update,
-human commands, state persistence, stale head, and the **required blocking
-check**. Procedure: [evidence README, "Current-image lifecycle procedure"](README.md);
-runbook: [Chain B](RUNBOOK.md).
+> Sanitized record. Never record credentials, CLI session material, proprietary
+> source, or sensitive model content.
+
+Chain B of the 1.0.1 campaign: deterministic mock reviewer, zero tokens, driving the
+real platform posting/state/resolve/reopen/gate APIs on one mock finding identity.
+
+**This is the release's headline run.** Its fixture *adds* a file, the path that had
+no live green evidence at any prior release.
 
 ## Identity
 
 - Platform: GitHub Actions (github.com), container jobs, same-repository pull request
-- Date/time: 2026-07-25, ~20:11–20:39 UTC
-- Deployment topology: one workflow, six jobs — `prepare`/`consensus`/`post`/`gate`
-  on the base image, `review`/`critique` on the reviewer image, both digest-pinned
-- Consumer project: `seanleecoder/code-tribunal-demo` (operator-controlled scratch)
-- Change request: PR #6 (`evidence/chain-b-88bc941` → `main`)
-- Workflow run: `30173073036`, attempts 1–7 (one attempt per lifecycle step)
-- Source commit under review: `9cdd2b67b1cc2ab36f9f64fed8283880384f2c44`
-  (a **modification** of `src/access.py` adding a `records[0]` indexing marker, so
-  the mock anchor is stable and resolvable — see the runbook note on added files)
-- Consumer workflow commit: `e619ea922174a09f00863315600346edf0b93109`
-  (workflow blob `f0374fe899b7194d462e5dcdf90ccd5dc90cdeff`), adopted from the
-  canonical template at `R`
-- Runtime source: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`
-- Publication run: `30125524008`
-- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
-- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
+- Date/time: 2026-07-30, ~12:05–12:32 UTC
+- Deployment topology: one workflow, six jobs, both images digest-pinned
+- Consumer project: `seanleecoder/code-tribunal-demo`
+  (see [consumer projects](CONSUMER-PROJECTS.md))
+- Change request: PR #10, branch `evidence/chain-b-5817e99`
+- Workflow run: `30541110970`, attempts 1–6 on one head commit
+- Source commit: `5817e99f8d831a816056feb2dfd44fac85b5196c`
+- Base image: `1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:657d5e70…`
+- Reviewer image: `1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:a4b35e46…`
 
 ## Preconditions
 
-- Ruleset "Require AI Review gate" **active**, requiring status check `gate`;
-  classic protection also lists `gate` as required with `strict: true`.
-- Deterministic mock enabled for the whole chain: `AI_REVIEW_LOCAL_MOCK=1`,
-  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, all four `AI_REVIEW_REQUIRE_REAL_*=0`, and
-  `AI_REVIEW_MOCK_SCENARIO` set per step. Supplied as repository variables through
-  the consumer workflow's `vars.*` indirection, applied to both the `review` and
-  `critique` jobs. **Zero model tokens spent.**
-- Critique enabled; Cursor disabled; merge gate enabled.
-- Expected behavior: one finding identity is created once, left alone on an
-  unchanged rerun, updated in place when only its body changes, resolved and kept
-  resolved by a human command, reopened by a human command, ignored when the head
-  moves, and blocking to the required check throughout.
+- Mock enabled via repository variables only, never a workflow commit:
+  `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, every
+  `AI_REVIEW_REQUIRE_REAL_*=0`, and `AI_REVIEW_MOCK_SCENARIO` flipped between
+  attempts. Because no commit changed, the diff and the mock's selected anchor stayed
+  stable across the whole chain.
+- `gate` required via the ruleset "Require AI Review gate".
+- **Fixture adds `src/audit.py`** carrying a `records[0]` indexing marker, alongside a
+  modified `src/access.py`. GitHub renders the added file with `--- /dev/null`.
+- All mock variables were deleted after the chain and confirmed absent.
 
 ## Actual result
 
-All seven steps ran on one finding identity — issue id
-`4f51a7af75ec457a69f687be2e15363c9c59b047290f8efdcda8784aa2fa9ff9`, GitHub review
-comment / discussion id `3650942127`, anchored to `src/access.py` line 17.
+### Step 1 — `blocking`, finding on the ADDED file (the release claim)
 
-| Step | Scenario | `post_result` | Platform observation | `gate` |
-|---|---|---|---|---|
-| 1. create | `blocking` | `created: 1` | comment `3650942127` created 20:13:42 | failure |
-| 2. unchanged rerun | `blocking` | `created: 0, updated: 0, skipped_unchanged: 1` | no duplicate thread | failure |
-| 3. changed body | `blocking_alt` | `created: 0, **updated: 1**` | same comment `3650942127`, `updated_at` 20:20:37, body now the alternate text | failure |
-| 4. resolve | `blocking` | `resolved: 1, skipped_unchanged: 1, warnings: []` | thread `isResolved=true` | failure |
-| 4b. persistence | `blocking` | `created: 0, updated: 0, skipped_unchanged: 1` | `prior_decisions.settled[0].status = wontfix` | failure |
-| 5. reopen | `blocking` | `skipped_unchanged: 1` | thread `isResolved=false`, same comment id | failure |
-| 7. stale head | `blocking` | `status: stale_head`, all counters `0` | no writes performed | **success** |
+| Seat | Status | raw | accepted | dropped | usable | `accepted == raw` |
+|---|---|---|---|---|---|---|
+| claude | success | 1 | 1 | 0 | true | **yes** |
+| codex | success | 1 | 1 | 0 | true | **yes** |
+| opencode | success | 1 | 1 | 0 | true | **yes** |
+| cursor | skipped | 0 | 0 | 0 | false | n/a (disabled) |
 
-Consensus was `panel_status: full` with `panel_convergence: 1.0`,
-`surface_count: 1`, `drop_count: 0`, `block_merge: true` on every non-stale
-attempt; run identifiers `gh-30173073036-1` … `-7`.
+Consensus `panel_status: full`, `surface_count: 1`, `drop_count: 0`,
+`panel_convergence: 1.0`, `block_merge: true`. `post` created inline comment
+`3682518404` on **`src/audit.py:6`** — on the added file itself. `gate` exit 7;
+`mergeStateStatus: BLOCKED`.
 
-Detail on the individually significant steps:
+At 1.0.0 this exact shape produced `raw=1, accepted=0, dropped=1,
+usable_for_resolution=false` on every seat with `absolute paths are not allowed:
+/dev/null`, consensus exit 3, and `post`/`gate` skipped. The defect is closed.
 
-- **Step 3 — positive changed-body in-place update.** This is the path the
-  evidence index recorded as never demonstrated live on either platform. The
-  `blocking_alt` scenario keeps identity (same title, category, anchor,
-  `context_hash`) and changes only the body. `post_result` reported
-  `updated_discussions: 1` with `action: "updated"` on the same
-  `discussion_id`/`issue_id`, and no new discussion. Confirmed on the platform:
-  comment `3650942127` retained its `created_at` of 20:13:42 while its
-  `updated_at` advanced to 20:20:37, and its body now contains the alternate text.
-- **Step 4 — human command authorization.** `/ai-review wontfix` was posted as a
-  threaded reply by a write-access author. `post_result.warnings` was empty, so the
-  command was accepted rather than rejected — `post.py` records a warning and
-  ignores any command whose author cannot be verified at write access. This is the
-  code path whose defect invalidated the `b674d1e` candidate.
-- **Step 4b — a `wontfix` does not clear the gate.** The dismissal persisted into
-  the next run's `prior_decisions.settled` and suppressed re-posting, but consensus
-  still reported `block_merge: true` and the gate still failed. This matches the
-  documented gate precedence (`gate.py` enforces `consensus.summary.block_merge`
-  and nothing else) and the documented meaning of `wontfix` as a durable dismissal
-  rather than a gate override; it is recorded as observed behavior, not a defect.
-- **Step 7 — stale-head no-op, reproduced live.** A new head
-  `00f78023a1975101c3c431c40037fbe7e00748a1` was pushed after `prepare` had already
-  selected `9cdd2b67b1cc2ab36f9f64fed8283880384f2c44`. `post` recorded
-  `status: stale_head` with `head_sha` and `current_head_sha` differing and
-  performed no writes; `gate` returned success (`passed_stale_head`, exit 0). The
-  SPEC-34 revision-race rows remain regression-covered and live-optional, so this
-  is a bonus confirmation rather than a gating result.
-- **Forced blocking required check.** On every non-stale attempt the required
-  `gate` check failed on blocking consensus and PR #6 reported
-  `mergeable_state=blocked` — a genuine platform merge block, not a soft signal.
+The resolved `context_hash` was `cbd85c44c62a03dee9b2219245703b843c59c6f3c9ac63286a371ea9a114587b`,
+identical to the value predicted by a pre-flight local run of the same fixture through
+`mock_reviewer.review_batch` and `finalize_finding_batch`.
 
-An earlier run on the same repository (`30172234816`, PR #4, `advisory` scenario)
-additionally exercised the non-blocking path end to end: one inline discussion
-created, `block_merge: false`, and `gate` success.
+### Step 2 — `blocking` rerun, unchanged (attempt 2)
+
+`created_discussions: 0`, `updated_discussions: 0`, `skipped_unchanged: 1`. Still
+exactly one root comment, `updated_at` unmoved. No duplicate.
+
+### Step 3 — `blocking_alt`, changed body (attempt 3)
+
+Same comment `3682518404` rewritten in place: `updated_discussions: 1`,
+`created_discussions: 0`, `created 12:08:23 → updated 12:16:29`, `body_hash`
+`e5f96289… → 61c6c1fb…`, `issue_id` unchanged at `761fd1ba…`. Identity is preserved
+because body is excluded from finding identity.
+
+### Step 4 — `/ai-review wontfix` disposition (attempt 4)
+
+Reply comment `3682573146` from a write-access author. `resolved_discussions: 1`,
+`skipped_unchanged: 1`; the platform thread reported `isResolved: true`.
+
+**The gate still failed and the merge stayed `BLOCKED`.** This reproduces the
+documented behavior in
+[SPEC-42](../improvement-specs/spec-42-wontfix-gate-semantics.md) exactly — a human
+`wontfix` durably dismisses a finding and stops it being re-posted but never clears
+the merge gate, because reviewers keep emitting it and consensus keeps counting it as
+blocking. SPEC-42 remains a proposed post-1.0 change; this is not a regression and not
+a new defect.
+
+### Step 4b — disposition persistence (attempt 5)
+
+`created: 0`, `updated: 0`, `skipped_unchanged: 1`, and
+`inputs/prior_decisions.json` carried
+`settled: [{status: "wontfix", path: "src/audit.py", category: "correctness", context_hash: "cbd85c44…"}]`.
+The dismissal persisted across a fresh prepare and suppressed re-posting.
+
+### Step 5 — reopen (attempt 6)
+
+Thread unresolved via the platform GraphQL `unresolveReviewThread`, plus an
+`/ai-review reopen` reply. The thread returned to `isResolved: false`,
+`created_discussions: 0`, exactly one root comment, `issue_id` still `761fd1ba…`.
+Identity preserved with no duplicate discussion.
+
+Note on ordering: `prior_decisions.json` in this attempt still showed the `wontfix`
+entry, because inputs are prepared before the run processes the reopen command. That
+is expected sequencing, not a stale-state defect.
+
+### Step 7 — blocking gate under enforcement
+
+Confirmed at every blocking attempt: `gate` exit 7, required check `FAILURE`, and
+`mergeStateStatus: BLOCKED` while all other checks were `SUCCESS`. The gate agreed
+with `out/consensus/consensus.json` and `out/post/post_result.json` throughout.
+
+### Step 6 — unrelated line movement: not run
+
+The internal cross-revision remap is regression-covered
+(`integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+plus the `test_anchors`/`test_post` remap tests) and platform-visible re-anchoring is
+live-optional, not release-gating. Not attempted.
+
+### Stale-head no-op: not run
+
+Part of the SPEC-34 revision-failures row, which is **waived** for 1.0.1 —
+`github_platform.py` and `input_bundle.py` carry no diff since `v1.0.0`. Not
+attempted; the 1.0.0 live observation of `status: stale_head` / `passed_stale_head`
+stands as historical evidence at the prior coordinates.
 
 ## Audit
 
-- Artifacts inspected, per attempt: `ai-review-inputs/manifest.json`,
-  `ai-review-inputs/prior_decisions.json`, `ai-review-consensus/consensus.json`,
-  `ai-review-post/post_result.json`, and per-seat `findings`/`status`.
-- Logs inspected: full run logs for `30173073036` and `30172234816`.
-- Platform objects verified directly through the GitHub REST and GraphQL APIs:
-  review comment `3650942127` (`path`, `line`, `created_at`, `updated_at`, body),
-  thread `isResolved` before and after each command, and PR `mergeable_state`.
-- Image binding: run logs reference only `ai-review-base@sha256:f2a433ac1094…` and
-  `ai-review-reviewer@sha256:2fd84c43fc45…`, matching the release-pinned digests.
-- Credential values: `scripts/scan_evidence_leaks.py` reports
-  `OK: no credential material detected (scanned 438 files, 5.7 MB, 10 detectors)`
-  over all retained 1.0.0 evidence artifacts and traces — nine credential-shape
-  patterns (provider and forge token prefixes plus `Authorization:`,
-  `PRIVATE-TOKEN:` and `X-API-KEY:` header forms) and a Shannon-entropy detector
-  for opaque tokens. The scan is rerunnable, so this claim is verifiable rather
-  than transcribed. GitHub's own redaction is observable as 98 `***` occurrences,
-  i.e. secrets were referenced and masked. No secret value is reproduced in this
-  record. **This is a pattern/entropy scan, not an exact-value comparison against
-  the configured secrets** — see the audit limitation in the
-  [hostile-MR record](record-gitlab-hostile-mr.md).
-- Sensitive model content omitted: findings in this chain are deterministic mock
-  output, so no real model content is involved.
-- Known unexercised paths:
-  - Step 6 (unrelated line movement) was deliberately **not** run live. The
-    internal remap is regression-covered
-    (`test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-    plus the `test_anchors`/`test_post` remap tests) and only the platform-visible
-    re-anchoring of a moved comment is live-optional.
-  - The below-quorum FYI/summary-comment path and the inline-unmappable summary
-    fallback are not reachable from the mock (identical findings across seats always
-    reach quorum) and remain regression-covered.
-  - This chain used the deterministic mock, so it proves posting/state/gate
-    behavior only; real-model behavior is covered by the separate
-    [default-model smoke](record-github-default-model-smoke.md).
+- Artifacts inspected: `ai-review-inputs`, all `ai-review-review-*` and
+  `ai-review-critique-*`, `ai-review-consensus`, `ai-review-post` for attempts 1–6 of
+  run `30541110970`.
+- Credential values absent from all artifacts and posted bodies.
+- **Known unexercised paths:** below-quorum FYI/summary comment and the
+  inline-unmappable summary fallback are unreachable through the uniform mock
+  scenarios and remain regression-covered only. Deleted-file diffs were not exercised
+  live, only added ones. The `advisory` scenario was not run.
 
 ## Verdict
 
-Scoped pass for GitHub Actions on `seanleecoder/code-tribunal-demo` at runtime
-source `88bc9412b283d4a44328ab3ffd9f9708b0290f8e` with the release-pinned image
-pair: a single finding identity was created once, skipped unchanged, **updated in
-place on a body-only change**, resolved by an authorized human command, kept
-resolved across a rerun, reopened, and ignored on a moved head — while the
-required `gate` check genuinely blocked the merge throughout. This closes the
-changed-body in-place update gap for GitHub. It proves posting, state, command
-authorization, and gate behavior for this topology only, and makes no claim about
-GitLab or about real-model behavior.
-
-## Superseded candidates
-
-Historical provenance only, not a release binding: partial lifecycle evidence at
-runtime sources `15d424feea730a04338ed423bf93b8797d807bbc` and
-`b674d1e4962ec976b5ca2c056a78b47d2b3d9a61` (the latter invalidated by the GitHub
-human-command authorization defect). Those runs proved workflow execution,
-authenticated state, and some inline posting, but never the positive changed-body
-in-place update.
+Scoped pass for GitHub Actions on `seanleecoder/code-tribunal-demo` at runtime source
+`5817e99` against base `sha256:657d5e70…` and reviewer `sha256:a4b35e46…`. Proves, for
+the first time at any release, that a finding on a **newly added file** survives
+anchor finalization (`accepted_finding_count == raw_finding_count`) and posts inline on
+that file; and re-proves create, unchanged rerun, in-place body update, `wontfix`
+resolution with persistence, reopen with identity preserved, and a genuinely blocking
+required check. It does not establish deleted-file behavior, stale-head handling at
+these coordinates, effort routes, or any GitLab property. It confirms rather than
+changes SPEC-42: `wontfix` does not clear the gate.

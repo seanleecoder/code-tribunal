@@ -21,28 +21,38 @@ The released 1.0.0 source/image coordinates are historical. Do not reactivate
 them for 1.0.1; bind this draft to the new runtime source and final image pair
 only after the new runs pass.
 
-## 1.0.1 scoped campaign
+## 1.0.1 evidence matrix
 
-The 1.0.1 campaign is **scoped by change impact**, not a full matrix re-run. See the
+The campaign was **scoped by change impact**, not a full matrix re-run. See the
 [triage table](../development/release-process.md#scoping-the-live-campaign) for the
-rule and [`release/1.0.1.md`](../../release/1.0.1.md) for the release's own scoping
-record. `git diff v1.0.0..R` changes `anchors.py`, `render.py`, `post.py`,
+rule and [`release/1.0.1.md`](../../release/1.0.1.md) for this release's scoping
+record. `git diff v1.0.0..R` changed `anchors.py`, `render.py`, `post.py`,
 `schema.py`, `types.py`, `mock_reviewer.py`, `adapter_runner.py`,
-`config/review.yaml`, `consensus.schema.json`, and `base.Dockerfile`; it leaves
+`config/review.yaml`, `consensus.schema.json`, and `base.Dockerfile`; it left
 `input_bundle.py`, `github_platform.py`, `gitlab_platform.py`, `gate.py`,
 `consensus.py`, and `scripts/verify_pipeline_trust.py` untouched.
 
-| Row | 1.0.1 disposition |
-|---|---|
-| Image publication verification | **re-run** — digests always change |
-| GitHub lifecycle Chain B with an **adding** fixture | **re-run** — the headline run; step 1 asserts `accepted_finding_count == raw_finding_count`, a path with no live green run at any release |
-| GitLab lifecycle Chain B, condensed to create / changed-body update / blocking gate | **re-run** — second independent render surface for `render-body.v3` |
-| Real 3-model panel, GitHub only | **re-run** — changed default model IDs and model-ID grammar |
-| `render-body.v3` refresh of a pre-v3 thread | **re-run** — only live proof of the one-time body-update migration; reuse the 1.0.0 threads (GitHub comment `3650942127`, GitLab note `3601861614`) |
-| Real 3-model panel on GitLab | **not run** — the adapter path is platform-independent |
-| GitLab hostile-MR credential/enforcement boundary | **waived** — impact set carries no diff; regression-covered |
-| Codex `max` / OpenCode `xhigh` effort routes | **waived** — unvalidated at the real providers; a malformed model/effort value fails closed with `model_error` before the CLI is invoked |
-| GitHub revision failures (SPEC-34) | **waived** — 1.0.0 waiver carried forward; code untouched |
+All rows below bind to `R = 5817e99f8d831a816056feb2dfd44fac85b5196c`, base
+`sha256:657d5e70…`, and reviewer `sha256:a4b35e46…`.
+
+| Suite | Tier | Status |
+|---|---|---|
+| Image publication verification | release-gating | **Passed** 2026-07-30 — anonymous digest resolution with `DOCKER_CONFIG` isolated to `{}`, OCI revision label equal to `R` on both subjects, provenance attestations bound to publication run `30536734285` and to `R`. [record](record-image-publication-verification.md) |
+| GitHub default-model panel (Chain A) | release-gating | **Passed** 2026-07-30 — PR #9, run `30540576843`. `anthropic/claude-haiku-4.5`, `openai/gpt-5.6-luna`, `google/gemini-3.5-flash-lite` all resolved at the real provider; `panel_status: full`, `panel_convergence: 1.0`, two real security findings posted inline, gate exit 7, `mergeStateStatus: BLOCKED`. [record](record-github-default-model-smoke.md) |
+| GitHub lifecycle (Chain B, **adding** fixture) | release-gating | **Passed** 2026-07-30 — PR #10, run `30541110970` attempts 1–6. **`accepted_finding_count == raw_finding_count == 1` with `dropped 0` on a finding on a newly added file**, posted on `src/audit.py:6`; plus unchanged rerun, in-place body update, `wontfix` with persistence, and reopen with identity preserved. [record](record-github-current-image.md) |
+| GitLab lifecycle (Chain B, condensed) | release-gating | **Passed** 2026-07-30 — MR `!13`, children `2718537416` / `2718551082`. Inline create on `src/audit.py:6`, in-place body update (`issue_id` held, `body_hash` changed), gate `failed_blocking_findings` agreeing with consensus and post, `detailed_merge_status: ci_must_pass` withholding the merge, and `render-body.v3` on the second render surface. [record](record-gitlab-current-image.md) |
+| `render-body.v3` refresh of a pre-v3 thread | release-gating | **Passed** 2026-07-30 — run `30543152373` converted comment `3650942127` (authored 2026-07-25 by the 1.0.0 pair) to v3 in place: one update, `issue_id` and marker grammar preserved, no duplicate. [record](record-render-body-v3-refresh.md) |
+| GitLab hostile-MR credential/enforcement boundary | release-gating | **Waived** — impact set carries no diff since `v1.0.0`; regression-covered by `test_verify_pipeline_trust.py` and the fork-secret withholding cases in `test_input_bundle.py`; passed live at 1.0.0 against the prior pair. [record](record-gitlab-hostile-mr.md) |
+| Codex `max` / OpenCode `xhigh` effort routes | release-gating | **Waived** — unvalidated at the real providers. A malformed model or effort value fails closed with `model_error` before the CLI is invoked, so provider rejection surfaces as an adapter failure rather than silent degradation. [record](record-model-effort-routes.md) |
+| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — 1.0.0 waiver carried forward; `github_platform.py` and `input_bundle.py` untouched. [record](record-github-revision-failures.md) |
+| Real 3-model panel on GitLab | — | **Not run.** The adapter path is platform-independent; the single GitHub panel proves the changed defaults resolve. |
+| Snapshot symlink containment (SPEC-31), gate/config artifact integrity (SPEC-33) | regression-covered | Not release-gating; `test_input_bundle.py`, `test_consensus_integrity.py`, `test_gate.py` are authoritative. |
+
+Two findings recorded as confirmations of known behavior rather than defects: a human
+`/ai-review wontfix` does not clear the merge gate
+([SPEC-42](../improvement-specs/spec-42-wontfix-gate-semantics.md), still proposed),
+and a reused evidence branch carries its own workflow copy, so repinning a consumer's
+default branch does not repin its existing branches.
 
 ## Operator checklist (1.0.1 final image pair)
 
@@ -104,7 +114,7 @@ classified by whether a live run proves something the regression suite cannot:
 | Image publication verification | release-gating | n/a (registry/attestation) | **Passed** 2026-07-25 against the final pair for `R = 88bc941` — anonymous digest resolution, OCI revision label equal to `R`, and provenance attestations bound to publication run `30125524008` on both subjects. [record](record-image-publication-verification.md) |
 | GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Passed** 2026-07-25 for `R = 88bc941`. Smoke: real 3-seat panel, `panel_status: full`, 4 security findings posted (run `30174011868`). Lifecycle: create → unchanged rerun → **changed-body in-place update** → resolve → persistence → reopen → stale-head no-op, with the required `gate` check genuinely blocking (`mergeable_state=blocked`), run `30173073036` attempts 1–7. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
 | GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Passed** 2026-07-25 for `R = 88bc941` (MR !11, hardened child): create → unchanged rerun → **changed-body in-place update** → resolve → reopen on one identity, with `detailed_merge_status: ci_must_pass` withholding the merge throughout. [record](record-gitlab-current-image.md) |
-| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | **Pending** at 1.0.0; **waived** for 1.0.1 with a registered reason — [record](record-model-effort-routes.md) |
+| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | Not completed at 1.0.0; waived for 1.0.1 with a registered reason — [record](record-model-effort-routes.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |

@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project follows semantic
 versioning.
 
-## [Unreleased]
+## [1.0.1] - 2026-07-30
+
+### Known issues
+
+- `make quality` on the 1.0.1 release commit fails
+  `test_release_tools.py::test_draft_has_no_historical_verification_binding` and
+  `test_populated_synthetic_draft_verification_remains_valid`. Both assert that the
+  checked-in release artifact is an unbound draft, which a release commit must
+  violate. Pre-existing since #95, not a 1.0.1 regression — the 1.0.0 release commit
+  carries the same activated state. No product code, image, or evidence is affected;
+  the tests are module-skipped inside the runtime image, whose own suite passes.
+  Fix queued for 1.0.2. See [`release/1.0.1.md`](release/1.0.1.md).
 
 ### Changed
 

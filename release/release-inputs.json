@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "ac98a7f6cf3cd8ef9b24c1203ebc55c7b3acba57321f7271500a970ec080f434"
+      "sha256": "650cdde3fa38a78f14d7dca33e4f8d511b622f89fc1a83121418008ae02bf848"
     },
     "configuration": {
       "files": [
@@ -59,22 +59,35 @@
   },
   "images": {
     "base": {
-      "digest": null,
+      "digest": "sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": null,
+      "digest": "sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "1.0.1",
-  "runtime_source": null,
+  "runtime_source": "5817e99f8d831a816056feb2dfd44fac85b5196c",
   "schema_version": "code_tribunal.release_inputs.v1",
-  "status": "draft",
+  "status": "active",
   "verification": {
-    "ci_run_id": null,
-    "evidence_record_ids": [],
-    "evidence_waivers": {},
-    "publication_run_id": null
+    "ci_run_id": "30536734260",
+    "evidence_record_ids": [
+      "record-github-current-image.md",
+      "record-github-default-model-smoke.md",
+      "record-github-revision-failures.md",
+      "record-gitlab-current-image.md",
+      "record-gitlab-hostile-mr.md",
+      "record-image-publication-verification.md",
+      "record-model-effort-routes.md",
+      "record-render-body-v3-refresh.md"
+    ],
+    "evidence_waivers": {
+      "record-github-revision-failures.md": "SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix.",
+      "record-gitlab-hostile-mr.md": "Credential withholding, prepare fail-closed behavior, and trusted-composition auditing are unchanged between R(1.0.0) 88bc9412b283d4a44328ab3ffd9f9708b0290f8e and R(1.0.1) 5817e99f8d831a816056feb2dfd44fac85b5196c: input_bundle.py, gitlab_platform.py, gate.py, and scripts/verify_pipeline_trust.py carry no diff. The row is regression-covered by test_verify_pipeline_trust.py and the fork-secret withholding cases in test_input_bundle.py, and it passed live at 1.0.0 against the prior image pair recorded above.",
+      "record-model-effort-routes.md": "The Codex max and OpenCode xhigh routes are unvalidated at the real providers for 1.0.1. Effort levels are passed through without coercion, and a malformed model or effort value is rejected with model_error before the reviewer CLI is invoked, so a provider-side rejection surfaces as an adapter failure rather than a silent degradation to a different effort level. This record remains pending and must be completed before either route is advertised as validated."
+    },
+    "publication_run_id": "30536734285"
   }
 }
