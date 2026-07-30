@@ -176,6 +176,39 @@
             }
           }
         },
+        "critique_observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["critic", "verdict", "rationale"],
+            "properties": {
+              "critic": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "verdict": { "enum": ["dispute", "duplicate", "noise"] },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "adjusted_severity": {
+                "type": ["string", "null"],
+                "enum": ["info", "minor", "major", "blocker", null]
+              },
+              "duplicate_of_source_finding_id": {
+                "type": ["string", "null"],
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        "drop_reason": {
+          "type": ["string", "null"],
+          "enum": ["critique_majority_noise", null]
+        },
         "body_hash": { "$ref": "#/$defs/sha256" },
         "vote_count": { "type": "integer", "minimum": 0 },
         "critique_support_count": { "type": "integer", "minimum": 0 },

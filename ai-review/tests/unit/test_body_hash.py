@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from ai_review.post import _unwrap_span, parse_marker, parse_review_note, render_body
 from ai_review.render import (
+    NOISE_RATIONALE_MAX_LENGTH,
     PLATFORM_COMMENT_LIMITS,
     _encode_span,
     _shorten_span,
@@ -46,16 +47,10 @@ class BodyHashTests(unittest.TestCase):
         second_group = self._group()
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
 
-        first, first_hash = render_body(
-            first_group, 3, "run", posting_mode="gitlab_discussions"
-        )
-        second, second_hash = render_body(
-            second_group, 3, "run", posting_mode="gitlab_discussions"
-        )
+        first, first_hash = render_body(first_group, 3, "run", posting_mode="gitlab_discussions")
+        second, second_hash = render_body(second_group, 3, "run", posting_mode="gitlab_discussions")
 
-        self.assertEqual(
-            first.rsplit("\n\n<!--", 1)[0], second.rsplit("\n\n<!--", 1)[0]
-        )
+        self.assertEqual(first.rsplit("\n\n<!--", 1)[0], second.rsplit("\n\n<!--", 1)[0])
         self.assertNotEqual(first_hash, second_hash)
         self.assertNotEqual(parse_marker(first), parse_marker(second))
 
@@ -124,9 +119,11 @@ class BodyHashTests(unittest.TestCase):
                 ]
             ),
         )
+        # The body bytes above are byte-identical to v3; only the hashed
+        # render_body_version changed, which is the one deliberate v4 refresh.
         self.assertEqual(
             body_hash,
-            "12f72479accfdeb245a1ff686692e115b6c656abaf9be0e7bec10769b515c1c7",
+            "2de535429e8e444fdaebe70784e5de4a5f96381dc0225f217bc6cff20e8ad572",
         )
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
@@ -171,47 +168,157 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("- `claude`:\n  `records[0] executes before the guard`", body)
         self.assertIn("- `codex`:\n  `the empty check occurs on the next line`", body)
 
-    def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
+    def test_renders_disputes_with_optional_severity_for_blocking_group(self) -> None:
         group = self._group()
         group["final_severity"] = "blocker"
         group["block_merge"] = True
+        group["critique_observations"] = [
+            {
+                "critic": "codex",
+                "verdict": "dispute",
+                "rationale": "The caller already checks emptiness.",
+                "adjusted_severity": "minor",
+                "duplicate_of_source_finding_id": None,
+            },
+            {
+                "critic": "opencode",
+                "verdict": "dispute",
+                "rationale": "This path is unreachable.",
+                "adjusted_severity": None,
+                "duplicate_of_source_finding_id": None,
+            },
+        ]
+        group["critique_summary"] = {"agree": 0, "dispute": 2, "noise": 0, "duplicate": 0}
+
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+
+        self.assertIn("Critique: 2 dispute", body)
+        self.assertIn("<summary>Critique detail (2 dispute)</summary>", body)
+        self.assertIn(
+            "- `codex` — `dispute` (suggested severity: `minor`)\n"
+            "  Rationale:\n"
+            "  `The caller already checks emptiness.`",
+            body,
+        )
+        self.assertIn(
+            "- `opencode` — `dispute`\n  Rationale:\n  `This path is unreachable.`",
+            body,
+        )
+        self.assertIn("- Blocking: yes", body)
+
+    def test_omits_disclosure_for_observation_that_sanitizes_to_empty(self) -> None:
+        group = self._group()
+        group["critique_observations"] = [
+            {
+                "critic": "codex",
+                "verdict": "dispute",
+                "rationale": "   ",
+                "adjusted_severity": None,
+                "duplicate_of_source_finding_id": None,
+            }
+        ]
+
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("codex", body.split("Consensus:")[0])
+
+    def test_legacy_artifact_without_observations_still_renders_its_disputes(self) -> None:
+        group = self._group()
         group["critique_disputes"] = [
             {
                 "critic": "codex",
                 "rationale": "The caller already checks emptiness.",
                 "adjusted_severity": "minor",
-            },
+            }
+        ]
+
+        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+
+        # An artifact written before observations existed carries an all-zero
+        # critique_summary, so it gets no counts line, and no duplicate or noise
+        # provenance is invented for it.
+        self.assertNotIn("Critique: ", body)
+        self.assertIn("- `codex` — `dispute` (suggested severity: `minor`)", body)
+
+    def test_critique_counts_line_is_the_only_addition_for_a_duplicate_only_group(self) -> None:
+        plain = self._group()
+        duplicate_only = self._group()
+        duplicate_only["critique_summary"] = {
+            "agree": 0,
+            "dispute": 0,
+            "noise": 0,
+            "duplicate": 1,
+        }
+        duplicate_only["critique_observations"] = [
             {
-                "critic": "opencode",
-                "rationale": "This path is unreachable.",
+                "critic": "codex",
+                "verdict": "duplicate",
+                "rationale": "Same as the neighbouring report.",
                 "adjusted_severity": None,
-            },
+                "duplicate_of_source_finding_id": "b" * 64,
+            }
         ]
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        plain_body, _plain_hash = render_body(plain, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(duplicate_only, 3, "run", posting_mode="gitlab_discussions")
 
-        self.assertIn("Dissent:", body)
-        self.assertIn(
-            "- `codex` disputes: (suggested severity: `minor`)\n"
-            "  `The caller already checks emptiness.`",
-            body,
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("Same as the neighbouring report", body)
+
+        def content_lines(rendered: str) -> list[str]:
+            return [
+                line for line in rendered.splitlines() if not line.startswith("<!-- ai-review:v1")
+            ]
+
+        plain_lines = content_lines(plain_body)
+        lines = content_lines(body)
+        self.assertEqual(
+            [line for line in lines if line not in plain_lines], ["Critique: 1 duplicate"]
         )
-        self.assertIn(
-            "- `opencode` disputes:\n  `This path is unreachable.`",
-            body,
-        )
-        self.assertIn("- Blocking: yes", body)
+        # The counts line plus the blank line separating its fragment: nothing else.
+        self.assertEqual(len(lines), len(plain_lines) + 2)
 
-    def test_omits_dissent_that_sanitizes_to_empty(self) -> None:
-        group = self._group()
-        group["critique_disputes"] = [
-            {"critic": "codex", "rationale": "   ", "adjusted_severity": None}
-        ]
+    def test_noise_rationale_elision_is_deterministic_at_sentence_and_length_bounds(self) -> None:
+        def render_noise(rationale: str) -> str:
+            group = self._group()
+            group["critique_summary"] = {
+                "agree": 0,
+                "dispute": 0,
+                "noise": 1,
+                "duplicate": 0,
+            }
+            group["critique_observations"] = [
+                {
+                    "critic": "codex",
+                    "verdict": "noise",
+                    "rationale": rationale,
+                    "adjusted_severity": None,
+                    "duplicate_of_source_finding_id": None,
+                }
+            ]
+            body, _hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+            return body
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        # A first sentence shorter than the cap wins, and the rest is elided.
+        sentence = render_noise("Style nit. The remainder must not be rendered.")
+        self.assertIn("- `codex` — `noise`: `Style nit.`…", sentence)
+        self.assertNotIn("remainder", sentence)
 
-        self.assertNotIn("Dissent:", body)
-        self.assertNotIn("codex disputes:", body)
+        # No sentence boundary: the cap applies, measured before span wrapping.
+        long_rationale = "x" * (NOISE_RATIONALE_MAX_LENGTH + 50)
+        capped = render_noise(long_rationale)
+        self.assertIn(f"`{'x' * NOISE_RATIONALE_MAX_LENGTH}`…", capped)
+
+        # Exactly at the cap with no boundary: nothing is elided.
+        exact = render_noise("y" * NOISE_RATIONALE_MAX_LENGTH)
+        self.assertIn(f"`{'y' * NOISE_RATIONALE_MAX_LENGTH}`", exact)
+        self.assertNotIn("…", exact.split("Consensus:")[0])
+
+        # A first sentence longer than the cap is still capped.
+        long_sentence = render_noise("z" * (NOISE_RATIONALE_MAX_LENGTH + 10) + ". Tail.")
+        self.assertIn(f"`{'z' * NOISE_RATIONALE_MAX_LENGTH}`…", long_sentence)
+        self.assertNotIn("Tail", long_sentence)
 
     def test_suggestion_rendering_is_literal_even_when_inner_fence_is_unbalanced(self) -> None:
         valid = self._group()
@@ -291,12 +398,8 @@ class BodyHashTests(unittest.TestCase):
 
         for posting_mode in ("gitlab_discussions", "github_reviews"):
             with self.subTest(posting_mode=posting_mode):
-                first, first_hash = render_body(
-                    group, 3, "run", posting_mode=posting_mode
-                )
-                second, second_hash = render_body(
-                    group, 3, "run", posting_mode=posting_mode
-                )
+                first, first_hash = render_body(group, 3, "run", posting_mode=posting_mode)
+                second, second_hash = render_body(group, 3, "run", posting_mode=posting_mode)
 
                 limit = platform_comment_limit(posting_mode)
                 # A prose span cannot always fill an arbitrary budget to
@@ -318,9 +421,7 @@ class BodyHashTests(unittest.TestCase):
         group["title"] = "T" * 240
 
         with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 500}):
-            body, _body_hash = render_body(
-                group, 3, "run", posting_mode="github_reviews"
-            )
+            body, _body_hash = render_body(group, 3, "run", posting_mode="github_reviews")
 
         self.assertNotIn("Title:", body)
         self.assertNotIn("`T", body)
@@ -430,9 +531,7 @@ class BodyHashTests(unittest.TestCase):
                 group = self._group()
                 group["body"] = body
 
-                rendered, _body_hash = render_body(
-                    group, 3, "run", posting_mode="github_reviews"
-                )
+                rendered, _body_hash = render_body(group, 3, "run", posting_mode="github_reviews")
 
                 self.assertLessEqual(len(rendered), 65_536)
                 self.assertIn("Body:\n", rendered)
@@ -500,9 +599,7 @@ class BodyHashTests(unittest.TestCase):
 
         generator = random.Random(20260728)
         for _ in range(2_000):
-            scalar = "".join(
-                generator.choice("ab` \t") for _ in range(generator.randint(1, 30))
-            )
+            scalar = "".join(generator.choice("ab` \t") for _ in range(generator.randint(1, 30)))
             room = generator.randint(0, 40)
             with self.subTest(scalar=scalar, room=room):
                 shortened = _shorten_span(scalar, room)

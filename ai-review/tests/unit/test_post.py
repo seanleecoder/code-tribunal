@@ -312,10 +312,7 @@ class PostTests(unittest.TestCase):
 
     def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
         fixture_path = (
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "golden"
-            / "semantic_consensus.json"
+            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
         )
         config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -1374,9 +1371,7 @@ class PostTests(unittest.TestCase):
         client = FakePostClient("head")
         old_consensus = self._consensus()
         old_group = old_consensus["groups"][0]
-        old_body, old_hash = render_body(
-            old_group, 1, "run", posting_mode="gitlab_discussions"
-        )
+        old_body, old_hash = render_body(old_group, 1, "run", posting_mode="gitlab_discussions")
         client.discussions = [
             {
                 "id": "existing-discussion",
@@ -1786,6 +1781,97 @@ class PostTests(unittest.TestCase):
         self.assertIn("  `< !-- not a marker -- >`", body)
         self.assertEqual(body.count("<!--"), 1)
 
+    def _suppressed_group(self) -> dict:
+        group = self._consensus()["groups"][0]
+        group["decision"] = "drop"
+        group["drop_reason"] = "critique_majority_noise"
+        group["title"] = "Unused configuration option"
+        group["critique_observations"] = [
+            {
+                "critic": "codex",
+                "verdict": "noise",
+                "rationale": "The option is intentionally exposed for the next rollout.",
+                "adjusted_severity": None,
+                "duplicate_of_source_finding_id": None,
+            }
+        ]
+        return group
+
+    def test_summary_entry_shows_found_by_and_inline_body_does_not(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["decision"] = "fyi"
+        group["contributing_reviewers"] = ["codex", "claude"]
+
+        summary, _summary_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+        inline, _inline_hash = render_body(group, 2, "run", posting_mode="gitlab_discussions")
+
+        self.assertIn("  Found by: `claude, codex`", summary)
+        self.assertNotIn("Found by", inline)
+        # The inline footer already carries the identical value from the same source.
+        self.assertIn("- Reviewers: `claude, codex`", inline)
+
+    def test_disposition_section_absent_by_default_and_summary_bytes_unchanged(self) -> None:
+        group = self._consensus()["groups"][0]
+        group["decision"] = "fyi"
+        suppressed = self._suppressed_group()
+
+        without, without_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+        default_gated, default_hash = post_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions", disposition_groups=()
+        )
+        enabled, enabled_hash = post_module.render_summary_body(
+            "run",
+            [],
+            [group],
+            50,
+            posting_mode="gitlab_discussions",
+            disposition_groups=[suppressed],
+        )
+
+        self.assertEqual(without, default_gated)
+        self.assertEqual(without_hash, default_hash)
+        self.assertNotIn("Critique disposition", without)
+        self.assertIn("<summary>Critique disposition</summary>", enabled)
+        self.assertIn("  Title: `Unused configuration option`", enabled)
+        self.assertIn("  `codex` — `noise`", enabled)
+        self.assertIn("The option is intentionally exposed for the next rollout", enabled)
+        self.assertNotEqual(without_hash, enabled_hash)
+        # An audit record is not a finding: no thread marker, no issue ID.
+        self.assertEqual(enabled.count("<!--"), 1)
+        self.assertNotIn(str(group["issue_id"]), enabled.split("Critique disposition")[1])
+
+    def test_summary_drops_whole_critique_dispositions_before_normal_entries(self) -> None:
+        fallback = copy.deepcopy(self._consensus()["groups"][0])
+        fallback["body"] = "A" * 30_000
+        fyi = copy.deepcopy(fallback)
+        fyi["decision"] = "fyi"
+        fyi["issue_id"] = "d" * 64
+        fyi["body"] = "B" * 30_000
+        suppressed = self._suppressed_group()
+        suppressed["critique_observations"][0]["rationale"] = "C" * 30_000
+
+        body, _body_hash = post_module.render_summary_body(
+            "run",
+            [fallback],
+            [fyi],
+            50,
+            posting_mode="github_reviews",
+            disposition_groups=[suppressed],
+        )
+
+        self.assertLessEqual(len(body), 65_536)
+        # Dispositions yield space before either finding section, and vanish
+        # entirely rather than leaving an empty disclosure shell behind.
+        self.assertIn("A" * 30_000, body)
+        self.assertIn("B" * 30_000, body)
+        self.assertNotIn("C" * 30_000, body)
+        self.assertNotIn("Critique disposition", body)
+        self.assertNotIn("<details>", body)
+
     def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
         v3_body, _body_hash = render_body(
             self._consensus()["groups"][0], 1, "run", posting_mode="gitlab_discussions"
@@ -1807,6 +1893,71 @@ class PostTests(unittest.TestCase):
         assert parsed_v2 is not None
         self.assertEqual(parsed_v2["title"], "Legacy title")
         self.assertEqual(parsed_v2["summary"], "Legacy body")
+
+    def test_v3_dissent_and_v4_critique_sections_both_terminate_the_recovered_body(self) -> None:
+        marker = (
+            "<!-- ai-review:v1 issue_id="
+            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
+        )
+        # Recovery reads note text already on the platform, so a body posted by v3
+        # must still parse after the renderer moved on to v4.
+        v3_body = "\n".join(
+            [
+                "**AI review: MAJOR correctness**",
+                "",
+                "Title: `Validate empty records`",
+                "",
+                "Body:",
+                "`The code indexes records before checking emptiness.`",
+                "",
+                "Dissent:",
+                "",
+                "- `codex` disputes:",
+                "  `The caller already checks emptiness.`",
+                "",
+                "Consensus:",
+                "- Reviewers: `claude`",
+                "",
+                marker,
+            ]
+        )
+        parsed_v3 = parse_review_note(v3_body)
+        self.assertIsNotNone(parsed_v3)
+        assert parsed_v3 is not None
+        self.assertEqual(
+            parsed_v3["summary"], "The code indexes records before checking emptiness."
+        )
+
+        # The v4 counts line carries its counts on the same line, so it is only
+        # recognizable by prefix. This is the damaged-fence path, where the blank
+        # separator cannot be relied on to end the body.
+        v4_damaged = "\n".join(
+            [
+                "**AI review: MAJOR correctness**",
+                "",
+                "Title: `T`",
+                "",
+                "Body:",
+                "```text",
+                "unterminated body fence",
+                "Critique: 2 agree · 1 dispute",
+                "<details>",
+                "<summary>Critique detail (1 dispute)</summary>",
+                "- `codex` — `dispute`",
+                "  Rationale:",
+                "  `must not be recovered as body text`",
+                "</details>",
+                "",
+                "Consensus:",
+                "- Reviewers: `claude`",
+                "",
+                marker,
+            ]
+        )
+        parsed_v4 = parse_review_note(v4_damaged)
+        self.assertIsNotNone(parsed_v4)
+        assert parsed_v4 is not None
+        self.assertEqual(parsed_v4["summary"], "unterminated body fence")
 
     def test_review_note_parser_preserves_exact_section_labels_inside_closed_v3_body(self) -> None:
         body = "\n".join(

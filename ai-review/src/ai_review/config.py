@@ -52,6 +52,7 @@ CRITIQUE_KEYS = {
     "can_add_quorum_votes",
     "allow_advisory_escalation",
     "allow_severity_downgrade",
+    "show_disposition_audit",
 }
 POSTING_KEYS = {
     "mode",
@@ -262,9 +263,7 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
             panel.get("min_successful_reviewers_for_resolution", 0) or 0
         ),
         "panel_quorum_votes_required": int(quorum.get("votes_required", 0) or 0),
-        "severity_single_reviewer_blocker_categories": sorted(
-            str(item) for item in categories
-        ),
+        "severity_single_reviewer_blocker_categories": sorted(str(item) for item in categories),
         "severity_quorum_blocker_block_merge": bool(
             isinstance(quorum_blocker, dict) and quorum_blocker.get("block_merge") is True
         ),
@@ -394,9 +393,15 @@ def validate_config(config: dict[str, Any]) -> None:
     critique.setdefault("can_add_quorum_votes", False)
     critique.setdefault("allow_advisory_escalation", True)
     critique.setdefault("allow_severity_downgrade", False)
+    # Display-only, so deliberately absent from effective_config_summary: that
+    # digest is stamped at prepare time and re-checked against every critique
+    # batch, and a rendering toggle must not be able to fail a run.
+    critique.setdefault("show_disposition_audit", False)
     rounds = critique.get("rounds")
     if rounds not in {0, 1}:
         raise ConfigError("critique.rounds must be 0 or 1 for v1")
+    if not isinstance(critique.get("show_disposition_audit"), bool):
+        raise ConfigError("critique.show_disposition_audit must be a boolean")
     if critique.get("can_add_quorum_votes") is not False:
         raise ConfigError("critique.can_add_quorum_votes must be false in v1")
     merge_gate = config.setdefault("merge_gate", {})
@@ -428,8 +433,7 @@ def validate_config(config: dict[str, Any]) -> None:
     minimum_votes = 2 if enabled_count > 1 else 1
     if type(votes_required) is not int or not (minimum_votes <= votes_required <= enabled_count):
         raise ConfigError(
-            "panel.quorum.votes_required must be between "
-            f"{minimum_votes} and enabled reviewers"
+            f"panel.quorum.votes_required must be between {minimum_votes} and enabled reviewers"
         )
     grouping = panel.get("grouping", {})
     if grouping is None:

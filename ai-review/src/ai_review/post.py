@@ -27,6 +27,7 @@ from .platform import ReviewPlatform, ReviewPlatformError
 from .platform.runtime import create_runtime_platform
 from .redact import redact_text
 from .render import (
+    CRITIQUE_COUNTS_LABEL,
     PROSE_LINE_BREAK,
     encode_marker_token,
     literal_span,
@@ -46,6 +47,7 @@ from .schema import load_json_file, now_iso, validate_instance, write_canonical_
 from .types import (
     Anchor,
     Consensus,
+    CritiqueDisposition,
     FindingGroup,
     PostResult,
     State,
@@ -91,8 +93,13 @@ COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
 REVIEW_SECTION_BOUNDARIES = frozenset(
-    {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
+    # ``Dissent:`` is retained because recovery reads note text already posted by
+    # v3, not the text the current renderer would produce.
+    {"Evidence:", "Dissent:", "Suggestion:", "Consensus:", "<details>"}
 )
+# The v4 critique counts line carries its counts on the same line, so it can only
+# be recognized by prefix.
+REVIEW_SECTION_PREFIXES = (CRITIQUE_COUNTS_LABEL,)
 BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
@@ -275,13 +282,19 @@ def _unwrap_span(rendered: str) -> str | None:
     return value
 
 
+def _is_section_boundary(stripped: str) -> bool:
+    """Report whether a stripped line begins a renderer-owned later section."""
+
+    return stripped in REVIEW_SECTION_BOUNDARIES or stripped.startswith(REVIEW_SECTION_PREFIXES)
+
+
 def _read_review_body(lines: list[str]) -> list[str]:
-    """Read a v2/v3 body without consuming renderer-owned later sections."""
+    """Read a v2/v3/v4 body without consuming renderer-owned later sections."""
 
     start = 0
     while start < len(lines) and not lines[start].strip():
         start += 1
-    if start >= len(lines) or lines[start].strip() in REVIEW_SECTION_BOUNDARIES:
+    if start >= len(lines) or _is_section_boundary(lines[start].strip()):
         return []
 
     opening_match = BODY_FENCE_RE.fullmatch(lines[start].strip())
@@ -319,7 +332,7 @@ def _read_prose_review_body(lines: list[str]) -> list[str] | None:
     content: list[str] = []
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped in REVIEW_SECTION_BOUNDARIES:
+        if not stripped or _is_section_boundary(stripped):
             break
         if stripped == PROSE_LINE_BREAK:
             content.append("")
@@ -336,7 +349,7 @@ def _read_unfenced_review_body(lines: list[str]) -> list[str]:
 
     content = []
     for line in lines:
-        if line.strip() in REVIEW_SECTION_BOUNDARIES:
+        if _is_section_boundary(line.strip()):
             break
         content.append(line)
     return content
@@ -834,11 +847,106 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
     category_part = f" {category}" if category else ""
     header = f"- **{severity}**{category_part} — {location}: {title}"
+    # Provenance is summary-only. An inline body already carries the identical
+    # value in its consensus footer's Reviewers line; a summary entry has no
+    # footer, which is why it needs this.
+    found_by = literal_span(", ".join(_sorted_reviewers(group)))
+    if found_by is not None:
+        header = f"{header}\n  Found by: {found_by}"
     detail = prose_block(str(group.get("body") or ""))
     if detail is None:
         return header
     indented_detail = "\n".join(f"  {line}" if line else "" for line in detail.split("\n"))
     return f"{header}\n  Body:\n{indented_detail}"
+
+
+def _sorted_reviewers(group: Mapping[str, Any]) -> list[str]:
+    reviewers = group.get("contributing_reviewers")
+    if not isinstance(reviewers, list):
+        return []
+    return sorted(str(reviewer) for reviewer in reviewers)
+
+
+def _disposition_entry(group: Mapping[str, Any]) -> str | None:
+    """Render one majority-noise audit record, or ``None`` when it is empty.
+
+    An audit record deliberately carries no body, suggestion, thread marker, or
+    issue ID: it is not a finding, and nothing downstream may treat it as one.
+    """
+
+    title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
+    reported_by = literal_span(", ".join(_sorted_reviewers(group)), required=True)
+    lines = [f"- Reported by: {reported_by}", f"  Title: {title}"]
+    rendered_any = False
+    for observation in _noise_observations(group):
+        critic = literal_span(str(observation.get("critic") or ""), required=True)
+        rationale = prose_block(str(observation.get("rationale") or ""))
+        if rationale is None:
+            continue
+        indented = "\n".join(f"  {line}" if line else "" for line in rationale.split("\n"))
+        lines.append(f"  {critic} — `noise`")
+        lines.append("  Rationale:")
+        lines.append(indented)
+        rendered_any = True
+    if not rendered_any:
+        return None
+    return "\n".join(lines)
+
+
+def _noise_observations(group: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    observations = group.get("critique_observations")
+    if not isinstance(observations, list):
+        return []
+    return [
+        observation
+        for observation in observations
+        if isinstance(observation, Mapping) and observation.get("verdict") == "noise"
+    ]
+
+
+def select_disposition_groups(consensus: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Select majority-noise groups by the persisted reason, never by predicate.
+
+    The suppression predicate needs ``successful_critics``, a consensus local that
+    never reaches the artifact, so it is not computable here. A missing
+    ``drop_reason`` is unknown, never majority noise.
+    """
+
+    groups = consensus.get("groups")
+    if not isinstance(groups, list):
+        return []
+    return _sort_groups(
+        [
+            group
+            for group in groups
+            if isinstance(group, dict) and group.get("drop_reason") == "critique_majority_noise"
+        ]
+    )
+
+
+def disposition_audit(groups: Sequence[Mapping[str, Any]]) -> list[CritiqueDisposition]:
+    """Build the machine-readable audit emitted to the run artifact.
+
+    Emitted regardless of ``critique.show_disposition_audit``: the artifact is
+    the audit's default destination, and the config key governs only whether the
+    merge request also shows it.
+    """
+
+    return [
+        {
+            "issue_id": group.get("issue_id"),
+            "title": str(group.get("title") or ""),
+            "reported_by": _sorted_reviewers(group),
+            "noise": [
+                {
+                    "critic": str(observation.get("critic") or ""),
+                    "rationale": str(observation.get("rationale") or ""),
+                }
+                for observation in _noise_observations(group)
+            ],
+        }
+        for group in groups
+    ]
 
 
 @overload
@@ -866,6 +974,9 @@ class SummarySectionDescriptor:
     trailer_factory: Callable[[int], list[str]]
     drop_priority: int
     retained_count: int | None = None
+    # A section whose header carries structure rather than a count is better
+    # omitted than rendered as an empty shell once its last entry is dropped.
+    omit_when_empty: bool = False
     entry_prefix_lengths: tuple[int, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -887,6 +998,8 @@ def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
     for section in sections:
         total = len(section.entries)
         assert section.retained_count is not None
+        if section.omit_when_empty and not section.retained_count:
+            continue
         section_lines = [
             section.header_factory(section.retained_count),
             *section.entries[: section.retained_count],
@@ -919,6 +1032,9 @@ def _summary_section_length(
 
     total = len(section.entries)
     assert section.retained_count is not None
+    if section.omit_when_empty and not section.retained_count:
+        # Omitted by _compose_summary_sections, and its separator with it.
+        return -2
     trailers = section.trailer_factory(total - section.retained_count)
     line_count = 1 + section.retained_count + len(trailers)
     return (
@@ -937,16 +1053,21 @@ def render_summary_body(
     max_fyi: int,
     *,
     posting_mode: str,
+    disposition_groups: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, str]:
     fallback_sorted = _sort_groups(fallback_groups)
     fyi_sorted = _sort_groups(fyi_groups)
     capped_fyi = fyi_sorted[:max_fyi] if max_fyi >= 0 else fyi_sorted
     fallback_entries = [_summary_line(group) for group in fallback_sorted]
     fyi_entries = [_summary_line(group) for group in capped_fyi]
+    # Dispositions never consume max_fyi: they are not advisory findings, and the
+    # count limit exists to bound findings a maintainer is asked to read.
+    disposition_entries = [
+        entry for entry in (_disposition_entry(group) for group in disposition_groups) if entry
+    ]
     max_comment_size = platform_comment_limit(posting_mode)
     placeholder_marker = (
-        "<!-- ai-review-summary:v1 run_id="
-        f"{encode_marker_token(run_id)} body_hash={'0' * 64} -->"
+        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={'0' * 64} -->"
     )
     configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
 
@@ -993,6 +1114,30 @@ def render_summary_body(
                 drop_priority=0,
             )
         )
+    if disposition_entries:
+        # Numerically lowest priority, because _drop_lowest_priority_trailing_entry
+        # drops from the smallest value first. The audience for this section is
+        # whoever tunes the panel, so it yields space to every real finding.
+        sections.append(
+            SummarySectionDescriptor(
+                header_factory=lambda _shown: (
+                    "<details>\n<summary>Critique disposition</summary>\n"
+                ),
+                entries=disposition_entries,
+                # Unlike the other sections' trailers, this one also closes the
+                # renderer-owned disclosure, so it emits a line at zero omissions.
+                trailer_factory=lambda size_omitted: (
+                    (
+                        [f"…and {size_omitted} more critique dispositions (size limit)"]
+                        if size_omitted
+                        else []
+                    )
+                    + ["\n</details>"]
+                ),
+                drop_priority=-10,
+                omit_when_empty=True,
+            )
+        )
 
     section_lengths = [_summary_section_length(section) for section in sections]
 
@@ -1008,9 +1153,7 @@ def render_summary_body(
         previous_counts = [section.retained_count for section in sections]
         if not _drop_lowest_priority_trailing_entry(sections):
             return False
-        for index, (previous, section) in enumerate(
-            zip(previous_counts, sections, strict=True)
-        ):
+        for index, (previous, section) in enumerate(zip(previous_counts, sections, strict=True)):
             if previous != section.retained_count:
                 section_lengths[index] = _summary_section_length(section)
                 break
@@ -1030,8 +1173,7 @@ def render_summary_body(
 
     body_hash = sha256_hex(body_without_marker)
     marker = (
-        "<!-- ai-review-summary:v1 run_id="
-        f"{encode_marker_token(run_id)} body_hash={body_hash} -->"
+        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={body_hash} -->"
     )
     if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")
@@ -1076,6 +1218,7 @@ def upsert_summary_comment(
     *,
     posting_mode: str,
     dry_run: bool = False,
+    disposition_groups: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     summary = {
         "action": "none",
@@ -1083,7 +1226,7 @@ def upsert_summary_comment(
         "surface_findings": len(fallback_groups),
         "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
     }
-    if not fallback_groups and not fyi_groups:
+    if not fallback_groups and not fyi_groups and not disposition_groups:
         return summary
     body, body_hash = render_summary_body(
         run_id,
@@ -1091,6 +1234,7 @@ def upsert_summary_comment(
         fyi_groups,
         max_fyi,
         posting_mode=posting_mode,
+        disposition_groups=disposition_groups,
     )
     if dry_run:
         summary["action"] = "created"
@@ -1132,6 +1276,7 @@ def _initial_post_result(
         "stale_unverified": 0,
         "posted_discussions": [],
         "warnings": [],
+        "critique_dispositions": [],
         "summary_comment": {
             "action": "none",
             "note_id": None,
@@ -1589,9 +1734,7 @@ def _update_existing_inline_discussion(
         # Intentionally leave used_discussion_ids untouched — planning-time dedup
         # already prevents double-matching the same discussion in this pass.
         result["status"] = "partial_failed"
-        result["warnings"].append(
-            f"update_comment for {post_group['issue_id']} failed: {exc}"
-        )
+        result["warnings"].append(f"update_comment for {post_group['issue_id']} failed: {exc}")
         summary_fallback_groups.append(group)
         return
     used_discussion_ids.add(existing["discussion_id"])
@@ -1787,9 +1930,14 @@ def finalize_state(
     fyi_mode: str,
     max_fyi: int,
     dry_run: bool,
+    disposition_groups: Sequence[Mapping[str, Any]] = (),
+    show_disposition_audit: bool = False,
 ) -> PostResult:
     fallback_to_post = summary_fallback_groups if fallback_to_summary else []
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
+    # Gated only on the audit toggle. Majority-noise suppression exists to reduce
+    # maintainer clutter, so re-posting it is opt-in and independent of fyi_mode.
+    dispositions_to_post = disposition_groups if show_disposition_audit else ()
     result["summary_comment"] = cast(
         SummaryComment,
         upsert_summary_comment(
@@ -1802,6 +1950,7 @@ def finalize_state(
             max_fyi,
             posting_mode=posting_mode,
             dry_run=dry_run,
+            disposition_groups=dispositions_to_post,
         ),
     )
     if _state_enabled(config):
@@ -1827,9 +1976,7 @@ def finalize_state(
                     result["resolved_discussions"] += 1
             except ReviewPlatformError as exc:
                 action = "resolve" if desired else "unresolve"
-                result["warnings"].append(
-                    f"failed to {action} thread {discussion_id}: {exc}"
-                )
+                result["warnings"].append(f"failed to {action} thread {discussion_id}: {exc}")
                 if desired:
                     previous = prior_records.get(record["issue_id"])
                     record["status"] = previous.get("status", "open") if previous else "open"
@@ -1992,6 +2139,18 @@ def post_consensus(
     fyi_groups = classification.fyi_groups
     result["warnings"].extend(classification.warnings)
 
+    # Selected from the artifact, deliberately outside every classification used
+    # for posting or gating: these groups stay dropped, and the audit gives them no
+    # thread, state record, vote, or merge-gate input. Emitted to the run artifact
+    # unconditionally; only the merge-request section is gated.
+    disposition_groups = select_disposition_groups(consensus)
+    result["critique_dispositions"] = disposition_audit(disposition_groups)
+    if disposition_groups:
+        LOGGER.info(
+            "critique majority noise suppressed %d group(s); see critique_dispositions",
+            len(disposition_groups),
+        )
+
     state_plan = plan_state(
         config,
         manifest,
@@ -2038,6 +2197,10 @@ def post_consensus(
         fyi_mode=fyi_mode,
         max_fyi=max_fyi,
         dry_run=dry_run,
+        disposition_groups=disposition_groups,
+        show_disposition_audit=bool(
+            config.get("critique", {}).get("show_disposition_audit", False)
+        ),
     )
 
 

@@ -7,7 +7,7 @@ from ai_review.canonical import canonical_json
 from ai_review.render import platform_comment_limit, render_body
 from ai_review.schema import load_json_file, validate_instance
 
-from .golden_cases import GOLDEN_CASES
+from .golden_cases import GOLDEN_CASES, ORDER_INDEPENDENCE_CASES
 
 
 class GoldenConsensusContractTests(unittest.TestCase):
@@ -20,6 +20,38 @@ class GoldenConsensusContractTests(unittest.TestCase):
                 self.assertEqual(
                     canonical_json(consensus),
                     canonical_json(load_json_file(fixture_dir / fixture_name)),
+                )
+
+    def test_critique_cases_are_canonically_order_independent(self) -> None:
+        for name, build_case in ORDER_INDEPENDENCE_CASES.items():
+            with self.subTest(case=name):
+                forward = build_case()
+                reordered = build_case(reverse=True)
+                validate_instance(reordered, "consensus.schema.json")
+                self.assertEqual(canonical_json(forward), canonical_json(reordered))
+                # Stated explicitly, so a future change that reorders observations
+                # cannot quietly move a decision with them.
+                self.assertEqual(
+                    [
+                        (
+                            group["issue_id"],
+                            group["decision"],
+                            group["final_severity"],
+                            group["block_merge"],
+                            group.get("drop_reason"),
+                        )
+                        for group in forward["groups"]
+                    ],
+                    [
+                        (
+                            group["issue_id"],
+                            group["decision"],
+                            group["final_severity"],
+                            group["block_merge"],
+                            group.get("drop_reason"),
+                        )
+                        for group in reordered["groups"]
+                    ],
                 )
 
     def test_hostile_rendering_contract_snapshot(self) -> None:
@@ -39,9 +71,7 @@ class GoldenConsensusContractTests(unittest.TestCase):
                 self.assertEqual(rendered, fixture["expected_body"])
                 self.assertEqual(body_hash, fixture["expected_body_hash"])
                 # SPEC-26/44 platform limits are Unicode character counts.
-                self.assertLessEqual(
-                    len(rendered), platform_comment_limit(posting_mode)
-                )
+                self.assertLessEqual(len(rendered), platform_comment_limit(posting_mode))
                 self.assertEqual(rendered.count("<!--"), 1)
                 self.assertEqual(rendered.count("-->"), 1)
 

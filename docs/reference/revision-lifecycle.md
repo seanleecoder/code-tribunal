@@ -39,7 +39,32 @@ identifier needed to resolve or reopen its thread through GraphQL.
 Open and `wontfix` records are retained by default. Bounded resolved and stale
 record counts plus a total byte limit prevent unbounded state. Overflow is an
 operational failure consumed by the gate. The posted-body format is now
-`render-body.v3`. Existing bot-authored inline threads receive one content refresh
+`render-body.v4`. Existing bot-authored inline threads receive one content refresh
 on the next run; issue IDs, markers, state records, and resolution status remain
 unchanged. Summary notes update through their normal body-hash upsert. A rollback
 causes one reverse refresh and does not discard state.
+
+## Critique display budget
+
+A group with critiques adds exactly one visible line: a counts line. Expanded
+reasoning sits behind a collapsed disclosure, and what goes in it is budgeted by
+verdict, because on an N-reviewer panel a group has up to N−1 eligible critics and
+every rationale is a literal block:
+
+| Effective verdict | Displayed as |
+| --- | --- |
+| `dispute` | Full rationale — the only verdict that should change whether a maintainer acts. |
+| `noise` (group survived) | One line, elided to the shorter of its first sentence or 200 characters. |
+| validated `duplicate` | Counts only. The group is already merged and the footer's reviewer list already names every reporter. |
+| `agree` | Counts only, through the existing support counter. |
+
+An invalid duplicate displays as a dispute, matching voting semantics rather than
+the verdict the model requested. Full noise text and every duplicate rationale
+remain in `critique_observations` and in the run artifact.
+
+Majority-noise suppression is audited to `post_result.json` unconditionally and to
+the merge-request summary only when `critique.show_disposition_audit` is `true` —
+its audience is whoever tunes the panel, not whoever reviews the change, and
+re-posting a suppressed report by default would undo the suppression it audits.
+Summary entries carry `Found by`; inline bodies do not, because their consensus
+footer already emits the identical reviewer list.

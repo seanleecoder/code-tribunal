@@ -44,6 +44,8 @@ type AdapterStatus = Literal[
 ]
 type AdapterStage = Literal["review", "critique"]
 type CritiqueVerdict = Literal["agree", "dispute", "noise", "duplicate"]
+type EffectiveCritiqueVerdict = Literal["dispute", "noise", "duplicate"]
+type DropReason = Literal["critique_majority_noise"]
 type PostStatus = Literal[
     "success",
     "stale_head",
@@ -216,6 +218,20 @@ class CritiqueDispute(TypedDict):
     adjusted_severity: NotRequired[Severity | None]
 
 
+class CritiqueObservation(TypedDict):
+    """One selected effective non-agree critique for a (group, critic) pair.
+
+    ``verdict`` is the effective verdict, so an invalid duplicate appears here as
+    a dispute with no ``duplicate_of_source_finding_id``.
+    """
+
+    critic: ReviewerId
+    verdict: EffectiveCritiqueVerdict
+    rationale: str
+    adjusted_severity: NotRequired[Severity | None]
+    duplicate_of_source_finding_id: NotRequired[str | None]
+
+
 class MatchKeys(TypedDict):
     path_keys: list[str]
     category: str
@@ -255,6 +271,8 @@ class FindingGroup(TypedDict):
     suggestion: NotRequired[str | None]
     evidence_by_reviewer: NotRequired[dict[str, str]]
     critique_disputes: NotRequired[list[CritiqueDispute]]
+    critique_observations: NotRequired[list[CritiqueObservation]]
+    drop_reason: NotRequired[DropReason | None]
 
 
 class ConsensusSummary(TypedDict):
@@ -342,6 +360,24 @@ class PostedDiscussion(TypedDict):
     root_note_id: int
 
 
+class CritiqueDispositionNoise(TypedDict):
+    critic: ReviewerId
+    rationale: str
+
+
+class CritiqueDisposition(TypedDict):
+    """One majority-noise suppression, recorded for whoever tunes the panel.
+
+    Not a finding: it carries no body, suggestion, or lifecycle, and nothing
+    downstream may derive a thread, state record, vote, or gate input from it.
+    """
+
+    issue_id: str | None
+    title: str
+    reported_by: list[ReviewerId]
+    noise: list[CritiqueDispositionNoise]
+
+
 class SummaryComment(TypedDict):
     action: SummaryCommentAction
     note_id: int | None
@@ -362,6 +398,7 @@ class PostResult(TypedDict):
     stale_unverified: int
     posted_discussions: list[PostedDiscussion]
     warnings: list[str]
+    critique_dispositions: NotRequired[list[CritiqueDisposition]]
     summary_comment: NotRequired[SummaryComment]
 
 

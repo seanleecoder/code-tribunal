@@ -90,6 +90,7 @@ production. Environment overrides
 | `critique.can_add_quorum_votes` | boolean, `false` | Must remain false in v1. Critiques are not reviewer votes. |
 | `critique.allow_advisory_escalation` | boolean, `true` | Surface peer-supported advisory evidence without making it blocking. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
+| `critique.show_disposition_audit` | boolean, `false` | Also show majority-noise suppressions in the merge-request summary. The run artifact records them either way. YAML only. |
 
 `critique.max_rounds` is not an active compatibility alias and is rejected.
 
