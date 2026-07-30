@@ -21,25 +21,51 @@ The released 1.0.0 source/image coordinates are historical. Do not reactivate
 them for 1.0.1; bind this draft to the new runtime source and final image pair
 only after the new runs pass.
 
+## 1.0.1 scoped campaign
+
+The 1.0.1 campaign is **scoped by change impact**, not a full matrix re-run. See the
+[triage table](../development/release-process.md#scoping-the-live-campaign) for the
+rule and [`release/1.0.1.md`](../../release/1.0.1.md) for the release's own scoping
+record. `git diff v1.0.0..R` changes `anchors.py`, `render.py`, `post.py`,
+`schema.py`, `types.py`, `mock_reviewer.py`, `adapter_runner.py`,
+`config/review.yaml`, `consensus.schema.json`, and `base.Dockerfile`; it leaves
+`input_bundle.py`, `github_platform.py`, `gitlab_platform.py`, `gate.py`,
+`consensus.py`, and `scripts/verify_pipeline_trust.py` untouched.
+
+| Row | 1.0.1 disposition |
+|---|---|
+| Image publication verification | **re-run** — digests always change |
+| GitHub lifecycle Chain B with an **adding** fixture | **re-run** — the headline run; step 1 asserts `accepted_finding_count == raw_finding_count`, a path with no live green run at any release |
+| GitLab lifecycle Chain B, condensed to create / changed-body update / blocking gate | **re-run** — second independent render surface for `render-body.v3` |
+| Real 3-model panel, GitHub only | **re-run** — changed default model IDs and model-ID grammar |
+| `render-body.v3` refresh of a pre-v3 thread | **re-run** — only live proof of the one-time body-update migration; reuse the 1.0.0 threads (GitHub comment `3650942127`, GitLab note `3601861614`) |
+| Real 3-model panel on GitLab | **not run** — the adapter path is platform-independent |
+| GitLab hostile-MR credential/enforcement boundary | **waived** — impact set carries no diff; regression-covered |
+| Codex `max` / OpenCode `xhigh` effort routes | **waived** — unvalidated at the real providers; a malformed model/effort value fails closed with `model_error` before the CLI is invoked |
+| GitHub revision failures (SPEC-34) | **waived** — 1.0.0 waiver carried forward; code untouched |
+
 ## Operator checklist (1.0.1 final image pair)
 
 1. Freeze runtime commit `R` that includes the intended mock/gate code.
 2. Publish attested base+reviewer images from exactly `R`; record anonymous
    pull, OCI revision label, and provenance in
    [`record-image-publication-verification.md`](record-image-publication-verification.md).
+   Remember `ai-review/src` ships in the **base** image — rebuild the base from `R`
+   first, then the reviewer `FROM` that base.
 3. Repin both GitHub workflow copies and the three GitLab pin variables together;
    refresh `release/release-inputs.json` hashes.
-4. Run Chain A (real default-model smoke) and Chain B (mock lifecycle, including
-   `blocking_alt` changed-body update) on GitHub and GitLab per
-   [`RUNBOOK.md`](RUNBOOK.md). Chain B requires
-   `AI_REVIEW_LOCAL_MOCK=1` **and** `AI_REVIEW_ALLOW_LOCAL_MOCK=true`.
-5. Before activation, run and record the first real Codex `max` and OpenCode
-   `xhigh` route checks against the rebuilt images in the separate
-   [`record-model-effort-routes.md`](record-model-effort-routes.md) record.
-   Provider rejection is a failed validation, not a reason to omit or coerce
-   the effort level.
-6. Finish GitLab hostile-MR trusted image/config override and forged-gate probes.
-7. Set each release-gating record to `Status: passed` with matching
+4. Run the scoped campaign above per [`RUNBOOK.md`](RUNBOOK.md): the one real
+   default-model panel (Chain A) **first**, before any mock variable exists, then
+   Chain B on each platform. Chain B requires `AI_REVIEW_LOCAL_MOCK=1` **and**
+   `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, with every `AI_REVIEW_REQUIRE_REAL_*=0`.
+   The GitHub Chain B fixture must **add** a file.
+5. Stamp each waived row with a `Release-evidence-waived: <reason>` line and
+   register the identical reason under `verification.evidence_waivers` in
+   `release/release-inputs.json`. A waiver missing either half is rejected.
+6. Audit every retained artifact and trace with
+   `python scripts/scan_evidence_leaks.py <dirs…>`, including the operator-only
+   `--exact-value-file` pass that 1.0.0 left as an unmet sign-off item.
+7. Set each non-waived release-gating record to `Status: passed` with matching
    `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
    fields (see [`record-template.md`](record-template.md)).
    Historical Identity-section source/image prose is not parsed as a release
@@ -78,7 +104,7 @@ classified by whether a live run proves something the regression suite cannot:
 | Image publication verification | release-gating | n/a (registry/attestation) | **Passed** 2026-07-25 against the final pair for `R = 88bc941` — anonymous digest resolution, OCI revision label equal to `R`, and provenance attestations bound to publication run `30125524008` on both subjects. [record](record-image-publication-verification.md) |
 | GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `test_gate.py`, `integration/test_post_gate_e2e.py` (posting/state/gate logic) | **Passed** 2026-07-25 for `R = 88bc941`. Smoke: real 3-seat panel, `panel_status: full`, 4 security findings posted (run `30174011868`). Lifecycle: create → unchanged rerun → **changed-body in-place update** → resolve → persistence → reopen → stale-head no-op, with the required `gate` check genuinely blocking (`mergeable_state=blocked`), run `30173073036` attempts 1–7. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
 | GitLab current-image lifecycle | release-gating | same posting/state/gate tests via `fake_gitlab` | **Passed** 2026-07-25 for `R = 88bc941` (MR !11, hardened child): create → unchanged rerun → **changed-body in-place update** → resolve → reopen on one identity, with `detailed_merge_status: ci_must_pass` withholding the merge throughout. [record](record-gitlab-current-image.md) |
-| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | **Pending** — [record](record-model-effort-routes.md) |
+| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | **Pending** at 1.0.0; **waived** for 1.0.1 with a registered reason — [record](record-model-effort-routes.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
 | Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
@@ -132,8 +158,14 @@ the disabled default.
   defect, so no live run has ever exercised a finding on a newly added or deleted
   file. Shipping the fix does not by itself close this — a Chain B run with an
   **adding** fixture is required, asserting
-  `accepted_finding_count == raw_finding_count`. See the coverage-gap table in the
-  [runbook](RUNBOOK.md).
+  `accepted_finding_count == raw_finding_count`. It is the headline run of the 1.0.1
+  campaign above. See the carried coverage-gap table in the [runbook](RUNBOOK.md).
+- **`render-body.v3` has no live rendering or migration evidence.** The format
+  changed after `v1.0.0`, so no live run has confirmed that prose renders as wrapping
+  code spans on either platform without autolink/mention/issue-reference expansion,
+  nor that a thread authored by an older image receives exactly one body update
+  (`updated_discussions=1`, `created=0`, same `issue_id`). Goldens prove generation;
+  only a real comment proves rendering.
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable
@@ -147,6 +179,16 @@ the disabled default.
   still unenforced at the container/runner boundary, forks are untested on GitLab,
   and Cursor remains disabled pending the SPEC-21 queue above. The
   regression-covered rows do not block the release.
+
+## Consumer projects
+
+The live runs use two long-lived, operator-controlled, public scratch consumers —
+`seanleecoder/code-tribunal-demo` on GitHub and on GitLab (project id `84667714`),
+plus the protected GitLab template project `seanleecoder/code-tribunal-ci-template`.
+Reuse them every release: they already carry the required-check ruleset, protected
+credentials, the mock-variable mapping, the `evidence/` fixture branches, and the
+pre-v3 bot threads the posted-body refresh check needs. See
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md).
 
 ## Record format
 

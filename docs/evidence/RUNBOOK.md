@@ -6,17 +6,15 @@ replace — the executable tests (`make quality`) and the
 [evidence index](README.md).
 
 **This is the durable procedure, not a one-release artifact.** It was executed in
-full for 1.0.0 against the pair named below, and it is the sequence to follow for
-1.0.1: replace the identity block with the new runtime source, images,
-and run IDs, then work through the same steps. Sections that record what 1.0.0
-actually observed are marked as such, so a future operator can tell the procedure
-apart from the results.
+full for 1.0.0 and is the sequence to follow for every subsequent release: fill the
+candidate block below with the new runtime source, images, and run IDs, then work
+through the steps. Sections that record what a past release actually observed are
+marked as such, so a future operator can tell the procedure apart from the results.
 
-The identity block below is the last activated 1.0.0 pair. The current source
-branch is the 1.0.1 draft release candidate: `release/release-inputs.json` is
-`release_version: 1.0.1` and `status: draft`, with its runtime source and image
-digests unset pending rebuild. These values remain historical until a new pair
-is published.
+**Not every row needs a live re-run every release.** Scope the campaign with the
+[change-impact triage table](../development/release-process.md#scoping-the-live-campaign)
+before booking operator time: rows whose impact set carries no diff may ship under a
+registered evidence waiver instead.
 
 For the accepted release-version grammar and derived notes path, see the
 [release version contract](../development/release-process.md#release-version-contract).
@@ -30,20 +28,31 @@ tests that cover each row.
 
 ## Release candidate under test
 
-> **This is the final RC pair.** The base and reviewer images below are the
-> rebuilt pair described in the precondition after Step 0: they are built from a
-> runtime source that includes the `AI_REVIEW_MOCK_SCENARIO` reviewer support, the
-> gate `run_id` binding, and the readiness-hardening work. Step 0 has been
-> verified against them (see the
-> [image-verification record](record-image-publication-verification.md)). Run
-> **both** chains against these digests.
+**Fill this block for the release you are running, then work through the steps.**
+Every release-gating probe below must run against the pair named here; a record
+bound to an older `R` or digest pair never certifies a later runtime source, however
+similar the code. The authoritative coordinates for the release under preparation
+live in `release/release-inputs.json` and `release/<release_version>.md` — this block
+restates them for the operator.
+
+```text
+Runtime source R:  <40-char sha>
+Quality gate:      CI `make quality` run <id>
+Publish run:       <id>
+Base image:        ghcr.io/<org>/code-tribunal/ai-review-base@sha256:<digest>
+Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest>
+```
+
+> **Historical: the activated 1.0.0 pair.** Retained because Step 0's example
+> commands and several 1.0.0 result notes below reference it. It is **not** the
+> current candidate — `release/release-inputs.json` is the 1.0.1 draft
+> (`status: draft`, runtime source and digests unset pending rebuild).
 
 > The prior `b674d1e` and `15d424f` candidates are historical provenance only —
 > `b674d1e` was invalidated by a GitHub human-command authorization defect and
-> `15d424f` predates the mock/gate code. Their partial evidence does not bind the
-> release; every release-gating probe below must run against the pair named here.
+> `15d424f` predates the mock/gate code. Their partial evidence binds no release.
 
-- Runtime source `R`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e` (`main` HEAD)
+- Runtime source `R`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e` (`main` HEAD at 1.0.0)
 - Quality gate: CI `make quality` run **30125523924** — success (the SPEC-31
   symlink and SPEC-34 revision/406 regression tests are inside this run and are
   the authoritative coverage for those rows).
@@ -112,9 +121,19 @@ Confirm the digests match the values above before running any smoke.
 
 These runs cannot be executed from CI or a dev container — they need real
 scratch consumer projects, runners, protected credentials, and (for the one
-model smoke) an OpenRouter key. Prerequisites:
+model smoke) an OpenRouter key.
 
-- **GitLab:** a scratch consumer project + a protected template project holding
+**The consumer projects already exist — reuse them, do not rebuild them.**
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md) documents both
+`seanleecoder/code-tribunal-demo` projects: what is already configured, the
+`evidence/` branch conventions, the threads that must be preserved for the posted-body
+refresh check, and the per-release setup checklist. The summary below is the
+requirement; that file is the current state.
+
+Prerequisites:
+
+- **GitLab:** the scratch consumer project (`seanleecoder/code-tribunal-demo`,
+  project id `84667714`) + a protected template project holding
   `ai-review/ci/` at the templates repinned to `R` (for the 1.0.0 runs this is
   `seanleecoder/code-tribunal-ci-template` at
   `97e05fddf9f5466ccee385344a7aaeac500e4aa2`; the consumer's `.gitlab-ci.yml` must
@@ -125,7 +144,8 @@ model smoke) an OpenRouter key. Prerequisites:
   `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
   it and posting fails). Setup:
   [`docs/getting-started/gitlab.md`](../getting-started/gitlab.md).
-- **GitHub:** a scratch consumer repo with the workflow copied from `R` and
+- **GitHub:** the scratch consumer repo (`seanleecoder/code-tribunal-demo`) with
+  the workflow copied from `R` and
   repinned to the pair above (copying an older template can carry env keys that `R`
   rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
   `OPENROUTER_API_KEY` secret; the `gate` job added as a **required status
@@ -171,23 +191,29 @@ lifecycle steps — create, rerun, body change, resolve, reopen. The
 first-added-line fallback is not stable — inserting a line above shifts which
 line is "first added", changing the anchor and opening a new discussion.
 
-> **On GitHub, the Chain B fixture must MODIFY an existing file, not add one** —
-> and this is a product limitation at this runtime source, not merely a fixture
-> convention. GitHub's prepared `mr.diff` renders an added file with
-> `--- /dev/null`; `parse_unified_diff` keeps that verbatim, and
-> `context_hash_from_unified_diff` normalizes the parsed path while scanning, so it
-> raises `absolute paths are not allowed: /dev/null`. Finalization catches that and
-> **drops the finding**, so every seat reports
+> **On GitHub, the Chain B fixture must ADD a file — deliberately.** At
+> `R = 88bc941` (the 1.0.0 runtime) this was impossible: GitHub's prepared
+> `mr.diff` renders an added file with `--- /dev/null`; `parse_unified_diff` kept
+> that verbatim, and `context_hash_from_unified_diff` normalized the parsed path
+> while scanning, raising `absolute paths are not allowed: /dev/null`. Finalization
+> caught that and **dropped the finding**, so every seat reported
 > `raw_finding_count=1, accepted_finding_count=0, usable_for_resolution=false`,
-> consensus exits 3, and `post`/`gate` are skipped. Observed live in GitHub run
-> `30172413739`.
+> consensus exited 3, and `post`/`gate` were skipped. Observed live in GitHub run
+> `30172413739`. It affected **real reviewers too**, not just the mock: the raise
+> happened while scanning the diff, before the anchor's own paths were compared,
+> and it triggered on an added or deleted file, or on a file appearing *after* one
+> in the diff. Every 1.0.0 fixture was therefore modify-only.
 >
-> This affects **real reviewers too**, not just the mock: the raise happens while
-> scanning the diff, before the anchor's own paths are compared. It triggers when a
-> finding is on an added or deleted file, or on a file that appears *after* one in
-> the diff. GitLab is unaffected because its prepared diff emits
-> `--- a/<path>` for added files rather than the sentinel. See the 1.0.0 release
-> notes; a fix is queued for 1.0.1 on `fix/devnull-diff-sides`.
+> **The anchor fix landed after `v1.0.0` and ships in 1.0.1.** So the GitHub Chain B
+> fixture must now **add** a file, and step 1 of the chain asserts
+> `accepted_finding_count == raw_finding_count` with a posted inline discussion.
+> That assertion is the release's headline claim — do not substitute a modify-only
+> fixture, because no live run has ever exercised this path green.
+>
+> **Platform asymmetry still holds and still drives fixture choice.** GitLab's
+> prepared diff emits `--- a/<path>` for added files rather than the sentinel, so it
+> never hit the defect and its fixture proves something different. Choose fixtures
+> per platform deliberately rather than assuming symmetry.
 
 > **Unrelated line movement is regression-covered, not a token-free mock live
 > step.** Keeping finding identity across a line movement is cross-revision remap
@@ -301,9 +327,10 @@ so scope it identically across **all** jobs or consensus fails closed on diverge
   change — a new commit on the reviewed branch changes the diff and the mock's
   selected anchor. (`workflow_dispatch` inputs mapped the same way are equivalent.)
 
-## Mechanics learned in the 1.0.0 runs
+## Operator mechanics
 
-Read this before driving a chain; each item cost real time to discover.
+Read this before driving a chain. Each item cost real time to discover during the
+1.0.0 runs and applies to every release.
 
 **Re-drive a step without a new change request.** This is the biggest efficiency win.
 
@@ -319,8 +346,7 @@ Read this before driving a chain; each item cost real time to discover.
 
 **Added-file diffs differ by platform.** GitHub renders an added file as
 `--- /dev/null`; GitLab renders `--- a/<path>`. A fixture that behaves one way on one
-platform can behave differently on the other, and at this runtime source the GitHub
-form triggers the anchor defect described above. Choose fixtures per platform
+platform can behave differently on the other. Choose fixtures per platform
 deliberately rather than assuming symmetry.
 
 **Do not force-update a source branch to its base.** Doing so leaves the pull request
@@ -341,13 +367,16 @@ python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
 python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
 ```
 
-### Coverage gaps carried out of 1.0.0
+### Carried coverage gaps
 
-Start 1.0.1 from this list rather than rediscovering it.
+The inherited list of paths no live run has exercised. **Updating this table is a
+step in the release sequence:** each release removes what it closed and adds what it
+discovered, so the next release starts here instead of rediscovering it.
 
-| Gap | Why it was unproven at 1.0.0 | How to close it |
+| Gap | Why it is unproven | How to close it |
 |---|---|---|
-| Added-file lifecycle | blocked by the `/dev/null` anchor defect, so every fixture was modify-only | after the fix lands, run Chain B with an **adding** fixture and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion |
+| Added-file lifecycle | blocked at 1.0.0 by the `/dev/null` anchor defect, so every fixture was modify-only. The fix ships in 1.0.1; shipping it does not by itself close the gap | run Chain B with an **adding** fixture on GitHub and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion — queued as the 1.0.1 headline run |
+| `render-body.v3` refresh of a pre-v3 thread | the format changed after `v1.0.0`, so no run has re-reviewed a thread authored by an older image | re-review a change request whose bot thread predates v3 (the 1.0.0 threads GitHub comment `3650942127` / GitLab note `3601861614` still exist) and assert `updated_discussions=1`, `created=0`, same `issue_id` |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
