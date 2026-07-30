@@ -67,10 +67,13 @@ jobs:
           # Mount the checkout's tests rather than shipping them in the image. This
           # still proves "this exact image passes the suite", and it proves it against
           # the current tests instead of whatever was frozen into the layers.
+          # Overlay the image's own tests path: the suite resolves config/ and schemas/
+          # relative to its own location, so mounting elsewhere would make it read the
+          # mount point instead of the image's /opt/ai-review.
           docker run --rm --workdir /tmp \
-            -v "$GITHUB_WORKSPACE/ai-review/tests:/mnt/ai-review-tests:ro" \
+            -v "$GITHUB_WORKSPACE/ai-review/tests:/opt/ai-review/tests:ro" \
             "$AI_REVIEW_BASE_TAG" \
-            python -m unittest discover -s /mnt/ai-review-tests -p 'test_*.py'
+            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
           # Run this as early as possible because the complete checkout validator

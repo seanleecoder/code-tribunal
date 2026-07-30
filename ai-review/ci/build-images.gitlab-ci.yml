@@ -75,8 +75,12 @@ preflight_ai_review_reviewer_image:
     AI_REVIEW_ALLOW_LOCAL_MOCK: "true"
   script:
     - cd /tmp
-    # Tests are not shipped in the image; run the checkout's copy against it.
-    - python -m unittest discover -s "$CI_PROJECT_DIR/ai-review/tests" -p 'test_*.py'
+    # Tests are not shipped in the image. Stage the checkout's copy into the image's
+    # own tests path, because the suite resolves config/ and schemas/ relative to its
+    # own location — running it from the checkout would validate the checkout's config
+    # instead of the image's.
+    - cp -R "$CI_PROJECT_DIR/ai-review/tests/." /opt/ai-review/tests/
+    - python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
     - python -m compileall -q /opt/ai-review/src
     - python -m ai_review.input_bundle --help >/dev/null
     - python -m ai_review.consensus --help >/dev/null
