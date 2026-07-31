@@ -226,6 +226,217 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(consensus["summary"]["drop_count"], 1)
         validate_instance(consensus, "consensus.schema.json")
 
+    def test_critique_observations_keep_selected_effective_non_agree_verdicts(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [_critique("codex", source_id, "dispute", rationale="the guard covers it")],
+                ),
+                _critique_batch(
+                    "opencode",
+                    [_critique("opencode", source_id, "noise", rationale="style nit only")],
+                ),
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(
+            group["critique_observations"],
+            [
+                {
+                    "critic": "codex",
+                    "verdict": "dispute",
+                    "rationale": "the guard covers it",
+                    "adjusted_severity": None,
+                    "duplicate_of_source_finding_id": None,
+                },
+                {
+                    "critic": "opencode",
+                    "verdict": "noise",
+                    "rationale": "style nit only",
+                    "adjusted_severity": None,
+                    "duplicate_of_source_finding_id": None,
+                },
+            ],
+        )
+        # critique_disputes is exactly the effective-dispute projection.
+        self.assertEqual(
+            group["critique_disputes"],
+            [
+                {
+                    "critic": "codex",
+                    "rationale": "the guard covers it",
+                    "adjusted_severity": None,
+                }
+            ],
+        )
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_agree_is_not_retained_as_an_observation(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[_critique_batch("codex", [_critique("codex", source_id, "agree")])],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(group["critique_observations"], [])
+        self.assertEqual(group["critique_support_count"], 1)
+
+    def test_valid_duplicate_observation_keeps_target(self) -> None:
+        first = _finding(
+            "claude",
+            "1" * 64,
+            "major",
+            line=10,
+            context_hash="1" * 64,
+            title_fingerprint="2" * 64,
+            evidence_fingerprint="3" * 64,
+            symbol="first",
+        )
+        second = _finding(
+            "codex",
+            "2" * 64,
+            "major",
+            line=100,
+            context_hash="4" * 64,
+            title_fingerprint="5" * 64,
+            evidence_fingerprint="6" * 64,
+            symbol="second",
+        )
+
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", first), _batch("codex", second)],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch(
+                    "opencode",
+                    [
+                        _critique(
+                            "opencode",
+                            "1" * 64,
+                            "duplicate",
+                            duplicate_of="2" * 64,
+                            rationale="the same defect as the neighbouring report",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(
+            group["critique_observations"],
+            [
+                {
+                    "critic": "opencode",
+                    "verdict": "duplicate",
+                    "rationale": "the same defect as the neighbouring report",
+                    "adjusted_severity": None,
+                    "duplicate_of_source_finding_id": "2" * 64,
+                }
+            ],
+        )
+        self.assertEqual(group["critique_disputes"], [])
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_invalid_duplicate_observation_is_a_dispute_without_target(self) -> None:
+        source_id = "1" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [_batch("claude", _finding("claude", source_id, "major"))],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [
+                        _critique(
+                            "codex",
+                            source_id,
+                            "duplicate",
+                            duplicate_of="f" * 64,
+                            rationale="already reported elsewhere",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        group = consensus["groups"][0]
+        observation = group["critique_observations"][0]
+        self.assertEqual(observation["verdict"], "dispute")
+        self.assertIsNone(observation["duplicate_of_source_finding_id"])
+        self.assertEqual(group["critique_summary"]["dispute"], 1)
+        self.assertEqual(group["critique_summary"]["duplicate"], 0)
+        self.assertEqual(len(group["critique_disputes"]), 1)
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_majority_noise_group_records_drop_reason_and_others_do_not(self) -> None:
+        suppressed_id = "1" * 64
+        surviving_id = "2" * 64
+        consensus = build_consensus(
+            _manifest(),
+            [
+                _batch("claude", _finding("claude", suppressed_id, "major", line=10)),
+                _batch(
+                    "codex",
+                    _finding(
+                        "codex",
+                        surviving_id,
+                        "major",
+                        line=200,
+                        context_hash="9" * 64,
+                        title_fingerprint="8" * 64,
+                        evidence_fingerprint="7" * 64,
+                        symbol="other",
+                    ),
+                ),
+            ],
+            _critique_config(),
+            critique_batches=[
+                _critique_batch("codex", [_critique("codex", suppressed_id, "noise")]),
+                _critique_batch("opencode", [_critique("opencode", suppressed_id, "noise")]),
+            ],
+        )
+
+        by_source = {group["source_finding_ids"][0]: group for group in consensus["groups"]}
+        suppressed = by_source[suppressed_id]
+        surviving = by_source[surviving_id]
+        self.assertEqual(suppressed["decision"], "drop")
+        self.assertEqual(suppressed["drop_reason"], "critique_majority_noise")
+        self.assertNotIn("drop_reason", surviving)
+        validate_instance(consensus, "consensus.schema.json")
+
+    def test_observations_are_order_independent(self) -> None:
+        source_id = "1" * 64
+        codex = _critique_batch(
+            "codex", [_critique("codex", source_id, "dispute", rationale="second")]
+        )
+        opencode = _critique_batch(
+            "opencode", [_critique("opencode", source_id, "noise", rationale="first")]
+        )
+        findings = [_batch("claude", _finding("claude", source_id, "major"))]
+
+        forward = build_consensus(
+            _manifest(), findings, _critique_config(), critique_batches=[codex, opencode]
+        )
+        reversed_order = build_consensus(
+            _manifest(), findings, _critique_config(), critique_batches=[opencode, codex]
+        )
+
+        self.assertEqual(
+            forward["groups"][0]["critique_observations"],
+            reversed_order["groups"][0]["critique_observations"],
+        )
+
     def test_agree_support_does_not_increase_vote_count(self) -> None:
         source_id = "1" * 64
         consensus = build_consensus(

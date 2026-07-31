@@ -25,12 +25,12 @@ versioning.
   with `model_error` before the reviewer CLI is invoked.
 - The Cursor permission smoke now requires an explicit exact model argument and
   rejects the discovery placeholder `auto` before invoking Docker.
-- Posted review output now uses `render-body.v3`: free-text and path-shaped model
+- Posted review output now uses `render-body.v4`: free-text and path-shaped model
   values render as literal data, malformed suggestions remain visible as data, and
   fragment-aware truncation keeps spans atomic, blocks closed, and trusted
   footers/markers intact. Consensus artifacts remain `consensus.v1`. (These entries
-  were previously filed under 1.0.0; `render-body.v3` landed after that tag and has
-  never shipped in a release.)
+  were previously filed under 1.0.0, and briefly as `render-body.v3`; neither v3 nor
+  v4 has shipped in a release, so there is exactly one format change for users.)
 - Prose in posted reviews now wraps instead of scrolling horizontally. Bodies,
   evidence, and critique rationale render as a paragraph of one code span per line
   rather than a `text` fenced block, which reads the same but reflows at the comment
@@ -39,12 +39,47 @@ versioning.
   element — the boundary that also keeps model text away from both platforms'
   post-render autolink, mention, and issue-reference filters.
 
+### Added
+
+- Consensus groups now retain a `critique_observations` array: every selected
+  effective non-agree critique, in full, with its critic, effective verdict,
+  rationale, any severity adjustment, and — for a validated duplicate — the
+  canonical source finding that justified the merge. `critique_disputes` is now
+  exactly the effective-dispute projection of that array rather than a second data
+  path, so existing consumers are unaffected. An invalid duplicate claim is
+  retained as a dispute and never keeps the link that failed validation.
+- A group suppressed by majority noise now records `drop_reason:
+  "critique_majority_noise"`. This is a correctness fix, not bookkeeping: the
+  suppression predicate depends on the set of eligible critics, which consensus
+  never wrote to the artifact, so no downstream consumer could reconstruct why a
+  report was withheld. A missing `drop_reason` means "unknown", never majority
+  noise.
+- Posted reviews show a tiered **Critique** presentation: an always-visible counts
+  line, with dispute rationale in full and noise rationale elided to one line
+  behind a collapsed disclosure. A validated duplicate is counted only — the group
+  is already merged and the footer's reviewer list already names every reporter.
+  Full noise text and every duplicate rationale remain in the artifact for audit.
+- Summary comment entries show `Found by`. Inline bodies do not, because their
+  consensus footer already emits the identical `Reviewers` line from the same
+  source.
+- `post_result.json` records a `critique_dispositions` audit of every
+  majority-noise suppression, unconditionally. The new
+  `critique.show_disposition_audit` option (YAML only, default `false`) also shows
+  it in the merge-request summary, in a lowest-priority collapsed section that
+  yields space to every real finding. A suppressed group still produces no thread,
+  state record, resolution, vote, or merge-gate effect.
+
 ### Migration
 
-- The posted-body format is `render-body.v3`. Existing bot-authored inline threads
+- The posted-body format is `render-body.v4`. Existing bot-authored inline threads
   receive a one-time body update on the next review run; issue IDs, state records,
-  and marker grammar remain unchanged. Deployments tracking `main` before this
-  change see one further refresh, because the prose format changed within v3.
+  consensus decisions, merge gates, and marker grammar remain unchanged.
+  Deployments tracking `main` before this change see one further refresh, because
+  the prose format and the critique section changed after 1.0.0.
+- The `consensus.v1` schema additions are optional-key-only. Artifacts written
+  before this change keep their existing `critique_disputes` behaviour; they can
+  produce neither a historical noise audit nor a disposition selection, because
+  neither their noise rationale nor their suppression reason was ever stored.
 
 ## [1.0.0] - 2026-07-25
 

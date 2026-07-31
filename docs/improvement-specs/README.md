@@ -22,8 +22,8 @@ wins.
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel; observed live with a weak default model. |
 | [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies the running image. |
-| [SPEC-44](spec-44-literal-model-output.md) | Implemented (post-1.0; `render-body.v3`) | Render every free-text and path-shaped review value as literal data, validate the consensus artifact before posting, and preserve v3 state recovery without changing consensus or marker schemas. |
-| [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Retain all effective duplicate/noise/dispute reasoning, display it tiered behind a disclosure, and record the suppression reason for an opt-in majority-noise audit. |
+| [SPEC-44](spec-44-literal-model-output.md) | Implemented (post-1.0; shipped as part of `render-body.v4`) | Render every free-text and path-shaped review value as literal data, validate the consensus artifact before posting, and preserve v3 state recovery without changing consensus or marker schemas. |
+| [SPEC-45](spec-45-critique-provenance.md) | Implemented (post-1.0; `render-body.v4`) | Retain all effective duplicate/noise/dispute reasoning, display it tiered behind a disclosure, and record the suppression reason for an opt-in majority-noise audit. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-40](../history/specs/spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
@@ -39,14 +39,13 @@ completed for `v1.0.0`. Remaining order:
 3. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
    in-pipeline trusted-image enforcement).
 4. Continue the post-1.0 review-output sequence in order: SPEC-44 literal-safe
-   rendering is implemented in `render-body.v3`; next is SPEC-45 critique
-   provenance/suppression audit, then SPEC-46
-   non-line-anchored advisories. SPEC-45 and SPEC-46 rely on the renderer boundary
-   and the summary section-descriptor refactor established by SPEC-44; SPEC-46 is
-   handed off after SPEC-45 so its summary priority composes with the
-   critique-disposition section, and degrades cleanly if SPEC-45 slips.
-   SPEC-44 remains independently shippable as `render-body.v3`; SPEC-45 owns the
-   later critique disclosure and `render-body.v4` change.
+   rendering and SPEC-45 critique provenance/suppression audit are both
+   implemented; next is SPEC-46 non-line-anchored advisories. SPEC-46 relies on the
+   renderer boundary and the summary section-descriptor refactor established by
+   SPEC-44, and its summary priority composes with the critique-disposition
+   section SPEC-45 added.
+   SPEC-44 and SPEC-45 ship together as `render-body.v4`, so maintainers see one
+   thread refresh rather than two; `render-body.v3` never shipped in a release.
    Critique of advisories is deliberately deferred out of SPEC-46 and needs its own
    specification before the advisory caps there are raised.
    Product-policy decisions for this sequence — critique display tiering, the opt-in

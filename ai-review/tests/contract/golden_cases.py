@@ -3,8 +3,21 @@ from __future__ import annotations
 from ai_review.consensus import build_consensus
 
 
-def _config(*, semantic_enabled: bool) -> dict:
+def _config(
+    *,
+    semantic_enabled: bool,
+    critique_enabled: bool = False,
+    allow_severity_downgrade: bool = False,
+) -> dict:
     return {
+        "critique": {
+            "enabled": critique_enabled,
+            "rounds": 1 if critique_enabled else 0,
+            "blind_reviewer_identity": True,
+            "can_add_quorum_votes": False,
+            "allow_advisory_escalation": False,
+            "allow_severity_downgrade": allow_severity_downgrade,
+        },
         "reviewers": {
             "opencode": {"enabled": True},
             "claude": {"enabled": True},
@@ -105,6 +118,170 @@ def _batch(reviewer: str, finding: dict) -> dict:
     }
 
 
+def _critique(
+    critic: str,
+    target: str,
+    verdict: str,
+    *,
+    rationale: str,
+    duplicate_of: str | None = None,
+    adjusted_severity: str | None = None,
+) -> dict:
+    return {
+        "target_source_finding_id": target,
+        "critic": critic,
+        "verdict": verdict,
+        "duplicate_of_source_finding_id": duplicate_of,
+        "rationale": rationale,
+        "adjusted_severity": adjusted_severity,
+        "confidence": 0.8,
+    }
+
+
+def _critique_batch(critic: str, critiques: list[dict]) -> dict:
+    return {
+        "schema_version": "critique_batch.v1",
+        "run_id": "run",
+        "critic": critic,
+        "adapter_status": "success",
+        "effective_config_sha256": "0" * 64,
+        "critiques": critiques,
+    }
+
+
+def _build(
+    finding_batches: list[dict],
+    config: dict,
+    critique_batches: list[dict] | None = None,
+    *,
+    reverse: bool = False,
+) -> dict:
+    """Build one case, optionally with every input list reversed.
+
+    Reversal covers both axes an adapter can vary: the batch order the CLI reads
+    from ``sorted(glob(...))`` and the critique order inside a batch.
+    """
+
+    if reverse:
+        finding_batches = list(reversed(finding_batches))
+        critique_batches = [
+            {**batch, "critiques": list(reversed(batch["critiques"]))}
+            for batch in reversed(critique_batches or [])
+        ] or None
+    return build_consensus(_manifest(), finding_batches, config, critique_batches=critique_batches)
+
+
+def _guard_finding(reviewer: str, source_id: str, *, line: int = 10, seed: str = "1") -> dict:
+    return _finding(
+        reviewer,
+        source_id,
+        title=f"Config lookup lacks a guard at line {line}",
+        body="The config lookup raises KeyError when required values are absent.",
+        context_hash=seed * 64,
+        title_fingerprint=seed * 64,
+        evidence_fingerprint=seed * 64,
+        line=line,
+    )
+
+
+def valid_duplicate_consensus(*, reverse: bool = False) -> dict:
+    """A third-party duplicate link merges two findings that would not group."""
+
+    first = _guard_finding("claude", "1" * 64, line=10, seed="1")
+    second = _guard_finding("codex", "2" * 64, line=100, seed="2")
+    return _build(
+        [_batch("claude", first), _batch("codex", second)],
+        _config(semantic_enabled=False, critique_enabled=True),
+        [
+            _critique_batch(
+                "opencode",
+                [
+                    _critique(
+                        "opencode",
+                        "1" * 64,
+                        "duplicate",
+                        duplicate_of="2" * 64,
+                        rationale="Both reports describe the same absent-value lookup.",
+                    )
+                ],
+            )
+        ],
+        reverse=reverse,
+    )
+
+
+def invalid_duplicate_consensus(*, reverse: bool = False) -> dict:
+    """An unresolvable duplicate link is retained as an effective dispute."""
+
+    return _build(
+        [_batch("claude", _guard_finding("claude", "1" * 64))],
+        _config(semantic_enabled=False, critique_enabled=True, allow_severity_downgrade=True),
+        [
+            _critique_batch(
+                "opencode",
+                [
+                    _critique(
+                        "opencode",
+                        "1" * 64,
+                        "duplicate",
+                        duplicate_of="f" * 64,
+                        adjusted_severity="minor",
+                        rationale="Already covered by a report that is not in this run.",
+                    )
+                ],
+            )
+        ],
+        reverse=reverse,
+    )
+
+
+def ordinary_noise_consensus(*, reverse: bool = False) -> dict:
+    """One noise critique out of two eligible critics leaves the group standing."""
+
+    return _build(
+        [_batch("claude", _guard_finding("claude", "1" * 64))],
+        _config(semantic_enabled=False, critique_enabled=True),
+        [
+            _critique_batch(
+                "codex",
+                [
+                    _critique(
+                        "codex",
+                        "1" * 64,
+                        "noise",
+                        rationale="Style preference, not actionable here. The guard is fine.",
+                    )
+                ],
+            ),
+            _critique_batch(
+                "opencode",
+                [_critique("opencode", "1" * 64, "agree", rationale="Reproduced from the diff.")],
+            ),
+        ],
+        reverse=reverse,
+    )
+
+
+def majority_noise_consensus(*, reverse: bool = False) -> dict:
+    """A strict majority of eligible critics suppresses the group."""
+
+    return _build(
+        [_batch("claude", _guard_finding("claude", "1" * 64))],
+        _config(semantic_enabled=False, critique_enabled=True),
+        [
+            _critique_batch(
+                "codex",
+                [_critique("codex", "1" * 64, "noise", rationale="Not worth a maintainer's time.")],
+            ),
+            _critique_batch(
+                "opencode",
+                [_critique("opencode", "1" * 64, "noise", rationale="Agreed, this is noise.")],
+            ),
+        ],
+        reverse=reverse,
+    )
+
+
 def semantic_consensus() -> dict:
     first = _finding(
         "claude",
@@ -172,4 +349,17 @@ def default_transitive_split_consensus() -> dict:
 GOLDEN_CASES = {
     "semantic_consensus.json": semantic_consensus,
     "default_transitive_split_consensus.json": default_transitive_split_consensus,
+    "valid_duplicate_consensus.json": valid_duplicate_consensus,
+    "invalid_duplicate_consensus.json": invalid_duplicate_consensus,
+    "ordinary_noise_consensus.json": ordinary_noise_consensus,
+    "majority_noise_consensus.json": majority_noise_consensus,
+}
+
+# Cases whose inputs are re-fed in a different batch/critique order to assert that
+# canonical output does not depend on adapter file enumeration or response order.
+ORDER_INDEPENDENCE_CASES = {
+    "valid_duplicate_consensus": valid_duplicate_consensus,
+    "invalid_duplicate_consensus": invalid_duplicate_consensus,
+    "ordinary_noise_consensus": ordinary_noise_consensus,
+    "majority_noise_consensus": majority_noise_consensus,
 }

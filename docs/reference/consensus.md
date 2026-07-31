@@ -24,6 +24,27 @@ add supporting or dissenting evidence but cannot add quorum votes in v1.
 Critique severity downgrades are disabled by default and never cross the blocker
 boundary.
 
+## Critique provenance
+
+Consensus decides, the artifact records, the renderer reads. Each group retains
+every selected effective non-agree critique in `critique_observations`: the
+critic, the *effective* verdict, the rationale in full, any requested severity
+adjustment, and — for a validated duplicate only — the canonical source finding
+that justified the merge. A duplicate whose link fails validation is retained as
+a dispute and keeps no link. `critique_disputes` is exactly the effective-dispute
+projection of that array, not an independent data path.
+
+Retention is unconditional and complete, which is where an audit should look.
+Display is separately budgeted, because value per rendered line differs sharply
+by verdict; see [revision lifecycle](revision-lifecycle.md).
+
+A group suppressed because a strict majority of eligible critics called it noise
+records `drop_reason: "critique_majority_noise"`. The reason is persisted rather
+than re-derived because the predicate depends on the set of eligible critics,
+which is internal to consensus and never written to the artifact — so no
+downstream consumer could recompute it. A missing `drop_reason` means "unknown",
+never majority noise.
+
 ## Panel degradation
 
 | Panel status | Meaning | Blocking | Absence-based resolution |

@@ -54,6 +54,37 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "critique_dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_id", "title", "reported_by", "noise"],
+        "properties": {
+          "issue_id": {
+            "type": ["string", "null"],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "title": { "type": "string" },
+          "reported_by": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "noise": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["critic", "rationale"],
+              "properties": {
+                "critic": { "type": "string", "minLength": 1 },
+                "rationale": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "summary_comment": {
       "type": "object",
       "additionalProperties": false,

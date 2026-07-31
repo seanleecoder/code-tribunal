@@ -149,13 +149,9 @@ class PostGateEndToEndTests(unittest.TestCase):
                         project_id="octo-org/octo-repo",
                         merge_request_iid="17",
                     )
-                    client = FakeGitHubClient(
-                        head_sha=manifest["head_sha"], diff_text=diff_text
-                    )
+                    client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
                 else:
-                    client = FakeGitLabClient(
-                        head_sha=manifest["head_sha"], diff_text=diff_text
-                    )
+                    client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
 
                 consensus = build_consensus(manifest, batches, config)
                 first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
@@ -196,6 +192,109 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(len(client.state_notes()), 1)
         self.assertEqual(exit_code, 7)
         self.assertEqual(second_gate["status"], "failed_blocking_findings")
+
+    def test_majority_noise_disposition_creates_no_thread_state_or_gate_effect(self) -> None:
+        results = {}
+        for show_audit in (False, True):
+            with tempfile.TemporaryDirectory() as tmp:
+                config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+                client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+
+                # First run posts the finding normally, leaving a persisted open
+                # state record for the group the second run suppresses.
+                first_consensus = build_consensus(manifest, self._blocking_batches(), config)
+                post_consensus(client, config, manifest, first_consensus, diff_text=diff_text)
+                self.assertEqual(client.discussion_count(), 1)
+                baseline_records = decode_state_note_body(client.state_notes()[0]["body"])[
+                    "records"
+                ]
+                self.assertEqual([record["status"] for record in baseline_records], ["open"])
+
+                config["critique"]["enabled"] = True
+                config["critique"]["rounds"] = 1
+                config["critique"]["show_disposition_audit"] = show_audit
+                consensus = build_consensus(
+                    manifest,
+                    self._blocking_batches(),
+                    config,
+                    critique_batches=self._noise_critique_batches(),
+                )
+                validate_instance(consensus, "consensus.schema.json")
+                suppressed = consensus["groups"][0]
+                self.assertEqual(suppressed["decision"], "drop")
+                self.assertEqual(suppressed["drop_reason"], "critique_majority_noise")
+
+                post_result = post_consensus(
+                    client, config, manifest, consensus, diff_text=diff_text
+                )
+                validate_instance(post_result, "post_result.schema.json")
+                gate_result, exit_code = evaluate_gate(config, consensus, post_result)
+                validate_instance(gate_result, "gate_result.schema.json")
+
+                # The audit is machine-readable in the artifact either way.
+                self.assertEqual(len(post_result["critique_dispositions"]), 1)
+                disposition = post_result["critique_dispositions"][0]
+                self.assertEqual(disposition["title"], "Missing guard before records access")
+                self.assertEqual(disposition["reported_by"], ["claude", "codex"])
+                # codex co-reported the finding, so its critique is a self-critique
+                # and is excluded; opencode is the only eligible critic.
+                self.assertEqual([entry["critic"] for entry in disposition["noise"]], ["opencode"])
+
+                # A suppressed group creates no new thread and no new record, and
+                # cannot block the merge.
+                self.assertEqual(post_result["created_discussions"], 0)
+                self.assertEqual(client.discussion_count(), 1)
+                self.assertIs(gate_result["block_merge"], False)
+                self.assertEqual(exit_code, 0)
+                records = decode_state_note_body(client.state_notes()[0]["body"])["records"]
+                self.assertEqual(
+                    {record["issue_id"] for record in records},
+                    {record["issue_id"] for record in baseline_records},
+                )
+                summary_notes = client.summary_notes()
+                results[show_audit] = (
+                    post_result,
+                    records,
+                    summary_notes[0]["body"] if summary_notes else None,
+                )
+
+        disabled_result, disabled_records, disabled_summary = results[False]
+        enabled_result, enabled_records, enabled_summary = results[True]
+        # Enabling the audit changes nothing but the summary comment.
+        self.assertEqual(disabled_records, enabled_records)
+        self.assertEqual(
+            disabled_result["critique_dispositions"], enabled_result["critique_dispositions"]
+        )
+        self.assertIsNone(disabled_summary)
+        self.assertIsNotNone(enabled_summary)
+        assert enabled_summary is not None
+        self.assertIn("<summary>Critique disposition</summary>", enabled_summary)
+        self.assertIn("The suppressed report is not worth a maintainer's time", enabled_summary)
+        # An audit entry is not a finding: it carries no inline thread marker.
+        self.assertNotIn("ai-review:v1", enabled_summary)
+
+    def _noise_critique_batches(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "schema_version": "critique_batch.v1",
+                "run_id": "integration-run",
+                "critic": critic,
+                "adapter_status": "success",
+                "effective_config_sha256": "0" * 64,
+                "critiques": [
+                    {
+                        "target_source_finding_id": "1" * 64,
+                        "critic": critic,
+                        "verdict": "noise",
+                        "duplicate_of_source_finding_id": None,
+                        "rationale": "The suppressed report is not worth a maintainer's time.",
+                        "adjusted_severity": None,
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+            for critic in ("codex", "opencode")
+        ]
 
     def _run_e2e(
         self, batches: list[dict[str, Any]]
@@ -427,9 +526,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         lines += ctx_above + [marker] + ctx_below
         return "\n".join(lines) + "\n"
 
-    def _marker_bundle(
-        self, tmp: Path, name: str, diff_text: str
-    ) -> tuple[Path, dict[str, Any]]:
+    def _marker_bundle(self, tmp: Path, name: str, diff_text: str) -> tuple[Path, dict[str, Any]]:
         """Build a full input bundle from `diff_text` via prepare_local_bundle so the
         manifest carries provenance (diff_sha256, run_id) consistent with the served
         diff — modelling a distinct revision rather than reusing one manifest with a
@@ -459,8 +556,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         return {f["source_finding_id"] for f in batch["findings"]}
 
     def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CONSENSUS_ENV
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
         ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
@@ -530,8 +628,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # visible placement as requiring separate live validation. That visible
         # placement remains a documented, live-optional confirmation, not something
         # this test asserts.
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CONSENSUS_ENV
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
         ):
             tmpp = Path(tmp)
             diff1 = self._marker_diff(unrelated_lines=0)

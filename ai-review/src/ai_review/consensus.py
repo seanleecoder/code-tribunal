@@ -336,6 +336,22 @@ def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, st
     )
 
 
+def _observation_sort_key(observation: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Order retained observations canonically.
+
+    This is also the render order, so it must not depend on adapter file
+    enumeration, model response order, or dictionary iteration.
+    """
+
+    return (
+        str(observation["critic"]),
+        str(observation["verdict"]),
+        str(observation["duplicate_of_source_finding_id"] or ""),
+        str(observation["adjusted_severity"] or ""),
+        str(observation["rationale"]),
+    )
+
+
 def _severity_after_group_downgrade(current: str, adjusted_values: list[str]) -> str:
     requested_ranks = [SEVERITY_RANK[value] for value in adjusted_values if value in SEVERITY_RANK]
     current_rank = SEVERITY_RANK[current]
@@ -516,29 +532,54 @@ def _apply_critiques(
             group["critique_support_count"] += 1
         elif verdict == "noise":
             group["critique_noise_count"] += 1
-        elif verdict == "dispute":
+
+        if verdict != "agree":
+            # Retention is unconditional and records the *effective* verdict, so a
+            # duplicate demoted at the check above is retained as a dispute and
+            # must not keep the link that failed validation.
             rationale = str(critique.get("rationale", ""))
             if critic.strip() and rationale.strip():
-                group["critique_disputes"].append(
+                group["critique_observations"].append(
                     {
                         "critic": critic,
+                        "verdict": verdict,
                         "rationale": rationale,
                         "adjusted_severity": (
                             str(critique["adjusted_severity"])
                             if isinstance(critique.get("adjusted_severity"), str)
                             else None
                         ),
+                        "duplicate_of_source_finding_id": (
+                            str(critique["duplicate_of_source_finding_id"])
+                            if verdict == "duplicate"
+                            else None
+                        ),
                     }
                 )
+
+        if verdict == "dispute":
             adjusted = critique.get("adjusted_severity")
             if isinstance(adjusted, str):
+                # A blank critic or rationale suppresses the observation above but
+                # still contributes its requested downgrade, as it always has.
                 downgrades.setdefault(group_index, []).append(adjusted)
 
     for group in groups:
-        group["critique_disputes"] = sorted(
-            group["critique_disputes"],
-            key=lambda item: (str(item["critic"]), str(item["rationale"])),
+        group["critique_observations"] = sorted(
+            group["critique_observations"], key=_observation_sort_key
         )
+        # A compatibility projection, not a second data path: one critique is
+        # selected per (group, critic), so this order matches the previous
+        # (critic, rationale) sort exactly.
+        group["critique_disputes"] = [
+            {
+                "critic": observation["critic"],
+                "rationale": observation["rationale"],
+                "adjusted_severity": observation["adjusted_severity"],
+            }
+            for observation in group["critique_observations"]
+            if observation["verdict"] == "dispute"
+        ]
 
     allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
     allow_advisory = bool(config.get("critique", {}).get("allow_advisory_escalation", True))
@@ -551,7 +592,11 @@ def _apply_critiques(
             if critic not in set(group["contributing_reviewers"])
         ]
         if eligible_critics and int(group["critique_noise_count"]) > len(eligible_critics) / 2:
+            # Persisted because the predicate is not computable downstream:
+            # eligible_critics derives from successful_critics, a local that never
+            # reaches the artifact. Consensus decides, the artifact records.
             group["decision"] = "drop"
+            group["drop_reason"] = "critique_majority_noise"
             group["block_merge"] = False
             group["human_ack_recommended"] = False
             continue
@@ -698,6 +743,9 @@ def build_consensus(
                 "suggestion": representative.get("suggestion"),
                 "evidence_by_reviewer": _evidence_by_reviewer(findings),
                 "critique_disputes": [],
+                # Seeded here rather than in _apply_critiques, which returns early
+                # when critique is disabled: every newly built group emits the key.
+                "critique_observations": [],
                 "body_hash": "0" * 64,
                 "vote_count": len(contributing),
                 "critique_support_count": 0,
@@ -847,9 +895,7 @@ def require_critique_provenance(
     if not isinstance(raw, dict):
         raise ConsensusIntegrityError(f"critique batch is not an object for critic={critic}")
     if raw.get("run_id") != run_id:
-        raise ConsensusIntegrityError(
-            f"critique batch run_id mismatch for critic={critic}"
-        )
+        raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
     if raw.get("critic") != critic:
         raise ConsensusIntegrityError(
             f"critique batch critic mismatches filename for critic={critic}"
@@ -910,9 +956,7 @@ def validate_consensus_inputs(
             if reviewer not in enabled:
                 # Matrix jobs may still emit skipped artifacts for disabled seats.
                 if status != "skipped":
-                    raise ConsensusIntegrityError(
-                        f"finding batch for disabled reviewer={reviewer}"
-                    )
+                    raise ConsensusIntegrityError(f"finding batch for disabled reviewer={reviewer}")
                 continue
             expected_model = str(reviewer_cfg.get("model") or "")
             if status == "success" and str(batch.get("model") or "") != expected_model:
@@ -933,18 +977,14 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(f"duplicate critique batch for critic={critic}")
             seen_critics.add(critic)
             if batch.get("run_id") != run_id:
-                raise ConsensusIntegrityError(
-                    f"critique batch run_id mismatch for critic={critic}"
-                )
+                raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
             status = str(batch.get("adapter_status") or "success")
             critic_cfg = reviewers_cfg.get(critic)
             if not isinstance(critic_cfg, dict):
                 raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
             if critic not in enabled:
                 if status != "skipped":
-                    raise ConsensusIntegrityError(
-                        f"critique batch for disabled critic={critic}"
-                    )
+                    raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
                 continue
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, overload
 
@@ -9,7 +9,11 @@ from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-RENDER_BODY_VERSION = "render-body.v3"
+RENDER_BODY_VERSION = "render-body.v4"
+CRITIQUE_COUNTS_LABEL = "Critique:"
+NOISE_RATIONALE_MAX_LENGTH = 200
+_CRITIQUE_COUNT_ORDER = ("agree", "dispute", "duplicate", "noise")
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
@@ -278,9 +282,7 @@ def _prose_fragment(
     if isinstance(sources, str):
         return _text_fragment(f"{label}\n{indent}{sources}")
     prefix = f"{label}\n"
-    content = _join_prose_lines(
-        [_encode_span(line) if line else "" for line in sources], indent
-    )
+    content = _join_prose_lines([_encode_span(line) if line else "" for line in sources], indent)
     return RenderFragment(
         text=f"{prefix}{content}",
         kind="prose",
@@ -310,9 +312,7 @@ def details_fragment(
     closing tag inert as well.
     """
 
-    escaped_summary = (
-        summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
+    escaped_summary = summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     content = _compose_fragments(fragments)
     text = f"<details>\n<summary>{escaped_summary}</summary>\n\n"
     if content:
@@ -414,9 +414,7 @@ def _partial_prose(fragment: RenderFragment, available: int) -> str | None:
     return fragment.prefix + _join_prose_lines(surviving, fragment.indent)
 
 
-def _fit_fragments(
-    fragments: Sequence[RenderFragment], budget: int
-) -> tuple[list[str], str]:
+def _fit_fragments(fragments: Sequence[RenderFragment], budget: int) -> tuple[list[str], str]:
     """Fit as many whole fragments as possible, then shorten the next one."""
 
     surviving: list[str] = []
@@ -459,9 +457,7 @@ def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> st
     # needs the blank-line separator instead.  Which one applies is only known
     # once the last surviving fragment is known, so fit for the shorter
     # separator and refit if the answer turns out to be prose.
-    surviving, last_kind = _fit_fragments(
-        fragments, max_length - notice_length - len("\n")
-    )
+    surviving, last_kind = _fit_fragments(fragments, max_length - notice_length - len("\n"))
     if last_kind == "prose":
         surviving, last_kind = _fit_fragments(
             fragments, max_length - notice_length - len(_FRAGMENT_SEPARATOR)
@@ -473,9 +469,7 @@ def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> st
 
     if surviving:
         return (
-            _FRAGMENT_SEPARATOR.join(surviving)
-            + truncation_separator
-            + PLATFORM_TRUNCATION_NOTICE
+            _FRAGMENT_SEPARATOR.join(surviving) + truncation_separator + PLATFORM_TRUNCATION_NOTICE
         )
     return PLATFORM_TRUNCATION_NOTICE
 
@@ -550,6 +544,120 @@ def _inline_marker(
     )
 
 
+def _critique_counts_line(group: FindingGroup) -> str | None:
+    """Render the always-visible counts line, or ``None`` for no critiques.
+
+    Derived from ``critique_summary``, which even pre-observation artifacts carry.
+    Separators, labels, and verdict order are renderer-owned.
+    """
+
+    summary = group.get("critique_summary")
+    if not isinstance(summary, dict):
+        return None
+    parts = []
+    for verdict in _CRITIQUE_COUNT_ORDER:
+        count = summary.get(verdict)
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            parts.append(f"{count} {verdict}")
+    if not parts:
+        return None
+    return f"{CRITIQUE_COUNTS_LABEL} " + " · ".join(parts)
+
+
+def _display_observations(group: FindingGroup) -> list[Mapping[str, object]]:
+    """Return the observations to display, newest artifact shape first.
+
+    An artifact written before observations existed retained dispute rationale
+    only, so its disputes are synthesized for display; duplicate and noise
+    provenance it never stored is not invented.
+    """
+
+    observations = group.get("critique_observations")
+    if isinstance(observations, list):
+        return [entry for entry in observations if isinstance(entry, Mapping)]
+    legacy = group.get("critique_disputes")
+    if not isinstance(legacy, list):
+        return []
+    return [
+        {
+            "critic": dispute.get("critic"),
+            "verdict": "dispute",
+            "rationale": dispute.get("rationale"),
+            "adjusted_severity": dispute.get("adjusted_severity"),
+        }
+        for dispute in legacy
+        if isinstance(dispute, dict)
+    ]
+
+
+def _elided_rationale(value: str) -> tuple[str, bool]:
+    """Elide a rationale to the shorter of its first sentence or the length cap.
+
+    Measured on the normalized value before span wrapping, so the boundary does
+    not move with the delimiter the span happens to need.
+    """
+
+    normalized = _sanitized_literal(value)
+    candidate = normalized
+    sentence_end = _SENTENCE_END_RE.search(normalized)
+    if sentence_end is not None:
+        candidate = normalized[: sentence_end.end()]
+    if len(candidate) > NOISE_RATIONALE_MAX_LENGTH:
+        candidate = candidate[:NOISE_RATIONALE_MAX_LENGTH]
+    return candidate.rstrip(), candidate != normalized
+
+
+def _critique_disclosure(group: FindingGroup) -> RenderFragment | None:
+    """Compose the collapsed critique detail, or ``None`` when there is none.
+
+    Only disputes and noise reach the merge request. A valid duplicate is counted
+    and no more: the group is already merged and the consensus footer's reviewer
+    list already names every reporter, so its rationale restates what the merge
+    makes self-evident. It stays in ``critique_observations`` for audit.
+    """
+
+    entries: list[str] = []
+    dispute_count = 0
+    noise_count = 0
+    for observation in _display_observations(group):
+        verdict = observation.get("verdict")
+        critic_span = literal_span(str(observation.get("critic", "")), required=True)
+        if critic_span is None:
+            continue
+        rationale = observation.get("rationale")
+        if not isinstance(rationale, str):
+            continue
+        verdict_span = literal_span(str(verdict), required=True)
+        if verdict == "dispute":
+            adjusted = observation.get("adjusted_severity")
+            adjusted_span = literal_span(adjusted) if isinstance(adjusted, str) else None
+            label = f"- {critic_span} — {verdict_span}"
+            if adjusted_span is not None:
+                label += f" (suggested severity: {adjusted_span})"
+            fragment = _prose_fragment(
+                f"{label}\n{_LIST_INDENT}Rationale:", rationale, indent=_LIST_INDENT
+            )
+            if fragment is None:
+                continue
+            entries.append(fragment.text)
+            dispute_count += 1
+        elif verdict == "noise":
+            elided, was_elided = _elided_rationale(rationale)
+            rationale_span = literal_span(elided, required=True)
+            ellipsis = "…" if was_elided else ""
+            entries.append(f"- {critic_span} — {verdict_span}: {rationale_span}{ellipsis}")
+            noise_count += 1
+    if not entries:
+        return None
+    counts = ", ".join(
+        f"{count} {label}"
+        for count, label in ((dispute_count, "dispute"), (noise_count, "noise"))
+        if count
+    )
+    # One fragment, so the list stays tight and the disclosure stays atomic.
+    return details_fragment(f"Critique detail ({counts})", [_text_fragment("\n".join(entries))])
+
+
 def render_body(
     group: FindingGroup,
     successful_reviewer_count: int,
@@ -561,9 +669,7 @@ def render_body(
     title = str(group["title"])
     summary = str(group.get("body", ""))
     variable_fragments: list[RenderFragment] = [
-        _text_fragment(
-            f"**AI review: {str(group['final_severity']).upper()} {group['category']}**"
-        )
+        _text_fragment(f"**AI review: {str(group['final_severity']).upper()} {group['category']}**")
     ]
 
     title_fragment = _span_fragment("Title: ", title, max_length=240, required=True)
@@ -602,30 +708,10 @@ def render_body(
         variable_fragments.append(_text_fragment("Evidence:"))
         variable_fragments.extend(evidence_fragments)
 
-    dissent_fragments: list[RenderFragment] = []
-    critique_disputes = group.get("critique_disputes", [])
-    if isinstance(critique_disputes, list):
-        for dispute in critique_disputes:
-            if not isinstance(dispute, dict):
-                continue
-            critic_span = literal_span(str(dispute.get("critic", "")), required=True)
-            adjusted = dispute.get("adjusted_severity")
-            adjusted_span = (
-                literal_span(adjusted) if isinstance(adjusted, str) else None
-            )
-            if critic_span is None:
-                continue
-            label = f"- {critic_span} disputes:"
-            if adjusted_span is not None:
-                label += f" (suggested severity: {adjusted_span})"
-            fragment = _prose_fragment(
-                label, str(dispute.get("rationale", "")), indent=_LIST_INDENT
-            )
-            if fragment is not None:
-                dissent_fragments.append(fragment)
-    if dissent_fragments:
-        variable_fragments.append(_text_fragment("Dissent:"))
-        variable_fragments.extend(dissent_fragments)
+    counts_line = _critique_counts_line(group)
+    if counts_line is not None:
+        variable_fragments.append(_text_fragment(counts_line))
+    critique_disclosure = _critique_disclosure(group)
 
     suggestion = group.get("suggestion")
     if isinstance(suggestion, str):
@@ -635,6 +721,13 @@ def render_body(
         suggestion_fragment = _block_fragment("Suggestion:", suggestion)
         if suggestion_fragment is not None:
             variable_fragments.append(suggestion_fragment)
+
+    if critique_disclosure is not None:
+        # Last, and deliberately after the suggestion: the disclosure is atomic,
+        # and _fit_fragments stops at the first fragment that does not fit rather
+        # than skipping it, so an oversized disclosure placed earlier would evict
+        # the suggestion behind it.
+        variable_fragments.append(critique_disclosure)
 
     reviewer_span = literal_span(", ".join(reviewers), required=True)
     consensus_footer = "\n".join(

@@ -85,6 +85,7 @@ critique:
   can_add_quorum_votes: false # Must be false in v1 schema
   allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
   allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
+  show_disposition_audit: false # Also show majority-noise suppressions in the MR summary; the run artifact records them either way (YAML only)
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:

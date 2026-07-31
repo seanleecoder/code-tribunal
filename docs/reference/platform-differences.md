@@ -21,7 +21,7 @@ credentials are never passed into reviewer subprocess environments.
 
 ## Rendered review output
 
-The shared posting renderer uses `render-body.v3`. Model-authored titles, paths,
+The shared posting renderer uses `render-body.v4`. Model-authored titles, paths,
 reviewer names, bodies, evidence, critique text, and suggestions are displayed as
 literal data on both platforms. The invariant is structural and single:
 **every model-authored value renders inside a `code` or `pre` element.** Redaction and
