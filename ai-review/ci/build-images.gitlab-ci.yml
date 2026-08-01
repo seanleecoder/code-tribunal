@@ -3,12 +3,20 @@ stages:
   - image_build
   - image_preflight
   - image_smoke
+  - image_promote
 
 variables:
   # Private GitLab registry tag slug. Public GHCR tags use semantic "1.0-<sha>".
   AI_REVIEW_IMAGE_VERSION: "1_0"
   AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
   AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
+  # Kaniko must push before anything can run the image, so it pushes to a staging
+  # tag. The commit-tagged names above are only created by the promote stage, after
+  # preflight passes. Before this split the test suite ran inside the Docker build,
+  # so a failure blocked the push; with the suite moved to preflight, pushing the
+  # final tag in image_build would leave a failing image published under it.
+  AI_REVIEW_BASE_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
+  AI_REVIEW_REVIEWER_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
 
 validate_ai_review_supply_chain_pins:
   extends: .ai_review_protected_image_rules
@@ -41,7 +49,7 @@ build_ai_review_base_image:
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/base.Dockerfile" \
-        --destination "$AI_REVIEW_BASE_IMAGE" \
+        --destination "$AI_REVIEW_BASE_STAGING" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
 
@@ -55,15 +63,15 @@ build_ai_review_reviewer_image:
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/reviewer.Dockerfile" \
-        --destination "$AI_REVIEW_REVIEWER_IMAGE" \
-        --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_IMAGE" \
+        --destination "$AI_REVIEW_REVIEWER_STAGING" \
+        --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_STAGING" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
 
 preflight_ai_review_reviewer_image:
   extends: .ai_review_protected_image_rules
   stage: image_preflight
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
+  image: "$AI_REVIEW_REVIEWER_STAGING"
   needs:
     - job: build_ai_review_reviewer_image
   variables:
@@ -78,7 +86,12 @@ preflight_ai_review_reviewer_image:
     # Tests are not shipped in the image. Stage the checkout's copy into the image's
     # own tests path, because the suite resolves config/ and schemas/ relative to its
     # own location — running it from the checkout would validate the checkout's config
-    # instead of the image's.
+    # instead of the image's. Replace the tree rather than merging into it: a plain
+    # `cp -R` would leave fixtures that the checkout deleted or renamed lingering from
+    # the image layer, so this preflight would verify a different tree than the GitHub
+    # one, which bind-mounts read-only.
+    - rm -rf /opt/ai-review/tests
+    - mkdir -p /opt/ai-review/tests
     - cp -R "$CI_PROJECT_DIR/ai-review/tests/." /opt/ai-review/tests/
     - python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
     - python -m compileall -q /opt/ai-review/src
@@ -113,7 +126,7 @@ preflight_ai_review_reviewer_image:
 
 smoke_ai_review_opencode_real:
   stage: image_smoke
-  image: "$AI_REVIEW_REVIEWER_IMAGE"
+  image: "$AI_REVIEW_REVIEWER_STAGING"
   needs:
     - job: build_ai_review_reviewer_image
   rules:
@@ -147,3 +160,19 @@ smoke_ai_review_opencode_real:
     paths:
       - out/opencode-real-smoke/findings/opencode.json
       - out/opencode-real-smoke/status/opencode.json
+
+promote_ai_review_images:
+  extends: .ai_review_protected_image_rules
+  stage: image_promote
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [""]
+  needs:
+    - job: build_ai_review_base_image
+    - job: preflight_ai_review_reviewer_image
+  script:
+    - crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+    # Copy by digest-preserving tag copy, so the promoted images are byte-identical
+    # to the ones preflight actually exercised.
+    - crane copy "$AI_REVIEW_BASE_STAGING" "$AI_REVIEW_BASE_IMAGE"
+    - crane copy "$AI_REVIEW_REVIEWER_STAGING" "$AI_REVIEW_REVIEWER_IMAGE"

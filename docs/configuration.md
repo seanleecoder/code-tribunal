@@ -198,6 +198,8 @@ override them in merge-request-controlled configuration.
 |---|---|
 | `AI_REVIEW_BASE_IMAGE` | GitLab template base image pin. |
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
+| `AI_REVIEW_BASE_STAGING` | GitLab image-build staging tag for the base image. Kaniko pushes here; the commit-tagged `AI_REVIEW_BASE_IMAGE` is created by the promote stage only after preflight passes. |
+| `AI_REVIEW_REVIEWER_STAGING` | GitLab image-build staging tag for the reviewer image. Kaniko pushes here; the commit-tagged `AI_REVIEW_REVIEWER_IMAGE` is created by the promote stage only after preflight passes. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
 | `AI_REVIEW_TRUSTED_ROOT` | Trusted in-image root, `/opt/ai-review`. |
 | `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |

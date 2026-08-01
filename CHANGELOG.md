@@ -13,8 +13,9 @@ versioning.
   `ai-review/tests/fixtures`, which is all the preflight resolves paths from, and the
   build-time in-image test run is removed. Both CI preflights now bind-mount the
   checkout's tests into the built image, which still proves that exact image passes the
-  suite — and proves it against the current tests rather than a frozen copy. A
-  test-only change no longer alters image identity.
+  suite — and proves it against the current tests rather than a frozen copy. A change
+  to test *code* no longer alters image identity; fixtures still ship, so a fixture
+  change does alter the image digest and remains part of the release binding.
 - Release tags are signed with SSH from `v1.0.2` onward, verified against
   `.github/allowed_signers`. `v1.0.0` and `v1.0.1` are annotated but unsigned and are
   not being retagged.

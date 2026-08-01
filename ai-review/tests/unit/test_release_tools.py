@@ -25,14 +25,22 @@ V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290
 
 if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
-# Derived from the checked-in artifact rather than hardcoded, so these tests survive
-# the per-release version bump and the draft reset that follows a release. Hardcoding
-# the version made the manifest tests fail on every reset.
-DRAFT_RELEASE_VERSION = json.loads(
-    (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
-)["release_version"]
-DRAFT_RELEASE_TAG = f"v{DRAFT_RELEASE_VERSION}"
-DRAFT_RELEASE_NOTES = f"release/{DRAFT_RELEASE_VERSION}.md"
+RELEASE_INPUTS = REPO_ROOT / "release/release-inputs.json"
+
+
+def _release_version() -> str:
+    """Read the checked-in release version, skipping if the artifact is unusable.
+
+    Derived rather than hardcoded so these tests survive the per-release version bump
+    and the draft reset that follows a release. Read lazily, and guarded on the
+    artifact itself: the module-level skip above only proves the release *scripts*
+    exist, so an environment with the scripts but no readable `release/` would
+    otherwise raise at import instead of skipping.
+    """
+    try:
+        return json.loads(RELEASE_INPUTS.read_text(encoding="utf-8"))["release_version"]
+    except (OSError, ValueError, KeyError) as error:
+        raise unittest.SkipTest(f"release inputs are unreadable: {error}") from error
 ORIGINAL_SYS_PATH = sys.path.copy()
 sys.path.insert(0, str(SCRIPTS))
 try:
@@ -75,6 +83,14 @@ class ReleaseToolTests(unittest.TestCase):
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO_ROOT / relative, target)
+
+    @property
+    def draft_release_tag(self) -> str:
+        return f"v{_release_version()}"
+
+    @property
+    def draft_release_notes(self) -> str:
+        return f"release/{_release_version()}.md"
 
     def _draft(self, root: Path) -> dict[str, object]:
         data = json.loads(
@@ -210,7 +226,7 @@ class ReleaseToolTests(unittest.TestCase):
         self, root: Path
     ) -> tuple[dict[str, object], dict[str, object], Path, list[str]]:
         inputs, release_inputs = self._write_active_inputs(root)
-        changed_paths = ["CHANGELOG.md", DRAFT_RELEASE_NOTES]
+        changed_paths = ["CHANGELOG.md", self.draft_release_notes]
         with (
             mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
             mock.patch(
@@ -218,7 +234,7 @@ class ReleaseToolTests(unittest.TestCase):
             ),
         ):
             manifest = build_manifest(
-                DRAFT_RELEASE_TAG,
+                self.draft_release_tag,
                 inputs["runtime_source"],
                 "d" * 40,
                 release_inputs,
@@ -708,7 +724,7 @@ class ReleaseToolTests(unittest.TestCase):
 
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
-            DRAFT_RELEASE_NOTES,
+            self.draft_release_notes,
             "docs/evidence/github.md",
             "ai-review/src/ai_review/config.py",
         ]
@@ -754,7 +770,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "disallowed paths"),
             ):
                 build_manifest(
-                    DRAFT_RELEASE_TAG,
+                    self.draft_release_tag,
                     inputs["runtime_source"],
                     "d" * 40,
                     release_inputs,
@@ -768,9 +784,9 @@ class ReleaseToolTests(unittest.TestCase):
             inputs, release_inputs = self._write_active_inputs(root)
             runtime_source = inputs["runtime_source"]
             for tag, release_commit, message in (
-                ("v0.0.0", "d" * 40, f"release tag must be {DRAFT_RELEASE_TAG}"),
-                (DRAFT_RELEASE_TAG, "BAD", "release commit must be"),
-                (DRAFT_RELEASE_TAG, runtime_source, "must differ"),
+                ("v0.0.0", "d" * 40, f"release tag must be {self.draft_release_tag}"),
+                (self.draft_release_tag, "BAD", "release commit must be"),
+                (self.draft_release_tag, runtime_source, "must differ"),
             ):
                 with (
                     self.subTest(tag=tag, release_commit=release_commit),
@@ -788,7 +804,7 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertRaisesRegex(ReleaseValidationError, "must descend"),
             ):
                 build_manifest(
-                    DRAFT_RELEASE_TAG,
+                    self.draft_release_tag,
                     runtime_source,
                     "d" * 40,
                     release_inputs,
@@ -803,7 +819,7 @@ class ReleaseToolTests(unittest.TestCase):
             cases = (
                 ("release_inputs_sha256", "0" * 64, "release-input hash"),
                 ("changed_paths", [], "changed_paths"),
-                ("tag", "v0.0.0", f"release tag must be {DRAFT_RELEASE_TAG}"),
+                ("tag", "v0.0.0", f"release tag must be {self.draft_release_tag}"),
                 ("release_commit", "BAD", "release commit must be"),
                 ("release_commit", manifest["runtime_source"], "must differ"),
             )

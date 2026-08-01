@@ -27,10 +27,13 @@ COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
-# Only the fixtures ship. Preflight resolves diffs and repos from here; the test
-# code itself is mounted at verification time instead, so a production image that
-# processes untrusted diffs and model output carries no test code, and a test-only
-# change no longer alters the image.
+# Only the fixtures ship, and they are required: the reviewer preflight runs
+# `docker run --read-only` with no mount and resolves --diff/--repo from here.
+# Test *code* is staged in at verification time instead, so a production image that
+# processes untrusted diffs and model output carries none of it, and a change to test
+# code no longer alters image identity. Fixtures are the exception — they are a
+# shipped layer, so changing one does change the image digest and is part of the
+# release binding.
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
 COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
