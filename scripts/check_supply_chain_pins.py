@@ -308,18 +308,43 @@ def _gitlab_build_image_pin_issues(text: str) -> list[str]:
 
     These jobs hold registry credentials and can publish release tags, so a mutable
     tag here means a later upstream tag change silently swaps the code that performs
-    the publish. Refs built from `$AI_REVIEW_*` variables are skipped: they are the
-    pipeline's own images, resolved at runtime and already pinned by the digest flow.
+    the publish.
+
+    Only references built from this pipeline's own variables are exempt, and only
+    those that already resolve to a digest: the staging tags are pipeline-unique and
+    the promoted refs are `@$..._DIGEST` pins recorded at build time. Any other
+    variable-based image is rejected rather than skipped, so an externally controlled
+    variable cannot smuggle an unpinned image into a credential-bearing job.
     """
     issues: list[str] = []
-    pattern = re.compile(
-        r"^\s*(?:-\s+)?(?:image|name):\s*[\"']?([^\"'\s]+)[\"']?\s*$", re.M
+    # Scoped to `image:` mappings so unrelated YAML `name:` keys — artifacts.name,
+    # environment.name, a service alias — cannot be misread as image references and
+    # hard-fail a gate that guards release publishing.
+    # `[^\S\n]*` keeps the inline branch on the `image:` line, so the block form is
+    # not mis-parsed as an inline value that happens to start with `name:`.
+    image_block = re.compile(
+        r"^(?P<indent>[^\S\n]*)image:[^\S\n]*"
+        r"(?:(?P<inline>\S[^\n]*)|\n(?P<block>(?:[^\S\n]*(?:#[^\n]*|\w+:[^\n]*)\n)+))",
+        re.M,
     )
-    for match in pattern.finditer(text):
-        ref = match.group(1)
-        if "$" in ref:
-            continue
-        if "@sha256:" not in ref:
+    for match in image_block.finditer(text):
+        refs = []
+        if match.group("inline"):
+            refs.append(match.group("inline"))
+        if match.group("block"):
+            name = re.search(r"^\s*name:\s*(\S+)\s*$", match.group("block"), re.M)
+            if name:
+                refs.append(name.group(1))
+        for raw in refs:
+            ref = raw.strip().strip("\"'")
+            if "@sha256:" in ref or re.search(r"@\$\{?[A-Z_]*DIGEST\}?", ref):
+                continue
+            if "$" in ref:
+                issues.append(
+                    "build-images.gitlab-ci.yml runs a variable image that is not "
+                    f"digest-pinned; got {ref!r}"
+                )
+                continue
             issues.append(
                 f"build-images.gitlab-ci.yml must digest-pin every image it runs; got {ref!r}"
             )

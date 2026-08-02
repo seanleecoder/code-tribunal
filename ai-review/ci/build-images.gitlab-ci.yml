@@ -15,8 +15,10 @@ variables:
   # preflight passes. Before this split the test suite ran inside the Docker build,
   # so a failure blocked the push; with the suite moved to preflight, pushing the
   # final tag in image_build would leave a failing image published under it.
-  AI_REVIEW_BASE_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
-  AI_REVIEW_REVIEWER_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"
+  # Keyed on the pipeline id as well as the commit: a retried or concurrent pipeline
+  # for the same commit must not be able to overwrite another pipeline's staging tag.
+  AI_REVIEW_BASE_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_base_${AI_REVIEW_IMAGE_VERSION}_${CI_COMMIT_SHA}_${CI_PIPELINE_ID}"
+  AI_REVIEW_REVIEWER_STAGING: "$CI_REGISTRY_IMAGE:staging_ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_${CI_COMMIT_SHA}_${CI_PIPELINE_ID}"
 
 validate_ai_review_supply_chain_pins:
   extends: .ai_review_protected_image_rules
@@ -53,39 +55,52 @@ build_ai_review_base_image:
         --digest-file "$CI_PROJECT_DIR/base.digest" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+    # Exported as dotenv so every downstream job can pin to this exact manifest
+    # rather than re-resolving a tag.
+    - echo "BASE_DIGEST=$(cat "$CI_PROJECT_DIR/base.digest")" > "$CI_PROJECT_DIR/base.env"
   artifacts:
     when: on_success
     expire_in: 1 day
     paths:
       - base.digest
+    reports:
+      dotenv: base.env
 
 build_ai_review_reviewer_image:
   extends: .ai_review_kaniko
   stage: image_build
   needs:
     - job: build_ai_review_base_image
+      artifacts: true
   script:
     - |
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/reviewer.Dockerfile" \
         --destination "$AI_REVIEW_REVIEWER_STAGING" \
-        --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_STAGING" \
+        --build-arg "AI_REVIEW_BASE_IMAGE=${CI_REGISTRY_IMAGE}@${BASE_DIGEST}" \
         --digest-file "$CI_PROJECT_DIR/reviewer.digest" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+    - echo "REVIEWER_DIGEST=$(cat "$CI_PROJECT_DIR/reviewer.digest")" > "$CI_PROJECT_DIR/reviewer.env"
   artifacts:
     when: on_success
     expire_in: 1 day
     paths:
       - reviewer.digest
+    reports:
+      dotenv: reviewer.env
 
 preflight_ai_review_reviewer_image:
   extends: .ai_review_protected_image_rules
   stage: image_preflight
-  image: "$AI_REVIEW_REVIEWER_STAGING"
+  # Pinned to the manifest the build recorded. Running "$AI_REVIEW_REVIEWER_STAGING"
+  # here would re-resolve a tag at job start, so a concurrent pipeline could make
+  # preflight exercise one image while promotion copies another's digest.
+  image: "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST"
   needs:
     - job: build_ai_review_reviewer_image
+      artifacts: true
   variables:
     PYTHONPATH: /opt/ai-review/src
     AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
@@ -144,9 +159,10 @@ preflight_ai_review_reviewer_image:
 
 smoke_ai_review_opencode_real:
   stage: image_smoke
-  image: "$AI_REVIEW_REVIEWER_STAGING"
+  image: "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST"
   needs:
     - job: build_ai_review_reviewer_image
+      artifacts: true
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_PIPELINE_SOURCE != "merge_request_event"'
       when: manual
@@ -186,6 +202,9 @@ promote_ai_review_images:
     name: gcr.io/go-containerregistry/crane:debug@sha256:82b7ed493481c78f20c80ecbc082d1cc61c78ad248bce1e58980ed47959055a7
     entrypoint: [""]
   needs:
+    # `needs` bypasses stage barriers, so the pin gate must be named explicitly or
+    # promotion could copy release tags before it has run.
+    - job: validate_ai_review_supply_chain_pins
     - job: build_ai_review_base_image
       artifacts: true
     - job: build_ai_review_reviewer_image

@@ -134,6 +134,45 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertIn("--password-stdin", promote)
         self.assertNotIn('-p "$CI_REGISTRY_PASSWORD"', gitlab)
 
+    def test_gitlab_binds_every_image_consumer_to_the_recorded_digest(self) -> None:
+        """Preflight, smoke, and promotion must all reference one recorded manifest.
+
+        Promoting by digest is not sufficient on its own: if preflight runs
+        `image: "$AI_REVIEW_REVIEWER_STAGING"`, the runner re-resolves that tag at job
+        start, so a concurrent pipeline can make preflight exercise one image while
+        promotion copies another's digest. Every consumer is pinned to the dotenv
+        digest instead, and staging tags are pipeline-unique so they cannot be
+        clobbered in the first place.
+        """
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("dotenv: base.env", gitlab)
+        self.assertIn("dotenv: reviewer.env", gitlab)
+        self.assertEqual(
+            2, gitlab.count('image: "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST"')
+        )
+        self.assertNotIn('image: "$AI_REVIEW_REVIEWER_STAGING"', gitlab)
+        # The reviewer must descend from the promoted base, not a re-resolved tag.
+        self.assertIn(
+            '--build-arg "AI_REVIEW_BASE_IMAGE=${CI_REGISTRY_IMAGE}@${BASE_DIGEST}"',
+            gitlab,
+        )
+        self.assertNotIn(
+            '--build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_STAGING"', gitlab
+        )
+        self.assertIn("${CI_PIPELINE_ID}", gitlab)
+
+    def test_gitlab_promotion_waits_for_the_supply_chain_gate(self) -> None:
+        """`needs` bypasses stage barriers, so the pin gate must be named."""
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+        promote = gitlab[gitlab.index("promote_ai_review_images:") :]
+
+        self.assertIn("validate_ai_review_supply_chain_pins", promote)
+
     def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
         """The overlay hides the shipped fixtures, so assert them first.
 
