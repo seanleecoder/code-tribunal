@@ -303,6 +303,29 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
     return issues
 
 
+def _gitlab_build_image_pin_issues(text: str) -> list[str]:
+    """Every concrete image the build pipeline runs must be digest-pinned.
+
+    These jobs hold registry credentials and can publish release tags, so a mutable
+    tag here means a later upstream tag change silently swaps the code that performs
+    the publish. Refs built from `$AI_REVIEW_*` variables are skipped: they are the
+    pipeline's own images, resolved at runtime and already pinned by the digest flow.
+    """
+    issues: list[str] = []
+    pattern = re.compile(
+        r"^\s*(?:-\s+)?(?:image|name):\s*[\"']?([^\"'\s]+)[\"']?\s*$", re.M
+    )
+    for match in pattern.finditer(text):
+        ref = match.group(1)
+        if "$" in ref:
+            continue
+        if "@sha256:" not in ref:
+            issues.append(
+                f"build-images.gitlab-ci.yml must digest-pin every image it runs; got {ref!r}"
+            )
+    return issues
+
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -344,6 +367,9 @@ def main() -> int:
     lock = json.loads(_read(PACKAGE_LOCK))
 
     for issue in _gitlab_image_pin_issues(gitlab_review):
+        error(issue)
+        failures += 1
+    for issue in _gitlab_build_image_pin_issues(gitlab_build):
         error(issue)
         failures += 1
     for issue in _cross_platform_image_pin_issues(gitlab_review, canonical_review_workflow):

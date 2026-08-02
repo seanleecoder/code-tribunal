@@ -19,6 +19,9 @@ versioning.
 - Release tags are signed with SSH from `v1.0.2` onward, verified against
   `.github/allowed_signers`. `v1.0.0` and `v1.0.1` are annotated but unsigned and are
   not being retagged.
+- The GitLab image pipeline promotes by recorded manifest digest rather than by
+  staging tag, and digest-pins every image it runs. `check_supply_chain_pins.py`
+  enforces the latter.
 
 ### Fixed
 

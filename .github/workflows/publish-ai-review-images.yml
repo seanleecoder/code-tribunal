@@ -64,6 +64,14 @@ jobs:
           set -euo pipefail
           # The suite creates executable fake reviewer CLIs under /tmp. Keep it
           # checkout-independent, but do not mount /tmp noexec for this command.
+          # Verify the image's OWN fixtures first: the read-only mount below shadows
+          # /opt/ai-review/tests, and the reviewer preflight resolves --diff/--repo
+          # from these paths with no mount at all, so a missing or mispackaged fixture
+          # must fail here rather than be hidden by the overlay.
+          docker run --rm --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" sh -euc '
+            test -f /opt/ai-review/tests/fixtures/diffs/simple.diff
+            test -d /opt/ai-review/tests/fixtures/repos/simple
+          '
           # Mount the checkout's tests rather than shipping them in the image. This
           # still proves "this exact image passes the suite", and it proves it against
           # the current tests instead of whatever was frozen into the layers.

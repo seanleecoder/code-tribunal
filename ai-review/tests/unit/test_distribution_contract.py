@@ -119,10 +119,48 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertNotIn('image: "$AI_REVIEW_REVIEWER_IMAGE"', gitlab)
         promote = gitlab[gitlab.index("promote_ai_review_images:") :]
         self.assertIn("preflight_ai_review_reviewer_image", promote)
-        self.assertIn('crane copy "$AI_REVIEW_BASE_STAGING" "$AI_REVIEW_BASE_IMAGE"', promote)
-        self.assertIn(
-            'crane copy "$AI_REVIEW_REVIEWER_STAGING" "$AI_REVIEW_REVIEWER_IMAGE"', promote
-        )
+
+        # Promote the digest kaniko recorded, never the staging tag. Staging tags are
+        # keyed only on the commit SHA, so a retried or concurrent pipeline can
+        # overwrite one between preflight and promotion.
+        self.assertIn("--digest-file", gitlab)
+        self.assertIn('crane copy "${CI_REGISTRY_IMAGE}@${BASE_DIGEST}"', promote)
+        self.assertIn('crane copy "${CI_REGISTRY_IMAGE}@${REVIEWER_DIGEST}"', promote)
+        self.assertNotIn('crane copy "$AI_REVIEW_BASE_STAGING"', promote)
+        self.assertNotIn('crane copy "$AI_REVIEW_REVIEWER_STAGING"', promote)
+
+        # The credential must not reach argv; the kaniko jobs in this file avoid it
+        # the same way, by writing a docker config instead.
+        self.assertIn("--password-stdin", promote)
+        self.assertNotIn('-p "$CI_REGISTRY_PASSWORD"', gitlab)
+
+    def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
+        """The overlay hides the shipped fixtures, so assert them first.
+
+        GitHub's read-only mount shadows `/opt/ai-review/tests` and GitLab deletes it,
+        so neither preflight would otherwise notice a fixture missing from the image.
+        The reviewer preflight depends on exactly these paths and runs with no mount.
+        """
+        workflow = (
+            _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
+        ).read_text(encoding="utf-8")
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        for text in (workflow, gitlab):
+            self.assertIn("test -f /opt/ai-review/tests/fixtures/diffs/simple.diff", text)
+            self.assertIn("test -d /opt/ai-review/tests/fixtures/repos/simple", text)
+
+    def test_gitlab_build_pipeline_digest_pins_every_image_it_runs(self) -> None:
+        """Jobs holding registry credentials must not run mutable tags."""
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("gcr.io/kaniko-project/executor:debug@sha256:", gitlab)
+        self.assertIn("gcr.io/go-containerregistry/crane:debug@sha256:", gitlab)
+        self.assertNotIn("gcr.io/kaniko-project/executor:debug\n", gitlab)
 
     def test_generated_artifacts_are_excluded_from_git_and_container_contexts(self) -> None:
         required = {"build/", "dist/", "*.egg-info/", "__pycache__/", ".coverage"}

@@ -32,7 +32,7 @@ validate_ai_review_supply_chain_pins:
 .ai_review_kaniko:
   extends: .ai_review_protected_image_rules
   image:
-    name: gcr.io/kaniko-project/executor:debug
+    name: gcr.io/kaniko-project/executor:debug@sha256:2562c4fe551399514277ffff7dcca9a3b1628c4ea38cb017d7286dc6ea52f4cd
     entrypoint: [""]
   before_script:
     - mkdir -p /kaniko/.docker
@@ -50,8 +50,14 @@ build_ai_review_base_image:
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/base.Dockerfile" \
         --destination "$AI_REVIEW_BASE_STAGING" \
+        --digest-file "$CI_PROJECT_DIR/base.digest" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+  artifacts:
+    when: on_success
+    expire_in: 1 day
+    paths:
+      - base.digest
 
 build_ai_review_reviewer_image:
   extends: .ai_review_kaniko
@@ -65,8 +71,14 @@ build_ai_review_reviewer_image:
         --dockerfile "$CI_PROJECT_DIR/ai-review/images/reviewer.Dockerfile" \
         --destination "$AI_REVIEW_REVIEWER_STAGING" \
         --build-arg "AI_REVIEW_BASE_IMAGE=$AI_REVIEW_BASE_STAGING" \
+        --digest-file "$CI_PROJECT_DIR/reviewer.digest" \
         --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
         --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+  artifacts:
+    when: on_success
+    expire_in: 1 day
+    paths:
+      - reviewer.digest
 
 preflight_ai_review_reviewer_image:
   extends: .ai_review_protected_image_rules
@@ -90,6 +102,12 @@ preflight_ai_review_reviewer_image:
     # `cp -R` would leave fixtures that the checkout deleted or renamed lingering from
     # the image layer, so this preflight would verify a different tree than the GitHub
     # one, which bind-mounts read-only.
+    # Verify the image's OWN fixtures before the overlay hides them. The reviewer
+    # preflight runs --read-only with no mount and resolves --diff/--repo from these
+    # paths, so a missing or mispackaged fixture must fail here rather than be
+    # silently replaced by the checkout's copy.
+    - test -f /opt/ai-review/tests/fixtures/diffs/simple.diff
+    - test -d /opt/ai-review/tests/fixtures/repos/simple
     - rm -rf /opt/ai-review/tests
     - mkdir -p /opt/ai-review/tests
     - cp -R "$CI_PROJECT_DIR/ai-review/tests/." /opt/ai-review/tests/
@@ -165,14 +183,23 @@ promote_ai_review_images:
   extends: .ai_review_protected_image_rules
   stage: image_promote
   image:
-    name: gcr.io/go-containerregistry/crane:debug
+    name: gcr.io/go-containerregistry/crane:debug@sha256:82b7ed493481c78f20c80ecbc082d1cc61c78ad248bce1e58980ed47959055a7
     entrypoint: [""]
   needs:
     - job: build_ai_review_base_image
+      artifacts: true
+    - job: build_ai_review_reviewer_image
+      artifacts: true
     - job: preflight_ai_review_reviewer_image
   script:
-    - crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
-    # Copy by digest-preserving tag copy, so the promoted images are byte-identical
-    # to the ones preflight actually exercised.
-    - crane copy "$AI_REVIEW_BASE_STAGING" "$AI_REVIEW_BASE_IMAGE"
-    - crane copy "$AI_REVIEW_REVIEWER_STAGING" "$AI_REVIEW_REVIEWER_IMAGE"
+    # Keep the credential off argv, as the kaniko jobs above deliberately do:
+    # anything in this container can read /proc/*/cmdline.
+    - echo "$CI_REGISTRY_PASSWORD" | crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    # Promote by the digest kaniko recorded at build time, not by the staging tag.
+    # Staging tags are keyed only on the commit SHA, so a retried or concurrent
+    # pipeline for the same commit can overwrite one between preflight and here; a
+    # tag copy would then publish an image preflight never exercised.
+    - BASE_DIGEST="$(cat "$CI_PROJECT_DIR/base.digest")"
+    - REVIEWER_DIGEST="$(cat "$CI_PROJECT_DIR/reviewer.digest")"
+    - crane copy "${CI_REGISTRY_IMAGE}@${BASE_DIGEST}" "$AI_REVIEW_BASE_IMAGE"
+    - crane copy "${CI_REGISTRY_IMAGE}@${REVIEWER_DIGEST}" "$AI_REVIEW_REVIEWER_IMAGE"
