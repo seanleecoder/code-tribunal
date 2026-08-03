@@ -87,11 +87,11 @@ else
   :
 fi
 
-# Map supported reviewer effort values onto OpenCode's reasoningEffort. The
-# Claude/Codex-only max level deliberately leaves the provider default in place
-# rather than silently changing the requested effort.
+# Map supported reviewer effort values onto OpenCode's reasoningEffort unchanged.
+# Provider/model-specific rejection remains visible rather than silently falling
+# back to a different effort or the provider default.
 case "${AI_REVIEW_EFFORT:-}" in
-  low|medium|high|xhigh) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
+  low|medium|high|xhigh|max) OPENCODE_REASONING_EFFORT="$AI_REVIEW_EFFORT" ;;
   *) OPENCODE_REASONING_EFFORT="" ;;
 esac
 
