@@ -38,9 +38,15 @@
         "ai-review/images/base.Dockerfile",
         "ai-review/images/cursor-agent.pin",
         "ai-review/images/package.json",
-        "ai-review/images/reviewer.Dockerfile"
+        "ai-review/images/reviewer.Dockerfile",
+        "ai-review/tests/fixtures/diffs/simple.diff",
+        "ai-review/tests/fixtures/golden/default_transitive_split_consensus.json",
+        "ai-review/tests/fixtures/golden/render_body_hostile.json",
+        "ai-review/tests/fixtures/golden/semantic_consensus.json",
+        "ai-review/tests/fixtures/grouping/corpus.json",
+        "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "469b4e2a1d2a84951481269bc1b9c2b3983161e59d3b07aef0a5248d61999b53"
+      "sha256": "c6923dd990129a6863753c4633efc3cc5e4cd329006619b1f2437dd4a97aa938"
     },
     "schemas": {
       "files": [

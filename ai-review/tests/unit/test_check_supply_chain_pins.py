@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -169,23 +171,41 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_detects_stale_reviewer_cli_version_variables(self) -> None:
         """Reviewer CLI versions must come from package-lock.json, not CI variables.
 
-        Retargeted from the deleted GitLab image-build template to the shipped review
-        workflow: the check is about CI-supplied CLI versions generally, not about that
-        one pipeline.
+        Asserts on the specific message rather than on `main()`'s exit code. Mutating
+        a copy of the canonical review workflow also trips the separate
+        installed-must-match-canonical check, so an exit-code assertion would pass
+        even if the CLI-version scan were deleted outright.
         """
         original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW
+        expected = "reviewer CLI versions must come from package-lock.json"
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "review.github-actions.yml"
-            stale_version_check = "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n"
             mutated.write_text(
-                original.read_text(encoding="utf-8") + stale_version_check,
+                original.read_text(encoding="utf-8")
+                + "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n",
                 encoding="utf-8",
             )
             check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
+            stderr = io.StringIO()
             try:
-                self.assertEqual(check_supply_chain_pins.main(), 1)
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(check_supply_chain_pins.main(), 1)
             finally:
                 check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
+            self.assertIn(expected, stderr.getvalue())
+
+            # Guard the guard: without the injected variable the CLI-version message
+            # must be absent, so a green result cannot come from an unrelated failure.
+            clean = Path(tmp) / "clean.yml"
+            clean.write_text(original.read_text(encoding="utf-8"), encoding="utf-8")
+            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = clean
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    check_supply_chain_pins.main()
+            finally:
+                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
+            self.assertNotIn(expected, stderr.getvalue())
 
     def test_detects_mutable_action_in_shipped_review_workflow(self) -> None:
         original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW

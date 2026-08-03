@@ -70,13 +70,12 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertNotIn("unittest discover", dockerfile)
 
     def test_ci_stages_the_suite_into_the_images_own_tests_path(self) -> None:
-        """Both preflights must overlay `/opt/ai-review/tests`, not run from elsewhere.
+        """The publish preflight must overlay `/opt/ai-review/tests`, not run elsewhere.
 
         The suite resolves `config/` and `schemas/` relative to its own location, so
-        running it from a checkout path validates the checkout's config rather than
-        the image's. GitHub bind-mounts read-only; GitLab, running inside the image,
-        clears the directory and copies in, so a fixture deleted in the checkout
-        cannot linger from the image layer.
+        running it from a checkout path would validate the checkout's config rather
+        than the image's. The read-only bind mount replaces the path, so a fixture
+        deleted in the checkout cannot linger from the image layer.
         """
         workflow = (
             _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"

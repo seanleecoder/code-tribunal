@@ -22,9 +22,10 @@ versioning.
 ### Removed
 
 - `ai-review/ci/build-images.gitlab-ci.yml`, which built the product images from a
-  GitLab mirror of this repository. No such project exists, no user-facing
+  GitLab mirror of this repository. No such project exists, no *current* user-facing
   documentation referenced it, it was outside the hashed release artifact, and it was
-  never executed. Its supply-chain guards are removed with it. GitLab support for
+  never executed. The historical `PHASE_2_ACCEPTANCE.md` record does reference it; it
+  is retained as written and now carries a superseded-procedure note. Its supply-chain guards are removed with it. GitLab support for
   *consumers* is unaffected: `review.gitlab-ci.yml` and `review-child.gitlab-ci.yml`
   are unchanged and remain covered by the live evidence campaign.
 

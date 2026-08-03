@@ -18,11 +18,20 @@ HASH_GROUPS = {
         "ai-review/images/python-constraints.txt",
         "requirements-dev.txt",
     ),
+    # Fixtures are enumerated, not listed, so a new one is picked up automatically.
+    # They ship in the runtime image (base.Dockerfile copies
+    # ai-review/tests/fixtures), so a fixture-only change moves the published image
+    # digest and must therefore move a declared image-recipe hash too.
     "image_recipes": (
         "ai-review/images/base.Dockerfile",
         "ai-review/images/cursor-agent.pin",
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile",
+    )
+    + tuple(
+        str(path.relative_to(ROOT))
+        for path in sorted((ROOT / "ai-review/tests/fixtures").rglob("*"))
+        if path.is_file()
     ),
     "configuration": ("ai-review/config/review.yaml",),
     "schemas": tuple(
