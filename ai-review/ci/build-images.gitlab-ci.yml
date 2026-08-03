@@ -73,6 +73,15 @@ build_ai_review_reviewer_image:
     - job: build_ai_review_base_image
       artifacts: true
   script:
+    # The whole design hinges on this digest binding, so assert it rather than
+    # interpolating blind: an empty value would build against
+    # "$CI_REGISTRY_IMAGE@" and fail obscurely at the registry instead of here.
+    - |
+      case "$BASE_DIGEST" in
+        sha256:*) ;;
+        "") echo "BASE_DIGEST missing from the base build dotenv report" >&2; exit 1 ;;
+        *)  echo "BASE_DIGEST is not a sha256 digest" >&2; exit 1 ;;
+      esac
     - |
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
@@ -157,6 +166,13 @@ preflight_ai_review_reviewer_image:
         --out "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
     - python -m ai_review.schema validate --schema consensus.schema.json --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
 
+# Deliberately opt-in and NON-GATING: `when: manual` plus `allow_failure: true`, and
+# intentionally absent from promote's `needs`. This is a convenience probe of one real
+# provider route from the private build pipeline, not a release gate. Release-gating
+# live verification is the Chain A real default-model panel run against the published
+# GHCR images during the release campaign — see docs/evidence/RUNBOOK.md. Do not add
+# this job to promote's dependencies without also deciding to make a real-token call
+# mandatory on every protected build.
 smoke_ai_review_opencode_real:
   stage: image_smoke
   image: "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST"
@@ -220,5 +236,14 @@ promote_ai_review_images:
     # tag copy would then publish an image preflight never exercised.
     - BASE_DIGEST="$(cat "$CI_PROJECT_DIR/base.digest")"
     - REVIEWER_DIGEST="$(cat "$CI_PROJECT_DIR/reviewer.digest")"
+    # Fail closed before publishing anything: a malformed digest here would copy a
+    # bad reference onto the tags that downstream release templates consume.
+    - |
+      for d in "$BASE_DIGEST" "$REVIEWER_DIGEST"; do
+        case "$d" in
+          sha256:*) ;;
+          *) echo "recorded digest is missing or malformed" >&2; exit 1 ;;
+        esac
+      done
     - crane copy "${CI_REGISTRY_IMAGE}@${BASE_DIGEST}" "$AI_REVIEW_BASE_IMAGE"
     - crane copy "${CI_REGISTRY_IMAGE}@${REVIEWER_DIGEST}" "$AI_REVIEW_REVIEWER_IMAGE"

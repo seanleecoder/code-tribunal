@@ -303,6 +303,16 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
     return issues
 
 
+# The only variable-based image refs the build pipeline is allowed to run. Each
+# resolves to a digest this pipeline recorded itself via kaniko --digest-file.
+PIPELINE_DIGEST_IMAGE_REFS = frozenset(
+    {
+        "$CI_REGISTRY_IMAGE@$BASE_DIGEST",
+        "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST",
+    }
+)
+
+
 def _gitlab_build_image_pin_issues(text: str) -> list[str]:
     """Every concrete image the build pipeline runs must be digest-pinned.
 
@@ -310,11 +320,12 @@ def _gitlab_build_image_pin_issues(text: str) -> list[str]:
     tag here means a later upstream tag change silently swaps the code that performs
     the publish.
 
-    Only references built from this pipeline's own variables are exempt, and only
-    those that already resolve to a digest: the staging tags are pipeline-unique and
-    the promoted refs are `@$..._DIGEST` pins recorded at build time. Any other
-    variable-based image is rejected rather than skipped, so an externally controlled
-    variable cannot smuggle an unpinned image into a credential-bearing job.
+    Variable-based references are exempt only if they appear verbatim in
+    `PIPELINE_DIGEST_IMAGE_REFS`, an allowlist of the refs this pipeline itself
+    records at build time. A suffix pattern is deliberately not used: matching any
+    `@$<SOMETHING>DIGEST` would also accept an unknown variable behind an arbitrary
+    registry prefix, and this gate exists precisely because these jobs hold registry
+    credentials and can publish release tags.
     """
     issues: list[str] = []
     # Scoped to `image:` mappings so unrelated YAML `name:` keys — artifacts.name,
@@ -337,7 +348,7 @@ def _gitlab_build_image_pin_issues(text: str) -> list[str]:
                 refs.append(name.group(1))
         for raw in refs:
             ref = raw.strip().strip("\"'")
-            if "@sha256:" in ref or re.search(r"@\$\{?[A-Z_]*DIGEST\}?", ref):
+            if "@sha256:" in ref or ref in PIPELINE_DIGEST_IMAGE_REFS:
                 continue
             if "$" in ref:
                 issues.append(

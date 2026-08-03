@@ -164,6 +164,54 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         )
         self.assertIn("${CI_PIPELINE_ID}", gitlab)
 
+    def test_gitlab_guards_the_recorded_digests_before_using_them(self) -> None:
+        """An absent or malformed digest must fail at the boundary that owns it.
+
+        Without a guard, an empty `BASE_DIGEST` interpolates to
+        `$CI_REGISTRY_IMAGE@` and fails obscurely at the registry rather than where
+        the binding was supposed to hold.
+        """
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('case "$BASE_DIGEST" in', gitlab)
+        self.assertIn("recorded digest is missing or malformed", gitlab)
+        self.assertIn('for d in "$BASE_DIGEST" "$REVIEWER_DIGEST"', gitlab)
+
+    def test_pin_checker_allowlists_only_this_pipelines_digest_refs(self) -> None:
+        """The variable-image exemption must be an allowlist, not a suffix pattern.
+
+        A pattern like `@$<ANYTHING>DIGEST` would also accept an unknown variable
+        behind an arbitrary registry prefix.
+        """
+        from importlib import util
+
+        spec = util.spec_from_file_location(
+            "_pins", _REPO_ROOT / "scripts" / "check_supply_chain_pins.py"
+        )
+        module = util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        self.assertEqual(
+            {"$CI_REGISTRY_IMAGE@$BASE_DIGEST", "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST"},
+            set(module.PIPELINE_DIGEST_IMAGE_REFS),
+        )
+        issues = module._gitlab_build_image_pin_issues(
+            '  image: "$SOME_OTHER_IMAGE@$UPSTREAM_DIGEST"\n'
+        )
+        self.assertEqual(1, len(issues))
+        self.assertIn("variable image", issues[0])
+
+    def test_gitlab_records_the_smoke_non_gating_policy(self) -> None:
+        """The deliberate non-gating choice must be stated where it is made."""
+        gitlab = (
+            _REPO_ROOT / "ai-review" / "ci" / "build-images.gitlab-ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("NON-GATING", gitlab)
+
     def test_gitlab_promotion_waits_for_the_supply_chain_gate(self) -> None:
         """`needs` bypasses stage barriers, so the pin gate must be named."""
         gitlab = (
