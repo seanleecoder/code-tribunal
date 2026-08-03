@@ -176,6 +176,8 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         mutating that file also trips the installed-must-match-canonical check.
         """
         original = check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW
+        if not original.is_file():
+            self.skipTest("installed workflow is not included in the runtime image")
         expected = "reviewer CLI versions must come from package-lock.json"
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "ai-review.yml"
