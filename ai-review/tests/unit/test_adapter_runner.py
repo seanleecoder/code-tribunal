@@ -16,6 +16,7 @@ from ai_review.adapter_runner import (
     _SHELL_MOCK_ALLOW_REFUSAL,
     _build_adapter_env,
     _cli_reviewer_validation_error,
+    _effective_adapter_timeout_seconds,
     _load_adapter_json,
     run_adapter,
 )
@@ -107,6 +108,26 @@ class AdapterEndpointValidationTests(unittest.TestCase):
 
         self.assertIsNotNone(error)
         self.assertIn("unsupported characters", error)
+
+
+class AdapterTimeoutSelectionTests(unittest.TestCase):
+    def test_review_and_critique_use_separate_effective_budgets(self) -> None:
+        reviewer_config = {
+            "timeout_seconds": 1800,
+            "critique_timeout_seconds": 900,
+        }
+
+        self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "review"), 1795)
+        self.assertEqual(
+            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
+        )
+
+    def test_legacy_config_falls_back_to_review_budget_for_critique(self) -> None:
+        reviewer_config = {"timeout_seconds": 1800}
+
+        self.assertEqual(
+            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 1795
+        )
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):

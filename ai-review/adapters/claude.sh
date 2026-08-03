@@ -143,7 +143,7 @@ fi
 
 # Effort modulates how much reasoning/exploration the model volunteers — it is
 # NOT a turn cap; the agentic loop still runs to completion (bounded only by
-# timeout_seconds as a hang-catch). Sourced from reviewers.<name>.effort in
+# the stage-specific runner timeout as a hang-catch). Sourced from reviewers.<name>.effort in
 # review.yaml (runtime override: AI_REVIEW_<REVIEWER>_EFFORT), exported by the
 # runner as AI_REVIEW_EFFORT and validated there against a closed set.
 if [ -n "${AI_REVIEW_EFFORT:-}" ]; then

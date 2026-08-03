@@ -23,12 +23,21 @@ disabled-by-default `cursor` seat.
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
-| `reviewers.<name>.timeout_seconds` | integer, `900` | Whole reviewer/critique process-group timeout. |
+| `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
+| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`timeout_seconds`) | Whole critique process-group timeout; omitted in legacy `review_config.v1` files means use `timeout_seconds`. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
 At least one reviewer must be enabled. The blocking, resolution, and quorum
 thresholds must not exceed the enabled count.
+
+The runner keeps a five-second reserve for process handling, so the shipped
+values give each reviewer an effective adapter limit of about 1795 seconds for
+review and 895 seconds for critique. The CI templates independently allow 40
+minutes for review jobs and 20 minutes for critique jobs. These timeout values
+are trusted image configuration; there is no timeout environment-variable
+override. Both resolved stage values are included in the effective-config
+summary and digest, so all pipeline stages must use the same policy.
 
 OpenCode review and critique invocations always pass the fixed internal session
 title `code-tribunal-ai-review`. It is non-empty and contains no prompt,

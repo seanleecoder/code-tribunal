@@ -32,7 +32,7 @@ REVIEWER_REQUIRED_KEYS = {
     "max_findings",
     "credential_variable",
 }
-REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort"}
+REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_seconds"}
 PANEL_KEYS = {
     "min_successful_reviewers_for_blocking",
     "min_successful_reviewers_for_resolution",
@@ -237,6 +237,13 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
                 "model": reviewer.get("model"),
                 "enabled": bool(reviewer.get("enabled")),
                 "effort": reviewer.get("effort"),
+                # Legacy review_config.v1 files may omit the stage-specific
+                # critique timeout. Resolve that fallback in the summary so
+                # every stage binds the same effective timeout policy.
+                "timeout_seconds": reviewer.get("timeout_seconds"),
+                "critique_timeout_seconds": reviewer.get(
+                    "critique_timeout_seconds", reviewer.get("timeout_seconds")
+                ),
                 "max_findings": (
                     int(reviewer["max_findings"])
                     if reviewer.get("max_findings") is not None
@@ -374,6 +381,18 @@ def validate_config(config: dict[str, Any]) -> None:
         missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
+        timeout_seconds = reviewer.get("timeout_seconds")
+        if type(timeout_seconds) is not int or timeout_seconds <= 0:
+            raise ConfigError(
+                f"reviewer {name} timeout_seconds must be a positive integer"
+            )
+        critique_timeout_seconds = reviewer.get("critique_timeout_seconds")
+        if "critique_timeout_seconds" in reviewer and (
+            type(critique_timeout_seconds) is not int or critique_timeout_seconds <= 0
+        ):
+            raise ConfigError(
+                f"reviewer {name} critique_timeout_seconds must be a positive integer"
+            )
         effort = reviewer.get("effort")
         if name == "cursor" and effort is not None:
             raise ConfigError(
