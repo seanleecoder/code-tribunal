@@ -109,10 +109,11 @@ after that capability proof and only for the requested file. A platform that
 intentionally obscures authorization as a 404 must report an ambiguous or
 unauthorized read failure, not silently select the image fallback.
 
-The selected project bytes must be valid UTF-8, contain no NUL, and fit the bounded
-configuration reader. The implementation documents the byte ceiling next to the
-reader and tests it; it is a denial-of-service bound, not a policy knob. The
-immutable in-image baseline is always read from
+The selected project bytes must be valid UTF-8, contain no NUL, and be at most
+65,536 UTF-8 bytes (64 KiB). A present project config larger than that ceiling is
+oversized input and fails closed as `project_config_invalid`; the limit is a
+denial-of-service bound, not a policy knob. The implementation documents the byte
+ceiling next to the reader and tests it. The immutable in-image baseline is always read from
 AI_REVIEW_TRUSTED_ROOT/config/review.yaml. The trusted root is template/image-owned;
 a project file cannot redirect it.
 
@@ -271,7 +272,7 @@ partially trusted bundle for a downstream job to consume.
 | Condition | Required result |
 | --- | --- |
 | Project file is proved absent at the immutable target/base SHA | Select image policy; record source=image; continue normally. |
-| Project file is malformed, incomplete, too large, invalid UTF-8, has unknown keys, or fails policy validation | Fail prepare with project_config_invalid; do not fall back. |
+| Project file is malformed, incomplete, larger than 65,536 UTF-8 bytes, invalid UTF-8, has unknown keys, or fails policy validation | Fail prepare with project_config_invalid; do not fall back. |
 | Project file changes reviewer names, adapter identity/path, credential mapping, prompt/rule source, or any other sealed value | Fail prepare with project_config_unauthorized; do not fall back. |
 | Token/read capability is denied, a concealed/ambiguous 404 cannot be proved absent, or retrieval returns any non-404/platform/network error | Fail prepare with project_config_fetch_failed; do not fall back. |
 | PR/MR revision changes while config or diff is collected | Fail prepare with project_config_revision_mismatch; publish no bundle. |
@@ -311,6 +312,10 @@ Add focused unit, contract, template, and platform-harness coverage. At minimum:
 - A genuine target-revision 404 falls back to the image config and records
   `source=image`. A denied, ambiguous, malformed, oversized, and 500/timeout read
   each fail closed rather than taking that fallback.
+- The config reader accepts a valid project config at exactly 65,536 UTF-8 bytes
+  and rejects one at 65,537 bytes as `project_config_invalid`; GitHub and GitLab
+  boundary tests demonstrate the same accepted/rejected result and error code on
+  both platforms.
 - A complete valid project config can alter permitted model, panel, limit, and policy
   fields; a partial file is rejected rather than merged.
 - Attempts to add/remove/rename reviewers, substitute an adapter, change a
@@ -375,16 +380,20 @@ security property, not a usability bug. If a project needs the new policy to rev
 the file that introduces it, merge the policy change separately and then open the
 dependent change request.
 
-Hard rollout ordering rule: trusted-root asset resolution and its regression tests
-must ship and pass before any GitHub Actions or GitLab template repoints
-`AI_REVIEW_CONFIG` to `inputs/config.review.yaml`. Both templates must first expose
-the required immutable `AI_REVIEW_TRUSTED_ROOT`; adding it to the GitHub Actions
-template is a prerequisite. After that gate, land the remaining loader/schema
-changes, build and attest the matching immutable images, pin the matching templates,
-and run controlled base-vs-head isolation smoke tests on both platforms. Do not
-enable consumer review_scope policy during a mixed image/template deployment.
-SPEC-48 can follow only after this source-selection and binding contract is shipped
-and evidenced.
+Rollout gate: the loader, trusted-root asset resolution, its regression coverage,
+the required immutable template-owned `AI_REVIEW_TRUSTED_ROOT` contract, and the
+template repoint to `AI_REVIEW_CONFIG=inputs/config.review.yaml` are one release
+unit and must ship as one matching immutable image/template revision. Within that
+rollout, trusted-root asset resolution and its regression tests are the prerequisite
+gate: they must land and pass before either template is repointed. That sequencing
+gate is not a separately deployable feature; the config repoint is mandatory in the
+same immutable revision and may not be deferred or deployed separately. Both
+templates must expose the required immutable trusted-root variable, with the GitHub
+Actions contract added before its repoint. Then build and attest the matching images,
+pin both templates, and run controlled base-vs-head isolation smoke tests on both
+platforms. Do not enable consumer review_scope policy during a mixed image/template
+deployment. SPEC-48 can follow only after this complete source-selection and binding
+contract is shipped and evidenced.
 
 ## Relationship to SPEC-48
 

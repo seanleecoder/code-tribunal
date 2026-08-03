@@ -112,6 +112,7 @@ The v1 grammar is intentionally small:
 | ** | Matches zero or more path components, including a zero-component match for forms such as a/**/b. |
 | /name or /dir/** | A leading slash anchors the pattern to the repository root. The slash is syntax, not part of the matched path. |
 | name | A pattern without a slash matches a file or directory component named name at any depth. Thus *.lock matches lockfile basenames anywhere. |
+| dir/name or dir/** | A pattern containing a slash is anchored to the repository root; the repository root is the implicit origin for these forms. |
 | **/name or **/dir/** | A leading **/ is the explicit any-depth form for a pattern that otherwise contains separators. |
 | directory/ | A trailing slash only denotes directory form; it does not anchor the pattern. `vendor/` matches every file below any directory named vendor, while `/vendor/` matches only the root vendor directory and its descendants. |
 
@@ -376,7 +377,10 @@ integration coverage. At minimum:
 - Matching grammar: root-anchored and unanchored basenames, * and ?, ** including
   zero directories, trailing-directory forms, UTF-8/case-sensitive names, ordered
   overlapping matches, and rejection of !, traversal, backslashes, character
-  classes, and malformed patterns.
+  classes, and malformed patterns. Explicit anchoring tests show that `dir/name`
+  matches root `dir/name` but not `nested/dir/name`, while `**/dir/name` also
+  matches the nested path, and that `vendor/` matches `vendor/file` and
+  `nested/vendor/file` while `/vendor/` matches only `vendor/file`.
 - Config contract: allowed categories, required nonblank reasons, unknown-key
   rejection, duplicate normalized patterns, empty default, and the proof that the
   policy arrives only through SPEC-47's target-revision config.
@@ -423,6 +427,10 @@ integration coverage. At minimum:
   automatically resolved.
 - An all-excluded change produces a first-class, auditable passing no-op: no snapshot,
   no model call, no state/comment mutation, and explicit consensus/post/gate results.
+- A base-owned exclusion's standing green-gate behavior is documented and
+  operator-visible: future head changes whose paths match it receive no model
+  review for that matched scope, and an all-excluded head produces the explicit
+  `no_reviewable_changes` no-op outcome above.
 - Every producer/consumer schema and type validates the scope identity, and a
   mismatched config or scope artifact fails closed.
 - GitHub and GitLab controlled runs demonstrate the same matching, provenance,
