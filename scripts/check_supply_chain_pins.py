@@ -15,7 +15,6 @@ PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
-GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
@@ -303,65 +302,6 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
     return issues
 
 
-# The only variable-based image refs the build pipeline is allowed to run. Each
-# resolves to a digest this pipeline recorded itself via kaniko --digest-file.
-PIPELINE_DIGEST_IMAGE_REFS = frozenset(
-    {
-        "$CI_REGISTRY_IMAGE@$BASE_DIGEST",
-        "$CI_REGISTRY_IMAGE@$REVIEWER_DIGEST",
-    }
-)
-
-
-def _gitlab_build_image_pin_issues(text: str) -> list[str]:
-    """Every concrete image the build pipeline runs must be digest-pinned.
-
-    These jobs hold registry credentials and can publish release tags, so a mutable
-    tag here means a later upstream tag change silently swaps the code that performs
-    the publish.
-
-    Variable-based references are exempt only if they appear verbatim in
-    `PIPELINE_DIGEST_IMAGE_REFS`, an allowlist of the refs this pipeline itself
-    records at build time. A suffix pattern is deliberately not used: matching any
-    `@$<SOMETHING>DIGEST` would also accept an unknown variable behind an arbitrary
-    registry prefix, and this gate exists precisely because these jobs hold registry
-    credentials and can publish release tags.
-    """
-    issues: list[str] = []
-    # Scoped to `image:` mappings so unrelated YAML `name:` keys — artifacts.name,
-    # environment.name, a service alias — cannot be misread as image references and
-    # hard-fail a gate that guards release publishing.
-    # `[^\S\n]*` keeps the inline branch on the `image:` line, so the block form is
-    # not mis-parsed as an inline value that happens to start with `name:`.
-    image_block = re.compile(
-        r"^(?P<indent>[^\S\n]*)image:[^\S\n]*"
-        r"(?:(?P<inline>\S[^\n]*)|\n(?P<block>(?:[^\S\n]*(?:#[^\n]*|\w+:[^\n]*)\n)+))",
-        re.M,
-    )
-    for match in image_block.finditer(text):
-        refs = []
-        if match.group("inline"):
-            refs.append(match.group("inline"))
-        if match.group("block"):
-            name = re.search(r"^\s*name:\s*(\S+)\s*$", match.group("block"), re.M)
-            if name:
-                refs.append(name.group(1))
-        for raw in refs:
-            ref = raw.strip().strip("\"'")
-            if "@sha256:" in ref or ref in PIPELINE_DIGEST_IMAGE_REFS:
-                continue
-            if "$" in ref:
-                issues.append(
-                    "build-images.gitlab-ci.yml runs a variable image that is not "
-                    f"digest-pinned; got {ref!r}"
-                )
-                continue
-            issues.append(
-                f"build-images.gitlab-ci.yml must digest-pin every image it runs; got {ref!r}"
-            )
-    return issues
-
-
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -394,7 +334,6 @@ def main() -> int:
         for issue in _github_review_container_issues(review_workflow):
             error(f"{display_path}: {issue}")
             failures += 1
-    gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     dev_requirements = _read_optional(DEV_REQUIREMENTS)
@@ -403,9 +342,6 @@ def main() -> int:
     lock = json.loads(_read(PACKAGE_LOCK))
 
     for issue in _gitlab_image_pin_issues(gitlab_review):
-        error(issue)
-        failures += 1
-    for issue in _gitlab_build_image_pin_issues(gitlab_build):
         error(issue)
         failures += 1
     for issue in _cross_platform_image_pin_issues(gitlab_review, canonical_review_workflow):
@@ -494,7 +430,9 @@ def main() -> int:
         for issue in _workflow_action_issues(text):
             error(f"{display_path}: {issue}")
             failures += 1
-    combined_ci = (workflow or "") + "\n" + gitlab_build
+    combined_ci = "\n".join(
+        [workflow or "", canonical_review_workflow, gitlab_review]
+    )
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
     if has_repo_cli_vars or has_ci_cli_vars:

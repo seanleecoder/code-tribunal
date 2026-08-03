@@ -166,20 +166,26 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
         )
 
-    def test_detects_stale_gitlab_cli_package_variables(self) -> None:
-        original = check_supply_chain_pins.GITLAB_BUILD_TEMPLATE
+    def test_detects_stale_reviewer_cli_version_variables(self) -> None:
+        """Reviewer CLI versions must come from package-lock.json, not CI variables.
+
+        Retargeted from the deleted GitLab image-build template to the shipped review
+        workflow: the check is about CI-supplied CLI versions generally, not about that
+        one pipeline.
+        """
+        original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW
         with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "build-images.gitlab-ci.yml"
-            stale_version_check = '\n    - test -n "$AI_REVIEW_CLAUDE_VERSION"\n'
+            mutated = Path(tmp) / "review.github-actions.yml"
+            stale_version_check = "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n"
             mutated.write_text(
                 original.read_text(encoding="utf-8") + stale_version_check,
                 encoding="utf-8",
             )
-            check_supply_chain_pins.GITLAB_BUILD_TEMPLATE = mutated
+            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
             try:
                 self.assertEqual(check_supply_chain_pins.main(), 1)
             finally:
-                check_supply_chain_pins.GITLAB_BUILD_TEMPLATE = original
+                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
 
     def test_detects_mutable_action_in_shipped_review_workflow(self) -> None:
         original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW

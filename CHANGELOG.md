@@ -19,9 +19,14 @@ versioning.
 - Release tags are signed with SSH from `v1.0.2` onward, verified against
   `.github/allowed_signers`. `v1.0.0` and `v1.0.1` are annotated but unsigned and are
   not being retagged.
-- The GitLab image pipeline promotes by recorded manifest digest rather than by
-  staging tag, and digest-pins every image it runs. `check_supply_chain_pins.py`
-  enforces the latter.
+### Removed
+
+- `ai-review/ci/build-images.gitlab-ci.yml`, which built the product images from a
+  GitLab mirror of this repository. No such project exists, no user-facing
+  documentation referenced it, it was outside the hashed release artifact, and it was
+  never executed. Its supply-chain guards are removed with it. GitLab support for
+  *consumers* is unaffected: `review.gitlab-ci.yml` and `review-child.gitlab-ci.yml`
+  are unchanged and remain covered by the live evidence campaign.
 
 ### Fixed
 

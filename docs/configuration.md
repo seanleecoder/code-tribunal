@@ -198,8 +198,6 @@ override them in merge-request-controlled configuration.
 |---|---|
 | `AI_REVIEW_BASE_IMAGE` | GitLab template base image pin. |
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
-| `AI_REVIEW_BASE_STAGING` | GitLab image-build staging tag for the base image. Kaniko pushes here; the commit-tagged `AI_REVIEW_BASE_IMAGE` is created by the promote stage only after preflight passes. |
-| `AI_REVIEW_REVIEWER_STAGING` | GitLab image-build staging tag for the reviewer image. Kaniko pushes here; the commit-tagged `AI_REVIEW_REVIEWER_IMAGE` is created by the promote stage only after preflight passes. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
 | `AI_REVIEW_TRUSTED_ROOT` | Trusted in-image root, `/opt/ai-review`. |
 | `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
@@ -226,13 +224,12 @@ override them in merge-request-controlled configuration.
 | `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory. |
 | `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON. |
 
-Build-only names such as `AI_REVIEW_IMAGE_VERSION`, package-name variables, and
+Build-only names, package-name variables, and
 image tags belong to the release workflows, not the runtime configuration
 surface.
 
 | Build/preflight variable | Owner/purpose |
 |---|---|
-| `AI_REVIEW_IMAGE_VERSION` | Private GitLab image tag version slug. |
 | `AI_REVIEW_BASE_TAG` | Base image build tag selected by publication tooling. |
 | `AI_REVIEW_REVIEWER_TAG` | Reviewer image build tag selected by publication tooling. |
 | `AI_REVIEW_IMAGE_TAG` | Shared publication/preflight image tag. |
