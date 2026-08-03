@@ -170,6 +170,8 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
 EOF
 )
 
+# Keep the following title non-empty, static, and data-free: without --title OpenCode
+# infers one with a separate model request. Do not turn it into model/config policy.
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
   TMPDIR="${TMPDIR:-/tmp}" \
@@ -187,6 +189,7 @@ env -i \
   OPENCODE_CONFIG_DIR="$OPENCODE_CONFIG_DIRECTORY" \
   OPENCODE_CONFIG_CONTENT="$OPENCODE_CONFIG_JSON" \
   opencode --pure run \
+  --title "code-tribunal-ai-review" \
   --model "openrouter/$AI_REVIEW_MODEL" \
   --agent ai-reviewer \
   --format json \

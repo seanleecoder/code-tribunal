@@ -30,6 +30,13 @@ disabled-by-default `cursor` seat.
 At least one reviewer must be enabled. The blocking, resolution, and quorum
 thresholds must not exceed the enabled count.
 
+OpenCode review and critique invocations always pass the fixed internal session
+title `code-tribunal-ai-review`. It is non-empty and contains no prompt,
+repository, pull/merge-request, or user data. This prevents OpenCode from making a
+separate automatic title-inference model request; it is not a configuration key or
+an additional model-selection interface. `reviewers.opencode.model` and
+`AI_REVIEW_OPENCODE_MODEL` remain the sole OpenCode model controls.
+
 ### Production model/effort recommendations
 
 The shipped model defaults are intended to be safe starting points. For

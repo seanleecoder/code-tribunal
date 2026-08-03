@@ -25,6 +25,7 @@ wins.
 | [SPEC-44](spec-44-literal-model-output.md) | Implemented (post-1.0; `render-body.v3`) | Render every free-text and path-shaped review value as literal data, validate the consensus artifact before posting, and preserve v3 state recovery without changing consensus or marker schemas. |
 | [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Retain all effective duplicate/noise/dispute reasoning, display it tiered behind a disclosure, and record the suppression reason for an opt-in majority-noise audit. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
+| [SPEC-49](spec-49-opencode-session-title-inference.md) | Proposed (post-1.0; runtime source only) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
 | [SPEC-40](../history/specs/spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
 ## Active dependency order
