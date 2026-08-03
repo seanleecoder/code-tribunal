@@ -84,7 +84,7 @@ RUN cursor-agent --help | grep -F -- '--mode <mode>'
 
 # The OpenCode adapter uses a static title to prevent a separate title-inference
 # model call. Keep that policy fail-closed if the pinned CLI surface changes.
-RUN opencode --pure run --help 2>&1 | grep -F -- '--title'
+RUN opencode --pure run --help 2>&1 | grep -F -- '--title '
 
 # Fail the image build if the pinned CLI ever rejects either of the claude
 # adapter's stage flag sets (claude.sh) — the review probe (finding schema,
