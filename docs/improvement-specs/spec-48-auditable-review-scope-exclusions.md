@@ -112,22 +112,26 @@ The v1 grammar is intentionally small:
 | ** | Matches zero or more path components, including a zero-component match for forms such as a/**/b. |
 | /name or /dir/** | A leading slash anchors the pattern to the repository root. The slash is syntax, not part of the matched path. |
 | name | A pattern without a slash matches a file or directory component named name at any depth. Thus *.lock matches lockfile basenames anywhere. |
-| dir/name or dir/** | A pattern containing a slash is relative to the repository root unless it starts with **/. |
-| directory/ | A trailing slash is a directory form: it matches that directory and every descendant. Thus vendor/ matches every file below any directory named vendor, while /vendor/ is root-only. |
+| **/name or **/dir/** | A leading **/ is the explicit any-depth form for a pattern that otherwise contains separators. |
+| directory/ | A trailing slash only denotes directory form; it does not anchor the pattern. `vendor/` matches every file below any directory named vendor, while `/vendor/` matches only the root vendor directory and its descendants. |
 
 The matcher accepts only these wildcard forms. It rejects a leading !, a NUL,
 backslash escaping, bracket character classes, an absolute-drive spelling, an empty
-component, and dot or dot-dot traversal components. The document's root is the
-logical repository root, so an explicit leading slash is available whenever a policy
-must distinguish root/generated/ from a generated directory nested below another
-component.
+component, and dot or dot-dot traversal components. All paths are interpreted from
+the logical repository root, never through the checkout filesystem.
 
-Patterns are evaluated in listed order using Gitignore-style last-match precedence
-for their metadata. Re-inclusion is absent: every positive match excludes, but the
-last matching rule supplies the recorded rule index, pattern, category, and reason.
-This lets a later, more-specific category/reason supersede a broad earlier one
-without creating a hidden inclusion path. A v1 implementation must reject ! rather
-than interpret it as a literal or silently ignore it.
+The separator rule is explicit: after an optional trailing directory-form slash is
+removed, a leading or internal `/` anchors a pattern to the repository root; the
+explicit `**/` prefix is the any-depth exception. Thus `dir/name` is root-anchored,
+while `**/dir/name` can match at any depth. A terminal `/` is only directory-form
+syntax, so `vendor/` remains unanchored and `/vendor/` is root-only.
+
+Patterns are evaluated in listed order. Every positive match excludes the path, and
+the last matching rule supplies the recorded rule index, pattern, category, and
+reason. Negation and re-inclusion remain unsupported: a v1 implementation must
+reject `!` rather than interpret it as a literal or silently ignore it. This lets a
+later, more-specific category/reason supersede a broad earlier one without creating
+a hidden inclusion path.
 
 For each parsed diff block, the implementation considers every present side:
 
@@ -319,6 +323,13 @@ This is a successful no-op gate, not a failed panel, a reviewer skip hidden as a
 normal clean review, or an empty consensus that can resolve every historical record.
 It must be distinguishable in artifacts, job output, and operator diagnostics.
 
+Because the policy is selected from the trusted target/base revision, a base-owned
+exclusion is a standing green-gate channel: future head changes whose paths match it
+receive no model review for that matched scope. When every changed block matches, the
+intentional all-excluded no-reviewable-changes result means the head receives no model
+review at all. Adding or changing a base-owned exclusion therefore requires
+protected-branch/config-owner review as a coverage-policy change.
+
 ## Failure behavior
 
 | Condition | Required result |
@@ -429,7 +440,7 @@ all producer/consumer/schema/template changes together, publish and attest the n
 base and reviewer images, pin both supported templates to that same revision, and
 run controlled GitHub/GitLab tests. Enable an adopter's first exclusion only after
 the complete deployment is available. A policy change is a reduction in automated
-coverage and should receive the project's normal protected-branch/config-owner review.
+coverage and requires protected-branch/config-owner review.
 
 The operational response to an oversized source change remains separate: split
 independently mergeable generated output from source changes where possible, or use

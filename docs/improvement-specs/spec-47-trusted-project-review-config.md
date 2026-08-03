@@ -248,6 +248,13 @@ escape hatch. The implementation separates policy loading from runtime asset loo
   untrusted review data;
 - all command construction and credential allowlists remain in trusted image code.
 
+Both the GitHub Actions and GitLab templates must declare and propagate
+`AI_REVIEW_TRUSTED_ROOT` as a required, immutable, template-owned variable for
+runtime asset lookup. It is separate from `AI_REVIEW_CONFIG`; adding this variable
+to the GitHub Actions template is a prerequisite before that template may point
+`AI_REVIEW_CONFIG` at `inputs/config.review.yaml`. The GitLab template must provide
+the same immutable contract.
+
 The templates may set AI_REVIEW_CONFIG to inputs/config.review.yaml after prepare,
 but must retain a separate immutable trusted-root value for runtime assets. A
 consumer cannot supply either value through its project policy. This distinction is
@@ -288,7 +295,7 @@ input bundle and cannot convert a config-selection failure into an incomplete re
 | adapter_runner.py and prompt_render.py | Load only the bundle policy after prepare, validate the binding before prompt/provider work, and resolve runtime assets from the trusted root rather than config.parent. |
 | consensus.py, post.py, and gate.py | Validate the same artifact/provenance/effective binding before consuming findings, platform state, comments, or gate inputs. Retain the existing successful-batch config-digest checks as defense in depth. |
 | Schemas and types | Add an input-manifest schema/type or equivalent strict validator for config_provenance and the expanded effective summary. Extend artifact provenance only additively where historical read compatibility is safe. |
-| GitHub and GitLab templates | Prepare begins with the baked baseline path; later jobs use inputs/config.review.yaml and share the same allowed policy overrides. Ensure prepare failure prevents every downstream consumer of inputs. |
+| GitHub and GitLab templates | Declare and propagate the required, immutable, template-owned `AI_REVIEW_TRUSTED_ROOT` for runtime assets; adding it to the GitHub Actions template is a prerequisite. Only after trusted-root asset resolution and its regression tests pass may later jobs use `AI_REVIEW_CONFIG=inputs/config.review.yaml`. Ensure prepare failure prevents every downstream consumer of inputs. |
 | Configuration, artifact, security, and installation docs | Document the fixed target-branch path, source precedence, sealed fields, migration, missing-file fallback, and the fact that this remains proposed until released. Update the artifact reference when implementation lands. |
 | Images and supply chain | Ship loader, schemas, prompt/adapter path hardening, and templates in one immutable runtime revision. Publish/pin the new base and reviewer images together, update trusted-root/image attestations, and retain SPEC-43 as the separate proof that the pipeline actually used those images. |
 
@@ -298,12 +305,12 @@ Add focused unit, contract, template, and platform-harness coverage. At minimum:
 
 - GitHub and GitLab prepare read ai-review/config/review.yaml from the selected
   base SHA of the target project, including a moving PR/MR revision rejection.
-- A valid base config is used when a PR/MR head adds a malicious config, changes a
-  model, or attempts to add its own config path; no head content reaches the selected
-  resolved policy.
+- PR/MR-head isolation tests prove that a valid base config remains selected when a
+  head adds a malicious config, changes a model, or attempts to add its own config
+  path; no head content reaches the selected resolved policy.
 - A genuine target-revision 404 falls back to the image config and records
-  image_or_project=image. A denied, ambiguous, malformed, oversized, and 500/timeout
-  read each fail closed rather than taking that fallback.
+  `source=image`. A denied, ambiguous, malformed, oversized, and 500/timeout read
+  each fail closed rather than taking that fallback.
 - A complete valid project config can alter permitted model, panel, limit, and policy
   fields; a partial file is rejected rather than merged.
 - Attempts to add/remove/rename reviewers, substitute an adapter, change a
@@ -317,8 +324,12 @@ Add focused unit, contract, template, and platform-harness coverage. At minimum:
 - Tampering with inputs/config.review.yaml or config provenance after prepare causes
   a binding failure. A successful finding/critique batch whose digest differs remains
   rejected by consensus.
-- Adapter and prompt lookup tests prove that a project config and its artifact parent
-  cannot supply a shell script, prompt, rule, or credential mapping.
+- Trusted-root asset-resolution regression tests prove that prompt and adapter
+  lookup remain below `AI_REVIEW_TRUSTED_ROOT` when `AI_REVIEW_CONFIG` points to
+  `inputs/config.review.yaml`. Config-artifact absolute, parent-relative, traversal,
+  and symlink attempts cannot escape that root or supply a shell script, prompt,
+  rule, or credential mapping. Template tests also require the immutable trusted-root
+  variable in both GitHub Actions and GitLab before the config-artifact repoint.
 - Existing image-only consumers and existing deterministic local fixtures continue
   to produce their expected effective policy when no project file exists.
 
@@ -364,12 +375,16 @@ security property, not a usability bug. If a project needs the new policy to rev
 the file that introduces it, merge the policy change separately and then open the
 dependent change request.
 
-Implementation rolls out in this order: land the loader/schema/runtime-root changes;
-build and attest the matching immutable images; pin the matching GitHub and GitLab
-templates; run controlled base-vs-head isolation smoke tests on both platforms; then
-document the feature as current. Do not enable consumer review_scope policy during a
-mixed image/template deployment. SPEC-48 can follow only after this source-selection
-and binding contract is shipped and evidenced.
+Hard rollout ordering rule: trusted-root asset resolution and its regression tests
+must ship and pass before any GitHub Actions or GitLab template repoints
+`AI_REVIEW_CONFIG` to `inputs/config.review.yaml`. Both templates must first expose
+the required immutable `AI_REVIEW_TRUSTED_ROOT`; adding it to the GitHub Actions
+template is a prerequisite. After that gate, land the remaining loader/schema
+changes, build and attest the matching immutable images, pin the matching templates,
+and run controlled base-vs-head isolation smoke tests on both platforms. Do not
+enable consumer review_scope policy during a mixed image/template deployment.
+SPEC-48 can follow only after this source-selection and binding contract is shipped
+and evidenced.
 
 ## Relationship to SPEC-48
 
