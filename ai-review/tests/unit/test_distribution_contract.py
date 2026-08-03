@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 import tomllib
 import unittest
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -28,6 +30,17 @@ class RepositoryDistributionContractTests(unittest.TestCase):
             raise unittest.SkipTest(
                 "repository distribution metadata is intentionally absent from runtime images"
             )
+
+    def _publish_workflow(self) -> str:
+        """Read the publish workflow, skipping where `.github` is absent.
+
+        The image build deliberately omits `.github`, and a sparse checkout or
+        archive export can have `pyproject.toml` without it, so the class-level skip
+        is not sufficient. Matches the convention in `test_ci_template.py`.
+        """
+        if not _PUBLISH_WORKFLOW.is_file():
+            self.skipTest("publish workflow is not present in this checkout")
+        return _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
 
     def test_pyproject_contains_tool_configuration_only(self) -> None:
         config = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -77,9 +90,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         than the image's. The read-only bind mount replaces the path, so a fixture
         deleted in the checkout cannot linger from the image layer.
         """
-        workflow = (
-            _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
-        ).read_text(encoding="utf-8")
+        workflow = self._publish_workflow()
 
         self.assertIn(
             '-v "$GITHUB_WORKSPACE/ai-review/tests:/opt/ai-review/tests:ro"', workflow
@@ -94,12 +105,15 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         removed in-image `COPY` + `RUN` could not fail that way, so the floor restores
         the property.
         """
-        workflow = (
-            _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
-        ).read_text(encoding="utf-8")
+        workflow = self._publish_workflow()
 
-        self.assertIn("expected at least 400", workflow)
-        self.assertIn('if [ -z "$ran" ] || [ "$ran" -lt 400 ]; then', workflow)
+        # Parse the floor rather than duplicate it, so the number lives in one place.
+        floor = re.search(r"MIN_EXECUTED_TESTS=(\d+)", workflow)
+        self.assertIsNotNone(floor, "workflow must define an executed-test floor")
+        self.assertGreater(int(floor.group(1)), 0)
+        # It must be an EXECUTION floor: unittest counts skips in "Ran N".
+        self.assertIn("executed=$((ran - skipped))", workflow)
+        self.assertIn('if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]', workflow)
 
     def test_release_hash_set_enumerates_only_tracked_fixtures(self) -> None:
         """The declared file list must be reproducible from a clean checkout.
@@ -134,9 +148,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         otherwise notice a fixture missing from the image.
         The reviewer preflight depends on exactly these paths and runs with no mount.
         """
-        workflow = (
-            _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
-        ).read_text(encoding="utf-8")
+        workflow = self._publish_workflow()
 
         self.assertIn("test -f /opt/ai-review/tests/fixtures/diffs/simple.diff", workflow)
         self.assertIn("test -d /opt/ai-review/tests/fixtures/repos/simple", workflow)

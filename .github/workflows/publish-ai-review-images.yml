@@ -89,12 +89,22 @@ jobs:
             "$AI_REVIEW_BASE_TAG" \
             python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py' \
             2>&1 | tee /tmp/ai-review-suite.log
+          # unittest counts skipped cases in "Ran N", and many cases skip in the
+          # image (repository-only guards), so N alone is a COLLECTION floor. Subtract
+          # the skips to get an EXECUTION floor: without this, a suite that skipped
+          # everything would satisfy the check while asserting nothing.
+          MIN_EXECUTED_TESTS=400
           ran="$(sed -n 's/^Ran \([0-9][0-9]*\) test[s]* in .*/\1/p' /tmp/ai-review-suite.log | tail -1)"
-          if [ -z "$ran" ] || [ "$ran" -lt 400 ]; then
-            echo "in-image suite collected ${ran:-0} tests; expected at least 400" >&2
+          skipped="$(sed -n 's/.*skipped=\([0-9][0-9]*\).*/\1/p' /tmp/ai-review-suite.log | tail -1)"
+          ran="${ran:-0}"
+          skipped="${skipped:-0}"
+          executed=$((ran - skipped))
+          if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]; then
+            echo "in-image suite executed $executed tests (ran $ran, skipped $skipped);" \
+              "expected at least $MIN_EXECUTED_TESTS" >&2
             exit 1
           fi
-          echo "in-image suite ran $ran tests"
+          echo "in-image suite executed $executed tests (ran $ran, skipped $skipped)"
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
           # Run this as early as possible because the complete checkout validator

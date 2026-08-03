@@ -12,22 +12,24 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 
-_IGNORED_FIXTURE_PARTS = frozenset({"__pycache__"})
+class ReleaseValidationError(ValueError):
+    """Raised when release metadata violates its checked contract."""
 
 
 def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
     """Enumerate git-tracked files under a directory, in sorted order.
 
-    The declared file list is written into release/release-inputs.json and
-    re-derived during manifest validation, so it must be reproducible from a clean
-    checkout. An unfiltered walk is not: it also picks up untracked and ignored
-    artifacts such as __pycache__/*.pyc, editor scratch, and .DS_Store, which differ
-    per machine and — because .dockerignore excludes them — never reach the image the
-    hash is supposed to bind.
+    The declared file list is written into release/release-inputs.json and re-derived
+    during manifest validation, so it must resolve identically everywhere. There is
+    deliberately no fallback: a filtered filesystem walk returns worktree files while
+    this returns index entries, and the two disagree — an unstaged fixture is shipped
+    by `docker build` but absent from the index, and a fixture deleted from the
+    worktree but still in the index would be hashed and fail. Two derivations of one
+    binding is worse than a clear error, so an unavailable git fails loudly.
 
-    Falls back to a filtered walk when git is unavailable. That fallback excludes
-    dot-files and __pycache__ but cannot distinguish tracked from merely untracked, so
-    it is a weaker guarantee; the git path is the intended one.
+    Validating a historical manifest therefore requires a git checkout, which is what
+    the release process already prescribes (`git worktree add <tmp> <tag>`), not an
+    extracted tarball.
     """
     try:
         completed = subprocess.run(
@@ -36,20 +38,23 @@ def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
             text=True,
             check=False,
         )
-        if completed.returncode == 0:
-            names = [name for name in completed.stdout.split("\0") if name]
-            return tuple(sorted(names))
-    except OSError:
-        pass
-    return tuple(
-        sorted(
-            str(path.relative_to(root))
-            for path in (root / relative_dir).rglob("*")
-            if path.is_file()
-            and not path.name.startswith(".")
-            and _IGNORED_FIXTURE_PARTS.isdisjoint(path.parts)
+    except OSError as exc:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git is unavailable ({exc}). "
+            "Validate release inputs from a git checkout, not an extracted archive."
+        ) from exc
+    if completed.returncode != 0:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git ls-files failed "
+            f"({completed.stderr.strip() or completed.returncode}). "
+            "Validate release inputs from a git checkout, not an extracted archive."
         )
-    )
+    names = [name for name in completed.stdout.split("\0") if name]
+    if not names:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git reports no tracked files there"
+        )
+    return tuple(sorted(names))
 
 
 HASH_GROUPS = {
@@ -109,8 +114,6 @@ IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)"
 PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
 
-class ReleaseValidationError(ValueError):
-    """Raised when release metadata violates its checked contract."""
 
 
 def canonical_json_bytes(value: Any) -> bytes:
