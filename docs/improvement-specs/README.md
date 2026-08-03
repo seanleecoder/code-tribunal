@@ -19,14 +19,16 @@ wins.
 | [SPEC-37](../history/specs/spec-37-final-release-artifacts.md) | Complete at `v1.0.0` | Runtime source `88bc941` frozen, images published and attested, release commit `3ad443e` tagged with a validated external manifest. |
 | [SPEC-38](../history/specs/spec-38-documentation-evidence-restructure.md) | Complete at `v1.0.0` | Docs/checks implemented and the required live evidence is recorded in the [evidence matrix](../evidence/README.md). |
 | [SPEC-39](spec-39-simplification-deletion.md) | Milestone A complete; B post-1.0 | Container-only contract cleanup landed; posting decomposition may follow in 1.0.x. |
+| [SPEC-40](../history/specs/spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel; observed live with a weak default model. |
 | [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies the running image. |
 | [SPEC-44](spec-44-literal-model-output.md) | Implemented (post-1.0; `render-body.v3`) | Render every free-text and path-shaped review value as literal data, validate the consensus artifact before posting, and preserve v3 state recovery without changing consensus or marker schemas. |
 | [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0; after SPEC-44) | Retain all effective duplicate/noise/dispute reasoning, display it tiered behind a disclosure, and record the suppression reason for an opt-in majority-noise audit. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
+| [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read complete project policy only from the immutable target/base revision, preserve trusted runtime ownership, and bind the resolved policy through every stage. |
+| [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply trusted generated/lockfile/vendored exclusions only after a complete diff is fetched, with explicit coverage provenance and a first-class no-reviewable-changes gate. |
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Proposed (post-1.0; runtime source only) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
-| [SPEC-40](../history/specs/spec-40-1.0-finalization-execution-plan.md) | Complete at `v1.0.0` | The coding-agent/human-operator handoff it coordinates was executed for the 1.0.0 release. |
 
 ## Active dependency order
 
@@ -56,7 +58,13 @@ completed for `v1.0.0`. Remaining order:
    [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
-5. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
+5. Establish trusted project-policy delivery with
+   [SPEC-47](spec-47-trusted-project-review-config.md) before any consumer can
+   narrow review scope. Then, and only then, deliver
+   [SPEC-48](spec-48-auditable-review-scope-exclusions.md): it depends on
+   SPEC-47's target-revision source selection, sealed runtime ownership, and
+   effective-config binding. Neither specification is currently implemented.
+6. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
    enabling or advertising the Cursor reviewer. It does not block shipping
    1.0.1 while Cursor stays disabled. Its acceptance checklist is canonical;
    keep the reviewer disabled until the complete scoped evidence set passes.

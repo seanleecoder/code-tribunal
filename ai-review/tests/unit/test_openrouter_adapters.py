@@ -941,7 +941,7 @@ PY
                 agent = config["agent"]["ai-reviewer"]
                 self.assertEqual(agent["reasoningEffort"], configured)
 
-    def test_opencode_max_effort_uses_provider_default(self) -> None:
+    def test_opencode_max_effort_reaches_reasoning_effort(self) -> None:
         batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
             "opencode",
             "opencode",
@@ -951,7 +951,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         config = meta["opencode_config"]
         assert isinstance(config, dict)
-        self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
+        self.assertEqual(config["agent"]["ai-reviewer"]["reasoningEffort"], "max")
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
