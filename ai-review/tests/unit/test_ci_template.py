@@ -16,7 +16,6 @@ import yaml
 
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
-_BUILD_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "build-images.gitlab-ci.yml"
 _REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _GITHUB_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -526,16 +525,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
         self.assertNotIn("optional: true", prepare_need.group(1))
 
-    def test_gitlab_image_build_uses_repo_pins(self) -> None:
-        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn("image_validate", text)
-        self.assertIn("validate_ai_review_supply_chain_pins", text)
-        self.assertIn("python scripts/check_supply_chain_pins.py", text)
-        self.assertNotRegex(text, r"AI_REVIEW_(CLAUDE|CODEX|OPENCODE)_VERSION")
-        self.assertNotIn("CLAUDE_VERSION=", text)
-        self.assertNotIn("CODEX_VERSION=", text)
-        self.assertNotIn("OPENCODE_VERSION=", text)
-
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
             self.skipTest("GitHub publish workflow is not present in this checkout")
@@ -827,22 +816,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
             ):
                 _cursor_publish_workflow_skip_reason(workflow_path)
 
-    def test_build_image_template_uses_explicit_private_version_slug(self) -> None:
-        text = _BUILD_TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn('AI_REVIEW_IMAGE_VERSION: "1_0"', text)
-        self.assertIn('Public GHCR tags use semantic "1.0-<sha>"', text)
-        self.assertIn(
-            'AI_REVIEW_BASE_IMAGE: "$CI_REGISTRY_IMAGE:'
-            'ai_review_base_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',
-            text,
-        )
-        self.assertIn(
-            'AI_REVIEW_REVIEWER_IMAGE: "$CI_REGISTRY_IMAGE:'
-            'ai_review_reviewer_${AI_REVIEW_IMAGE_VERSION}_$CI_COMMIT_SHA"',
-            text,
-        )
-
     def test_image_dockerfiles_do_not_copy_github_metadata(self) -> None:
         for dockerfile in _IMAGE_DOCKERFILES:
             text = dockerfile.read_text(encoding="utf-8")
@@ -926,7 +899,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = "\n".join(
             [
                 _CI_TEMPLATE.read_text(encoding="utf-8"),
-                _BUILD_TEMPLATE.read_text(encoding="utf-8"),
                 _REVIEWER_DOCKERFILE.read_text(encoding="utf-8"),
             ]
         )

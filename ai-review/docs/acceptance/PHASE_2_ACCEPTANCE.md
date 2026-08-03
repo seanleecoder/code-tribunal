@@ -2,6 +2,13 @@
 
 > **Historical evidence.** This record predates the current 1.0 evidence matrix
 > and is non-normative; see the [evidence index](../../../docs/evidence/README.md).
+>
+> **Superseded procedure.** The rollout steps below reference
+> `ci/build-images.gitlab-ci.yml`, a GitLab image-build template that has since been
+> removed — no GitLab mirror of this repository exists and none is planned. Those
+> steps therefore cannot be followed as written. Images are built and published by
+> the GitHub `publish-ai-review-images.yml` workflow. The record is retained as
+> written because acceptance history should not be rewritten.
 
 This file tracks Phase 2 acceptance for parallel fan-out reviewers
 (spec `../specs/ai-review-implementation-ready-spec.md` section 21,

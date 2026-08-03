@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project follows semantic
 versioning.
 
+## [Unreleased]
+
+### Changed
+
+- The runtime images no longer ship test code. `base.Dockerfile` copies only
+  `ai-review/tests/fixtures`, which is all the preflight resolves paths from, and the
+  build-time in-image test run is removed. Both CI preflights now bind-mount the
+  checkout's tests into the built image, which still proves that exact image passes the
+  suite — and proves it against the current tests rather than a frozen copy. A change
+  to test *code* no longer alters image identity; fixtures still ship, so a fixture
+  change does alter the image digest and remains part of the release binding.
+- Release tags are signed with SSH from `v1.0.2` onward, verified against
+  `.github/allowed_signers`. `v1.0.0` and `v1.0.1` are annotated but unsigned and are
+  not being retagged.
+### Removed
+
+- `ai-review/ci/build-images.gitlab-ci.yml`, which built the product images from a
+  GitLab mirror of this repository. No such project exists, no *current* user-facing
+  documentation referenced it, it was outside the hashed release artifact, and it was
+  never executed. The historical `PHASE_2_ACCEPTANCE.md` record does reference it; it
+  is retained as written and now carries a superseded-procedure note. Its supply-chain guards are removed with it. GitLab support for
+  *consumers* is unaffected: `review.gitlab-ci.yml` and `review-child.gitlab-ci.yml`
+  are unchanged and remain covered by the live evidence campaign.
+
+### Fixed
+
+- `test_release_tools.py` no longer assumes the checked-in release artifact is an
+  unbound draft. The repo-state guard is scoped by declared status — a draft must carry
+  no verification binding, an active release must carry one — and the manifest tests
+  derive the release version from the artifact instead of hardcoding it. The first
+  assumption broke `make quality` on any release commit; the second broke it on every
+  post-release draft reset. Its release-version derivation is also placed after the
+  runtime-image skip guard, so importing the module inside an image that has no
+  `release/` directory skips cleanly instead of raising `ImportError` — which broke the
+  image build once before it was caught.
+
 ## [1.0.1] - 2026-07-30
 
 ### Known issues

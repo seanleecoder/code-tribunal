@@ -15,7 +15,6 @@ PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
-GITLAB_BUILD_TEMPLATE = ROOT / "ai-review/ci/build-images.gitlab-ci.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
@@ -335,7 +334,6 @@ def main() -> int:
         for issue in _github_review_container_issues(review_workflow):
             error(f"{display_path}: {issue}")
             failures += 1
-    gitlab_build = _read(GITLAB_BUILD_TEMPLATE)
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     dev_requirements = _read_optional(DEV_REQUIREMENTS)
@@ -432,7 +430,17 @@ def main() -> int:
         for issue in _workflow_action_issues(text):
             error(f"{display_path}: {issue}")
             failures += 1
-    combined_ci = (workflow or "") + "\n" + gitlab_build
+    # Includes the INSTALLED workflow, which is the file GitHub actually executes: a
+    # reviewer CLI version variable added only there would otherwise sit outside this
+    # scan and reintroduce mutable CLI selection.
+    combined_ci = "\n".join(
+        [
+            workflow or "",
+            canonical_review_workflow,
+            installed_review_workflow or "",
+            gitlab_review,
+        ]
+    )
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
     if has_repo_cli_vars or has_ci_cli_vars:

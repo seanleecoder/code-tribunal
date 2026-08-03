@@ -224,13 +224,12 @@ override them in merge-request-controlled configuration.
 | `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory. |
 | `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON. |
 
-Build-only names such as `AI_REVIEW_IMAGE_VERSION`, package-name variables, and
+Build-only names, package-name variables, and
 image tags belong to the release workflows, not the runtime configuration
 surface.
 
 | Build/preflight variable | Owner/purpose |
 |---|---|
-| `AI_REVIEW_IMAGE_VERSION` | Private GitLab image tag version slug. |
 | `AI_REVIEW_BASE_TAG` | Base image build tag selected by publication tooling. |
 | `AI_REVIEW_REVIEWER_TAG` | Reviewer image build tag selected by publication tooling. |
 | `AI_REVIEW_IMAGE_TAG` | Shared publication/preflight image tag. |

@@ -12,12 +12,61 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 
+class ReleaseValidationError(ValueError):
+    """Raised when release metadata violates its checked contract."""
+
+
+FIXTURE_DIR = "ai-review/tests/fixtures"
+
+
+def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
+    """Enumerate git-tracked files under a directory, in sorted order.
+
+    The declared file list is written into release/release-inputs.json and re-derived
+    during manifest validation, so it must resolve identically everywhere. There is
+    deliberately no fallback: a filtered filesystem walk returns worktree files while
+    this returns index entries, and the two disagree — an unstaged fixture is shipped
+    by `docker build` but absent from the index, and a fixture deleted from the
+    worktree but still in the index would be hashed and fail. Two derivations of one
+    binding is worse than a clear error, so an unavailable git fails loudly.
+
+    Validating a historical manifest therefore requires a git checkout, which is what
+    the release process already prescribes (`git worktree add <tmp> <tag>`), not an
+    extracted tarball.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", relative_dir],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git is unavailable ({exc}). "
+            "Validate release inputs from a git checkout, not an extracted archive."
+        ) from exc
+    if completed.returncode != 0:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git ls-files failed "
+            f"({completed.stderr.strip() or completed.returncode}). "
+            "Validate release inputs from a git checkout, not an extracted archive."
+        )
+    names = [name for name in completed.stdout.split("\0") if name]
+    if not names:
+        raise ReleaseValidationError(
+            f"cannot enumerate {relative_dir}: git reports no tracked files there"
+        )
+    return tuple(sorted(names))
+
+
 HASH_GROUPS = {
     "dependency_locks": (
         "ai-review/images/package-lock.json",
         "ai-review/images/python-constraints.txt",
         "requirements-dev.txt",
     ),
+    # Fixture files are appended per-root by hash_groups(); see FIXTURE_DIR.
     "image_recipes": (
         "ai-review/images/base.Dockerfile",
         "ai-review/images/cursor-agent.pin",
@@ -64,8 +113,6 @@ IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)"
 PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
 
-class ReleaseValidationError(ValueError):
-    """Raised when release metadata violates its checked contract."""
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -93,13 +140,35 @@ def aggregate_hash(root: Path, paths: tuple[str, ...] | list[str]) -> str:
     return digest.hexdigest()
 
 
+def hash_groups(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
+    """Resolve the checked file sets for one checkout.
+
+    Fixture files are enumerated here rather than baked into HASH_GROUPS at import
+    time, for two reasons. They must be derived from the root actually being
+    validated, not from whichever checkout happened to import this module — an
+    alternate-tree or historical validation would otherwise hash one tree against
+    another's file list. And the git requirement must apply only to release-hash
+    computation: HASH_GROUPS is imported by general-purpose tooling such as
+    check_docs.py, which should not fail at import in a non-git tree.
+
+    Fixtures ship in the runtime image (base.Dockerfile copies
+    ai-review/tests/fixtures), so a fixture-only change moves the published image
+    digest and must therefore move a declared image-recipe hash too.
+    """
+    groups = dict(HASH_GROUPS)
+    groups["image_recipes"] = groups["image_recipes"] + _tracked_files(
+        FIXTURE_DIR, root
+    )
+    return groups
+
+
 def computed_hashes(root: Path = ROOT) -> dict[str, dict[str, Any]]:
     return {
         name: {
             "files": list(paths),
             "sha256": aggregate_hash(root, list(paths)),
         }
-        for name, paths in HASH_GROUPS.items()
+        for name, paths in hash_groups(root).items()
     }
 
 

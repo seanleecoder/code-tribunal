@@ -27,14 +27,20 @@ COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
-COPY ai-review/tests /opt/ai-review/tests
+# Only the fixtures ship, and they are required: the reviewer preflight runs
+# `docker run --read-only` with no mount and resolves --diff/--repo from here.
+# Test *code* is staged in at verification time instead, so a production image that
+# processes untrusted diffs and model output carries none of it, and a change to test
+# code no longer alters image identity. Fixtures are the exception — they are a
+# shipped layer, so changing one does change the image digest and is part of the
+# release binding.
+COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
 COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
 
 RUN chmod +x /opt/ai-review/adapters/*.sh \
-    && python -m compileall -q /opt/ai-review/src \
-    && python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+    && python -m compileall -q /opt/ai-review/src
 
 WORKDIR /workspace

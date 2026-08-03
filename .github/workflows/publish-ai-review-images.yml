@@ -64,8 +64,47 @@ jobs:
           set -euo pipefail
           # The suite creates executable fake reviewer CLIs under /tmp. Keep it
           # checkout-independent, but do not mount /tmp noexec for this command.
-          docker run --rm --workdir /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+          # Verify the image's OWN fixtures first: the read-only mount below shadows
+          # /opt/ai-review/tests, and the reviewer preflight resolves --diff/--repo
+          # from these paths with no mount at all, so a missing or mispackaged fixture
+          # must fail here rather than be hidden by the overlay.
+          docker run --rm --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" sh -euc '
+            test -f /opt/ai-review/tests/fixtures/diffs/simple.diff
+            test -d /opt/ai-review/tests/fixtures/repos/simple
+          '
+          # Mount the checkout's tests rather than shipping them in the image. This
+          # still proves "this exact image passes the suite", and it proves it against
+          # the current tests instead of whatever was frozen into the layers.
+          # Overlay the image's own tests path: the suite resolves config/ and schemas/
+          # relative to its own location, so mounting elsewhere would make it read the
+          # mount point instead of the image's /opt/ai-review.
+          # `unittest discover` exits 0 when it collects nothing, and `docker run -v`
+          # silently creates an empty directory when the host path is missing or has
+          # been renamed. Without a floor on collected tests this preflight could
+          # report success having verified nothing and still publish the image — a
+          # property the removed in-image `COPY` + `RUN` had for free, because `COPY`
+          # fails on a missing path.
+          docker run --rm --workdir /tmp \
+            -v "$GITHUB_WORKSPACE/ai-review/tests:/opt/ai-review/tests:ro" \
+            "$AI_REVIEW_BASE_TAG" \
+            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py' \
+            2>&1 | tee /tmp/ai-review-suite.log
+          # unittest counts skipped cases in "Ran N", and many cases skip in the
+          # image (repository-only guards), so N alone is a COLLECTION floor. Subtract
+          # the skips to get an EXECUTION floor: without this, a suite that skipped
+          # everything would satisfy the check while asserting nothing.
+          MIN_EXECUTED_TESTS=400
+          ran="$(sed -n 's/^Ran \([0-9][0-9]*\) test[s]* in .*/\1/p' /tmp/ai-review-suite.log | tail -1)"
+          skipped="$(sed -n 's/.*skipped=\([0-9][0-9]*\).*/\1/p' /tmp/ai-review-suite.log | tail -1)"
+          ran="${ran:-0}"
+          skipped="${skipped:-0}"
+          executed=$((ran - skipped))
+          if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]; then
+            echo "in-image suite executed $executed tests (ran $ran, skipped $skipped);" \
+              "expected at least $MIN_EXECUTED_TESTS" >&2
+            exit 1
+          fi
+          echo "in-image suite executed $executed tests (ran $ran, skipped $skipped)"
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
           # Run this as early as possible because the complete checkout validator
