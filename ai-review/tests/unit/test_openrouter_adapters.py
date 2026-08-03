@@ -827,6 +827,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
         self.assertIn("/opencode --pure run", cli_args)
+        self._assert_static_opencode_title(cli_args)
         self.assertIn("--model openrouter/google/gemini-3.5-flash-lite", cli_args)
         self.assertIn("--agent ai-reviewer", cli_args)
         self.assertIn("--format json", cli_args)
@@ -978,6 +979,7 @@ PY
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
         self.assertIn("--dir ", cli_args)
+        self._assert_static_opencode_title(cli_args)
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
@@ -1143,18 +1145,29 @@ PY
         self.assertNotIn("openai/gpt-5.6-luna", cli_args)
 
     def test_opencode_model_override_reaches_cli_and_config(self) -> None:
-        batch, cli_args, cli_env, _meta = self._run_with_fake_cli(
+        batch, cli_args, cli_env, meta = self._run_with_fake_cli(
             "opencode",
             "opencode",
             extra_env={"AI_REVIEW_OPENCODE_MODEL": "google/custom-model"},
         )
 
         self.assertEqual(batch["adapter_status"], "success")
+        self._assert_static_opencode_title(cli_args)
         self.assertIn("--model openrouter/google/custom-model", cli_args)
+        self.assertEqual(shlex.split(cli_args).count("--model"), 1)
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
         self.assertNotIn("gemini-3.5-flash-lite", cli_env)
+        config = meta["opencode_config"]
+        assert isinstance(config, dict)
+        self.assertNotIn("small_model", config)
+        self.assertNotIn("title_model", config)
+
+    def _assert_static_opencode_title(self, cli_args: str) -> None:
+        argv = shlex.split(cli_args)
+        self.assertEqual(argv.count("--title"), 1)
+        self.assertEqual(argv[argv.index("--title") + 1], "code-tribunal-ai-review")
 
     def test_openrouter_variant_model_is_accepted(self) -> None:
         # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.

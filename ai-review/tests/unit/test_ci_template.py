@@ -894,6 +894,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("codex --version", text)
         self.assertIn("opencode --version", text)
         self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
+        exact_guard = "opencode --pure run --help 2>&1 | grep -F -- '--title '"
+        self.assertIn(exact_guard, text)
+        self.assertNotIn("opencode --pure run --help 2>&1 | grep -F -- '--title'", text)
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
         text = "\n".join(
