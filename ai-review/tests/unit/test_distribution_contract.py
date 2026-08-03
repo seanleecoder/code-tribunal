@@ -86,6 +86,47 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         )
         self.assertIn("python -m unittest discover -s /opt/ai-review/tests", workflow)
 
+    def test_preflight_requires_the_mounted_suite_to_actually_run(self) -> None:
+        """A vacuous pass must not publish an image.
+
+        `unittest discover` exits 0 when it collects nothing, and `docker run -v`
+        creates an empty directory when the host path is missing or renamed. The
+        removed in-image `COPY` + `RUN` could not fail that way, so the floor restores
+        the property.
+        """
+        workflow = (
+            _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("expected at least 400", workflow)
+        self.assertIn('if [ -z "$ran" ] || [ "$ran" -lt 400 ]; then', workflow)
+
+    def test_release_hash_set_enumerates_only_tracked_fixtures(self) -> None:
+        """The declared file list must be reproducible from a clean checkout.
+
+        An unfiltered walk also collects untracked and ignored artifacts, which differ
+        per machine and — since `.dockerignore` excludes them — never reach the image
+        the hash is meant to bind.
+        """
+        from importlib import util
+
+        spec = util.spec_from_file_location(
+            "_release_common", _REPO_ROOT / "scripts" / "release_common.py"
+        )
+        module = util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        fixtures = [
+            path
+            for path in module.HASH_GROUPS["image_recipes"]
+            if path.startswith("ai-review/tests/fixtures/")
+        ]
+        self.assertNotEqual([], fixtures)
+        for path in fixtures:
+            self.assertNotIn("__pycache__", path)
+            self.assertFalse(Path(path).name.startswith("."), path)
+
     def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
         """The overlay hides the shipped fixtures, so assert them first.
 

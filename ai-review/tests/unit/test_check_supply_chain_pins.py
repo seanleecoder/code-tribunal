@@ -168,6 +168,31 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
         )
 
+    def test_cli_version_scan_covers_the_installed_workflow(self) -> None:
+        """The installed workflow is what GitHub executes, so it must be scanned.
+
+        A reviewer CLI version variable added only to `.github/workflows/ai-review.yml`
+        would otherwise sit outside the scan. Asserts on the specific message, because
+        mutating that file also trips the installed-must-match-canonical check.
+        """
+        original = check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW
+        expected = "reviewer CLI versions must come from package-lock.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "ai-review.yml"
+            mutated.write_text(
+                original.read_text(encoding="utf-8")
+                + "\n  AI_REVIEW_OPENCODE_VERSION: 9.9.9\n",
+                encoding="utf-8",
+            )
+            check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = mutated
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = original
+            self.assertIn(expected, stderr.getvalue())
+
     def test_detects_stale_reviewer_cli_version_variables(self) -> None:
         """Reviewer CLI versions must come from package-lock.json, not CI variables.
 

@@ -12,6 +12,46 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 
+_IGNORED_FIXTURE_PARTS = frozenset({"__pycache__"})
+
+
+def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
+    """Enumerate git-tracked files under a directory, in sorted order.
+
+    The declared file list is written into release/release-inputs.json and
+    re-derived during manifest validation, so it must be reproducible from a clean
+    checkout. An unfiltered walk is not: it also picks up untracked and ignored
+    artifacts such as __pycache__/*.pyc, editor scratch, and .DS_Store, which differ
+    per machine and — because .dockerignore excludes them — never reach the image the
+    hash is supposed to bind.
+
+    Falls back to a filtered walk when git is unavailable. That fallback excludes
+    dot-files and __pycache__ but cannot distinguish tracked from merely untracked, so
+    it is a weaker guarantee; the git path is the intended one.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", relative_dir],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            names = [name for name in completed.stdout.split("\0") if name]
+            return tuple(sorted(names))
+    except OSError:
+        pass
+    return tuple(
+        sorted(
+            str(path.relative_to(root))
+            for path in (root / relative_dir).rglob("*")
+            if path.is_file()
+            and not path.name.startswith(".")
+            and _IGNORED_FIXTURE_PARTS.isdisjoint(path.parts)
+        )
+    )
+
+
 HASH_GROUPS = {
     "dependency_locks": (
         "ai-review/images/package-lock.json",
@@ -28,11 +68,7 @@ HASH_GROUPS = {
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile",
     )
-    + tuple(
-        str(path.relative_to(ROOT))
-        for path in sorted((ROOT / "ai-review/tests/fixtures").rglob("*"))
-        if path.is_file()
-    ),
+    + _tracked_files("ai-review/tests/fixtures"),
     "configuration": ("ai-review/config/review.yaml",),
     "schemas": tuple(
         str(path.relative_to(ROOT)) for path in sorted((ROOT / "ai-review/schemas").glob("*.json"))

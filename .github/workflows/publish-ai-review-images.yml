@@ -78,10 +78,23 @@ jobs:
           # Overlay the image's own tests path: the suite resolves config/ and schemas/
           # relative to its own location, so mounting elsewhere would make it read the
           # mount point instead of the image's /opt/ai-review.
+          # `unittest discover` exits 0 when it collects nothing, and `docker run -v`
+          # silently creates an empty directory when the host path is missing or has
+          # been renamed. Without a floor on collected tests this preflight could
+          # report success having verified nothing and still publish the image — a
+          # property the removed in-image `COPY` + `RUN` had for free, because `COPY`
+          # fails on a missing path.
           docker run --rm --workdir /tmp \
             -v "$GITHUB_WORKSPACE/ai-review/tests:/opt/ai-review/tests:ro" \
             "$AI_REVIEW_BASE_TAG" \
-            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py'
+            python -m unittest discover -s /opt/ai-review/tests -p 'test_*.py' \
+            2>&1 | tee /tmp/ai-review-suite.log
+          ran="$(sed -n 's/^Ran \([0-9][0-9]*\) test[s]* in .*/\1/p' /tmp/ai-review-suite.log | tail -1)"
+          if [ -z "$ran" ] || [ "$ran" -lt 400 ]; then
+            echo "in-image suite collected ${ran:-0} tests; expected at least 400" >&2
+            exit 1
+          fi
+          echo "in-image suite ran $ran tests"
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
             python -m compileall -q /opt/ai-review/src
           # Run this as early as possible because the complete checkout validator

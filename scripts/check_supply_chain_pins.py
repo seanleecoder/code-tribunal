@@ -430,8 +430,16 @@ def main() -> int:
         for issue in _workflow_action_issues(text):
             error(f"{display_path}: {issue}")
             failures += 1
+    # Includes the INSTALLED workflow, which is the file GitHub actually executes: a
+    # reviewer CLI version variable added only there would otherwise sit outside this
+    # scan and reintroduce mutable CLI selection.
     combined_ci = "\n".join(
-        [workflow or "", canonical_review_workflow, gitlab_review]
+        [
+            workflow or "",
+            canonical_review_workflow,
+            installed_review_workflow or "",
+            gitlab_review,
+        ]
     )
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
