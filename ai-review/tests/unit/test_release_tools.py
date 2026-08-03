@@ -6,6 +6,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -53,13 +54,13 @@ try:
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         DIGEST_RE,
-        HASH_GROUPS,
         ReleaseValidationError,
         aggregate_hash,
         canonical_json_bytes,
         computed_hashes,
         disallowed_release_paths,
         git_is_ancestor,
+        hash_groups,
         image_ref,
         sha256_bytes,
         validate_release_coordinates,
@@ -71,7 +72,14 @@ finally:
 
 class ReleaseToolTests(unittest.TestCase):
     def _tree(self, destination: Path) -> None:
-        paths = {item for group in HASH_GROUPS.values() for item in group}
+        """Build a minimal checkout of every hashed file, as a real git repository.
+
+        Fixture enumeration uses `git ls-files` against the root being validated, so
+        the synthetic tree must be a git checkout rather than a bare directory. That
+        mirrors the real requirement: release hashes are only derivable from a
+        checkout, which is what the release process already prescribes.
+        """
+        paths = {item for group in hash_groups(REPO_ROOT).values() for item in group}
         paths.update(
             {
                 ".github/workflows/ai-review.yml",
@@ -83,6 +91,11 @@ class ReleaseToolTests(unittest.TestCase):
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO_ROOT / relative, target)
+        for command in (
+            ["git", "init", "-q"],
+            ["git", "add", "-A"],
+        ):
+            subprocess.run(command, cwd=destination, check=True, capture_output=True)
 
     @property
     def draft_release_tag(self) -> str:

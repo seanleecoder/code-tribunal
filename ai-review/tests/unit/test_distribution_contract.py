@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -30,6 +32,33 @@ class RepositoryDistributionContractTests(unittest.TestCase):
             raise unittest.SkipTest(
                 "repository distribution metadata is intentionally absent from runtime images"
             )
+
+    def _release_common(self):
+        from importlib import util
+
+        spec = util.spec_from_file_location(
+            "_release_common", _REPO_ROOT / "scripts" / "release_common.py"
+        )
+        module = util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
+    def test_a_real_clone_carries_the_workflows_these_contracts_assert(self) -> None:
+        """A clone must not silently skip the workflow contracts.
+
+        The `.github` presence guards let a sparse checkout or archive export skip
+        gracefully, but that also means CI could stop exercising these contracts
+        without anyone noticing. A tree with `.git` is a real clone, so the workflow
+        must be there; absence is a broken checkout, not a supported context.
+        """
+        if not (_REPO_ROOT / ".git").exists():
+            self.skipTest("not a git clone; sparse or exported tree")
+
+        self.assertTrue(
+            _PUBLISH_WORKFLOW.is_file(),
+            "a git clone must contain the publish workflow these contracts assert",
+        )
 
     def _publish_workflow(self) -> str:
         """Read the publish workflow, skipping where `.github` is absent.
@@ -115,31 +144,56 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertIn("executed=$((ran - skipped))", workflow)
         self.assertIn('if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]', workflow)
 
-    def test_release_hash_set_enumerates_only_tracked_fixtures(self) -> None:
-        """The declared file list must be reproducible from a clean checkout.
+    def test_fixture_enumeration_excludes_untracked_and_ignored_files(self) -> None:
+        """Exercise the enumerator against a real tree containing junk.
 
-        An unfiltered walk also collects untracked and ignored artifacts, which differ
-        per machine and — since `.dockerignore` excludes them — never reach the image
-        the hash is meant to bind.
+        Asserting that the enumerated list has no `__pycache__` or dot-files is
+        tautological while the implementation is `git ls-files`, which cannot return
+        them. This drives the helper against a checkout that actually contains an
+        untracked file, an ignored artifact and a tracked one, so a regression to an
+        unfiltered walk fails here rather than only on a machine that happens to have
+        stale bytes lying around.
         """
-        from importlib import util
+        module = self._release_common()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixtures = root / module.FIXTURE_DIR
+            (fixtures / "repos" / "simple" / "src" / "__pycache__").mkdir(parents=True)
+            (fixtures / "diffs").mkdir(parents=True)
+            (fixtures / "diffs" / "simple.diff").write_text("tracked\n", encoding="utf-8")
+            (fixtures / "untracked.json").write_text("untracked\n", encoding="utf-8")
+            (fixtures / ".DS_Store").write_text("junk\n", encoding="utf-8")
+            (
+                fixtures / "repos" / "simple" / "src" / "__pycache__" / "x.pyc"
+            ).write_text("junk\n", encoding="utf-8")
+            for command in (
+                ["git", "init", "-q"],
+                ["git", "add", module.FIXTURE_DIR + "/diffs/simple.diff"],
+            ):
+                subprocess.run(command, cwd=root, check=True, capture_output=True)
 
-        spec = util.spec_from_file_location(
-            "_release_common", _REPO_ROOT / "scripts" / "release_common.py"
+            enumerated = module._tracked_files(module.FIXTURE_DIR, root)
+
+        self.assertEqual((module.FIXTURE_DIR + "/diffs/simple.diff",), enumerated)
+
+    def test_release_hash_set_is_derived_from_the_root_being_validated(self) -> None:
+        """The fixture list must follow the tree under validation, not the importer.
+
+        Baking it into HASH_GROUPS at import time meant an alternate-tree or
+        historical validation hashed one checkout against another's file list.
+        """
+        module = self._release_common()
+
+        self.assertNotIn(
+            module.FIXTURE_DIR,
+            " ".join(module.HASH_GROUPS["image_recipes"]),
+            "fixtures must not be frozen into HASH_GROUPS at import time",
         )
-        module = util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-
-        fixtures = [
-            path
-            for path in module.HASH_GROUPS["image_recipes"]
-            if path.startswith("ai-review/tests/fixtures/")
-        ]
-        self.assertNotEqual([], fixtures)
-        for path in fixtures:
-            self.assertNotIn("__pycache__", path)
-            self.assertFalse(Path(path).name.startswith("."), path)
+        resolved = module.hash_groups(_REPO_ROOT)["image_recipes"]
+        self.assertTrue(
+            any(path.startswith(module.FIXTURE_DIR) for path in resolved),
+            "hash_groups() must append the fixtures for the given root",
+        )
 
     def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
         """The overlay hides the shipped fixtures, so assert them first.

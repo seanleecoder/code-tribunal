@@ -16,6 +16,9 @@ class ReleaseValidationError(ValueError):
     """Raised when release metadata violates its checked contract."""
 
 
+FIXTURE_DIR = "ai-review/tests/fixtures"
+
+
 def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
     """Enumerate git-tracked files under a directory, in sorted order.
 
@@ -63,17 +66,13 @@ HASH_GROUPS = {
         "ai-review/images/python-constraints.txt",
         "requirements-dev.txt",
     ),
-    # Fixtures are enumerated, not listed, so a new one is picked up automatically.
-    # They ship in the runtime image (base.Dockerfile copies
-    # ai-review/tests/fixtures), so a fixture-only change moves the published image
-    # digest and must therefore move a declared image-recipe hash too.
+    # Fixture files are appended per-root by hash_groups(); see FIXTURE_DIR.
     "image_recipes": (
         "ai-review/images/base.Dockerfile",
         "ai-review/images/cursor-agent.pin",
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile",
-    )
-    + _tracked_files("ai-review/tests/fixtures"),
+    ),
     "configuration": ("ai-review/config/review.yaml",),
     "schemas": tuple(
         str(path.relative_to(ROOT)) for path in sorted((ROOT / "ai-review/schemas").glob("*.json"))
@@ -141,13 +140,35 @@ def aggregate_hash(root: Path, paths: tuple[str, ...] | list[str]) -> str:
     return digest.hexdigest()
 
 
+def hash_groups(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
+    """Resolve the checked file sets for one checkout.
+
+    Fixture files are enumerated here rather than baked into HASH_GROUPS at import
+    time, for two reasons. They must be derived from the root actually being
+    validated, not from whichever checkout happened to import this module — an
+    alternate-tree or historical validation would otherwise hash one tree against
+    another's file list. And the git requirement must apply only to release-hash
+    computation: HASH_GROUPS is imported by general-purpose tooling such as
+    check_docs.py, which should not fail at import in a non-git tree.
+
+    Fixtures ship in the runtime image (base.Dockerfile copies
+    ai-review/tests/fixtures), so a fixture-only change moves the published image
+    digest and must therefore move a declared image-recipe hash too.
+    """
+    groups = dict(HASH_GROUPS)
+    groups["image_recipes"] = groups["image_recipes"] + _tracked_files(
+        FIXTURE_DIR, root
+    )
+    return groups
+
+
 def computed_hashes(root: Path = ROOT) -> dict[str, dict[str, Any]]:
     return {
         name: {
             "files": list(paths),
             "sha256": aggregate_hash(root, list(paths)),
         }
-        for name, paths in HASH_GROUPS.items()
+        for name, paths in hash_groups(root).items()
     }
 
 
