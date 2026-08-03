@@ -109,13 +109,16 @@ after that capability proof and only for the requested file. A platform that
 intentionally obscures authorization as a 404 must report an ambiguous or
 unauthorized read failure, not silently select the image fallback.
 
-The selected project bytes must be valid UTF-8, contain no NUL, and be at most
-65,536 UTF-8 bytes (64 KiB). A present project config larger than that ceiling is
-oversized input and fails closed as `project_config_invalid`; the limit is a
-denial-of-service bound, not a policy knob. The implementation documents the byte
-ceiling next to the reader and tests it. The immutable in-image baseline is always read from
-AI_REVIEW_TRUSTED_ROOT/config/review.yaml. The trusted root is template/image-owned;
-a project file cannot redirect it.
+The project config fetched from the immutable target/base revision must be valid
+UTF-8, contain no NUL, and be at most 65,536 UTF-8 bytes (64 KiB). This ceiling
+applies only to that project input. A present project config larger than that ceiling
+is oversized input and fails closed as `project_config_invalid`; the limit is a
+denial-of-service bound, not a policy knob. The trusted in-image baseline is exempt
+from this project-input limit and remains governed by the existing trusted-image
+configuration validation/release contract. The implementation documents the byte
+ceiling next to the reader and tests it. The immutable in-image baseline is always
+read from AI_REVIEW_TRUSTED_ROOT/config/review.yaml. The trusted root is
+template/image-owned; a project file cannot redirect it.
 
 ### 2. Complete file, fallback, and ownership registry
 
@@ -380,20 +383,15 @@ security property, not a usability bug. If a project needs the new policy to rev
 the file that introduces it, merge the policy change separately and then open the
 dependent change request.
 
-Rollout gate: the loader, trusted-root asset resolution, its regression coverage,
-the required immutable template-owned `AI_REVIEW_TRUSTED_ROOT` contract, and the
-template repoint to `AI_REVIEW_CONFIG=inputs/config.review.yaml` are one release
-unit and must ship as one matching immutable image/template revision. Within that
-rollout, trusted-root asset resolution and its regression tests are the prerequisite
-gate: they must land and pass before either template is repointed. That sequencing
-gate is not a separately deployable feature; the config repoint is mandatory in the
-same immutable revision and may not be deferred or deployed separately. Both
-templates must expose the required immutable trusted-root variable, with the GitHub
-Actions contract added before its repoint. Then build and attest the matching images,
-pin both templates, and run controlled base-vs-head isolation smoke tests on both
-platforms. Do not enable consumer review_scope policy during a mixed image/template
-deployment. SPEC-48 can follow only after this complete source-selection and binding
-contract is shipped and evidenced.
+Rollout gate: trusted-root asset resolution and its regression tests must land and
+pass first. The loader, both templates' immutable `AI_REVIEW_TRUSTED_ROOT` contract,
+and the `AI_REVIEW_CONFIG=inputs/config.review.yaml` repoints must then ship together
+in one matching immutable image/template revision; those repoints are mandatory in
+that revision and may not be deferred or deployed separately. Publish, attest, and
+pin the matching image/template pair, run both-platform base-vs-head isolation smoke
+tests, and prohibit consumer `review_scope` enablement during any mixed deployment.
+SPEC-48 can follow only after this complete source-selection and binding contract is
+shipped and evidenced.
 
 ## Relationship to SPEC-48
 

@@ -112,7 +112,7 @@ The v1 grammar is intentionally small:
 | ** | Matches zero or more path components, including a zero-component match for forms such as a/**/b. |
 | /name or /dir/** | A leading slash anchors the pattern to the repository root. The slash is syntax, not part of the matched path. |
 | name | A pattern without a slash matches a file or directory component named name at any depth. Thus *.lock matches lockfile basenames anywhere. |
-| dir/name or dir/** | A pattern containing a slash is anchored to the repository root; the repository root is the implicit origin for these forms. |
+| dir/name or dir/** | A pattern containing a slash other than a trailing directory-form slash is anchored to the repository root. |
 | **/name or **/dir/** | A leading **/ is the explicit any-depth form for a pattern that otherwise contains separators. |
 | directory/ | A trailing slash only denotes directory form; it does not anchor the pattern. `vendor/` matches every file below any directory named vendor, while `/vendor/` matches only the root vendor directory and its descendants. |
 
