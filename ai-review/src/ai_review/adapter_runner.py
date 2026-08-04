@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .adapter_output import extract_json_text as _extract_json_text
 from .anchors import is_sha256
 from .canonical import json_loads_no_duplicates
 from .config import (
@@ -234,101 +235,6 @@ def _head_tail_preview(value: str, *, limit: int = 4000) -> str:
     head = (limit * 2) // 3
     tail = limit - head
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
-
-
-def _raw_json_end(decoder: json.JSONDecoder, value: str, start: int) -> int | None:
-    try:
-        _decoded, relative_end = decoder.raw_decode(value[start:])
-    except json.JSONDecodeError:
-        return None
-    return start + relative_end
-
-
-def _has_unclosed_opener(prefix: str) -> bool:
-    """Whether ``prefix`` leaves a JSON container open, ignoring string contents.
-
-    Distinguishes prose that merely mentions brackets (``Reviewed [a.py, b.py]``)
-    from a genuinely malformed outer root whose interior happens to parse
-    (``{"outer":{"findings":[]} BROKEN``). Only the latter leaves a container
-    open, and only the latter must be refused.
-    """
-    depth = 0
-    in_string = False
-    escaped = False
-    for char in prefix:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char in "{[":
-            depth += 1
-        elif char in "}]":
-            depth -= 1
-    return depth > 0
-
-
-def _extract_json_text(value: str, *, stage: str | None = None) -> str:
-    """Extract one complete JSON root surrounded by optional prose.
-
-    Prose around a single payload is tolerated: models routinely preface or
-    follow the batch with a sentence, and refusing that turns a usable review
-    into a schema error. Two things are refused, because both silently produce a
-    *wrong* review rather than a failed one:
-
-    - More than one complete root, where picking either is a guess.
-    - A complete root nested inside a malformed outer root — salvaging the
-      interior of ``{"outer":{"findings":[]} BROKEN`` yields a batch the model
-      never meant as its answer.
-    """
-    stripped = value.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-
-    decoder = json.JSONDecoder()
-    candidates: list[tuple[int, int, str]] = []
-    for start, char in enumerate(stripped):
-        if char not in "{[":
-            continue
-        end = _raw_json_end(decoder, stripped, start)
-        if end is None:
-            continue
-        # A root immediately followed by a JSON closer or separator is an
-        # interior fragment of a larger structure, not the payload.
-        if stripped[end:].lstrip().startswith(("]", "}", ",")):
-            continue
-        candidates.append((start, end, stripped[start:end]))
-    if not candidates:
-        return stripped
-
-    roots: list[tuple[int, int, str]] = []
-    for candidate in candidates:
-        if roots and candidate[0] < roots[-1][1]:
-            # Contained in an already-accepted root; not a second payload.
-            continue
-        roots.append(candidate)
-    if len(roots) > 1:
-        raise SchemaValidationError(
-            f"{stage or 'adapter'} output contains more than one complete JSON root"
-        )
-
-    root_start, _root_end, text = roots[0]
-    if _has_unclosed_opener(stripped[:root_start]):
-        raise SchemaValidationError(
-            f"{stage or 'adapter'} output has a complete JSON root nested inside a "
-            "malformed outer root"
-        )
-    return text
 
 
 def _terminal_error_detail(event: dict[str, Any]) -> str:
