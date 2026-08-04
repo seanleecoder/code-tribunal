@@ -7,8 +7,8 @@
     "verify": "claude --version && codex --version && opencode --version"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.207",
-    "@openai/codex": "0.144.3",
-    "opencode-ai": "1.17.18"
+    "@anthropic-ai/claude-code": "2.1.221",
+    "@openai/codex": "0.146.0",
+    "opencode-ai": "1.18.12"
   }
 }

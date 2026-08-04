@@ -20,7 +20,7 @@
         "ai-review/images/python-constraints.txt",
         "requirements-dev.txt"
       ],
-      "sha256": "743ad068e286bd8537b82a8972f3ee419a97e35efb8bc34de89f91af7beabb00"
+      "sha256": "331a498533d2c884993f13f264f2c82702eb26bb34a69150c63224154ab9ed3d"
     },
     "documentation_entry_points": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "1b52ad948ae032f6fa2e4b1858ccf65600229fab8bd00f201c7fb6452b602082"
+      "sha256": "4b3aa4128b08683122ac877886439ccd2755d8d924c48cb45fbf480ece1cec7e"
     },
     "image_recipes": {
       "files": [
@@ -44,9 +44,12 @@
         "ai-review/tests/fixtures/golden/render_body_hostile.json",
         "ai-review/tests/fixtures/golden/semantic_consensus.json",
         "ai-review/tests/fixtures/grouping/corpus.json",
+        "ai-review/tests/fixtures/opencode/review-malformed-outer.ndjson",
+        "ai-review/tests/fixtures/opencode/review-prefix.ndjson",
+        "ai-review/tests/fixtures/opencode/review-reasoning-only.ndjson",
         "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "dc74da379661d5c7924d16ee945a2b62be07093f7ed9529ab29b3070ed67d802"
+      "sha256": "de27c5d671f2394ab915ebcdb3397a7418864a8e996dafad90a233c434d312a9"
     },
     "schemas": {
       "files": [

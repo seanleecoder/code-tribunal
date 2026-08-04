@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .adapter_output import extract_json_text as _extract_json_text
 from .anchors import is_sha256
 from .canonical import json_loads_no_duplicates
 from .config import (
@@ -48,6 +49,11 @@ _ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 # (min_successful_reviewers_for_blocking) still governs merge gating. Intentional
 # Non-run outcomes (success and skipped) keep exit code 0.
 _EXIT_ERROR = 1
+
+# Upper bound for the full-stdout parse-failure artifact. Large enough to hold a
+# complete reviewer stream, small enough that a runaway adapter cannot fill the
+# job's artifact quota. A hit is marked in the file rather than silently trimmed.
+_RAW_STDOUT_ARTIFACT_LIMIT = 2 * 1024 * 1024
 
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
@@ -218,46 +224,17 @@ def _head_tail_preview(value: str, *, limit: int = 4000) -> str:
     # exactly what we need to diagnose a failure — but it lives at the *end* of
     # stdout. A head-only preview (see _json_preview) drops it, so capture both
     # ends when the output is too long to keep whole.
-    compact = " ".join(value.strip().split())
-    if len(compact) <= limit:
-        return compact
+    #
+    # Line structure is preserved rather than whitespace-compacted: an NDJSON
+    # stream whose newlines are collapsed cannot be replayed through the stream
+    # reader or reused as a fixture, which is exactly what post-mortem work on a
+    # schema failure needs to do.
+    text = value.strip()
+    if len(text) <= limit:
+        return text
     head = (limit * 2) // 3
     tail = limit - head
-    return compact[:head] + "...[truncated]..." + compact[-tail:]
-
-
-def _extract_json_text(value: str) -> str:
-    stripped = value.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-
-    decoder = json.JSONDecoder()
-    candidates: list[tuple[int, str, str]] = []
-    for start, char in enumerate(stripped):
-        if char not in "{[":
-            continue
-        try:
-            _decoded, end = decoder.raw_decode(stripped[start:])
-        except json.JSONDecodeError:
-            continue
-        trailing = stripped[start + end :].lstrip()
-        if trailing.startswith(("]", "}", ",")):
-            continue
-        candidates.append((start, char, stripped[start : start + end]))
-    if candidates:
-        candidates.sort(key=lambda item: item[0])
-        if candidates[0][0] == 0:
-            return candidates[0][2]
-        object_candidates = [candidate for candidate in candidates if candidate[1] == "{"]
-        if object_candidates:
-            return object_candidates[0][2]
-        return candidates[0][2]
-    return stripped
+    return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
 def _terminal_error_detail(event: dict[str, Any]) -> str:
@@ -306,14 +283,33 @@ def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any
     raise SchemaValidationError("adapter output root must be an object")
 
 
+_ANSWER_PART_KEYS = ("content", "result", "parts", "part", "message")
+
+
+def _is_answer_part(content: dict[str, Any]) -> bool:
+    """Whether a part's ``text`` is the model's answer rather than its scratchpad.
+
+    Reasoning, thinking, and tool parts all carry a ``text`` field. Treating them
+    as answer text is how a reasoning-only response (GitLab job 2624957) got its
+    finding batch scraped out of `metadata.openrouter.reasoning_details` and then
+    rejected as "findings must be an array" — the model had answered, but only in
+    its scratchpad, and the error named the wrong cause. An untyped dict stays
+    eligible: Claude's `message` object carries no `type` of its own.
+    """
+    part_type = content.get("type")
+    return part_type is None or part_type == "text"
+
+
 def _extract_text_parts(content: Any) -> list[str]:
     if isinstance(content, str):
         return [content]
     if isinstance(content, dict):
         parts = []
-        if isinstance(content.get("text"), str):
+        if isinstance(content.get("text"), str) and _is_answer_part(content):
             parts.append(str(content["text"]))
-        for key in ("content", "result", "parts", "part", "message"):
+        # `metadata` is deliberately absent: providers hang reasoning traces off
+        # it (OpenRouter uses metadata.openrouter.reasoning_details).
+        for key in _ANSWER_PART_KEYS:
             if key in content:
                 parts.extend(_extract_text_parts(content[key]))
         return parts
@@ -323,6 +319,29 @@ def _extract_text_parts(content: Any) -> list[str]:
     for item in content:
         parts.extend(_extract_text_parts(item))
     return parts
+
+
+def _nonanswer_part_types(content: Any) -> set[str]:
+    """Types of parts that carried text but were excluded as non-answer parts.
+
+    Used only to explain an empty answer: "the model wrote 1101 tokens of
+    reasoning and no answer" is actionable, "stream did not contain reviewer
+    JSON" is not.
+    """
+    if isinstance(content, dict):
+        found: set[str] = set()
+        if isinstance(content.get("text"), str) and not _is_answer_part(content):
+            found.add(str(content.get("type")))
+        for key in _ANSWER_PART_KEYS:
+            if key in content:
+                found |= _nonanswer_part_types(content[key])
+        return found
+    if isinstance(content, list):
+        found = set()
+        for item in content:
+            found |= _nonanswer_part_types(item)
+        return found
+    return set()
 
 
 def _log_structured_output_usage(stage: str | None, *, used: bool) -> None:
@@ -347,6 +366,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
     saw_result_event = False
+    nonanswer_types: set[str] = set()
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -375,6 +395,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             assistant_parts.extend(_extract_text_parts(event["part"]))
         if event.get("type") == "text":
             assistant_parts.extend(_extract_text_parts(event))
+        nonanswer_types |= _nonanswer_part_types(event)
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
         # With --json-schema, the terminal result event carries the
@@ -410,12 +431,21 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         if stream_error is not None:
             message = "adapter run ended in a model error before emitting reviewer output"
             raise AdapterModelError(f"{message}: {stream_error!r}")
+        if nonanswer_types:
+            # The model spent its turn in the scratchpad and never wrote an
+            # answer part. That is a model outcome, not malformed adapter output,
+            # so it must not be reported as a schema failure.
+            excluded = ",".join(sorted(nonanswer_types))
+            raise AdapterModelError(
+                "model emitted no answer part; response contained only "
+                f"{excluded} parts; event_types={event_types}"
+            )
         raise SchemaValidationError(
             "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
         )
     try:
-        raw = json_loads_no_duplicates(_extract_json_text(text))
+        raw = json_loads_no_duplicates(_extract_json_text(text, stage=stage))
     except Exception as exc:
         if stream_error is not None:
             raise AdapterModelError(
@@ -430,7 +460,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
 
 def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     try:
-        raw = json_loads_no_duplicates(_extract_json_text(stdout))
+        raw = json_loads_no_duplicates(_extract_json_text(stdout, stage=stage))
     except Exception as exc:
         if "\n" in stdout.strip():
             return _load_stream_json(stdout, stage=stage)
@@ -442,6 +472,9 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     # a schema-conforming `structured_output`: prefer it over re-parsing the
     # `result` text. Error envelopes keep flowing into the AdapterModelError
     # path below, whether the CLI identifies them with is_error or type=error.
+    #
+    # OpenCode needs no branch here: ai_review.opencode_client emits the reviewer
+    # batch itself, so it lands on the `findings`/`critiques` root above.
     if (
         "findings" not in raw
         and "critiques" not in raw
@@ -457,11 +490,15 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     ):
         _log_structured_output_usage(stage, used=False)
     if (
-        "\n" in stdout.strip()
-        and "findings" not in raw
+        "findings" not in raw
         and "critiques" not in raw
+        and not _is_adapter_error_event(raw)
         and not isinstance(raw.get("result"), str)
     ):
+        # A batch-less, error-less root is a stream event envelope. Route it to
+        # the stream reader regardless of line count: a stream that emitted a
+        # single event has no newline to detect, and falling through would return
+        # the raw event as if it were a reviewer batch.
         return _load_stream_json(stdout, stage=stage)
 
     if "findings" not in raw and "critiques" not in raw and _is_adapter_error_event(raw):
@@ -471,7 +508,9 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw["result"].strip():
             try:
-                unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))
+                unwrapped = json_loads_no_duplicates(
+                    _extract_json_text(str(raw["result"]), stage=stage)
+                )
             except Exception as exc:
                 raise SchemaValidationError(
                     "Claude Code result was not reviewer JSON: "
@@ -497,7 +536,8 @@ def _write_parse_debug(
         stdout = stdout.decode("utf-8", errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
-    debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-{kind}-debug.txt"
+    stem = _status_stem(stage, reviewer)
+    debug_path = output_dir / "status" / f"{stem}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(
         "\n".join(
@@ -512,6 +552,18 @@ def _write_parse_debug(
         ),
         encoding="utf-8",
     )
+    # The 4 KB preview elides the middle, which for a stream adapter is where the
+    # assistant parts live — reconstructing GitLab job 2624957 required guessing
+    # at the elided region. Keep the whole thing next to the preview, bounded and
+    # redacted, so the next parse failure is readable instead of inferred.
+    raw_path = output_dir / "status" / f"{stem}-{kind}-raw-stdout.txt"
+    raw_text = redact_text(stdout)
+    if len(raw_text) > _RAW_STDOUT_ARTIFACT_LIMIT:
+        raw_text = (
+            raw_text[:_RAW_STDOUT_ARTIFACT_LIMIT]
+            + f"\n...[truncated at {_RAW_STDOUT_ARTIFACT_LIMIT} characters]...\n"
+        )
+    raw_path.write_text(raw_text, encoding="utf-8")
 
 
 def _build_adapter_env(

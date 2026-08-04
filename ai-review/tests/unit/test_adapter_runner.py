@@ -28,6 +28,8 @@ from ai_review.schema import (
     write_canonical_json,
 )
 
+_OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
+
 _CONFIG_TAIL = [
     "panel:",
     "  min_successful_reviewers_for_blocking: 1",
@@ -521,6 +523,113 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(loaded, {"findings": []})
 
+    def test_recovers_observed_opencode_prefix_around_one_json_root(self) -> None:
+        # Non-regression guard: a sentence before a single complete payload must
+        # stay recoverable. Refusing it converts a usable review into a schema
+        # error, and this extractor is shared by every reviewer.
+        stdout = (_OPENCODE_FIXTURES / "review-prefix.ndjson").read_text(encoding="utf-8")
+
+        loaded = _load_adapter_json(stdout, stage="review")
+
+        self.assertEqual(loaded, {"findings": []})
+
+    def test_does_not_salvage_nested_json_from_malformed_outer_root(self) -> None:
+        # The interior of `{"outer":{"findings":[]} BROKEN` parses on its own, so
+        # a scan that accepts the first complete root would return a batch the
+        # model never meant as its answer.
+        stdout = (_OPENCODE_FIXTURES / "review-malformed-outer.ndjson").read_text(
+            encoding="utf-8"
+        )
+
+        with self.assertRaises(SchemaValidationError):
+            _load_adapter_json(stdout, stage="review")
+
+    def test_reasoning_only_response_is_a_model_error_not_a_schema_error(self) -> None:
+        # Regression for GitLab job 2624957: the model wrote its finding batch
+        # only into reasoning/tool metadata and never emitted an answer part.
+        # Scraping that scratchpad produced "findings must be an array", blaming
+        # the adapter for a model outcome.
+        stdout = (_OPENCODE_FIXTURES / "review-reasoning-only.ndjson").read_text(
+            encoding="utf-8"
+        )
+
+        with self.assertRaises(AdapterModelError) as caught:
+            _load_adapter_json(stdout, stage="review")
+
+        message = str(caught.exception)
+        self.assertIn("no answer part", message)
+        self.assertIn("reasoning", message)
+        # The batch that only ever existed in the scratchpad must not be adopted.
+        self.assertNotIn("Empty catch masks logout failures", message)
+
+    def test_two_complete_json_roots_are_refused(self) -> None:
+        stdout = json.dumps(
+            {
+                "type": "text",
+                "text": '{"findings":[]} {"findings":[{"title":"other"}]}',
+            }
+        )
+
+        with self.assertRaises(SchemaValidationError) as caught:
+            _load_adapter_json(stdout, stage="review")
+
+        self.assertIn("more than one complete JSON root", str(caught.exception))
+
+    def test_brace_free_prose_around_one_payload_still_parses(self) -> None:
+        # Prose around a single payload stays recoverable, as long as the prose
+        # carries no JSON syntax of its own. Refusing these regresses every
+        # adapter, not just opencode.
+        for label, text in (
+            ("fence then prose", '```json\n{"findings":[]}\n```\nDone.'),
+            ("plain prose after", '{"findings":[]}\nNo issues found.'),
+            ("prose before", 'Based on my review of the diff.\n{"findings":[]}'),
+            ("simple bracketed label after", '{"findings":[]}\n[end of report]'),
+        ):
+            with self.subTest(label):
+                stdout = json.dumps({"type": "text", "text": text})
+
+                self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+
+    def test_trailing_closer_after_a_complete_payload_is_tolerated(self) -> None:
+        # Deliberately asymmetric with the leading-closer cases below. A closer
+        # after a complete payload cannot mean the payload is an interior
+        # fragment — the enclosing opener would have to precede it, which is
+        # refused — so what is left is trailing model noise. Live reviewer output
+        # does this; see test_loads_critique_array_before_unrelated_trailing_bracket,
+        # added from real phase-5 acceptance output. Do not "fix" this into a
+        # rejection without new evidence that the shape signals a bad payload.
+        for label, text in (
+            ("stray bracket after", '{"findings":[]}\ntrailing note ]'),
+            ("stray brace after", '{"findings":[]}\ntrailing note }'),
+        ):
+            with self.subTest(label):
+                stdout = json.dumps({"type": "text", "text": text})
+
+                self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+
+    def test_json_syntax_outside_the_payload_is_refused(self) -> None:
+        # Every one of these offers an interior the model never nominated as its
+        # answer. Accepting any of them yields a silently wrong review rather
+        # than a failed one — the balanced cases were accepted before, because
+        # the earlier guard only noticed containers left open.
+        for label, text in (
+            ("malformed object before", '{"outer": nope} prose {"findings":[]}'),
+            ("malformed object after", '{"findings":[]} {"broken": nope}'),
+            ("malformed object on a later line", '{"findings":[]}\ntrailing {"a": oops}'),
+            ("unclosed outer wrapper", '{"outer":{"findings":[]} BROKEN'),
+            ("bracket list mentioning paths", 'Reviewed [src/a.py, src/b.py]\n{"findings":[]}'),
+            ("brace shape mentioned after", '{"findings":[]}\nNote: shape is {"findings": [..]}.'),
+            # A closer *before* the payload means a structure ended there, so the
+            # payload may be the interior of something malformed.
+            ("unmatched brace before", '} prose {"findings":[]}'),
+            ("unmatched bracket before", '] {"findings":[]}'),
+        ):
+            with self.subTest(label):
+                stdout = json.dumps({"type": "text", "text": text})
+
+                with self.assertRaises(SchemaValidationError):
+                    _load_adapter_json(stdout, stage="review")
+
 
 class EffortEnvTests(unittest.TestCase):
     def _run_effort_adapter(self, *, config_effort: str | None, env_effort: str | None) -> str:
@@ -891,6 +1000,27 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["error_class"], "AdapterModelError")
             self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
 
+    def test_malformed_opencode_prose_has_schema_error_and_no_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
+            fixture = _OPENCODE_FIXTURES / "review-malformed-outer.ndjson"
+            _write_adapter(
+                paths["adapter_dir"],
+                "opencode",
+                f'#!/bin/sh\ncat "{fixture}"\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
+            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            self.assertEqual(batch["findings"], [])
+            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["error_class"], "SchemaValidationError")
+
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
@@ -905,6 +1035,52 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "garbled.json")
             self.assertEqual(status["status"], "schema_error")
             self.assertTrue((paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists())
+
+    def test_parse_failure_persists_full_stdout_with_newlines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "streamy")
+            # Long enough that the 4 KB preview must elide the middle, so the
+            # elided region is only recoverable from the raw artifact.
+            filler = "\n".join(
+                json.dumps({"type": "message.part.updated", "part": {"type": "reasoning",
+                                                                     "text": f"step {index}"}})
+                for index in range(300)
+            )
+            _write_adapter(
+                paths["adapter_dir"],
+                "streamy",
+                f"#!/bin/sh\ncat <<'STREAM'\n{filler}\nSTREAM\n",
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("streamy", "review"), _EXIT_ERROR)
+
+            status_dir = paths["output_dir"] / "status"
+            raw_path = status_dir / "streamy-parse-raw-stdout.txt"
+            self.assertTrue(raw_path.exists())
+            raw_text = raw_path.read_text(encoding="utf-8")
+            # Whole stream, line structure intact, so it can be replayed.
+            self.assertEqual(len(raw_text.strip().splitlines()), 300)
+            self.assertIn('"text": "step 150"', raw_text)
+            preview = (status_dir / "streamy-parse-debug.txt").read_text(encoding="utf-8")
+            self.assertIn("...[truncated]...", preview)
+            self.assertIn("\n", preview.split("stdout_preview:")[1].strip())
+
+    def test_successful_run_writes_no_parse_debug_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "clean")
+            _write_adapter(
+                paths["adapter_dir"], "clean", "#!/bin/sh\nprintf '%s' '{\"findings\":[]}'\n"
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("clean", "review"), 0)
+
+            status_dir = paths["output_dir"] / "status"
+            self.assertFalse((status_dir / "clean-parse-debug.txt").exists())
+            self.assertFalse((status_dir / "clean-parse-raw-stdout.txt").exists())
 
     def test_review_drops_malformed_finding_without_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

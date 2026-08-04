@@ -67,6 +67,7 @@ _ENV_KEYS = [
     "OPENCODE_CONFIG_CONTENT",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
+    "PYTHON",
 ]
 
 
@@ -313,6 +314,73 @@ PY
             )
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
             return
+        if name == "opencode":
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "import os\n"
+                "import sys\n"
+                "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+                "from pathlib import Path\n"
+                "\n"
+                "trace_dir = Path(os.environ['OPENCODE_CONFIG_DIR'])\n"
+                "trace_dir.mkdir(parents=True, exist_ok=True)\n"
+                "(trace_dir / 'cli.args').write_text(' '.join(sys.argv), encoding='utf-8')\n"
+                "(trace_dir / 'cli.env').write_text(''.join(f'{k}={v}\\n' for k, v in sorted(os.environ.items())), encoding='utf-8')\n"  # noqa: E501
+                "(trace_dir / 'cli.key').write_text(os.environ.get('OPENROUTER_API_KEY', ''), encoding='utf-8')\n"  # noqa: E501
+                "if os.environ.get('OPENCODE_CONFIG_CONTENT'):\n"
+                "    (trace_dir / 'opencode_config.json').write_text(os.environ['OPENCODE_CONFIG_CONTENT'], encoding='utf-8')\n"  # noqa: E501
+                "\n"
+                "def write_json(handler, status, value):\n"
+                "    encoded = json.dumps(value, separators=(',', ':')).encode('utf-8')\n"
+                "    handler.send_response(status)\n"
+                "    handler.send_header('Content-Type', 'application/json')\n"
+                "    handler.send_header('Content-Length', str(len(encoded)))\n"
+                "    handler.end_headers()\n"
+                "    handler.wfile.write(encoded)\n"
+                "\n"
+                "class Handler(BaseHTTPRequestHandler):\n"
+                "    def log_message(self, *_args):\n"
+                "        return\n"
+                "\n"
+                "    def do_GET(self):\n"
+                "        if self.path.split('?', 1)[0] == '/global/health':\n"
+                "            write_json(self, 200, {'healthy': True, 'version': '1.18.12'})\n"
+                "            return\n"
+                "        write_json(self, 404, {'error': 'not found'})\n"
+                "\n"
+                "    def do_POST(self):\n"
+                "        length = int(self.headers.get('Content-Length', '0'))\n"
+                "        body = json.loads(self.rfile.read(length) or b'{}')\n"
+                "        with (trace_dir / 'requests.ndjson').open('a', encoding='utf-8') as handle:\n"  # noqa: E501
+                "            handle.write(json.dumps({'path': self.path, 'directory': self.headers.get('X-Opencode-Directory'), 'body': body}) + '\\n')\n"  # noqa: E501
+                # Reject unknown top-level keys the way a strict server would, so
+                # a drift in the client's request shape fails loudly here instead
+                # of silently dropping fields such as the permission denials.
+                "        if self.path.split('?', 1)[0] == '/session':\n"
+                "            unknown = sorted(set(body) - {'title', 'permission'})\n"
+                "            if unknown:\n"
+                "                write_json(self, 400, {'error': 'unknown session keys: ' + ','.join(unknown)})\n"  # noqa: E501
+                "                return\n"
+                "            write_json(self, 200, {'id': 'ses_fake', 'title': body.get('title')})\n"  # noqa: E501
+                "            return\n"
+                "        if self.path.endswith('/message'):\n"
+                "            unknown = sorted(set(body) - {'agent', 'model', 'parts', 'format'})\n"  # noqa: E501
+                "            if unknown:\n"
+                "                write_json(self, 400, {'error': 'unknown message keys: ' + ','.join(unknown)})\n"  # noqa: E501
+                "                return\n"
+                "            structured = {'critiques': []} if os.environ.get('AI_REVIEW_STAGE') == 'critique' else {'findings': []}\n"  # noqa: E501
+                "            write_json(self, 200, {'info': {'role': 'assistant', 'structured': structured}, 'parts': [{'type': 'text', 'text': 'conflicting text'}]})\n"  # noqa: E501
+                "            return\n"
+                "        write_json(self, 404, {'error': 'not found'})\n"
+                "\n"
+                "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
+                "server = ThreadingHTTPServer(('127.0.0.1', port), Handler)\n"
+                "server.serve_forever()\n",
+                encoding="utf-8",
+            )
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+            return
         cli.write_text(
             "#!/bin/sh\n"
             'args="$*"\n'
@@ -380,6 +448,12 @@ PY
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            if cli_name == "opencode":
+                # Run the real ai_review.opencode_client against the fake server.
+                # Substituting a stand-in client here would make every request
+                # assertion below compare a re-implementation against itself.
+                os.environ["PYTHON"] = sys.executable
+                os.environ["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
             os.environ["GITLAB_TOKEN"] = "gl-token-secret"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
@@ -452,6 +526,23 @@ PY
                         else ""
                     ),
                 }
+                requests_path = cli_args_path.parent / "requests.ndjson"
+                if requests_path.exists():
+                    meta["opencode_requests"] = [
+                        json.loads(line)
+                        for line in requests_path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
+                requests = meta.get("opencode_requests")
+                if isinstance(requests, list) and requests:
+                    directory = requests[-1].get("directory")
+                    if isinstance(directory, str) and directory:
+                        selected_dir = Path(directory)
+                        meta["selected_dir"] = directory
+                        meta["workspace_entries"] = {
+                            f"{path.relative_to(selected_dir)}{'/' if path.is_dir() else ''}"
+                            for path in selected_dir.rglob("*")
+                        }
                 if cli_tree_path is not None and cli_tree_path.exists():
                     meta["workspace_entries"] = {
                         line.removeprefix("./")
@@ -826,14 +917,44 @@ PY
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
-        self.assertIn("/opencode --pure run", cli_args)
-        self._assert_static_opencode_title(cli_args)
-        self.assertIn("--model openrouter/google/gemini-3.5-flash-lite", cli_args)
-        self.assertIn("--agent ai-reviewer", cli_args)
-        self.assertIn("--format json", cli_args)
-        self.assertIn("--dir ", cli_args)
-        self.assertRegex(cli_args, r"--dir \S*/out/\.tmp/opencode-review-root\.\d+(\s|$)")
-        self.assertNotRegex(cli_args, r"--dir \S*repo_snapshot")
+        # cli_args is the argv the real client spawned the server with.
+        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
+        self.assertNotIn("--title", cli_args)
+        self.assertNotIn("--format", cli_args)
+        self.assertNotIn("--model", cli_args)
+        self.assertNotIn("--agent", cli_args)
+        requests = meta["opencode_requests"]
+        assert isinstance(requests, list)
+        self.assertEqual(len(requests), 2)
+        session_request, message_request = requests
+        self.assertEqual(session_request["path"], "/session")
+        self.assertEqual(
+            session_request["body"],
+            {
+                "title": "code-tribunal-ai-review",
+                "permission": [
+                    {"permission": "question", "action": "deny", "pattern": "*"},
+                    {"permission": "plan_enter", "action": "deny", "pattern": "*"},
+                    {"permission": "plan_exit", "action": "deny", "pattern": "*"},
+                ],
+            },
+        )
+        self.assertEqual(message_request["path"], "/session/ses_fake/message")
+        message_body = message_request["body"]
+        self.assertEqual(message_body["agent"], "ai-reviewer")
+        self.assertEqual(
+            message_body["model"],
+            {"providerID": "openrouter", "modelID": "google/gemini-3.5-flash-lite"},
+        )
+        self.assertEqual(message_body["parts"][0]["type"], "text")
+        self.assertEqual(message_body["format"]["type"], "json_schema")
+        expected_schema = load_json_file(
+            Path(__file__).resolve().parents[2] / "schemas" / "raw_finding_batch.schema.json"
+        )
+        assert isinstance(expected_schema, dict)
+        expected_schema.pop("$schema")
+        self.assertEqual(message_body["format"]["schema"], expected_schema)
+        self.assertNotIn("$schema", message_body["format"]["schema"])
         self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
         # opencode strips its own config (opencode.json/.jsonc, tui.json,
@@ -863,10 +984,6 @@ PY
                 "symdir/.cursorignore",
             },
         )
-        self.assertNotIn(" exec ", cli_args)
-        self.assertNotIn("--output-format", cli_args)
-        self.assertNotIn("--base-url", cli_args)
-        self.assertNotIn(" -o ", cli_args)
         self.assertIn("OPENCODE_DISABLE_AUTOUPDATE=1", cli_env)
         self.assertIn("OPENCODE_DISABLE_DEFAULT_PLUGINS=1", cli_env)
         self.assertIn("OPENCODE_DISABLE_LSP_DOWNLOAD=1", cli_env)
@@ -978,8 +1095,14 @@ PY
         self.assertIn("critiques", batch)
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
-        self.assertIn("--dir ", cli_args)
-        self._assert_static_opencode_title(cli_args)
+        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
+        requests = meta["opencode_requests"]
+        assert isinstance(requests, list)
+        self.assertEqual(requests[0]["body"]["title"], "code-tribunal-ai-review")
+        self.assertEqual(
+            requests[1]["body"]["format"]["schema"]["$id"], "critique_batch.schema.json"
+        )
+        self.assertNotIn("$schema", requests[1]["body"]["format"]["schema"])
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
@@ -1152,9 +1275,13 @@ PY
         )
 
         self.assertEqual(batch["adapter_status"], "success")
-        self._assert_static_opencode_title(cli_args)
-        self.assertIn("--model openrouter/google/custom-model", cli_args)
-        self.assertEqual(shlex.split(cli_args).count("--model"), 1)
+        self.assertNotIn("--title", cli_args)
+        requests = meta["opencode_requests"]
+        assert isinstance(requests, list)
+        self.assertEqual(
+            requests[1]["body"]["model"],
+            {"providerID": "openrouter", "modelID": "google/custom-model"},
+        )
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
@@ -1163,11 +1290,6 @@ PY
         assert isinstance(config, dict)
         self.assertNotIn("small_model", config)
         self.assertNotIn("title_model", config)
-
-    def _assert_static_opencode_title(self, cli_args: str) -> None:
-        argv = shlex.split(cli_args)
-        self.assertEqual(argv.count("--title"), 1)
-        self.assertEqual(argv[argv.index("--title") + 1], "code-tribunal-ai-review")
 
     def test_openrouter_variant_model_is_accepted(self) -> None:
         # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.

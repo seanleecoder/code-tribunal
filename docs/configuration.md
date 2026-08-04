@@ -46,12 +46,14 @@ effective-config summary and digest. Explicit stage-specific values are used as
 configured; keep them at or below 900 seconds while using the shipped 20-minute
 critique CI ceiling.
 
-OpenCode review and critique invocations always pass the fixed internal session
-title `code-tribunal-ai-review`. It is non-empty and contains no prompt,
-repository, pull/merge-request, or user data. This prevents OpenCode from making a
-separate automatic title-inference model request; it is not a configuration key or
-an additional model-selection interface. `reviewers.opencode.model` and
-`AI_REVIEW_OPENCODE_MODEL` remain the sole OpenCode model controls.
+OpenCode review and critique use a loopback-only `opencode serve` session client.
+The client sends the fixed internal session title `code-tribunal-ai-review` and
+the stage-specific schema through OpenCode's `json_schema` message format. The
+title is non-empty and contains no prompt, repository, pull/merge-request, or
+user data, so OpenCode does not make a separate automatic title-inference model
+request. It is not a configuration key or an additional model-selection
+interface. `reviewers.opencode.model` and `AI_REVIEW_OPENCODE_MODEL` remain the
+sole OpenCode model controls.
 
 ### Production model/effort recommendations
 
@@ -241,6 +243,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_MODEL` | Effective model passed to one adapter. |
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
+| `AI_REVIEW_OPENCODE_ROOT` | Clean, disposable OpenCode working root passed to the loopback server client. |
 | `AI_REVIEW_STREAM_ADAPTER_LOGS` | Internal diagnostic streaming switch; avoid in shared logs. |
 | `XDG_CONFIG_HOME` | Disposable OpenCode configuration home created by the adapter. |
 | `XDG_DATA_HOME` | Disposable OpenCode data home created by the adapter. |
