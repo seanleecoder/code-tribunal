@@ -46,9 +46,10 @@
         "ai-review/tests/fixtures/grouping/corpus.json",
         "ai-review/tests/fixtures/opencode/review-malformed-outer.ndjson",
         "ai-review/tests/fixtures/opencode/review-prefix.ndjson",
+        "ai-review/tests/fixtures/opencode/review-reasoning-only.ndjson",
         "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "dc79175e59361c2f423fcac72fddfb2faca3575fc4a997521d9cd36d6656f500"
+      "sha256": "de27c5d671f2394ab915ebcdb3397a7418864a8e996dafad90a233c434d312a9"
     },
     "schemas": {
       "files": [

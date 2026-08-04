@@ -49,6 +49,11 @@ _ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 # Non-run outcomes (success and skipped) keep exit code 0.
 _EXIT_ERROR = 1
 
+# Upper bound for the full-stdout parse-failure artifact. Large enough to hold a
+# complete reviewer stream, small enough that a runaway adapter cannot fill the
+# job's artifact quota. A hit is marked in the file rather than silently trimmed.
+_RAW_STDOUT_ARTIFACT_LIMIT = 2 * 1024 * 1024
+
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
     "PYTHON",
@@ -218,12 +223,17 @@ def _head_tail_preview(value: str, *, limit: int = 4000) -> str:
     # exactly what we need to diagnose a failure — but it lives at the *end* of
     # stdout. A head-only preview (see _json_preview) drops it, so capture both
     # ends when the output is too long to keep whole.
-    compact = " ".join(value.strip().split())
-    if len(compact) <= limit:
-        return compact
+    #
+    # Line structure is preserved rather than whitespace-compacted: an NDJSON
+    # stream whose newlines are collapsed cannot be replayed through the stream
+    # reader or reused as a fixture, which is exactly what post-mortem work on a
+    # schema failure needs to do.
+    text = value.strip()
+    if len(text) <= limit:
+        return text
     head = (limit * 2) // 3
     tail = limit - head
-    return compact[:head] + "...[truncated]..." + compact[-tail:]
+    return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
 def _raw_json_end(decoder: json.JSONDecoder, value: str, start: int) -> int | None:
@@ -234,103 +244,91 @@ def _raw_json_end(decoder: json.JSONDecoder, value: str, start: int) -> int | No
     return start + relative_end
 
 
-def _prose_bracket_end(value: str, start: int) -> int | None:
-    """Return the end of a bracketed prose label such as ``[draft 1]``.
+def _has_unclosed_opener(prefix: str) -> bool:
+    """Whether ``prefix`` leaves a JSON container open, ignoring string contents.
 
-    A failed JSON array must never be treated as a wrapper around a nested
-    object. Only a simple, non-JSON-looking label is allowed to be skipped.
+    Distinguishes prose that merely mentions brackets (``Reviewed [a.py, b.py]``)
+    from a genuinely malformed outer root whose interior happens to parse
+    (``{"outer":{"findings":[]} BROKEN``). Only the latter leaves a container
+    open, and only the latter must be refused.
     """
-    close = value.find("]", start + 1)
-    if close < 0:
-        return None
-    inner = value[start + 1 : close].strip()
-    if not inner or any(char in inner for char in "{}[],"):
-        return None
-    if inner.startswith(('"', "'", "null", "true", "false")):
-        return None
-    if inner[0].isdigit() or inner[0] == "-":
-        return None
-    return close + 1
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in prefix:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+    return depth > 0
 
 
 def _extract_json_text(value: str, *, stage: str | None = None) -> str:
     """Extract one complete JSON root surrounded by optional prose.
 
-    The old extractor tried every opening brace and selected a later object if
-    an earlier JSON root was malformed. That could turn malformed outer JSON
-    into a seemingly valid nested finding batch. Recovery now starts at the
-    first real root, permits only simple prose bracket labels before it, and
-    rejects a second complete root or an unmatched JSON closer after it.
+    Prose around a single payload is tolerated: models routinely preface or
+    follow the batch with a sentence, and refusing that turns a usable review
+    into a schema error. Two things are refused, because both silently produce a
+    *wrong* review rather than a failed one:
+
+    - More than one complete root, where picking either is a guess.
+    - A complete root nested inside a malformed outer root — salvaging the
+      interior of ``{"outer":{"findings":[]} BROKEN`` yields a batch the model
+      never meant as its answer.
     """
     stripped = value.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
-        if not lines or lines[-1].strip() != "```":
-            raise SchemaValidationError(
-                f"{stage or 'adapter'} output has an unterminated JSON code fence"
-            )
-        lines = lines[1:-1]
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
         stripped = "\n".join(lines).strip()
 
     decoder = json.JSONDecoder()
-    start = 0
-    end: int | None = None
-    while True:
-        positions = [
-            position
-            for position in (stripped.find("{", start), stripped.find("[", start))
-            if position >= 0
-        ]
-        if not positions:
-            break
-        root_start = min(positions)
-        end = _raw_json_end(decoder, stripped, root_start)
-        if end is not None:
-            start = root_start
-            break
-        if stripped[root_start] == "[":
-            prose_end = _prose_bracket_end(stripped, root_start)
-            if prose_end is not None:
-                start = prose_end
-                continue
-        raise SchemaValidationError(
-            f"{stage or 'adapter'} output contains an incomplete or malformed outer JSON root"
-        )
-
-    if end is None:
+    candidates: list[tuple[int, int, str]] = []
+    for start, char in enumerate(stripped):
+        if char not in "{[":
+            continue
+        end = _raw_json_end(decoder, stripped, start)
+        if end is None:
+            continue
+        # A root immediately followed by a JSON closer or separator is an
+        # interior fragment of a larger structure, not the payload.
+        if stripped[end:].lstrip().startswith(("]", "}", ",")):
+            continue
+        candidates.append((start, end, stripped[start:end]))
+    if not candidates:
         return stripped
 
-    trailing = stripped[end:].strip()
-    if trailing.startswith(("]", "}", ",")):
+    roots: list[tuple[int, int, str]] = []
+    for candidate in candidates:
+        if roots and candidate[0] < roots[-1][1]:
+            # Contained in an already-accepted root; not a second payload.
+            continue
+        roots.append(candidate)
+    if len(roots) > 1:
         raise SchemaValidationError(
-            f"{stage or 'adapter'} output has trailing JSON syntax after the complete root"
+            f"{stage or 'adapter'} output contains more than one complete JSON root"
         )
-    trailing_start = 0
-    while True:
-        positions = [
-            position
-            for position in (
-                trailing.find("{", trailing_start),
-                trailing.find("[", trailing_start),
-            )
-            if position >= 0
-        ]
-        if not positions:
-            break
-        position = min(positions)
-        if _raw_json_end(decoder, trailing, position) is not None:
-            raise SchemaValidationError(
-                f"{stage or 'adapter'} output contains more than one complete JSON root"
-            )
-        if trailing[position] == "[":
-            prose_end = _prose_bracket_end(trailing, position)
-            if prose_end is not None:
-                trailing_start = prose_end
-                continue
+
+    root_start, _root_end, text = roots[0]
+    if _has_unclosed_opener(stripped[:root_start]):
         raise SchemaValidationError(
-            f"{stage or 'adapter'} output contains malformed trailing JSON syntax"
+            f"{stage or 'adapter'} output has a complete JSON root nested inside a "
+            "malformed outer root"
         )
-    return stripped[root_start:end]
+    return text
 
 
 def _terminal_error_detail(event: dict[str, Any]) -> str:
@@ -379,14 +377,33 @@ def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any
     raise SchemaValidationError("adapter output root must be an object")
 
 
+_ANSWER_PART_KEYS = ("content", "result", "parts", "part", "message")
+
+
+def _is_answer_part(content: dict[str, Any]) -> bool:
+    """Whether a part's ``text`` is the model's answer rather than its scratchpad.
+
+    Reasoning, thinking, and tool parts all carry a ``text`` field. Treating them
+    as answer text is how a reasoning-only response (GitLab job 2624957) got its
+    finding batch scraped out of `metadata.openrouter.reasoning_details` and then
+    rejected as "findings must be an array" — the model had answered, but only in
+    its scratchpad, and the error named the wrong cause. An untyped dict stays
+    eligible: Claude's `message` object carries no `type` of its own.
+    """
+    part_type = content.get("type")
+    return part_type is None or part_type == "text"
+
+
 def _extract_text_parts(content: Any) -> list[str]:
     if isinstance(content, str):
         return [content]
     if isinstance(content, dict):
         parts = []
-        if isinstance(content.get("text"), str):
+        if isinstance(content.get("text"), str) and _is_answer_part(content):
             parts.append(str(content["text"]))
-        for key in ("content", "result", "parts", "part", "message"):
+        # `metadata` is deliberately absent: providers hang reasoning traces off
+        # it (OpenRouter uses metadata.openrouter.reasoning_details).
+        for key in _ANSWER_PART_KEYS:
             if key in content:
                 parts.extend(_extract_text_parts(content[key]))
         return parts
@@ -396,6 +413,29 @@ def _extract_text_parts(content: Any) -> list[str]:
     for item in content:
         parts.extend(_extract_text_parts(item))
     return parts
+
+
+def _nonanswer_part_types(content: Any) -> set[str]:
+    """Types of parts that carried text but were excluded as non-answer parts.
+
+    Used only to explain an empty answer: "the model wrote 1101 tokens of
+    reasoning and no answer" is actionable, "stream did not contain reviewer
+    JSON" is not.
+    """
+    if isinstance(content, dict):
+        found: set[str] = set()
+        if isinstance(content.get("text"), str) and not _is_answer_part(content):
+            found.add(str(content.get("type")))
+        for key in _ANSWER_PART_KEYS:
+            if key in content:
+                found |= _nonanswer_part_types(content[key])
+        return found
+    if isinstance(content, list):
+        found = set()
+        for item in content:
+            found |= _nonanswer_part_types(item)
+        return found
+    return set()
 
 
 def _log_structured_output_usage(stage: str | None, *, used: bool) -> None:
@@ -420,6 +460,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
     saw_result_event = False
+    nonanswer_types: set[str] = set()
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -448,6 +489,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             assistant_parts.extend(_extract_text_parts(event["part"]))
         if event.get("type") == "text":
             assistant_parts.extend(_extract_text_parts(event))
+        nonanswer_types |= _nonanswer_part_types(event)
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = str(event["result"])
         # With --json-schema, the terminal result event carries the
@@ -483,6 +525,15 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
         if stream_error is not None:
             message = "adapter run ended in a model error before emitting reviewer output"
             raise AdapterModelError(f"{message}: {stream_error!r}")
+        if nonanswer_types:
+            # The model spent its turn in the scratchpad and never wrote an
+            # answer part. That is a model outcome, not malformed adapter output,
+            # so it must not be reported as a schema failure.
+            excluded = ",".join(sorted(nonanswer_types))
+            raise AdapterModelError(
+                "model emitted no answer part; response contained only "
+                f"{excluded} parts; event_types={event_types}"
+            )
         raise SchemaValidationError(
             "adapter JSON stream did not contain reviewer JSON; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
@@ -511,12 +562,13 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
             f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
     raw = _coerce_adapter_root(raw, stage=stage)
-    # Single-object Claude Code result envelopes (--output-format json) and the
-    # OpenCode session API response both carry a schema-conforming structured
-    # payload. Prefer it over re-parsing any result/text part. Error envelopes
-    # keep flowing into the AdapterModelError path below.
-    info = raw.get("info")
-    opencode_structured = info.get("structured") if isinstance(info, dict) else None
+    # Single-object Claude Code result envelope (--output-format json) carrying
+    # a schema-conforming `structured_output`: prefer it over re-parsing the
+    # `result` text. Error envelopes keep flowing into the AdapterModelError
+    # path below, whether the CLI identifies them with is_error or type=error.
+    #
+    # OpenCode needs no branch here: ai_review.opencode_client emits the reviewer
+    # batch itself, so it lands on the `findings`/`critiques` root above.
     if (
         "findings" not in raw
         and "critiques" not in raw
@@ -526,60 +578,26 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
         _log_structured_output_usage(stage, used=True)
         return _coerce_adapter_root(raw["structured_output"], stage=stage)
     if (
-        "findings" not in raw
-        and "critiques" not in raw
-        and not _is_adapter_error_event(raw)
-        and isinstance(opencode_structured, (dict, list))
-    ):
-        _log_structured_output_usage(stage, used=True)
-        return _coerce_adapter_root(opencode_structured, stage=stage)
-    if (
-        "findings" not in raw
-        and "critiques" not in raw
-        and raw.get("type") in {"text", "message.updated", "message.part.updated"}
-    ):
-        # A one-event OpenCode NDJSON response has no newline to trigger the
-        # general stream fallback above, but it is still an event envelope.
-        return _load_stream_json(stdout, stage=stage)
-    if (
         raw.get("type") == "result"
         and not _is_adapter_error_event(raw)
         and "structured_output" not in raw
     ):
         _log_structured_output_usage(stage, used=False)
     if (
-        "\n" in stdout.strip()
-        and "findings" not in raw
+        "findings" not in raw
         and "critiques" not in raw
+        and not _is_adapter_error_event(raw)
         and not isinstance(raw.get("result"), str)
     ):
+        # A batch-less, error-less root is a stream event envelope. Route it to
+        # the stream reader regardless of line count: a stream that emitted a
+        # single event has no newline to detect, and falling through would return
+        # the raw event as if it were a reviewer batch.
         return _load_stream_json(stdout, stage=stage)
 
     if "findings" not in raw and "critiques" not in raw and _is_adapter_error_event(raw):
         error_detail = _json_preview(_terminal_error_detail(raw))
         raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
-
-    if "findings" not in raw and "critiques" not in raw and isinstance(info, dict):
-        if info.get("error") is not None:
-            raise AdapterModelError(
-                f"OpenCode session returned an error: {_json_preview(str(info['error']))!r}"
-            )
-        # The OpenCode HTTP API returns an assistant message with text parts
-        # when structured output is absent. Feed that text through the same
-        # strict, stage-aware compatibility path as the CLI adapters.
-        parts_text = "\n".join(_extract_text_parts(raw.get("parts"))).strip()
-        if parts_text:
-            try:
-                unwrapped = json_loads_no_duplicates(
-                    _extract_json_text(parts_text, stage=stage)
-                )
-            except Exception as exc:
-                raise SchemaValidationError(
-                    f"OpenCode text response was not reviewer JSON: {exc}; "
-                    f"preview={_json_preview(parts_text)}"
-                ) from exc
-            return _coerce_adapter_root(unwrapped, stage=stage)
-        raise AdapterModelError("OpenCode session returned no structured output or text")
 
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw["result"].strip():
@@ -612,7 +630,8 @@ def _write_parse_debug(
         stdout = stdout.decode("utf-8", errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
-    debug_path = output_dir / "status" / f"{_status_stem(stage, reviewer)}-{kind}-debug.txt"
+    stem = _status_stem(stage, reviewer)
+    debug_path = output_dir / "status" / f"{stem}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(
         "\n".join(
@@ -627,6 +646,18 @@ def _write_parse_debug(
         ),
         encoding="utf-8",
     )
+    # The 4 KB preview elides the middle, which for a stream adapter is where the
+    # assistant parts live — reconstructing GitLab job 2624957 required guessing
+    # at the elided region. Keep the whole thing next to the preview, bounded and
+    # redacted, so the next parse failure is readable instead of inferred.
+    raw_path = output_dir / "status" / f"{stem}-{kind}-raw-stdout.txt"
+    raw_text = redact_text(stdout)
+    if len(raw_text) > _RAW_STDOUT_ARTIFACT_LIMIT:
+        raw_text = (
+            raw_text[:_RAW_STDOUT_ARTIFACT_LIMIT]
+            + f"\n...[truncated at {_RAW_STDOUT_ARTIFACT_LIMIT} characters]...\n"
+        )
+    raw_path.write_text(raw_text, encoding="utf-8")
 
 
 def _build_adapter_env(

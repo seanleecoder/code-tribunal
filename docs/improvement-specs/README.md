@@ -28,7 +28,8 @@ wins.
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-44) | Carry genuinely non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read complete project policy only from the immutable target/base revision, preserve trusted runtime ownership, and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply trusted generated/lockfile/vendored exclusions only after a complete diff is fetched, with explicit coverage provenance and a first-class no-reviewable-changes gate. |
-| [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by durable structured-output client | The OpenCode adapter creates each session with a deterministic data-free title; the loopback API request also enforces the stage schema and avoids title inference. |
+| [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 (title decision still in force) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
+| [SPEC-50](spec-50-opencode-structured-reviewer-output.md) | Implemented (post-1.0; runtime source only) | Obtain OpenCode reviewer output through the structured-output transport instead of parsing model prose, and stop treating reasoning parts as answer text in any adapter. |
 
 ## Active dependency order
 

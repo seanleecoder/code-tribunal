@@ -52,10 +52,21 @@ finding pools).
 `AI_REVIEW_STREAM_ADAPTER_LOGS=1` mirrors reviewer stdout and stderr while the
 process runs. It is off by default because verbose Claude stream output can
 exceed GitLab's job-log limit and truncate the useful tail. Adapter output is
-always captured for parsing. A parse or validation failure also writes a
-redacted, bounded head/tail preview to
-`out/status/<stage>-<reviewer>-parse-debug.txt`, so post-mortem evidence remains
-available without enabling live streaming.
+always captured for parsing. A parse or validation failure also writes two
+redacted artifacts, so post-mortem evidence remains available without enabling
+live streaming:
+
+- `out/status/<stage>-<reviewer>-parse-debug.txt` — bounded head/tail preview of
+  stdout and stderr, useful for a first look.
+- `out/status/<stage>-<reviewer>-parse-raw-stdout.txt` — the complete adapter
+  stdout, bounded at 2 MiB. Read this one when the preview's elided middle is
+  where the answer should have been; its newline structure is intact, so a
+  stream can be replayed or reused as a test fixture directly.
+
+A `schema_error` whose message names the *model* rather than the output — for
+example `model emitted no answer part` — means the reviewer never produced an
+answer, only reasoning or tool calls. That is a model or prompt problem, not
+malformed adapter output.
 
 ## Human commands
 

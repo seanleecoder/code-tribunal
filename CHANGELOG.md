@@ -9,11 +9,34 @@ versioning.
 
 ### Changed
 
-- The OpenCode reviewer now uses a pinned loopback `serve` client with a
-  stage-specific structured-output schema, deterministic session title, and
-  strict prose compatibility recovery. Reviewer image pins are refreshed to
-  OpenCode `1.18.12`, Claude Code `2.1.221`, Codex `0.146.0`, and Cursor Agent
-  `2026.07.23-e383d2b` with its artifact SHA-256 recorded.
+- The OpenCode reviewer now obtains its batch through OpenCode's structured-output
+  transport: a pinned loopback `serve` client sends the stage schema as
+  `format: {"type":"json_schema", …}` and emits the reviewer batch directly, so
+  OpenCode no longer depends on the model volunteering a schema-conforming
+  payload. See
+  [SPEC-50](docs/improvement-specs/spec-50-opencode-structured-reviewer-output.md).
+
+- Reviewer image pins are refreshed to OpenCode `1.18.12`, Claude Code
+  `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its
+  artifact SHA-256 recorded and verified against the published download.
+
+### Fixed
+
+- Reasoning and tool parts are no longer read as answer text. A reviewer that
+  wrote its findings only into its reasoning trace previously had that scratchpad
+  scraped and rejected as `adapter output findings must be an array`, reporting a
+  model outcome as malformed adapter output and yielding a zero-finding panel. A
+  response with no answer part now fails as a model error that names the cause.
+
+- A complete JSON root nested inside a malformed outer root is refused instead of
+  being salvaged as the reviewer's answer, as is a response containing two
+  complete roots. Prose around a single payload remains accepted.
+
+- A parse or validation failure now also writes the complete redacted adapter
+  stdout to `out/status/<stage>-<reviewer>-parse-raw-stdout.txt`, and the bounded
+  preview keeps its newline structure. The previous preview elided the middle of
+  the stream and collapsed its newlines, which is where a stream adapter's
+  answer parts live.
 
 - The runtime images no longer ship test code. `base.Dockerfile` copies only
   `ai-review/tests/fixtures`, which is all the preflight resolves paths from, and the

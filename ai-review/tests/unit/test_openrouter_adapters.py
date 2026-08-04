@@ -354,10 +354,21 @@ PY
                 "        body = json.loads(self.rfile.read(length) or b'{}')\n"
                 "        with (trace_dir / 'requests.ndjson').open('a', encoding='utf-8') as handle:\n"  # noqa: E501
                 "            handle.write(json.dumps({'path': self.path, 'directory': self.headers.get('X-Opencode-Directory'), 'body': body}) + '\\n')\n"  # noqa: E501
+                # Reject unknown top-level keys the way a strict server would, so
+                # a drift in the client's request shape fails loudly here instead
+                # of silently dropping fields such as the permission denials.
                 "        if self.path.split('?', 1)[0] == '/session':\n"
+                "            unknown = sorted(set(body) - {'title', 'permission'})\n"
+                "            if unknown:\n"
+                "                write_json(self, 400, {'error': 'unknown session keys: ' + ','.join(unknown)})\n"  # noqa: E501
+                "                return\n"
                 "            write_json(self, 200, {'id': 'ses_fake', 'title': body.get('title')})\n"  # noqa: E501
                 "            return\n"
                 "        if self.path.endswith('/message'):\n"
+                "            unknown = sorted(set(body) - {'agent', 'model', 'parts', 'format'})\n"  # noqa: E501
+                "            if unknown:\n"
+                "                write_json(self, 400, {'error': 'unknown message keys: ' + ','.join(unknown)})\n"  # noqa: E501
+                "                return\n"
                 "            structured = {'critiques': []} if os.environ.get('AI_REVIEW_STAGE') == 'critique' else {'findings': []}\n"  # noqa: E501
                 "            write_json(self, 200, {'info': {'role': 'assistant', 'structured': structured}, 'parts': [{'type': 'text', 'text': 'conflicting text'}]})\n"  # noqa: E501
                 "            return\n"
@@ -405,37 +416,6 @@ PY
         )
         cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
 
-    def _write_fake_opencode_client(self, path: Path) -> None:
-        schema_root = Path(__file__).resolve().parents[2] / "schemas"
-        path.write_text(
-            f"#!{sys.executable}\n"
-            "import json\n"
-            "import os\n"
-            "from pathlib import Path\n"
-            f"schema_root = Path({str(schema_root)!r})\n"
-            "trace_dir = Path(os.environ['OPENCODE_CONFIG_DIR'])\n"
-            "trace_dir.mkdir(parents=True, exist_ok=True)\n"
-            "(trace_dir / 'cli.args').write_text(' '.join(__import__('sys').argv), encoding='utf-8')\n"  # noqa: E501
-            "(trace_dir / 'cli.env').write_text(''.join(f'{k}={v}\\n' for k, v in sorted(os.environ.items())), encoding='utf-8')\n"  # noqa: E501
-            "(trace_dir / 'cli.key').write_text(os.environ.get('OPENROUTER_API_KEY', ''), encoding='utf-8')\n"  # noqa: E501
-            "if os.environ.get('OPENCODE_CONFIG_CONTENT'):\n"
-            "    (trace_dir / 'opencode_config.json').write_text(os.environ['OPENCODE_CONFIG_CONTENT'], encoding='utf-8')\n"  # noqa: E501
-            "stage = os.environ['AI_REVIEW_STAGE']\n"
-            "schema_name = 'critique_batch.schema.json' if stage == 'critique' else 'raw_finding_batch.schema.json'\n"  # noqa: E501
-            "schema = json.loads((schema_root / schema_name).read_text(encoding='utf-8'))\n"
-            "schema.pop('$schema')\n"
-            "prompt = Path(os.environ['AI_REVIEW_RENDERED_PROMPT']).read_text(encoding='utf-8')\n"
-            "requests = [\n"
-            "    {'path': '/session', 'directory': os.environ['AI_REVIEW_OPENCODE_ROOT'], 'body': {'title': 'code-tribunal-ai-review', 'permission': [{'permission': 'question', 'action': 'deny', 'pattern': '*'}, {'permission': 'plan_enter', 'action': 'deny', 'pattern': '*'}, {'permission': 'plan_exit', 'action': 'deny', 'pattern': '*'}]}},\n"  # noqa: E501
-            "    {'path': '/session/ses_fake/message', 'directory': os.environ['AI_REVIEW_OPENCODE_ROOT'], 'body': {'agent': 'ai-reviewer', 'model': {'providerID': 'openrouter', 'modelID': os.environ['AI_REVIEW_MODEL']}, 'parts': [{'type': 'text', 'text': prompt}], 'format': {'type': 'json_schema', 'schema': schema}}},\n"  # noqa: E501
-            "]\n"
-            "(trace_dir / 'requests.ndjson').write_text(''.join(json.dumps(item) + '\\n' for item in requests), encoding='utf-8')\n"  # noqa: E501
-            "structured = {'critiques': []} if stage == 'critique' else {'findings': []}\n"
-            "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'structured_output': structured, 'result': 'conflicting text'}))\n",  # noqa: E501
-            encoding="utf-8",
-        )
-        path.chmod(path.stat().st_mode | stat.S_IXUSR)
-
     def _run_with_fake_cli(
         self,
         reviewer: str,
@@ -455,10 +435,6 @@ PY
             if prepare_snapshot is not None:
                 prepare_snapshot(input_dir / "repo_snapshot")
             self._write_fake_cli(bin_dir, cli_name)
-            fake_python: Path | None = None
-            if cli_name == "opencode":
-                fake_python = bin_dir / "fake-python"
-                self._write_fake_opencode_client(fake_python)
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
@@ -472,8 +448,12 @@ PY
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            if fake_python is not None:
-                os.environ["PYTHON"] = str(fake_python)
+            if cli_name == "opencode":
+                # Run the real ai_review.opencode_client against the fake server.
+                # Substituting a stand-in client here would make every request
+                # assertion below compare a re-implementation against itself.
+                os.environ["PYTHON"] = sys.executable
+                os.environ["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
             os.environ["GITLAB_TOKEN"] = "gl-token-secret"
             os.environ["GITLAB_READ_TOKEN"] = "gl-read-secret"
             os.environ["GITLAB_WRITE_TOKEN"] = "gl-write-secret"
@@ -937,7 +917,8 @@ PY
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
-        self.assertIn("-m ai_review.opencode_client", cli_args)
+        # cli_args is the argv the real client spawned the server with.
+        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
         self.assertNotIn("--title", cli_args)
         self.assertNotIn("--format", cli_args)
         self.assertNotIn("--model", cli_args)
@@ -1114,7 +1095,7 @@ PY
         self.assertIn("critiques", batch)
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
-        self.assertIn("-m ai_review.opencode_client", cli_args)
+        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
         requests = meta["opencode_requests"]
         assert isinstance(requests, list)
         self.assertEqual(requests[0]["body"]["title"], "code-tribunal-ai-review")

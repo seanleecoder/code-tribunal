@@ -91,9 +91,19 @@ adapter starts a pinned server on a free loopback port:
   server starts for review and left empty for critique.
 
 The adapter does not use `opencode run --format json`: that flag selects raw
-event output and does not enforce a response schema. OpenCode's
-`info.structured` response is the primary result; a complete, schema-validated
-JSON payload in text is compatibility fallback only.
+event output and does not enforce a response schema. `ai_review.opencode_client`
+normalizes the response and emits the reviewer batch itself, so the shared
+adapter runner reads it on its ordinary batch path and never applies prose
+recovery to OpenCode. A complete, duplicate-free JSON root in the answer text is
+a narrow compatibility fallback; reasoning parts are never eligible.
+
+Open question, tracked as follow-up work and not claimed here: OpenCode's `grep`
+tool has never executed in the published images, because no image installs
+ripgrep. The observed failing call
+(`{"tool":"grep","state":{"error":"ripgrep execution failed"}}`) targeted the CI
+checkout path rather than the temporary review root, so whether `grep`/`read`
+are confined to the session directory must be established before ripgrep is
+installed.
 - The temporary OpenCode review root must not expose bundle-root files such as
   `manifest.json`, `prior_decisions.json`, `config.review.yaml`, `rules/`, or
   `prompts/`.

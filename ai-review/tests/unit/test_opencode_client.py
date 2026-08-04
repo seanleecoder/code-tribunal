@@ -22,6 +22,64 @@ class OpenCodeClientTests(unittest.TestCase):
         ):
             opencode_client._normalize_message({"info": {"role": "assistant"}, "parts": []})
 
+    def test_structured_output_wins_over_conflicting_text(self) -> None:
+        batch = opencode_client._normalize_message(
+            {
+                "info": {"role": "assistant", "structured": {"findings": []}},
+                "parts": [{"type": "text", "text": "not reviewer JSON"}],
+            }
+        )
+
+        self.assertEqual(batch, {"findings": []})
+
+    def test_provider_error_is_a_client_error(self) -> None:
+        with self.assertRaisesRegex(
+            opencode_client.OpenCodeClientError,
+            "provider/API error",
+        ):
+            opencode_client._normalize_message(
+                {"info": {"role": "assistant", "error": {"name": "rate_limit_exceeded"}}}
+            )
+
+    def test_reasoning_only_message_is_a_client_error(self) -> None:
+        # The observed failure mode (GitLab job 2624957): the batch exists only
+        # in a reasoning part. _text_from_parts keeps `type == "text"` parts only,
+        # so there is no answer to salvage and the client must say so.
+        with self.assertRaisesRegex(
+            opencode_client.OpenCodeClientError,
+            "no structured output or text",
+        ):
+            opencode_client._normalize_message(
+                {
+                    "info": {"role": "assistant"},
+                    "parts": [
+                        {"type": "reasoning", "text": '{"findings":[{"title":"scratchpad"}]}'}
+                    ],
+                }
+            )
+
+    def test_complete_json_text_is_accepted_as_compatibility_fallback(self) -> None:
+        batch = opencode_client._normalize_message(
+            {
+                "info": {"role": "assistant"},
+                "parts": [{"type": "text", "text": '```json\n{"findings":[]}\n```'}],
+            }
+        )
+
+        self.assertEqual(batch, {"findings": []})
+
+    def test_prose_wrapped_text_without_structured_output_is_refused(self) -> None:
+        with self.assertRaisesRegex(
+            opencode_client.OpenCodeClientError,
+            "not one complete reviewer JSON root",
+        ):
+            opencode_client._normalize_message(
+                {
+                    "info": {"role": "assistant"},
+                    "parts": [{"type": "text", "text": 'Here it is.\n{"findings":[]}'}],
+                }
+            )
+
     def test_run_posts_stage_schema_and_normalizes_info_structured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -94,9 +152,14 @@ class OpenCodeClientTests(unittest.TestCase):
             self.assertEqual(message_body["format"]["schema"], expected_schema)
             self.assertNotIn("$schema", message_body["format"]["schema"])
 
-            envelope = json.loads(output.getvalue())
+            # The client emits the reviewer batch itself, so the shared runner
+            # reads it on its plain-batch path and never re-enters prose
+            # recovery. A result envelope here would force the runner to
+            # special-case opencode again.
+            printed = json.loads(output.getvalue())
+            self.assertEqual(printed, {"findings": []})
             self.assertEqual(
-                _load_adapter_json(json.dumps(envelope), stage="review"), {"findings": []}
+                _load_adapter_json(output.getvalue(), stage="review"), {"findings": []}
             )
             process.terminate.assert_called_once_with()
             process.wait.assert_called_once()
@@ -148,6 +211,64 @@ class OpenCodeClientTests(unittest.TestCase):
                     ],
                 )
                 opencode_client._stop_server(process, thread)
+
+    def test_start_server_reports_exit_before_readiness_with_server_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            process = mock.Mock()
+            process.poll.return_value = 1
+            process.stdout = io.StringIO("failed to bind port\n")
+            with (
+                mock.patch.object(
+                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
+                ),
+                mock.patch.object(opencode_client, "_free_loopback_port", return_value=43125),
+                mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
+                self.assertRaisesRegex(
+                    opencode_client.OpenCodeClientError, "exited before readiness"
+                ) as caught,
+            ):
+                opencode_client._start_server(Path(tmp))
+
+            # The server's own output is the only clue to why it died, so it has
+            # to reach the error rather than be dropped.
+            self.assertIn("failed to bind port", str(caught.exception))
+
+    def test_start_server_reports_readiness_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.stdout = io.StringIO("")
+            with (
+                mock.patch.object(
+                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
+                ),
+                mock.patch.object(opencode_client, "_free_loopback_port", return_value=43126),
+                mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
+                mock.patch.object(
+                    opencode_client,
+                    "_request_json",
+                    side_effect=opencode_client.OpenCodeClientError("connection refused"),
+                ),
+                mock.patch.object(opencode_client, "_SERVER_START_TIMEOUT_SECONDS", 0.1),
+                self.assertRaisesRegex(
+                    opencode_client.OpenCodeClientError, "did not become ready"
+                ),
+            ):
+                opencode_client._start_server(Path(tmp))
+
+    def test_missing_opencode_executable_is_a_client_error(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(opencode_client.shutil, "which", return_value=None),
+            self.assertRaisesRegex(opencode_client.OpenCodeClientError, "was not found"),
+        ):
+            opencode_client._start_server(Path(tmp))
+
+    def test_unsupported_stage_is_a_client_error(self) -> None:
+        with self.assertRaisesRegex(
+            opencode_client.OpenCodeClientError, "unsupported OpenCode stage"
+        ):
+            opencode_client._load_transport_schema("")
 
 
 if __name__ == "__main__":

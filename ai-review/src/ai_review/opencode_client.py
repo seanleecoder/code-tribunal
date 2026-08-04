@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -100,7 +101,9 @@ def _request_json(
     return parsed
 
 
-def _start_server(root: Path) -> tuple[subprocess.Popen[str], str, list[str], threading.Thread]:
+def _start_server(
+    root: Path,
+) -> tuple[subprocess.Popen[str], str, deque[str], threading.Thread]:
     executable = shutil.which("opencode")
     if executable is None:
         raise OpenCodeClientError("pinned opencode executable was not found")
@@ -114,14 +117,16 @@ def _start_server(root: Path) -> tuple[subprocess.Popen[str], str, list[str], th
         text=True,
         bufsize=1,
     )
-    logs: list[str] = []
+    # Keep the most recent lines, not the first: a server that logs a banner
+    # before failing would otherwise push the actual error out of the capture,
+    # and the failure paths below report these as the last lines seen.
+    logs: deque[str] = deque(maxlen=80)
 
     def drain() -> None:
         if process.stdout is None:
             return
         for line in process.stdout:
-            if len(logs) < 80:
-                logs.append(line.rstrip())
+            logs.append(line.rstrip())
 
     drain_thread = threading.Thread(target=drain, name="opencode-server-log", daemon=True)
     drain_thread.start()
@@ -129,7 +134,7 @@ def _start_server(root: Path) -> tuple[subprocess.Popen[str], str, list[str], th
     deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            detail = " | ".join(logs[-8:])
+            detail = " | ".join(list(logs)[-8:])
             drain_thread.join(timeout=_SERVER_STOP_TIMEOUT_SECONDS)
             raise OpenCodeClientError(
                 f"opencode serve exited before readiness{': ' + detail if detail else ''}"
@@ -147,7 +152,7 @@ def _start_server(root: Path) -> tuple[subprocess.Popen[str], str, list[str], th
         except OpenCodeClientError:
             pass
         time.sleep(0.05)
-    detail = " | ".join(logs[-8:])
+    detail = " | ".join(list(logs)[-8:])
     _stop_server(process, drain_thread)
     raise OpenCodeClientError(
         f"opencode serve did not become ready{': ' + detail if detail else ''}"
@@ -183,6 +188,16 @@ def _load_transport_schema(stage: str) -> dict[str, Any]:
     return transport_schema
 
 
+def _strip_code_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) < 2 or lines[-1].strip() != "```":
+        return stripped
+    return "\n".join(lines[1:-1]).strip()
+
+
 def _text_from_parts(parts: Any) -> list[str]:
     if not isinstance(parts, list):
         return []
@@ -195,7 +210,15 @@ def _text_from_parts(parts: Any) -> list[str]:
     return text
 
 
-def _normalize_message(response: dict[str, Any]) -> dict[str, Any]:
+def _normalize_message(response: dict[str, Any]) -> dict[str, Any] | list[Any]:
+    """Return the reviewer batch this session produced.
+
+    The client is the sole normalizer for OpenCode: it emits the reviewer batch
+    itself, so `adapter_runner` reads it through the same `findings`/`critiques`
+    root it uses for a plain batch and never re-enters prose recovery. Do not
+    reintroduce a CLI result envelope here — mimicking another adapter's shape
+    forces the shared runner to special-case OpenCode again.
+    """
     message = _response_data(response)
     info = message.get("info")
     if not isinstance(info, dict):
@@ -204,21 +227,35 @@ def _normalize_message(response: dict[str, Any]) -> dict[str, Any]:
         detail = info.get("error") if info.get("error") is not None else message.get("error")
         raise OpenCodeClientError(f"OpenCode provider/API error: {_compact(detail)}")
 
-    output: dict[str, Any] = {
-        "type": "result",
-        "subtype": "success",
-        "is_error": False,
-    }
-    has_structured = "structured" in info and info["structured"] is not None
-    if has_structured:
-        # adapter_runner recognizes this envelope as its structured-output path.
-        output["structured_output"] = info["structured"]
+    structured = info.get("structured")
+    if structured is not None:
+        if not isinstance(structured, (dict, list)):
+            raise OpenCodeClientError(
+                f"OpenCode structured output was not an object or array: {_compact(structured)}"
+            )
+        return structured
+
+    # No structured output means the required StructuredOutput tool did not run.
+    # Narrow compatibility path only: the whole answer text, minus an optional
+    # code fence, must itself be one complete duplicate-free JSON root. Prose
+    # around the payload is not salvaged here — scraping prose for JSON is what
+    # produced misleading schema errors, and reasoning text never reaches this
+    # function because _text_from_parts keeps only `type == "text"` parts.
     text = "\n".join(_text_from_parts(message.get("parts"))).strip()
-    if text:
-        output["result"] = text
-    elif not has_structured:
+    if not text:
         raise OpenCodeClientError("OpenCode session returned no structured output or text")
-    return output
+    try:
+        payload = json_loads_no_duplicates(_strip_code_fence(text))
+    except Exception as exc:
+        raise OpenCodeClientError(
+            "OpenCode returned no structured output and its text was not one "
+            f"complete reviewer JSON root: {exc}; text_preview={_compact(text, limit=500)}"
+        ) from exc
+    if not isinstance(payload, (dict, list)):
+        raise OpenCodeClientError(
+            f"OpenCode text payload was not an object or array: {_compact(payload)}"
+        )
+    return payload
 
 
 def run() -> int:
@@ -264,12 +301,17 @@ def run() -> int:
             },
             timeout=_MESSAGE_TIMEOUT_SECONDS,
         )
-        output = _normalize_message(response)
+        batch = _normalize_message(response)
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
 
-    print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
+    # Match the wording adapter_runner._log_structured_output_usage emits for the
+    # other reviewers so job logs stay comparable across adapters.
+    sys.stderr.write(
+        redact_text(f"ai-review: {stage or 'review'} adapter used structured_output\n")
+    )
+    print(json.dumps(batch, ensure_ascii=False, separators=(",", ":")))
     return 0
 
 
