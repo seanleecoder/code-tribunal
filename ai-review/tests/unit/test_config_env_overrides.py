@@ -241,7 +241,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertTrue(config["critique"]["allow_advisory_escalation"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
 
-    def test_legacy_reviewer_config_falls_back_to_review_timeout_for_critique(self) -> None:
+    def test_legacy_reviewer_config_critique_fallback_is_capped_in_summary(self) -> None:
         config = load_config(_REPO_CONFIG)
         for reviewer in config["reviewers"].values():
             reviewer.pop("critique_timeout_seconds")
@@ -253,8 +253,13 @@ class LoadConfigOverrideTests(unittest.TestCase):
             with self.subTest(reviewer=name):
                 self.assertEqual(
                     summary["reviewers"][name]["critique_timeout_seconds"],
-                    reviewer["timeout_seconds"],
+                    min(reviewer["timeout_seconds"], 900),
                 )
+
+        self.assertEqual(
+            effective_config_digest(config),
+            effective_config_digest(load_config(_REPO_CONFIG)),
+        )
 
     def test_effective_timeout_fields_are_in_summary_and_digest(self) -> None:
         config = load_config(_REPO_CONFIG)

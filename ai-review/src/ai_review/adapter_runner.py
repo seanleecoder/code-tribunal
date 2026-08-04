@@ -20,6 +20,7 @@ from .config import (
     effective_config_digest,
     load_config,
     resolve_adapter_path,
+    resolve_reviewer_timeout_seconds,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
@@ -732,14 +733,7 @@ def _effective_adapter_timeout_seconds(
     reviewer_config: dict[str, Any], stage: str
 ) -> int:
     """Return the stage budget after the runner's five-second reserve."""
-    if stage not in {"review", "critique"}:
-        raise ConfigError(f"unsupported reviewer stage: {stage}")
-    timeout_key = "timeout_seconds" if stage == "review" else "critique_timeout_seconds"
-    configured_timeout = reviewer_config.get(timeout_key)
-    if stage == "critique" and "critique_timeout_seconds" not in reviewer_config:
-        configured_timeout = reviewer_config.get("timeout_seconds")
-    if type(configured_timeout) is not int or configured_timeout <= 0:
-        raise ConfigError(f"reviewer {timeout_key} must be a positive integer")
+    configured_timeout = resolve_reviewer_timeout_seconds(reviewer_config, stage)
     return max(1, configured_timeout - 5)
 
 

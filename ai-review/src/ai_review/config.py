@@ -33,6 +33,10 @@ REVIEWER_REQUIRED_KEYS = {
     "credential_variable",
 }
 REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_seconds"}
+# The critique CI templates reserve 300 seconds outside the adapter process.
+# Legacy configs without the stage-specific field must not inherit the longer
+# review budget and run past the 20-minute critique job ceiling.
+_LEGACY_CRITIQUE_TIMEOUT_CEILING_SECONDS = 900
 PANEL_KEYS = {
     "min_successful_reviewers_for_blocking",
     "min_successful_reviewers_for_resolution",
@@ -237,12 +241,11 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
                 "model": reviewer.get("model"),
                 "enabled": bool(reviewer.get("enabled")),
                 "effort": reviewer.get("effort"),
-                # Legacy review_config.v1 files may omit the stage-specific
-                # critique timeout. Resolve that fallback in the summary so
-                # every stage binds the same effective timeout policy.
-                "timeout_seconds": reviewer.get("timeout_seconds"),
-                "critique_timeout_seconds": reviewer.get(
-                    "critique_timeout_seconds", reviewer.get("timeout_seconds")
+                # Resolve stage budgets here, rather than recording raw input,
+                # so the digest binds the same policy used by the runner.
+                "timeout_seconds": resolve_reviewer_timeout_seconds(reviewer, "review"),
+                "critique_timeout_seconds": resolve_reviewer_timeout_seconds(
+                    reviewer, "critique"
                 ),
                 "max_findings": (
                     int(reviewer["max_findings"])
@@ -282,6 +285,32 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
             float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
         ),
     }
+
+
+def resolve_reviewer_timeout_seconds(
+    reviewer_config: dict[str, Any], stage: str
+) -> int:
+    """Resolve a reviewer stage budget before the runner's reserve.
+
+    ``review_config.v1`` files predating the stage-specific critique field use
+    ``timeout_seconds`` as their critique budget. Cap that legacy fallback at
+    900 seconds so it fits the current critique CI ceiling; explicit
+    ``critique_timeout_seconds`` values remain intentional configuration.
+    """
+    if stage not in {"review", "critique"}:
+        raise ConfigError(f"unsupported reviewer stage: {stage}")
+
+    timeout_key = "timeout_seconds" if stage == "review" else "critique_timeout_seconds"
+    legacy_critique_fallback = stage == "critique" and timeout_key not in reviewer_config
+    if legacy_critique_fallback:
+        timeout_key = "timeout_seconds"
+
+    configured_timeout = reviewer_config.get(timeout_key)
+    if type(configured_timeout) is not int or configured_timeout <= 0:
+        raise ConfigError(f"reviewer {timeout_key} must be a positive integer")
+    if legacy_critique_fallback:
+        return min(configured_timeout, _LEGACY_CRITIQUE_TIMEOUT_CEILING_SECONDS)
+    return configured_timeout
 
 
 def effective_config_digest(config: dict[str, Any]) -> str:

@@ -20,6 +20,7 @@ from ai_review.adapter_runner import (
     _load_adapter_json,
     run_adapter,
 )
+from ai_review.config import ConfigError
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -122,12 +123,23 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
             _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
         )
 
-    def test_legacy_config_falls_back_to_review_budget_for_critique(self) -> None:
+    def test_legacy_config_critique_fallback_is_capped_at_ci_ceiling(self) -> None:
         reviewer_config = {"timeout_seconds": 1800}
 
         self.assertEqual(
-            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 1795
+            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
         )
+
+    def test_legacy_config_critique_fallback_preserves_shorter_budget(self) -> None:
+        reviewer_config = {"timeout_seconds": 600}
+
+        self.assertEqual(
+            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 595
+        )
+
+    def test_legacy_config_timeout_errors_name_present_field(self) -> None:
+        with self.assertRaisesRegex(ConfigError, r"reviewer timeout_seconds"):
+            _effective_adapter_timeout_seconds({"timeout_seconds": 0}, "critique")
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):

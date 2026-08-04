@@ -22,7 +22,7 @@ credentials or sensitive model content into issues.
 | GitLab child trust audit fails | Include project/SHA, forwarding, inheritance, or bridge contract changed | Auditor errors | Restore the exact hardened example; do not bypass the validator |
 | Runtime override appears ignored | Pinned image predates it or variable scope differs | Template image source SHA and manifest effective config | Rotate all image pins together or move override to shared project/repository scope |
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
-| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status, optional streamed adapter log | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (or its legacy fallback); temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`, then unset it |
+| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status, optional streamed adapter log | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (or `min(timeout_seconds, 900)` for its legacy fallback); temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`, then unset it |
 | GitHub: every seat drops its findings and consensus exits 3 | 1.0.0-only defect: the PR adds or deletes a file, so anchor resolution rejects `/dev/null` | Reviewer log line `absolute paths are not allowed: /dev/null`; `dropped_finding_count` equals `raw_finding_count` | Fixed in 1.0.1 — upgrade the pinned images. On 1.0.0 images, land file additions in a separate change request or re-run after they merge |
 | Local provider call rejects an endpoint | Developer shell exported a non-canonical provider URL | Redacted `model_error` naming `ANTHROPIC_BASE_URL` or `OPENROUTER_BASE_URL` | Run with `env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL make review-local ...` |
 
@@ -34,7 +34,7 @@ credentials or sensitive model content into issues.
 - `timeout`: the complete process group exceeded the stage-specific timeout:
   `reviewers.<name>.timeout_seconds` for review or
   `reviewers.<name>.critique_timeout_seconds` for critique. Legacy configs that
-  omit the latter use `timeout_seconds` for both stages.
+  omit the latter resolve critique to `min(timeout_seconds, 900)`.
 - `config_error`: configuration or an environment override failed strict
   validation.
 

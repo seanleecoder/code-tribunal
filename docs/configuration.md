@@ -24,7 +24,7 @@ disabled-by-default `cursor` seat.
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
-| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`timeout_seconds`) | Whole critique process-group timeout; omitted in legacy `review_config.v1` files means use `timeout_seconds`. |
+| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`timeout_seconds`) | Whole critique process-group timeout. Legacy `review_config.v1` files omit this key and resolve critique to `min(timeout_seconds, 900)` so the 20-minute CI ceiling is respected. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
@@ -38,6 +38,13 @@ minutes for review jobs and 20 minutes for critique jobs. These timeout values
 are trusted image configuration; there is no timeout environment-variable
 override. Both resolved stage values are included in the effective-config
 summary and digest, so all pipeline stages must use the same policy.
+
+For a legacy configuration without `critique_timeout_seconds`, the resolved
+critique value is capped at 900 seconds even when `timeout_seconds` is higher.
+The capped value, rather than the raw fallback input, is recorded in the
+effective-config summary and digest. Explicit stage-specific values are used as
+configured; keep them at or below 900 seconds while using the shipped 20-minute
+critique CI ceiling.
 
 OpenCode review and critique invocations always pass the fixed internal session
 title `code-tribunal-ai-review`. It is non-empty and contains no prompt,
