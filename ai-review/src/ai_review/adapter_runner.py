@@ -244,47 +244,67 @@ def _raw_json_end(decoder: json.JSONDecoder, value: str, start: int) -> int | No
     return start + relative_end
 
 
-def _has_unclosed_opener(prefix: str) -> bool:
-    """Whether ``prefix`` leaves a JSON container open, ignoring string contents.
+def _prose_bracket_end(value: str, start: int) -> int | None:
+    """Return the end of a bracketed prose label such as ``[draft 1]``.
 
-    Distinguishes prose that merely mentions brackets (``Reviewed [a.py, b.py]``)
-    from a genuinely malformed outer root whose interior happens to parse
-    (``{"outer":{"findings":[]} BROKEN``). Only the latter leaves a container
-    open, and only the latter must be refused.
+    The one permitted exception to "no JSON syntax outside the payload". A label
+    is only a label if its interior could not be JSON: non-empty, free of JSON
+    structure and separators, and not the start of a JSON scalar. A failed array
+    must never be mistaken for a label, because that is how a malformed outer
+    structure gets treated as a wrapper around its own interior.
     """
-    depth = 0
-    in_string = False
-    escaped = False
-    for char in prefix:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char in "{[":
-            depth += 1
-        elif char in "}]":
-            depth -= 1
-    return depth > 0
+    close = value.find("]", start + 1)
+    if close < 0:
+        return None
+    inner = value[start + 1 : close].strip()
+    if not inner or any(char in inner for char in "{}[],"):
+        return None
+    if inner.startswith(('"', "'", "null", "true", "false")):
+        return None
+    if inner[0].isdigit() or inner[0] == "-":
+        return None
+    return close + 1
+
+
+def _unexpected_json_syntax(value: str) -> bool:
+    """Whether ``value`` contains JSON syntax that is not a bracketed label.
+
+    Applied to the text before and after the accepted root. Prose is welcome
+    there; a stray ``{`` or ``[`` is not, whether or not it parses.
+    """
+    position = 0
+    while position < len(value):
+        candidates = [
+            found for found in (value.find("{", position), value.find("[", position)) if found >= 0
+        ]
+        if not candidates:
+            return False
+        found = min(candidates)
+        if value[found] == "[":
+            label_end = _prose_bracket_end(value, found)
+            if label_end is not None:
+                position = label_end
+                continue
+        return True
+    return False
 
 
 def _extract_json_text(value: str, *, stage: str | None = None) -> str:
-    """Extract one complete JSON root surrounded by optional prose.
+    """Extract the one complete JSON root that is the adapter's whole answer.
 
-    Prose around a single payload is tolerated: models routinely preface or
-    follow the batch with a sentence, and refusing that turns a usable review
-    into a schema error. Two things are refused, because both silently produce a
-    *wrong* review rather than a failed one:
+    Prose around the payload is tolerated — models routinely preface or follow
+    the batch with a sentence, and refusing that turns a usable review into a
+    schema error. What is refused is *JSON syntax* outside the payload, because
+    every such case makes the answer ambiguous and yields a silently wrong review
+    rather than a failed one:
 
-    - More than one complete root, where picking either is a guess.
-    - A complete root nested inside a malformed outer root — salvaging the
-      interior of ``{"outer":{"findings":[]} BROKEN`` yields a batch the model
-      never meant as its answer.
+    - Two complete roots, where picking either is a guess.
+    - A complete root sitting next to or inside malformed JSON, parseable or not:
+      ``{"outer":{"findings":[]} BROKEN`` and ``{"a": nope} {"findings":[]}`` both
+      offer an interior the model never nominated as its answer.
+
+    A simple bracketed label (``[draft 1]``) is the sole exception; see
+    ``_prose_bracket_end``.
     """
     stripped = value.strip()
     if stripped.startswith("```"):
@@ -309,6 +329,8 @@ def _extract_json_text(value: str, *, stage: str | None = None) -> str:
             continue
         candidates.append((start, end, stripped[start:end]))
     if not candidates:
+        # Nothing parsed; hand back the original text so the caller's JSON error
+        # reports what the adapter actually produced.
         return stripped
 
     roots: list[tuple[int, int, str]] = []
@@ -322,11 +344,13 @@ def _extract_json_text(value: str, *, stage: str | None = None) -> str:
             f"{stage or 'adapter'} output contains more than one complete JSON root"
         )
 
-    root_start, _root_end, text = roots[0]
-    if _has_unclosed_opener(stripped[:root_start]):
+    root_start, root_end, text = roots[0]
+    if _unexpected_json_syntax(stripped[:root_start]) or _unexpected_json_syntax(
+        stripped[root_end:]
+    ):
         raise SchemaValidationError(
-            f"{stage or 'adapter'} output has a complete JSON root nested inside a "
-            "malformed outer root"
+            f"{stage or 'adapter'} output has JSON syntax outside the complete root, "
+            "so which payload is the answer is ambiguous"
         )
     return text
 

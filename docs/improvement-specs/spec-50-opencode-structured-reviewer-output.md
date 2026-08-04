@@ -54,9 +54,28 @@ transport, not by parsing model prose:
 - Session creation keeps SPEC-49's fixed title `code-tribunal-ai-review`, unchanged in
   value and still free of prompt, repository, merge-request, and user data.
 
-Text output is a narrow compatibility path only: the whole answer text, minus an
-optional code fence, must itself be one complete duplicate-free JSON root. Prose
-around a payload is not salvaged for OpenCode, and reasoning parts are never eligible.
+Two layers apply different rules to model text. They are deliberately different, and
+each statement below governs exactly one layer.
+
+**Layer 1 — the OpenCode client (`opencode_client.py`), OpenCode only.** Structured
+output is the transport. Text is a narrow compatibility path: the whole answer text,
+minus an optional code fence, must itself be one complete duplicate-free JSON root.
+Prose around the payload is *not* tolerated here, and reasoning parts are never
+eligible. The bar is higher than Layer 2 because OpenCode has a schema-enforcing
+transport, so any text answer is already a degraded outcome; accepting prose around it
+would restore the guessing this specification removes.
+
+Whether structured output or the text fallback produced the batch must be reported
+honestly in the job log, using the same two wordings the shared runner emits. The
+rollout canary treats `used structured_output` as evidence that the transport worked,
+so the fallback must never claim it.
+
+**Layer 2 — the shared extractor (`adapter_runner._extract_json_text`), all four
+adapters.** Exactly one complete JSON root, which must be the whole answer. Prose
+before or after it is tolerated, but *JSON syntax* outside it is not — a stray `{` or
+`[`, whether or not it parses, makes the answer ambiguous. A simple bracketed prose
+label such as `[draft 1]` is the sole exception. Refused: two complete roots; a
+complete root next to or inside malformed JSON.
 
 No `small_model`, title-model variable, reviewer-config key, model override, or
 provider change is permitted for this purpose. `reviewers.opencode.model` and
@@ -71,10 +90,10 @@ provider change is permitted for this purpose. `reviewers.opencode.model` and
 - Answer-text extraction across every reviewer: only parts whose `type` is `text` (or
   an untyped envelope) are answer text. A response containing only reasoning or tool
   parts is a model error naming that fact, never a schema error.
-- One complete JSON root per adapter response: refuse two complete roots, and refuse a
-  complete root nested inside a malformed outer root. Prose around a single payload
-  stays tolerated — refusing it converts usable reviews into schema errors across all
-  four adapters.
+- One complete JSON root per adapter response, per Layer 2 above: brace-free prose
+  around the payload stays tolerated, because refusing it converts usable reviews into
+  schema errors across all four adapters; any other JSON syntax outside the payload is
+  refused, because accepting it yields a review whose provenance is a guess.
 - Full redacted adapter stdout persisted on parse failure, and newline structure
   preserved in the bounded preview, so a stream failure is readable rather than
   inferred.
@@ -102,6 +121,20 @@ provider change is permitted for this purpose. `reviewers.opencode.model` and
 - Image publication, template repinning, immutable digest updates, release-input
   changes beyond the recipe/fixture hashes, or release-history changes.
 
+## Considered and rejected
+
+- **Running the Layer 2 extractor over the client's typed answer-text parts**, so both
+  layers share one rule. Rejected: Layer 1's whole-text rule is both stricter and
+  simpler than the extractor, and routing OpenCode back through the shared prose path is
+  precisely what this specification removes. The asymmetry is the point — see Layer 1's
+  rationale above — not an oversight to be normalized away later.
+- **Tolerating balanced-but-unparseable JSON adjacent to the payload**, on the grounds
+  that prose sometimes mentions JSON shapes. Rejected after review: it leaves the
+  salvage hazard open for any malformed structure whose braces happen to balance, which
+  is the same class of defect as the nested case, and the prose shapes it protects were
+  hypothetical while the hazard is demonstrable. Brace-mentioning prose now fails closed
+  with a schema error.
+
 ## Acceptance criteria
 
 - A fixture reproducing job 2624957 — reasoning and tool parts, no answer part —
@@ -111,8 +144,14 @@ provider change is permitted for this purpose. `reviewers.opencode.model` and
   unrecognized request keys, so a drift in the session path, directory header,
   permission rules, or `format` body fails the suite. A stand-in *client* asserting its
   own request shape does not satisfy this criterion.
-- Prose around a single complete payload still parses for every adapter; two complete
-  roots and a nested root inside a malformed outer root are both refused.
+- Brace-free prose around a single complete payload still parses for every adapter, and
+  a bracketed prose label still parses. Refused: two complete roots, and a complete root
+  accompanied by any other JSON syntax — including balanced-but-unparseable JSON before
+  or after it, which an earlier revision accepted because it only checked for containers
+  left open.
+- The text fallback logs `carried no structured_output` and never
+  `used structured_output`, so the canary evidence below cannot be satisfied by the
+  degraded path.
 - A parse failure writes the complete redacted stdout with its line structure intact;
   a successful run writes neither debug artifact.
 - The reviewer-image build fails if the pinned OpenCode CLI no longer supports the

@@ -575,19 +575,39 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
         self.assertIn("more than one complete JSON root", str(caught.exception))
 
-    def test_prose_mentioning_brackets_and_braces_still_parses(self) -> None:
-        # Shapes a reviewer plausibly emits around a single payload. Each must
-        # keep working; refusing them regresses every adapter, not just opencode.
+    def test_brace_free_prose_around_one_payload_still_parses(self) -> None:
+        # Prose around a single payload stays recoverable, as long as the prose
+        # carries no JSON syntax of its own. Refusing these regresses every
+        # adapter, not just opencode.
         for label, text in (
-            ("bracket list before", 'Reviewed [src/a.py, src/b.py]\n{"findings":[]}'),
-            ("brace mention after", '{"findings":[]}\nNote: shape is {"findings": [...]}.'),
             ("fence then prose", '```json\n{"findings":[]}\n```\nDone.'),
             ("plain prose after", '{"findings":[]}\nNo issues found.'),
+            ("prose before", 'Based on my review of the diff.\n{"findings":[]}'),
+            ("simple bracketed label after", '{"findings":[]}\n[end of report]'),
         ):
             with self.subTest(label):
                 stdout = json.dumps({"type": "text", "text": text})
 
                 self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+
+    def test_json_syntax_outside_the_payload_is_refused(self) -> None:
+        # Every one of these offers an interior the model never nominated as its
+        # answer. Accepting any of them yields a silently wrong review rather
+        # than a failed one — the balanced cases were accepted before, because
+        # the earlier guard only noticed containers left open.
+        for label, text in (
+            ("malformed object before", '{"outer": nope} prose {"findings":[]}'),
+            ("malformed object after", '{"findings":[]} {"broken": nope}'),
+            ("malformed object on a later line", '{"findings":[]}\ntrailing {"a": oops}'),
+            ("unclosed outer wrapper", '{"outer":{"findings":[]} BROKEN'),
+            ("bracket list mentioning paths", 'Reviewed [src/a.py, src/b.py]\n{"findings":[]}'),
+            ("brace shape mentioned after", '{"findings":[]}\nNote: shape is {"findings": [..]}.'),
+        ):
+            with self.subTest(label):
+                stdout = json.dumps({"type": "text", "text": text})
+
+                with self.assertRaises(SchemaValidationError):
+                    _load_adapter_json(stdout, stage="review")
 
 
 class EffortEnvTests(unittest.TestCase):

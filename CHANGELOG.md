@@ -28,9 +28,13 @@ versioning.
   model outcome as malformed adapter output and yielding a zero-finding panel. A
   response with no answer part now fails as a model error that names the cause.
 
-- A complete JSON root nested inside a malformed outer root is refused instead of
-  being salvaged as the reviewer's answer, as is a response containing two
-  complete roots. Prose around a single payload remains accepted.
+- Adapter output must now carry exactly one complete JSON root and no other JSON
+  syntax. Previously a valid-looking payload was salvaged out of a response that
+  also contained malformed JSON — `{"outer":{"findings":[]} BROKEN` and
+  `{"a": nope} {"findings":[]}` both yielded a batch the reviewer never
+  nominated as its answer. Brace-free prose around the payload, and a simple
+  bracketed label such as `[draft 1]`, are still accepted; prose that itself
+  contains JSON syntax now fails closed with a schema error.
 
 - A parse or validation failure now also writes the complete redacted adapter
   stdout to `out/status/<stage>-<reviewer>-parse-raw-stdout.txt`, and the bounded

@@ -23,7 +23,7 @@ class OpenCodeClientTests(unittest.TestCase):
             opencode_client._normalize_message({"info": {"role": "assistant"}, "parts": []})
 
     def test_structured_output_wins_over_conflicting_text(self) -> None:
-        batch = opencode_client._normalize_message(
+        batch, used_structured = opencode_client._normalize_message(
             {
                 "info": {"role": "assistant", "structured": {"findings": []}},
                 "parts": [{"type": "text", "text": "not reviewer JSON"}],
@@ -31,6 +31,7 @@ class OpenCodeClientTests(unittest.TestCase):
         )
 
         self.assertEqual(batch, {"findings": []})
+        self.assertTrue(used_structured)
 
     def test_provider_error_is_a_client_error(self) -> None:
         with self.assertRaisesRegex(
@@ -59,7 +60,7 @@ class OpenCodeClientTests(unittest.TestCase):
             )
 
     def test_complete_json_text_is_accepted_as_compatibility_fallback(self) -> None:
-        batch = opencode_client._normalize_message(
+        batch, used_structured = opencode_client._normalize_message(
             {
                 "info": {"role": "assistant"},
                 "parts": [{"type": "text", "text": '```json\n{"findings":[]}\n```'}],
@@ -67,6 +68,9 @@ class OpenCodeClientTests(unittest.TestCase):
         )
 
         self.assertEqual(batch, {"findings": []})
+        # The schema transport did not produce this; saying otherwise would let
+        # the fallback satisfy the canary check meant to detect it.
+        self.assertFalse(used_structured)
 
     def test_prose_wrapped_text_without_structured_output_is_refused(self) -> None:
         with self.assertRaisesRegex(
@@ -124,8 +128,11 @@ class OpenCodeClientTests(unittest.TestCase):
                 mock.patch.object(opencode_client, "_request_json", side_effect=request),
             ):
                 output = io.StringIO()
-                with contextlib.redirect_stdout(output):
+                errors = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                     self.assertEqual(opencode_client.run(), 0)
+
+            self.assertIn("review adapter used structured_output", errors.getvalue())
 
             self.assertEqual(
                 [path for path, _body in calls], ["session", "session/ses_test/message"]
@@ -164,6 +171,58 @@ class OpenCodeClientTests(unittest.TestCase):
             process.terminate.assert_called_once_with()
             process.wait.assert_called_once()
             thread.join.assert_called_once()
+
+    def test_run_on_text_fallback_does_not_claim_structured_output(self) -> None:
+        # The rollout canary reads "used structured_output" as proof the schema
+        # transport worked. If the text fallback logged it too, the degraded path
+        # would satisfy the check that exists to catch it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt = root / "prompt.md"
+            prompt.write_text("Return the stage payload.\n", encoding="utf-8")
+            process = mock.Mock()
+            process.poll.return_value = None
+            thread = mock.Mock()
+
+            def request(
+                _base_url: str, _method: str, path: str, **_kwargs: object
+            ) -> dict[str, object]:
+                if path == "session":
+                    return {"id": "ses_test"}
+                return {
+                    "data": {
+                        "info": {"role": "assistant"},
+                        "parts": [{"type": "text", "text": '{"findings":[]}'}],
+                    }
+                }
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AI_REVIEW_STAGE": "review",
+                        "AI_REVIEW_MODEL": "google/test-model",
+                        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+                        "AI_REVIEW_OPENCODE_ROOT": str(root),
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(
+                    opencode_client,
+                    "_start_server",
+                    return_value=(process, "http://127.0.0.1:43123/", [], thread),
+                ),
+                mock.patch.object(opencode_client, "_request_json", side_effect=request),
+            ):
+                output = io.StringIO()
+                errors = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(opencode_client.run(), 0)
+
+            logged = errors.getvalue()
+            self.assertIn("carried no structured_output", logged)
+            self.assertNotIn("used structured_output", logged)
+            self.assertEqual(json.loads(output.getvalue()), {"findings": []})
 
     def test_critique_transport_uses_critique_schema(self) -> None:
         schema = opencode_client._load_transport_schema("critique")
