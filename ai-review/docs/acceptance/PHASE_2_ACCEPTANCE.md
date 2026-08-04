@@ -148,6 +148,27 @@ is therefore the reviewer's actual reach, not merely its working directory.
   `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`, and
   `OPENCODE_DISABLE_MODELS_FETCH`.
 
+The provider-free half of the above is enforced by the image preflight
+(`scripts/smoke_opencode_search_tools.py`, run by the publish workflow's
+`opencode-search-smoke` job): the pinned `rg` wins on the adapter's fixed trusted
+PATH (with a decoy negative control), matches `ripgrep.pin`'s SHA-256 and version,
+and the pinned opencode server accepts the client's session-create permission
+rules including the `external_directory` deny.
+
+### Rollout gate (post-merge, from trusted main)
+
+The remaining behavior needs a live provider and is deferred to rollout:
+
+- **Canary:** a real review must show a `grep` tool call with `status != "error"`,
+  and no `downloading ripgrep` line in the adapter log (SPEC-51 acceptance).
+- **Publication:** build and publish the immutable base and reviewer images with
+  provenance attestation, then repin consumers (`.github/workflows/ai-review.yml`,
+  `ai-review/ci/review.github-actions.yml`, and
+  `ai-review/ci/review.gitlab-ci.yml` incl. `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the
+  new digests.
+- **Release inputs:** finalize `release/release-inputs.json` out of its draft
+  state so consumers reference the published digests.
+
 Reviewer jobs that carry provider secrets must not trust MR-controlled adapter
 code, reviewer config, or wrapper edits. Those inputs should come from the
 trusted review image/repository; the in-repo endpoint/model validation and

@@ -189,6 +189,17 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 text = (_ADAPTERS / script_name).read_text(encoding="utf-8")
                 self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, text)
 
+    def test_opencode_adapter_forwards_fixed_trusted_path(self) -> None:
+        """The adapter must not forward the ambient PATH to opencode.
+
+        OpenCode's which(\"rg\") must resolve the fixed trusted /usr/local/bin/rg
+        on every run: an ambient PATH (or the old /usr/bin:/bin fallback) would
+        skip the pinned binary and silently restore the unverified download.
+        """
+        text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
+        self.assertIn('PATH="/usr/local/bin:/usr/bin:/bin"', text)
+        self.assertNotIn('PATH="${PATH:-', text)
+
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
         adapters = {
             "claude": "claude.sh",

@@ -168,6 +168,149 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
         )
 
+    _RIPGREP_PIN_OK = (
+        "version=15.1.0\n"
+        "url=https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/"
+        "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz\n"
+        "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599\n"
+    )
+
+    _RIPGREP_STAGE_OK = (
+        "FROM debian:bookworm-slim AS ripgrep-bin\n"
+        "WORKDIR /opt/ripgrep-src\n"
+        "COPY ai-review/images/ripgrep.pin ./ripgrep.pin\n"
+        "RUN set -eu; \\\n"
+        "    . ./ripgrep.pin; \\\n"
+        "    curl -fL \"$url\" -o ripgrep.tar.gz; \\\n"
+        "    echo \"$sha256  ripgrep.tar.gz\" | sha256sum -c -;\n"
+        "FROM ${AI_REVIEW_BASE_IMAGE}\n"
+    )
+
+    def test_ripgrep_pin_happy_path_passes(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._ripgrep_pin_issues(self._RIPGREP_PIN_OK),
+            [],
+        )
+
+    def test_detects_malformed_ripgrep_pin(self) -> None:
+        issues = check_supply_chain_pins._ripgrep_pin_issues(
+            "version=latest\n"
+            "url=https://example.invalid/ripgrep-15.1.0.tar.gz\n"
+            "sha256=not-a-sha\n"
+        )
+        self.assertIn("ripgrep.pin version must be an exact ripgrep version", issues)
+        self.assertIn(
+            "ripgrep.pin url must contain the pinned version", issues
+        )
+        self.assertIn(
+            "ripgrep.pin url must use the upstream ripgrep release download host", issues
+        )
+        self.assertIn(
+            "ripgrep.pin sha256 must be a lowercase SHA-256 hex digest", issues
+        )
+
+    def test_detects_zero_ripgrep_pin_placeholder(self) -> None:
+        self.assertIn(
+            "ripgrep.pin sha256 must not be the all-zero placeholder",
+            check_supply_chain_pins._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace(
+                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                    "sha256=" + "0" * 64,
+                )
+            ),
+        )
+
+    def test_detects_missing_ripgrep_pin_key(self) -> None:
+        self.assertIn(
+            "ripgrep.pin missing sha256",
+            check_supply_chain_pins._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace(
+                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                    "",
+                )
+            ),
+        )
+
+    def test_detects_ripgrep_pin_off_host_arch(self) -> None:
+        self.assertIn(
+            "ripgrep.pin url must reference the x86_64-unknown-linux-musl asset",
+            check_supply_chain_pins._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace("x86_64", "aarch64")
+            ),
+        )
+
+    def test_ripgrep_stage_happy_path_passes(self) -> None:
+        self.assertEqual(
+            check_supply_chain_pins._ripgrep_stage_issues(self._RIPGREP_STAGE_OK),
+            [],
+        )
+
+    def test_ripgrep_stage_requires_verify_stage(self) -> None:
+        issues = check_supply_chain_pins._ripgrep_stage_issues(
+            "FROM ${AI_REVIEW_BASE_IMAGE}\n"
+        )
+        self.assertIn(
+            "reviewer.Dockerfile must build the pinned ripgrep in a ripgrep-bin stage",
+            issues,
+        )
+
+    def test_ripgrep_stage_requires_checksum(self) -> None:
+        self.assertIn(
+            "reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum",
+            check_supply_chain_pins._ripgrep_stage_issues(
+                self._RIPGREP_STAGE_OK.replace(
+                    'echo "$sha256  ripgrep.tar.gz" | sha256sum -c -;', ""
+                )
+            ),
+        )
+
+    def test_ripgrep_stage_requires_pin_read(self) -> None:
+        self.assertIn(
+            "reviewer.Dockerfile ripgrep-bin stage must read ripgrep.pin",
+            check_supply_chain_pins._ripgrep_stage_issues(
+                self._RIPGREP_STAGE_OK.replace(
+                    "COPY ai-review/images/ripgrep.pin ./ripgrep.pin",
+                    "COPY ai-review/images/other.pin ./other.pin",
+                ).replace(". ./ripgrep.pin;", ". ./other.pin;")
+            ),
+        )
+
+    def test_detects_placeholder_ripgrep_pin_via_checker(self) -> None:
+        original = check_supply_chain_pins.RIPGREP_PIN
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "ripgrep.pin"
+            mutated.write_text(
+                self._RIPGREP_PIN_OK.replace(
+                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                    "sha256=" + "0" * 64,
+                ),
+                encoding="utf-8",
+            )
+            check_supply_chain_pins.RIPGREP_PIN = mutated
+            try:
+                self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.RIPGREP_PIN = original
+
+    def test_runtime_guard_resolves_rg_through_sh_c(self) -> None:
+        text = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
+        self.assertEqual(
+            check_supply_chain_pins._ripgrep_runtime_guard_issues(text),
+            [],
+        )
+
+    def test_runtime_guard_rejects_direct_command_builtin(self) -> None:
+        broken = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
+        self.assertIn(
+            "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c",
+            check_supply_chain_pins._ripgrep_runtime_guard_issues(
+                broken.replace(
+                    "env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'",
+                    "env -i PATH=/usr/local/bin:/usr/bin:/bin command -v rg",
+                )
+            ),
+        )
+
     def test_cli_version_scan_covers_the_installed_workflow(self) -> None:
         """The installed workflow is what GitHub executes, so it must be scanned.
 

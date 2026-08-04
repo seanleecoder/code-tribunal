@@ -353,10 +353,32 @@ def _ripgrep_pin_issues(text: str) -> list[str]:
         issues.append("ripgrep.pin url must contain the pinned version")
     if url and not url.startswith("https://github.com/BurntSushi/ripgrep/releases/download/"):
         issues.append("ripgrep.pin url must use the upstream ripgrep release download host")
+    if url and not re.search(r"x86_64-unknown-linux-musl\.tar\.gz$", url):
+        issues.append("ripgrep.pin url must reference the x86_64-unknown-linux-musl asset")
     if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
         issues.append("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest")
     if sha256 == "0" * 64:
         issues.append("ripgrep.pin sha256 must not be the all-zero placeholder")
+    return issues
+
+
+def _ripgrep_runtime_guard_issues(reviewer: str) -> list[str]:
+    """Require the final-stage rg provenance guard to resolve through `sh -c`.
+
+    `command -v` is a shell builtin, so `env -i ... command -v rg` fails with
+    "env: 'command': No such file or directory" and only `sh -c` executes it.
+    The PATH must be the adapter's fixed trusted PATH so the guard proves the
+    exact resolution the adapter will perform at review time.
+    """
+    issues: list[str] = []
+    if not re.search(
+        r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer
+    ):
+        issues.append(
+            "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c"
+        )
+    if not re.search(r'test "\$resolved" = "/usr/local/bin/rg"', reviewer):
+        issues.append("reviewer.Dockerfile must assert rg resolves to /usr/local/bin/rg")
     return issues
 
 
@@ -465,6 +487,9 @@ def main() -> int:
         error("reviewer.Dockerfile must copy the pinned ripgrep to /usr/local/bin/rg")
         failures += 1
     for issue in _ripgrep_stage_issues(reviewer):
+        error(issue)
+        failures += 1
+    for issue in _ripgrep_runtime_guard_issues(reviewer):
         error(issue)
         failures += 1
     if "npm ci" not in reviewer:

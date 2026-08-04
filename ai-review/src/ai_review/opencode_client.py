@@ -110,7 +110,7 @@ def _request_json(
 def _start_server(
     root: Path,
 ) -> tuple[subprocess.Popen[str], str, deque[str], threading.Thread]:
-    executable = shutil.which("opencode")
+    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
     if executable is None:
         raise OpenCodeClientError("pinned opencode executable was not found")
     port = _free_loopback_port()

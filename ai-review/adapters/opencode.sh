@@ -35,6 +35,13 @@ if ! command -v opencode >/dev/null 2>&1; then
   run_mock
 fi
 
+# Resolve the pinned opencode on the ambient PATH (the runner's, where the image
+# installs /usr/local/bin) and hand the client the exact path. The fixed trusted
+# PATH below governs what opencode itself finds — notably which("rg") — so it must
+# not carry an injected binary directory, but the opencode executable still has to
+# be reachable.
+OPENCODE_BIN="$(command -v opencode)"
+
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
     echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
@@ -187,8 +194,13 @@ EOF
 PYTHON_BIN="${PYTHON:-python3}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
+# Fixed trusted PATH, not the runner's ambient one: /usr/local/bin must win so
+# OpenCode's which("rg") resolves the pinned image rg and never falls through to
+# a download or to some earlier rg on the ambient PATH. This is the exact PATH the
+# reviewer.Dockerfile final guard proves resolution on.
 env -i \
-  PATH="${PATH:-/usr/bin:/bin}" \
+  PATH="/usr/local/bin:/usr/bin:/bin" \
+  OPENCODE_BIN="$OPENCODE_BIN" \
   PYTHON="$PYTHON_BIN" \
   PYTHONPATH="$PYTHONPATH_VALUE" \
   TMPDIR="${TMPDIR:-/tmp}" \

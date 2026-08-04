@@ -925,6 +925,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("rg --version", text)
         self.assertIn("COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg", text)
         self.assertIn('test "$resolved" = "/usr/local/bin/rg"', text)
+        self.assertIn("env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", text)
         self.assertIn('rg --version | grep -F -- "ripgrep $version"', text)
         self.assertIn("sha256sum -c -", text)
         self.assertNotIn("opencode --pure run --help 2>&1 | grep -F -- '--title'", text)

@@ -50,7 +50,7 @@
         "ai-review/tests/fixtures/opencode/review-reasoning-only.ndjson",
         "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "550e25aeea85799ed00e3d732e262b316fc2580c6427d1e89bee12829d1a0536"
+      "sha256": "9c656a33034dab7926619981d3fe8e9795f2b6103dedbb71dcee8623c99d3b9a"
     },
     "schemas": {
       "files": [

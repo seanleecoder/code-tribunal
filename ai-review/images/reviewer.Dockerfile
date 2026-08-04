@@ -104,7 +104,7 @@ RUN claude --version \
 # pinned binary is the one that will be found, on the PATH the adapter forwards —
 # not merely present somewhere in the image.
 RUN set -eu; \
-    resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin command -v rg)"; \
+    resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg')"; \
     test "$resolved" = "/usr/local/bin/rg"; \
     . /opt/ai-review/images/ripgrep.pin; \
     rg --version | grep -F -- "ripgrep $version"
