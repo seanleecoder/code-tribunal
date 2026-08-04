@@ -31,6 +31,11 @@ _PERMISSION_RULES = [
     {"permission": "question", "action": "deny", "pattern": "*"},
     {"permission": "plan_enter", "action": "deny", "pattern": "*"},
     {"permission": "plan_exit", "action": "deny", "pattern": "*"},
+    # Denied at the session too, not only in the adapter's agent config: every
+    # permission whose default is "ask" would otherwise block a headless session
+    # on an approval nobody can grant. OpenCode's default for external_directory
+    # is {"*": "ask"}, and the tool-level "*" wildcard does not cover it.
+    {"permission": "external_directory", "action": "deny", "pattern": "*"},
 ]
 
 

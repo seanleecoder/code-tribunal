@@ -1,0 +1,12 @@
+# OpenCode's grep/glob tools shell out to ripgrep. Its resolution order is
+# which("rg") -> $HOME/.cache/opencode/bin/rg -> download from GitHub releases.
+# The download verifies nothing but a non-zero byte length, and the adapter gives
+# each run a fresh HOME, so the cache is always cold and every review would fetch
+# and exec an unverified binary. Installing this pinned, checksum-verified copy on
+# PATH short-circuits at the first step.
+#
+# Keep the version equal to the one the pinned opencode-ai would fetch, so the
+# reviewer runs the ripgrep OpenCode was tested against.
+version=15.1.0
+url=https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz
+sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599

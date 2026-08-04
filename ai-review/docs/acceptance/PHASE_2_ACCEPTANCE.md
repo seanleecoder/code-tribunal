@@ -97,13 +97,42 @@ adapter runner reads it on its ordinary batch path and never applies prose
 recovery to OpenCode. A complete, duplicate-free JSON root in the answer text is
 a narrow compatibility fallback; reasoning parts are never eligible.
 
-Open question, tracked as follow-up work and not claimed here: OpenCode's `grep`
-tool has never executed in the published images, because no image installs
-ripgrep. The observed failing call
-(`{"tool":"grep","state":{"error":"ripgrep execution failed"}}`) targeted the CI
-checkout path rather than the temporary review root, so whether `grep`/`read`
-are confined to the session directory must be established before ripgrep is
-installed.
+### Search-tool reach and the pinned ripgrep
+
+OpenCode's `grep`/`glob` tools shell out to ripgrep. Resolution order, read from
+the pinned `opencode-ai` 1.18.12 binary and confirmed by running it:
+
+1. `which("rg")`
+2. `$HOME/.cache/opencode/bin/rg`
+3. download `ripgrep-<version>-<platform>.tar.gz` from
+   `https://github.com/BurntSushi/ripgrep/releases`, extract, `chmod 0755`, exec
+
+Step 3 verifies nothing but a non-zero byte length, and the adapter gives each run
+a fresh `HOME`, so the cache is always cold. Before this change no image installed
+ripgrep, which is why job 2624957 logged
+`{"tool":"grep","state":{"error":"ripgrep execution failed"}}` — and why a review
+with egress to GitHub would instead have fetched and executed an unverified
+binary. The reviewer image now ships a pinned, checksum-verified ripgrep on
+`/usr/local/bin`, so resolution stops at step 1. The image build asserts both that
+`rg` resolves to that path under the adapter's forwarded `PATH` and that its
+version equals `ripgrep.pin`.
+
+Reach is bounded by the `external_directory` permission, which gates any absolute
+path outside the session directory. It is a permission key of its own, so the
+adapter's `"*": "deny"` tool wildcard does not cover it, and OpenCode's default is
+`{"*": "ask"}` — an approval request that nothing in a headless reviewer can
+answer. Verified against the adapter's exact generated config with
+`opencode --pure debug agent ai-reviewer`:
+
+| config | effective `external_directory` for an external absolute path |
+| --- | --- |
+| without an explicit rule | `ask` |
+| with `"external_directory": {"*": "deny"}` | `deny` |
+
+The adapter now sets that rule in both the agent and top-level permission blocks,
+and `ai_review.opencode_client` repeats it in the session-create request. `read`,
+`glob`, and `grep` remain allowed inside the review root. The sanitized snapshot
+is therefore the reviewer's actual reach, not merely its working directory.
 - The temporary OpenCode review root must not expose bundle-root files such as
   `manifest.json`, `prior_decisions.json`, `config.review.yaml`, `rules/`, or
   `prompts/`.

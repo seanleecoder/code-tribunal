@@ -20,6 +20,23 @@ versioning.
   `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its
   artifact SHA-256 recorded and verified against the published download.
 
+### Security
+
+- The OpenCode reviewer's filesystem reach is now bounded by its sanitized review
+  root. OpenCode's `external_directory` permission is a key of its own, so the
+  adapter's `"*": "deny"` tool wildcard never covered it and its default was
+  `{"*": "ask"}` — in a headless reviewer, an approval request nobody can answer
+  rather than a refusal. The adapter and the session client now deny it
+  explicitly. `read`, `glob`, and `grep` remain allowed inside the root. See
+  [SPEC-51](docs/improvement-specs/spec-51-opencode-search-tool-reach.md).
+
+- The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`.
+  OpenCode's `grep`/`glob` tools resolve `which("rg")` first and otherwise
+  download ripgrep from GitHub releases at review time, verifying only that the
+  response is non-empty; because the adapter gives each run a fresh `HOME`, that
+  cache was always cold. No image previously installed ripgrep, so the tool had
+  never worked — and a run with egress would have executed an unverified binary.
+
 ### Fixed
 
 - Reasoning and tool parts are no longer read as answer text. A reviewer that

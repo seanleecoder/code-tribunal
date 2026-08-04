@@ -55,6 +55,13 @@ request. It is not a configuration key or an additional model-selection
 interface. `reviewers.opencode.model` and `AI_REVIEW_OPENCODE_MODEL` remain the
 sole OpenCode model controls.
 
+The OpenCode reviewer may read, glob, and grep inside its temporary review root
+and nowhere else: the adapter denies OpenCode's `external_directory` permission,
+which gates absolute paths outside that root. Its search tools use the pinned
+ripgrep shipped on the image `PATH`, so no reviewer run downloads a search binary
+at review time. Neither is a configuration key — there is no supported way for
+project configuration to widen the reviewer's filesystem reach.
+
 ### Production model/effort recommendations
 
 The shipped model defaults are intended to be safe starting points. For

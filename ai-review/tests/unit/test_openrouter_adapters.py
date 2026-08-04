@@ -936,6 +936,7 @@ PY
                     {"permission": "question", "action": "deny", "pattern": "*"},
                     {"permission": "plan_enter", "action": "deny", "pattern": "*"},
                     {"permission": "plan_exit", "action": "deny", "pattern": "*"},
+                    {"permission": "external_directory", "action": "deny", "pattern": "*"},
                 ],
             },
         )
@@ -1035,6 +1036,13 @@ PY
         self.assertEqual(agent["permission"]["read"], "allow")
         self.assertEqual(agent["permission"]["glob"], "allow")
         self.assertEqual(agent["permission"]["grep"], "allow")
+        # external_directory is a permission key of its own, so the "*" wildcard
+        # above does not cover it and OpenCode's default is {"*": "ask"}. Without
+        # this explicit deny, read/grep on an absolute path outside the review
+        # root raises an approval nothing in a headless session can answer, and
+        # the sanitized snapshot stops bounding the reviewer's reach.
+        self.assertEqual(agent["permission"]["external_directory"], {"*": "deny"})
+        self.assertEqual(config["permission"]["external_directory"], {"*": "deny"})
         self.assertEqual(agent["permission"]["bash"], "deny")
         self.assertEqual(agent["permission"]["edit"], "deny")
         self.assertEqual(agent["permission"]["write"], "deny")

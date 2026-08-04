@@ -919,6 +919,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
         self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--hostname'", text)
         self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--port'", text)
+        # OpenCode resolves which("rg") first and otherwise downloads an
+        # unverified ripgrep at review time. The build must prove the pinned
+        # binary is what resolves on the adapter's forwarded PATH.
+        self.assertIn("rg --version", text)
+        self.assertIn("COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg", text)
+        self.assertIn('test "$resolved" = "/usr/local/bin/rg"', text)
+        self.assertIn('rg --version | grep -F -- "ripgrep $version"', text)
+        self.assertIn("sha256sum -c -", text)
         self.assertNotIn("opencode --pure run --help 2>&1 | grep -F -- '--title'", text)
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:

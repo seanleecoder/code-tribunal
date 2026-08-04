@@ -21,6 +21,7 @@ PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
 PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
+RIPGREP_PIN = ROOT / "ai-review/images/ripgrep.pin"
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
@@ -302,6 +303,63 @@ def _cursor_agent_pin_issues(text: str) -> list[str]:
     return issues
 
 
+def _ripgrep_stage_issues(reviewer: str) -> list[str]:
+    """Require the ripgrep builder stage itself to verify the artifact.
+
+    Scoped to the stage on purpose: `sha256sum -c -` also appears in the
+    cursor-agent stage, so a repository-wide substring check would keep passing
+    after the ripgrep verification was deleted.
+    """
+    match = re.search(r"^FROM \S+ AS ripgrep-bin$(.*?)(?=^FROM )", reviewer, re.M | re.S)
+    if match is None:
+        return ["reviewer.Dockerfile must build the pinned ripgrep in a ripgrep-bin stage"]
+    stage = match.group(1)
+    issues: list[str] = []
+    if "ripgrep.pin" not in stage:
+        issues.append("reviewer.Dockerfile ripgrep-bin stage must read ripgrep.pin")
+    if "sha256sum -c -" not in stage:
+        issues.append("reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum")
+    return issues
+
+
+def _ripgrep_pin_issues(text: str) -> list[str]:
+    """Validate the pinned ripgrep artifact.
+
+    OpenCode downloads ripgrep from GitHub releases at review time and verifies
+    nothing but a non-zero byte length. The image ships this pinned, checksummed
+    copy on PATH so that download never happens; an unpinned or placeholder value
+    here silently restores the unverified fetch.
+    """
+    values: dict[str, str] = {}
+    issues: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            issues.append(f"ripgrep.pin line is not key=value: {line!r}")
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    for key in ("version", "url", "sha256"):
+        if not values.get(key):
+            issues.append(f"ripgrep.pin missing {key}")
+    version = values.get("version", "")
+    url = values.get("url", "")
+    sha256 = values.get("sha256", "")
+    if version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        issues.append("ripgrep.pin version must be an exact ripgrep version")
+    if url and version and version not in url:
+        issues.append("ripgrep.pin url must contain the pinned version")
+    if url and not url.startswith("https://github.com/BurntSushi/ripgrep/releases/download/"):
+        issues.append("ripgrep.pin url must use the upstream ripgrep release download host")
+    if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        issues.append("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest")
+    if sha256 == "0" * 64:
+        issues.append("ripgrep.pin sha256 must not be the all-zero placeholder")
+    return issues
+
+
 def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
@@ -338,6 +396,7 @@ def main() -> int:
     constraints = _read(PYTHON_CONSTRAINTS)
     dev_requirements = _read_optional(DEV_REQUIREMENTS)
     cursor_pin = _read(CURSOR_AGENT_PIN)
+    ripgrep_pin = _read(RIPGREP_PIN)
     package = json.loads(_read(PACKAGE_JSON))
     lock = json.loads(_read(PACKAGE_LOCK))
 
@@ -395,6 +454,17 @@ def main() -> int:
         error("reviewer.Dockerfile must install pinned cursor-agent and smoke-test --version")
         failures += 1
     for issue in _cursor_agent_pin_issues(cursor_pin):
+        error(issue)
+        failures += 1
+    for issue in _ripgrep_pin_issues(ripgrep_pin):
+        error(issue)
+        failures += 1
+    if not re.search(
+        r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M
+    ):
+        error("reviewer.Dockerfile must copy the pinned ripgrep to /usr/local/bin/rg")
+        failures += 1
+    for issue in _ripgrep_stage_issues(reviewer):
         error(issue)
         failures += 1
     if "npm ci" not in reviewer:

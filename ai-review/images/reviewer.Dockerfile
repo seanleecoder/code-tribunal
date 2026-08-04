@@ -28,6 +28,25 @@ RUN set -eu; \
     find /usr/local/cursor-agent -type f -name cursor-agent -exec chmod 0755 {} \; ; \
     test -x /usr/local/cursor-agent/cursor-agent || find /usr/local/cursor-agent -maxdepth 3 -type f -perm /111 -print -quit | xargs -r -I{} ln -sf {} /usr/local/cursor-agent/cursor-agent
 
+FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS ripgrep-bin
+
+WORKDIR /opt/ripgrep-src
+COPY ai-review/images/ripgrep.pin ./ripgrep.pin
+RUN set -eu; \
+    . ./ripgrep.pin; \
+    test -n "$version"; test -n "$url"; test -n "$sha256"; \
+    if [ "$sha256" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then \
+      echo "ripgrep.pin must be refreshed with the artifact sha256 before building" >&2; exit 1; \
+    fi; \
+    apt-get update; apt-get install -y --no-install-recommends ca-certificates curl tar; rm -rf /var/lib/apt/lists/*; \
+    curl -fL "$url" -o ripgrep.tar.gz; \
+    echo "$sha256  ripgrep.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/ripgrep; \
+    tar -xzf ripgrep.tar.gz -C /opt/ripgrep --strip-components=1; \
+    test -f /opt/ripgrep/rg; \
+    chmod 0755 /opt/ripgrep/rg; \
+    /opt/ripgrep/rg --version
+
 FROM ${AI_REVIEW_BASE_IMAGE}
 
 ARG CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code
@@ -39,6 +58,7 @@ COPY --from=reviewer-clis /usr/local/bin/npm /usr/local/bin/npm
 COPY --from=reviewer-clis /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=reviewer-clis /opt/ai-review/reviewer-clis/node_modules /usr/local/lib/node_modules
 COPY --from=cursor-cli /usr/local/cursor-agent /usr/local/cursor-agent
+COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg
 
 RUN ln -sf /usr/local/cursor-agent/cursor-agent /usr/local/bin/cursor-agent \
     && if [ ! -e /usr/local/bin/agent ]; then ln -sf /usr/local/cursor-agent/cursor-agent /usr/local/bin/agent; fi
@@ -76,7 +96,18 @@ for (const packageName of process.argv.slice(1)) { \
 RUN claude --version \
     && codex --version \
     && opencode --version \
-    && cursor-agent --version
+    && cursor-agent --version \
+    && rg --version
+
+# OpenCode's grep/glob tools shell out to ripgrep, resolving which("rg") first and
+# otherwise downloading an unverified copy from GitHub at review time. Prove the
+# pinned binary is the one that will be found, on the PATH the adapter forwards —
+# not merely present somewhere in the image.
+RUN set -eu; \
+    resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin command -v rg)"; \
+    test "$resolved" = "/usr/local/bin/rg"; \
+    . /opt/ai-review/images/ripgrep.pin; \
+    rg --version | grep -F -- "ripgrep $version"
 
 # The adapter's read-only boundary depends on this pinned CLI surface. Fail the
 # image build if a future pin drops or renames native ask mode.

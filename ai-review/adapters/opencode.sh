@@ -104,6 +104,14 @@ fi
 # Unquoted heredoc so $AI_REVIEW_MODEL and guarded optional fragments expand;
 # \$schema stays literal and the {env:OPENROUTER_API_KEY} template (no leading
 # $) is passed through untouched.
+#
+# external_directory must be denied explicitly. It is a permission key of its own,
+# so the "*": "deny" tool wildcard does not cover it, and OpenCode's default is
+# {"*": "ask"} — verified with `opencode --pure debug agent ai-reviewer` against
+# this exact config. Without the explicit rule, read/grep on an absolute path
+# outside the review root raises an approval request that nothing in a headless
+# reviewer can answer, and the sanitized snapshot boundary stops being the
+# reviewer's actual reach.
 OPENCODE_CONFIG_JSON=$(cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -136,7 +144,8 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
         "webfetch": "deny",
         "websearch": "deny",
         "task": "deny",
-        "skill": "deny"
+        "skill": "deny",
+        "external_directory": {"*": "deny"}
       },
       "// tools": "Trim schemas for tools already denied by permission; permission remains enforcement.",
       "tools": {
@@ -164,7 +173,8 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
     "webfetch": "deny",
     "websearch": "deny",
     "task": "deny",
-    "skill": "deny"
+    "skill": "deny",
+    "external_directory": {"*": "deny"}
   }
 }
 EOF
