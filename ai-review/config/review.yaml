@@ -1,8 +1,9 @@
 schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
 
-# Configured LLM reviewer backends. All reviewer and critique process groups
-# use a 900-second (15-minute) timeout; the CI review and critique jobs add a
-# 20-minute outer ceiling for wrapper and artifact overhead.
+# Configured LLM reviewer backends. Review process groups use a 1800-second
+# (30-minute) timeout and critique process groups use a 900-second (15-minute)
+# timeout; the CI review and critique jobs add independent 40-minute and
+# 20-minute outer ceilings for wrapper and artifact overhead.
 # Per-reviewer `model` and `enabled` can be overridden at runtime without a
 # rebuild via AI_REVIEW_<REVIEWER>_MODEL / AI_REVIEW_<REVIEWER>_ENABLED
 # (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See
@@ -12,10 +13,11 @@ reviewers:
     enabled: true # Override: AI_REVIEW_CLAUDE_ENABLED
     adapter: adapters/claude.sh # Shell wrapper script executing the reviewer CLI
     model: anthropic/claude-haiku-4.5 # OpenRouter provider-qualified model identifier (override: AI_REVIEW_CLAUDE_MODEL)
-    effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — timeout_seconds stays the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
-    timeout_seconds: 900
+    effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — stage-specific timeout fields stay the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
+    timeout_seconds: 1800
+    critique_timeout_seconds: 900
     # No turn cap: Claude runs its agentic loop to completion, bounded by
-    # timeout_seconds as the hang-catch. A hard-coded low cap made stronger,
+    # the stage-specific timeout as the hang-catch. A hard-coded low cap made stronger,
     # more exploratory models stop before emitting findings.
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: ANTHROPIC_API_KEY # Environment variable holding provider API token. Note: on the OpenRouter route the adapter blanks this and authenticates via ANTHROPIC_AUTH_TOKEN mapped from OPENROUTER_API_KEY (see adapters/claude.sh); this variable is used for direct-Anthropic runs.
@@ -25,7 +27,8 @@ reviewers:
     model: openai/gpt-5.6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
     # Optional reasoning effort: low|medium|high|xhigh|max reaches Codex
     # unchanged as model_reasoning_effort. Override: AI_REVIEW_CODEX_EFFORT
-    timeout_seconds: 900
+    timeout_seconds: 1800
+    critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
   opencode:
@@ -37,7 +40,8 @@ reviewers:
     # provider default; once SPEC-20 usage data is available, low is the
     # recommended starting point for flash-class models. Override:
     # AI_REVIEW_OPENCODE_EFFORT
-    timeout_seconds: 900
+    timeout_seconds: 1800
+    critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
@@ -56,7 +60,8 @@ reviewers:
     # model variant. Use an exact slug reported by `cursor-agent --list-models`;
     # AI_REVIEW_CURSOR_EFFORT is unsupported and rejected.
     model: auto # Discovery-only placeholder; enabling Cursor requires an exact Composer slug. Override: AI_REVIEW_CURSOR_MODEL
-    timeout_seconds: 900
+    timeout_seconds: 1800
+    critique_timeout_seconds: 900
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
 

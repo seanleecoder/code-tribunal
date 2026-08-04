@@ -6,13 +6,13 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "650cdde3fa38a78f14d7dca33e4f8d511b622f89fc1a83121418008ae02bf848"
+      "sha256": "7b400af6236990553d4a50a5d8ba8562a2af0eb63ee5dc2c4f0b00072aeee385"
     },
     "configuration": {
       "files": [
         "ai-review/config/review.yaml"
       ],
-      "sha256": "a6cb2dafa0f4ec5e82919fc3eb92c7170ca688d36ead6ca3d2b333003cbd8eeb"
+      "sha256": "aee4f991fac4716e35c6b2670bbef3e9e5b1044e4d32d953798a60073a77b615"
     },
     "dependency_locks": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "1d17f3a798bc16316852b71b88f65017d77cf5745674cb41d971b5c895d78f2d"
+      "sha256": "1b52ad948ae032f6fa2e4b1858ccf65600229fab8bd00f201c7fb6452b602082"
     },
     "image_recipes": {
       "files": [
@@ -46,7 +46,7 @@
         "ai-review/tests/fixtures/grouping/corpus.json",
         "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "c6923dd990129a6863753c4633efc3cc5e4cd329006619b1f2437dd4a97aa938"
+      "sha256": "dc74da379661d5c7924d16ee945a2b62be07093f7ed9529ab29b3070ed67d802"
     },
     "schemas": {
       "files": [

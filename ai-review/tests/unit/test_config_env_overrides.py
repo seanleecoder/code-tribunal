@@ -6,7 +6,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from ai_review.config import ConfigError, apply_env_overrides, load_config, validate_config
+from ai_review.config import (
+    ConfigError,
+    apply_env_overrides,
+    effective_config_digest,
+    effective_config_summary,
+    load_config,
+    validate_config,
+)
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -80,13 +87,21 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertEqual(config["panel"]["quorum"]["votes_required"], 2)
         self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 2)
 
-    def test_shipped_reviewer_timeout_defaults_are_900_seconds(self) -> None:
+    def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
             config = load_config(_REPO_CONFIG)
 
         self.assertEqual(
-            {name: reviewer["timeout_seconds"] for name, reviewer in config["reviewers"].items()},
-            {"claude": 900, "codex": 900, "opencode": 900, "cursor": 900},
+            {
+                name: (reviewer["timeout_seconds"], reviewer["critique_timeout_seconds"])
+                for name, reviewer in config["reviewers"].items()
+            },
+            {
+                "claude": (1800, 900),
+                "codex": (1800, 900),
+                "opencode": (1800, 900),
+                "cursor": (1800, 900),
+            },
         )
 
     def test_reviewer_enabled_override(self) -> None:
@@ -225,6 +240,49 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
         self.assertTrue(config["critique"]["allow_advisory_escalation"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
+
+    def test_legacy_reviewer_config_critique_fallback_is_capped_in_summary(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        for reviewer in config["reviewers"].values():
+            reviewer.pop("critique_timeout_seconds")
+
+        validate_config(config)
+        summary = effective_config_summary(config)
+
+        for name, reviewer in config["reviewers"].items():
+            with self.subTest(reviewer=name):
+                self.assertEqual(
+                    summary["reviewers"][name]["critique_timeout_seconds"],
+                    min(reviewer["timeout_seconds"], 900),
+                )
+
+        self.assertEqual(
+            effective_config_digest(config),
+            effective_config_digest(load_config(_REPO_CONFIG)),
+        )
+
+    def test_effective_timeout_fields_are_in_summary_and_digest(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        summary = effective_config_summary(config)
+        self.assertEqual(summary["reviewers"]["codex"]["timeout_seconds"], 1800)
+        self.assertEqual(summary["reviewers"]["codex"]["critique_timeout_seconds"], 900)
+
+        modified = deepcopy(config)
+        modified["reviewers"]["codex"]["critique_timeout_seconds"] = 1200
+        self.assertNotEqual(effective_config_digest(config), effective_config_digest(modified))
+
+    def test_timeout_fields_must_be_positive_integers(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        for field, values in {
+            "timeout_seconds": (0, -1, True, 1.5, "1800"),
+            "critique_timeout_seconds": (None, 0, -1, True, 1.5, "900"),
+        }.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    mutated = deepcopy(config)
+                    mutated["reviewers"]["claude"][field] = value
+                    with self.assertRaisesRegex(ConfigError, field):
+                        validate_config(mutated)
 
     def test_stale_nested_config_keys_fail_loudly(self) -> None:
         config_text = _REPO_CONFIG.read_text(encoding="utf-8")

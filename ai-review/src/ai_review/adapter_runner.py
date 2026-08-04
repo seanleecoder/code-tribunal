@@ -15,7 +15,13 @@ from typing import Any
 
 from .anchors import is_sha256
 from .canonical import json_loads_no_duplicates
-from .config import ConfigError, effective_config_digest, load_config, resolve_adapter_path
+from .config import (
+    ConfigError,
+    effective_config_digest,
+    load_config,
+    resolve_adapter_path,
+    resolve_reviewer_timeout_seconds,
+)
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .schema import (
@@ -723,6 +729,14 @@ def _adapter_exit_is_mock_allow_refusal(stderr: str) -> bool:
     return _SHELL_MOCK_ALLOW_REFUSAL in stderr
 
 
+def _effective_adapter_timeout_seconds(
+    reviewer_config: dict[str, Any], stage: str
+) -> int:
+    """Return the stage budget after the runner's five-second reserve."""
+    configured_timeout = resolve_reviewer_timeout_seconds(reviewer_config, stage)
+    return max(1, configured_timeout - 5)
+
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -867,7 +881,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp=prompt_tmp,
         )
 
-        timeout_seconds = max(1, int(reviewer_config.get("timeout_seconds", 60)) - 5)
+        timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         # Opt-in live mirroring of the adapter's output to the job log; off by
         # default to avoid large stream-json/--verbose dumps and log truncation.
         mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
