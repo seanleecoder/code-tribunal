@@ -72,17 +72,40 @@ class OpenCodeClientTests(unittest.TestCase):
         # the fallback satisfy the canary check meant to detect it.
         self.assertFalse(used_structured)
 
-    def test_prose_wrapped_text_without_structured_output_is_refused(self) -> None:
-        with self.assertRaisesRegex(
-            opencode_client.OpenCodeClientError,
-            "not one complete reviewer JSON root",
+    def test_prose_wrapped_text_uses_the_shared_extractor(self) -> None:
+        # The fallback admits text under the same rule as every other adapter.
+        # Refusing brace-free prose here would discard a usable review on the
+        # degraded path — the outcome this client exists to prevent.
+        batch, used_structured = opencode_client._normalize_message(
+            {
+                "info": {"role": "assistant"},
+                "parts": [{"type": "text", "text": 'Here it is.\n{"findings":[]}'}],
+            },
+            stage="review",
+        )
+
+        self.assertEqual(batch, {"findings": []})
+        self.assertFalse(used_structured)
+
+    def test_ambiguous_text_without_structured_output_is_refused(self) -> None:
+        # The shared rule still refuses what it refuses everywhere else, so the
+        # fallback cannot become a way to smuggle an ambiguous payload through.
+        for label, text in (
+            ("two complete roots", '{"findings":[]} {"findings":[{"t":1}]}'),
+            ("nested in malformed outer", '{"outer":{"findings":[]} BROKEN'),
+            ("malformed object before", '{"a": nope} {"findings":[]}'),
         ):
-            opencode_client._normalize_message(
-                {
-                    "info": {"role": "assistant"},
-                    "parts": [{"type": "text", "text": 'Here it is.\n{"findings":[]}'}],
-                }
-            )
+            with self.subTest(label), self.assertRaisesRegex(
+                opencode_client.OpenCodeClientError,
+                "not one complete reviewer JSON root",
+            ):
+                opencode_client._normalize_message(
+                    {
+                        "info": {"role": "assistant"},
+                        "parts": [{"type": "text", "text": text}],
+                    },
+                    stage="review",
+                )
 
     def test_run_posts_stage_schema_and_normalizes_info_structured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

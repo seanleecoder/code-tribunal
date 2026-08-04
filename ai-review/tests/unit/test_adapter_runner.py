@@ -590,6 +590,23 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
                 self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
 
+    def test_trailing_closer_after_a_complete_payload_is_tolerated(self) -> None:
+        # Deliberately asymmetric with the leading-closer cases below. A closer
+        # after a complete payload cannot mean the payload is an interior
+        # fragment — the enclosing opener would have to precede it, which is
+        # refused — so what is left is trailing model noise. Live reviewer output
+        # does this; see test_loads_critique_array_before_unrelated_trailing_bracket,
+        # added from real phase-5 acceptance output. Do not "fix" this into a
+        # rejection without new evidence that the shape signals a bad payload.
+        for label, text in (
+            ("stray bracket after", '{"findings":[]}\ntrailing note ]'),
+            ("stray brace after", '{"findings":[]}\ntrailing note }'),
+        ):
+            with self.subTest(label):
+                stdout = json.dumps({"type": "text", "text": text})
+
+                self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+
     def test_json_syntax_outside_the_payload_is_refused(self) -> None:
         # Every one of these offers an interior the model never nominated as its
         # answer. Accepting any of them yields a silently wrong review rather
@@ -602,6 +619,10 @@ class AdapterRunnerOutputTests(unittest.TestCase):
             ("unclosed outer wrapper", '{"outer":{"findings":[]} BROKEN'),
             ("bracket list mentioning paths", 'Reviewed [src/a.py, src/b.py]\n{"findings":[]}'),
             ("brace shape mentioned after", '{"findings":[]}\nNote: shape is {"findings": [..]}.'),
+            # A closer *before* the payload means a structure ended there, so the
+            # payload may be the interior of something malformed.
+            ("unmatched brace before", '} prose {"findings":[]}'),
+            ("unmatched bracket before", '] {"findings":[]}'),
         ):
             with self.subTest(label):
                 stdout = json.dumps({"type": "text", "text": text})

@@ -30,11 +30,14 @@ versioning.
 
 - Adapter output must now carry exactly one complete JSON root and no other JSON
   syntax. Previously a valid-looking payload was salvaged out of a response that
-  also contained malformed JSON — `{"outer":{"findings":[]} BROKEN` and
-  `{"a": nope} {"findings":[]}` both yielded a batch the reviewer never
-  nominated as its answer. Brace-free prose around the payload, and a simple
-  bracketed label such as `[draft 1]`, are still accepted; prose that itself
-  contains JSON syntax now fails closed with a schema error.
+  also contained malformed JSON — `{"outer":{"findings":[]} BROKEN`,
+  `{"a": nope} {"findings":[]}`, and `} prose {"findings":[]}` all yielded a
+  batch the reviewer never nominated as its answer. Brace-free prose around the
+  payload is still accepted, as are a simple bracketed label such as
+  `[draft 1]` and an unmatched closer following a complete payload; prose that
+  itself contains JSON syntax now fails closed with a schema error. The rule
+  lives in one place (`ai_review.adapter_output`) and governs every adapter as
+  well as the OpenCode text fallback.
 
 - A parse or validation failure now also writes the complete redacted adapter
   stdout to `out/status/<stage>-<reviewer>-parse-raw-stdout.txt`, and the bounded

@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from .adapter_output import extract_json_text
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
 from .schema import load_json_file, schema_dir
@@ -188,16 +189,6 @@ def _load_transport_schema(stage: str) -> dict[str, Any]:
     return transport_schema
 
 
-def _strip_code_fence(text: str) -> str:
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    if len(lines) < 2 or lines[-1].strip() != "```":
-        return stripped
-    return "\n".join(lines[1:-1]).strip()
-
-
 def _text_from_parts(parts: Any) -> list[str]:
     if not isinstance(parts, list):
         return []
@@ -211,7 +202,7 @@ def _text_from_parts(parts: Any) -> list[str]:
 
 
 def _normalize_message(
-    response: dict[str, Any],
+    response: dict[str, Any], *, stage: str | None = None
 ) -> tuple[dict[str, Any] | list[Any], bool]:
     """Return the reviewer batch and whether structured output produced it.
 
@@ -243,20 +234,23 @@ def _normalize_message(
         return structured, True
 
     # No structured output means the required StructuredOutput tool did not run.
-    # Narrow compatibility path only: the whole answer text, minus an optional
-    # code fence, must itself be one complete duplicate-free JSON root. Prose
-    # around the payload is not salvaged here — scraping prose for JSON is what
-    # produced misleading schema errors, and reasoning text never reaches this
-    # function because _text_from_parts keeps only `type == "text"` parts.
+    # Compatibility path: admit the answer text under the same rule as every other
+    # adapter, via the shared extractor. A stricter OpenCode-only rule was tried
+    # and reverted — rejecting `Here is the batch:\n{...}` throws away a usable
+    # review on the degraded path, which is the exact outcome this client exists
+    # to prevent, while the genuinely ambiguous shapes are already refused by the
+    # shared rule. Only `type == "text"` parts reach here, so a reasoning trace is
+    # never a candidate.
     text = "\n".join(_text_from_parts(message.get("parts"))).strip()
     if not text:
         raise OpenCodeClientError("OpenCode session returned no structured output or text")
     try:
-        payload = json_loads_no_duplicates(_strip_code_fence(text))
+        payload = json_loads_no_duplicates(extract_json_text(text, stage=stage))
     except Exception as exc:
         raise OpenCodeClientError(
-            "OpenCode returned no structured output and its text was not one "
-            f"complete reviewer JSON root: {exc}; text_preview={_compact(text, limit=500)}"
+            "OpenCode returned no structured output and its answer text was not "
+            f"one complete reviewer JSON root: {exc}; "
+            f"text_preview={_compact(text, limit=500)}"
         ) from exc
     if not isinstance(payload, (dict, list)):
         raise OpenCodeClientError(
@@ -308,7 +302,7 @@ def run() -> int:
             },
             timeout=_MESSAGE_TIMEOUT_SECONDS,
         )
-        batch, used_structured = _normalize_message(response)
+        batch, used_structured = _normalize_message(response, stage=stage)
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
