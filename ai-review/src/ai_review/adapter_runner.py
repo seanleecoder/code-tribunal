@@ -226,38 +226,111 @@ def _head_tail_preview(value: str, *, limit: int = 4000) -> str:
     return compact[:head] + "...[truncated]..." + compact[-tail:]
 
 
-def _extract_json_text(value: str) -> str:
+def _raw_json_end(decoder: json.JSONDecoder, value: str, start: int) -> int | None:
+    try:
+        _decoded, relative_end = decoder.raw_decode(value[start:])
+    except json.JSONDecodeError:
+        return None
+    return start + relative_end
+
+
+def _prose_bracket_end(value: str, start: int) -> int | None:
+    """Return the end of a bracketed prose label such as ``[draft 1]``.
+
+    A failed JSON array must never be treated as a wrapper around a nested
+    object. Only a simple, non-JSON-looking label is allowed to be skipped.
+    """
+    close = value.find("]", start + 1)
+    if close < 0:
+        return None
+    inner = value[start + 1 : close].strip()
+    if not inner or any(char in inner for char in "{}[],"):
+        return None
+    if inner.startswith(('"', "'", "null", "true", "false")):
+        return None
+    if inner[0].isdigit() or inner[0] == "-":
+        return None
+    return close + 1
+
+
+def _extract_json_text(value: str, *, stage: str | None = None) -> str:
+    """Extract one complete JSON root surrounded by optional prose.
+
+    The old extractor tried every opening brace and selected a later object if
+    an earlier JSON root was malformed. That could turn malformed outer JSON
+    into a seemingly valid nested finding batch. Recovery now starts at the
+    first real root, permits only simple prose bracket labels before it, and
+    rejects a second complete root or an unmatched JSON closer after it.
+    """
     stripped = value.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
+        if not lines or lines[-1].strip() != "```":
+            raise SchemaValidationError(
+                f"{stage or 'adapter'} output has an unterminated JSON code fence"
+            )
+        lines = lines[1:-1]
         stripped = "\n".join(lines).strip()
 
     decoder = json.JSONDecoder()
-    candidates: list[tuple[int, str, str]] = []
-    for start, char in enumerate(stripped):
-        if char not in "{[":
-            continue
-        try:
-            _decoded, end = decoder.raw_decode(stripped[start:])
-        except json.JSONDecodeError:
-            continue
-        trailing = stripped[start + end :].lstrip()
-        if trailing.startswith(("]", "}", ",")):
-            continue
-        candidates.append((start, char, stripped[start : start + end]))
-    if candidates:
-        candidates.sort(key=lambda item: item[0])
-        if candidates[0][0] == 0:
-            return candidates[0][2]
-        object_candidates = [candidate for candidate in candidates if candidate[1] == "{"]
-        if object_candidates:
-            return object_candidates[0][2]
-        return candidates[0][2]
-    return stripped
+    start = 0
+    end: int | None = None
+    while True:
+        positions = [
+            position
+            for position in (stripped.find("{", start), stripped.find("[", start))
+            if position >= 0
+        ]
+        if not positions:
+            break
+        root_start = min(positions)
+        end = _raw_json_end(decoder, stripped, root_start)
+        if end is not None:
+            start = root_start
+            break
+        if stripped[root_start] == "[":
+            prose_end = _prose_bracket_end(stripped, root_start)
+            if prose_end is not None:
+                start = prose_end
+                continue
+        raise SchemaValidationError(
+            f"{stage or 'adapter'} output contains an incomplete or malformed outer JSON root"
+        )
+
+    if end is None:
+        return stripped
+
+    trailing = stripped[end:].strip()
+    if trailing.startswith(("]", "}", ",")):
+        raise SchemaValidationError(
+            f"{stage or 'adapter'} output has trailing JSON syntax after the complete root"
+        )
+    trailing_start = 0
+    while True:
+        positions = [
+            position
+            for position in (
+                trailing.find("{", trailing_start),
+                trailing.find("[", trailing_start),
+            )
+            if position >= 0
+        ]
+        if not positions:
+            break
+        position = min(positions)
+        if _raw_json_end(decoder, trailing, position) is not None:
+            raise SchemaValidationError(
+                f"{stage or 'adapter'} output contains more than one complete JSON root"
+            )
+        if trailing[position] == "[":
+            prose_end = _prose_bracket_end(trailing, position)
+            if prose_end is not None:
+                trailing_start = prose_end
+                continue
+        raise SchemaValidationError(
+            f"{stage or 'adapter'} output contains malformed trailing JSON syntax"
+        )
+    return stripped[root_start:end]
 
 
 def _terminal_error_detail(event: dict[str, Any]) -> str:
@@ -415,7 +488,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
         )
     try:
-        raw = json_loads_no_duplicates(_extract_json_text(text))
+        raw = json_loads_no_duplicates(_extract_json_text(text, stage=stage))
     except Exception as exc:
         if stream_error is not None:
             raise AdapterModelError(
@@ -430,7 +503,7 @@ def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any
 
 def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
     try:
-        raw = json_loads_no_duplicates(_extract_json_text(stdout))
+        raw = json_loads_no_duplicates(_extract_json_text(stdout, stage=stage))
     except Exception as exc:
         if "\n" in stdout.strip():
             return _load_stream_json(stdout, stage=stage)
@@ -438,10 +511,12 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
             f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
     raw = _coerce_adapter_root(raw, stage=stage)
-    # Single-object Claude Code result envelope (--output-format json) carrying
-    # a schema-conforming `structured_output`: prefer it over re-parsing the
-    # `result` text. Error envelopes keep flowing into the AdapterModelError
-    # path below, whether the CLI identifies them with is_error or type=error.
+    # Single-object Claude Code result envelopes (--output-format json) and the
+    # OpenCode session API response both carry a schema-conforming structured
+    # payload. Prefer it over re-parsing any result/text part. Error envelopes
+    # keep flowing into the AdapterModelError path below.
+    info = raw.get("info")
+    opencode_structured = info.get("structured") if isinstance(info, dict) else None
     if (
         "findings" not in raw
         and "critiques" not in raw
@@ -450,6 +525,22 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
     ):
         _log_structured_output_usage(stage, used=True)
         return _coerce_adapter_root(raw["structured_output"], stage=stage)
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and not _is_adapter_error_event(raw)
+        and isinstance(opencode_structured, (dict, list))
+    ):
+        _log_structured_output_usage(stage, used=True)
+        return _coerce_adapter_root(opencode_structured, stage=stage)
+    if (
+        "findings" not in raw
+        and "critiques" not in raw
+        and raw.get("type") in {"text", "message.updated", "message.part.updated"}
+    ):
+        # A one-event OpenCode NDJSON response has no newline to trigger the
+        # general stream fallback above, but it is still an event envelope.
+        return _load_stream_json(stdout, stage=stage)
     if (
         raw.get("type") == "result"
         and not _is_adapter_error_event(raw)
@@ -468,10 +559,34 @@ def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, An
         error_detail = _json_preview(_terminal_error_detail(raw))
         raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
 
+    if "findings" not in raw and "critiques" not in raw and isinstance(info, dict):
+        if info.get("error") is not None:
+            raise AdapterModelError(
+                f"OpenCode session returned an error: {_json_preview(str(info['error']))!r}"
+            )
+        # The OpenCode HTTP API returns an assistant message with text parts
+        # when structured output is absent. Feed that text through the same
+        # strict, stage-aware compatibility path as the CLI adapters.
+        parts_text = "\n".join(_extract_text_parts(raw.get("parts"))).strip()
+        if parts_text:
+            try:
+                unwrapped = json_loads_no_duplicates(
+                    _extract_json_text(parts_text, stage=stage)
+                )
+            except Exception as exc:
+                raise SchemaValidationError(
+                    f"OpenCode text response was not reviewer JSON: {exc}; "
+                    f"preview={_json_preview(parts_text)}"
+                ) from exc
+            return _coerce_adapter_root(unwrapped, stage=stage)
+        raise AdapterModelError("OpenCode session returned no structured output or text")
+
     if "findings" not in raw and isinstance(raw.get("result"), str):
         if raw["result"].strip():
             try:
-                unwrapped = json_loads_no_duplicates(_extract_json_text(str(raw["result"])))
+                unwrapped = json_loads_no_duplicates(
+                    _extract_json_text(str(raw["result"]), stage=stage)
+                )
             except Exception as exc:
                 raise SchemaValidationError(
                     "Claude Code result was not reviewer JSON: "

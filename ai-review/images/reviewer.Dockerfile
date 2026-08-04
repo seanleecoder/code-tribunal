@@ -82,9 +82,11 @@ RUN claude --version \
 # image build if a future pin drops or renames native ask mode.
 RUN cursor-agent --help | grep -F -- '--mode <mode>'
 
-# The OpenCode adapter uses a static title to prevent a separate title-inference
-# model call. Keep that policy fail-closed if the pinned CLI surface changes.
-RUN opencode --pure run --help 2>&1 | grep -F -- '--title '
+# The OpenCode adapter uses the loopback server API and a static session title to
+# prevent a separate title-inference model call. Keep the pinned server surface
+# fail-closed if either required listen flag changes.
+RUN opencode --pure serve --help 2>&1 | grep -F -- '--hostname' \
+    && opencode --pure serve --help 2>&1 | grep -F -- '--port'
 
 # Fail the image build if the pinned CLI ever rejects either of the claude
 # adapter's stage flag sets (claude.sh) — the review probe (finding schema,

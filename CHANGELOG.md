@@ -9,6 +9,12 @@ versioning.
 
 ### Changed
 
+- The OpenCode reviewer now uses a pinned loopback `serve` client with a
+  stage-specific structured-output schema, deterministic session title, and
+  strict prose compatibility recovery. Reviewer image pins are refreshed to
+  OpenCode `1.18.12`, Claude Code `2.1.221`, Codex `0.146.0`, and Cursor Agent
+  `2026.07.23-e383d2b` with its artifact SHA-256 recorded.
+
 - The runtime images no longer ship test code. `base.Dockerfile` copies only
   `ai-review/tests/fixtures`, which is all the preflight resolves paths from, and the
   build-time in-image test run is removed. Both CI preflights now bind-mount the

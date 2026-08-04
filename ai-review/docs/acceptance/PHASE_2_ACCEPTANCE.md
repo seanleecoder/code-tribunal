@@ -77,15 +77,23 @@ Responses, but Chat Completions support is deprecated in Codex, so the exact
 OpenRouter/Codex wire mode must be proven by smoke evidence before acceptance.
 
 OpenCode must run in controlled non-interactive mode with mock disabled and
-with the least privilege settings that match the review-only use case:
+with the least privilege settings that match the review-only use case. The
+adapter starts a pinned server on a free loopback port:
 
-- `opencode --pure run`
-- `--model openrouter/google/gemini-3.1-flash-lite`
-- `--agent ai-reviewer`
-- `--format json`
-- `--dir "$AI_REVIEW_OUTPUT_DIR/.tmp/opencode-review-root.<pid>"`, where the
-  temporary review root is populated from `$AI_REVIEW_INPUT_DIR/repo_snapshot`
-  before OpenCode starts.
+- `opencode --pure serve --hostname 127.0.0.1 --port <free-port>`
+- `POST /session` with the fixed title `code-tribunal-ai-review` and the
+  question/plan permission denials
+- `POST /session/<id>/message` with `agent=ai-reviewer`, the configured model,
+  and the stage-specific schema in
+  `format: {"type":"json_schema","schema":...}`
+- `AI_REVIEW_OUTPUT_DIR/.tmp/opencode-review-root.<pid>` as the OpenCode
+  working root, populated from `$AI_REVIEW_INPUT_DIR/repo_snapshot` before the
+  server starts for review and left empty for critique.
+
+The adapter does not use `opencode run --format json`: that flag selects raw
+event output and does not enforce a response schema. OpenCode's
+`info.structured` response is the primary result; a complete, schema-validated
+JSON payload in text is compatibility fallback only.
 - The temporary OpenCode review root must not expose bundle-root files such as
   `manifest.json`, `prior_decisions.json`, `config.review.yaml`, `rules/`, or
   `prompts/`.
@@ -292,11 +300,13 @@ were intentionally skipped by owner request for the superseded path.
   `https://developers.openai.com/codex/environment-variables`
 - OpenRouter quickstart:
   `https://openrouter.ai/docs/quickstart`
-- OpenCode CLI docs:
+- OpenCode server and CLI docs:
   `https://opencode.ai/docs/cli/`
-  - Verification source for `opencode run`, `--dir`, `--format`, global
-    `--pure`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, and the
-    `OPENCODE_DISABLE_*` environment variables used by the adapter.
+  - Verification source for global `--pure`, `serve`, loopback listen flags,
+    `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, and the
+    `OPENCODE_DISABLE_*` environment variables used by the adapter. The
+    structured-output request and response behavior is pinned to the reviewed
+    OpenCode source version in the implementation change.
 - OpenCode config docs:
   `https://opencode.ai/docs/config/`
   - Verification source for merged config precedence, project-root

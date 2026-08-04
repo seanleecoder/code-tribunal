@@ -170,10 +170,17 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
 EOF
 )
 
-# Keep the following title non-empty, static, and data-free: without --title OpenCode
-# infers one with a separate model request. Do not turn it into model/config policy.
+# OpenCode's `run --format json` only selects raw event output; it does not enforce
+# a response schema. The internal client below uses the pinned server API so the
+# stage schema reaches OpenCode's required StructuredOutput tool. It keeps the
+# title static and data-free to avoid the separate title-inference request.
+PYTHON_BIN="${PYTHON:-python3}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
 env -i \
   PATH="${PATH:-/usr/bin:/bin}" \
+  PYTHON="$PYTHON_BIN" \
+  PYTHONPATH="$PYTHONPATH_VALUE" \
   TMPDIR="${TMPDIR:-/tmp}" \
   HOME="$OPENCODE_HOME_DIR" \
   XDG_CONFIG_HOME="$OPENCODE_CONFIG_HOME" \
@@ -188,10 +195,10 @@ env -i \
   OPENCODE_DISABLE_MODELS_FETCH=1 \
   OPENCODE_CONFIG_DIR="$OPENCODE_CONFIG_DIRECTORY" \
   OPENCODE_CONFIG_CONTENT="$OPENCODE_CONFIG_JSON" \
-  opencode --pure run \
-  --title "code-tribunal-ai-review" \
-  --model "openrouter/$AI_REVIEW_MODEL" \
-  --agent ai-reviewer \
-  --format json \
-  --dir "$OPENCODE_REVIEW_ROOT" \
-  < "$AI_REVIEW_RENDERED_PROMPT"
+  AI_REVIEW_INPUT_DIR="$AI_REVIEW_INPUT_DIR" \
+  AI_REVIEW_OUTPUT_DIR="$AI_REVIEW_OUTPUT_DIR" \
+  AI_REVIEW_MODEL="$AI_REVIEW_MODEL" \
+  AI_REVIEW_STAGE="${AI_REVIEW_STAGE:-}" \
+  AI_REVIEW_RENDERED_PROMPT="$AI_REVIEW_RENDERED_PROMPT" \
+  AI_REVIEW_OPENCODE_ROOT="$OPENCODE_REVIEW_ROOT" \
+  "$PYTHON_BIN" -m ai_review.opencode_client

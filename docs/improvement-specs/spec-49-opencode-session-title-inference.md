@@ -1,6 +1,8 @@
 # SPEC-49 — Suppress OpenCode session-title inference
 
-- **Status:** Proposed (post-1.0; runtime source only; not a current published-image claim).
+- **Status:** Superseded by the durable structured-output OpenCode client (source
+  implemented; immutable image publication and live-provider acceptance remain
+  separate rollout work).
 - **Classification:** S / operational-policy correctness.
 - **Depends on:** the existing OpenCode adapter contract in
   [SPEC-19](../history/specs/spec-19-opencode-reviewer-optimization.md).
@@ -24,16 +26,11 @@ selection.
 
 ## Non-negotiable decision
 
-Every executable `opencode --pure run` invocation in the Code Tribunal OpenCode
-adapter must include exactly:
-
-~~~text
---title "code-tribunal-ai-review"
-~~~
-
-The title is fixed, non-empty, and contains no prompt, repository, pull/merge-request,
-or user data. It is internal session metadata only. It must not be derived from the
-review prompt, input bundle, filesystem, environment, or configured model.
+The Code Tribunal OpenCode adapter must create each server session with exactly
+the fixed title `code-tribunal-ai-review`. The title is fixed, non-empty, and
+contains no prompt, repository, pull/merge-request, or user data. It is internal
+session metadata only. It must not be derived from the review prompt, input
+bundle, filesystem, environment, or configured model.
 
 No `small_model`, title-model variable, reviewer-config key, model override, or
 provider change is permitted for this purpose. The existing OpenCode model setting
@@ -44,22 +41,23 @@ model-selection interface.
 
 **In scope**
 
-- Add the static `--title "code-tribunal-ai-review"` argument and an explanatory
-  regression-prevention comment to `ai-review/adapters/opencode.sh`. The shared
-  invocation serves both review and critique.
+- Start `opencode --pure serve` on loopback, create the titled session through
+  the server API, and use the same client for review and critique.
+- Send the stage-specific `json_schema` format so OpenCode's structured-output
+  tool is the primary transport; retain strict complete-JSON text recovery as
+  compatibility handling only.
 - Document the deterministic, data-free internal title behavior in
   `docs/configuration.md` without adding a control.
 - Add an image-build guard in `ai-review/images/reviewer.Dockerfile` that requires
-  `opencode --pure run --help` to expose `--title`; a future pinned CLI that drops
-  or renames the flag must fail the build.
-- Add fake-CLI adapter coverage for both stages and a source-contract test for the
-  Dockerfile guard.
+  the pinned server CLI to expose both loopback listen flags.
+- Add API-contract, fixture, malformed-output, and fake-adapter coverage.
 
 **Explicitly out of scope**
 
 - The unrelated consensus failure.
-- Model-default changes, OpenCode package upgrades, model/provider overrides, or
-  a `small_model`/title-model setting.
+- Model-default changes, model/provider overrides, or a `small_model`/title-model
+  setting. The OpenCode package is upgraded only to the exact reviewed pin used
+  by the durable client.
 - Image publication, template repinning, immutable digest updates, release-input
   changes, or release-history changes.
 - Any claim that a live provider, OpenRouter dashboard, or currently pinned
@@ -67,14 +65,14 @@ model-selection interface.
 
 ## Acceptance criteria
 
-- Fake-CLI tests prove that both review and critique receive exactly one static
-  `--title` argument with value `code-tribunal-ai-review`.
+- API-contract tests prove that both review and critique create exactly one
+  session with title `code-tribunal-ai-review` and send the matching stage schema.
 - The configured `--model`, `--agent`, permissions, tool restrictions, and isolated
   environment are unchanged.
 - A model override still changes only the configured primary model. It cannot alter
   the static title or introduce another model setting.
 - The reviewer-image build fails if the pinned OpenCode CLI no longer supports
-  `--title`.
+  the loopback `serve --hostname` and `serve --port` flags.
 - Targeted adapter tests, documentation checks, full quality, and the pull-request
   image build/preflight pass without credentials or a real OpenRouter request.
 - Real OpenRouter verification is deferred. Source-only work does not modify the

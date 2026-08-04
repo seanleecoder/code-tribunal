@@ -28,6 +28,8 @@ from ai_review.schema import (
     write_canonical_json,
 )
 
+_OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
+
 _CONFIG_TAIL = [
     "panel:",
     "  min_successful_reviewers_for_blocking: 1",
@@ -521,6 +523,33 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(loaded, {"findings": []})
 
+    def test_recovers_observed_opencode_prefix_around_one_json_root(self) -> None:
+        stdout = (_OPENCODE_FIXTURES / "review-prefix.ndjson").read_text(encoding="utf-8")
+
+        loaded = _load_adapter_json(stdout, stage="review")
+
+        self.assertEqual(loaded, {"findings": []})
+
+    def test_does_not_salvage_nested_json_from_malformed_outer_root(self) -> None:
+        stdout = (_OPENCODE_FIXTURES / "review-malformed-outer.ndjson").read_text(
+            encoding="utf-8"
+        )
+
+        with self.assertRaises(SchemaValidationError):
+            _load_adapter_json(stdout, stage="review")
+
+    def test_opencode_info_structured_wins_over_conflicting_text(self) -> None:
+        stdout = json.dumps(
+            {
+                "info": {"role": "assistant", "structured": {"findings": []}},
+                "parts": [{"type": "text", "text": "not reviewer JSON"}],
+            }
+        )
+
+        loaded = _load_adapter_json(stdout, stage="review")
+
+        self.assertEqual(loaded, {"findings": []})
+
 
 class EffortEnvTests(unittest.TestCase):
     def _run_effort_adapter(self, *, config_effort: str | None, env_effort: str | None) -> str:
@@ -890,6 +919,27 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterModelError")
             self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
+
+    def test_malformed_opencode_prose_has_schema_error_and_no_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
+            fixture = _OPENCODE_FIXTURES / "review-malformed-outer.ndjson"
+            _write_adapter(
+                paths["adapter_dir"],
+                "opencode",
+                f'#!/bin/sh\ncat "{fixture}"\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
+            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            self.assertEqual(batch["findings"], [])
+            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["error_class"], "SchemaValidationError")
 
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
