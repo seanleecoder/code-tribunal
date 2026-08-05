@@ -24,13 +24,13 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 # pinned one, which is exactly the substitution the fixed trusted PATH exists to
 # prevent.
 #
-# The optional second argument is where the image installs that CLI. If the install
-# root is present but /usr/local/bin/$1 is not, the image shipped a pinned copy and
-# lost it: that is a broken image, not a fallback case, and running an ambient binary
-# instead would be the same substitution by another route — so it fails closed. Where
-# no pinned copy was ever installed (a checkout, a dev machine, the base image, whose
-# test suite supplies its own fake CLIs) there is nothing to prefer, and ambient
-# resolution is the only thing left.
+# The optional second argument is evidence that this environment is expected to ship a
+# pinned copy of that CLI. If that evidence is present but /usr/local/bin/$1 is not, the
+# image shipped a pinned copy and lost it: that is a broken image, not a fallback case,
+# and running an ambient binary instead would be the same substitution by another route
+# — so it fails closed. Where nothing was ever pinned (a checkout, a dev machine, the
+# base image, whose test suite supplies its own fake CLIs) there is nothing to prefer,
+# and ambient resolution is the only thing left.
 #
 # Resolution happens before the availability gate below and by absolute path, so a
 # PATH that omits /usr/local/bin can neither hide the pinned binary nor cause the
@@ -41,7 +41,7 @@ resolve_trusted() {
     return 0
   fi
   if [ -n "${2:-}" ] && [ -e "$2" ]; then
-    echo "pinned $1 is installed at $2 but is not on /usr/local/bin; refusing to run an ambient one" >&2
+    echo "$2 exists, so a pinned $1 is expected on /usr/local/bin but is missing; refusing to run an ambient one" >&2
     return 1
   fi
   command -v "$1" 2>/dev/null
@@ -223,16 +223,26 @@ EOF
 # a response schema. The internal client below uses the pinned server API so the
 # stage schema reaches OpenCode's required StructuredOutput tool. It keeps the
 # title static and data-free to avoid the separate title-inference request.
-# The interpreter is resolved like OPENCODE_BIN, and for both reasons: the fixed
-# trusted PATH below is deliberate, but a bare `python3` (a venv, a Homebrew
-# install, anything outside /usr/local/bin:/usr/bin:/bin) would not be reachable
-# from it — and an ambient-resolved python3 could itself be shadowed. An explicitly
-# set $PYTHON is honored verbatim, because that is a caller's deliberate choice, not
-# a lookup.
+# The interpreter is resolved exactly like OPENCODE_BIN, under the same rule: it is
+# forwarded into the same fixed environment and then executed, so leaving it fail-open
+# while opencode fails closed would just move the substitution to the other binary. The
+# fixed trusted PATH below is deliberate, but a bare `python3` (a venv, a Homebrew
+# install, anything outside /usr/local/bin:/usr/bin:/bin) would not be reachable from it.
+#
+# Its pinned-copy evidence is the packaged runtime install rather than a python directory
+# on purpose: /usr/local/lib/python3.12 embeds the minor version, so the next base-image
+# digest bump would silently disable the check. The base image is an official python
+# image installed under /usr/local, so a packaged runtime without /usr/local/bin/python3
+# is broken by construction. Keeping the interpreter there is therefore a base-image
+# constraint, recorded in images/SUPPLY_CHAIN.md with the digest-refresh step.
+#
+# An explicitly set $PYTHON is honored verbatim and is deliberately not routed through
+# this rule: it is a caller's deliberate choice rather than a lookup, and the unit suite
+# supplies its own interpreter that way.
 if [ -n "${PYTHON:-}" ]; then
   PYTHON_BIN="$PYTHON"
 else
-  PYTHON_BIN="$(resolve_trusted python3 || true)"
+  PYTHON_BIN="$(resolve_trusted python3 /opt/ai-review/src/ai_review || true)"
   if [ -z "$PYTHON_BIN" ]; then
     echo "python3 was not found for the $AI_REVIEW_REVIEWER reviewer client" >&2
     exit 127

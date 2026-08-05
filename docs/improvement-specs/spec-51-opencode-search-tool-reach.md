@@ -122,12 +122,17 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   trusted PATH exists to prevent. The preflight proves this against a real decoy.
   Resolution must also come *before* the CLI-availability gate and go by absolute
   path, so a PATH that omits `/usr/local/bin` can neither hide the pinned binary nor
-  make the gate reject it. When a pinned copy was installed but is not on
-  `/usr/local/bin` — detected through the CLI's install root,
-  `/usr/local/lib/node_modules/opencode-ai` — the image is broken and resolution must
-  fail rather than fall back to an ambient binary. Where nothing was ever pinned there
-  is nothing to prefer, so ambient resolution stays available for checkouts, dev
-  machines, and the base image, whose in-image suite supplies its own fake CLIs.
+  make the gate reject it. When a pinned copy is expected but is not on `/usr/local/bin`,
+  the image is broken and resolution must fail rather than fall back to an ambient
+  binary. The evidence that a pinned copy is expected is
+  `/usr/local/lib/node_modules/opencode-ai` for `opencode` and the packaged runtime
+  install for the interpreter — the interpreter is forwarded into the same fixed
+  environment and then executed, so exempting it would move the substitution to the
+  other binary rather than prevent it. A versioned python directory is deliberately not
+  used as that evidence: it would embed the minor version, so the next base-image digest
+  bump would silently disable the check. Where nothing was ever pinned there is nothing
+  to prefer, so ambient resolution stays available for checkouts, dev machines, and the
+  base image, whose in-image suite supplies its own fake CLIs.
 - A review-time ripgrep fetch must be recognized as the server logs it, not by
   scanning a retained buffer afterwards. The buffer is deliberately bounded for
   diagnostics, so a fetch early in a real review is evicted long before the check

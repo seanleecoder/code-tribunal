@@ -220,7 +220,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             '/usr/local/lib/node_modules/opencode-ai || true)"',
             text,
         )
-        self.assertIn("resolve_trusted python3", text)
+        # The interpreter is forwarded and executed the same way, so it carries the same
+        # rule: leaving it without pinned-copy evidence would move the substitution to
+        # the other binary rather than prevent it.
+        self.assertIn(
+            'PYTHON_BIN="$(resolve_trusted python3 /opt/ai-review/src/ai_review || true)"',
+            text,
+        )
         self.assertIn('OPENCODE_BIN="$OPENCODE_BIN" \\', text)
         # The trusted candidate must be tested before any ambient lookup.
         helper = re.search(r"(?s)resolve_trusted\(\) \{.*?\n\}", text)
@@ -293,35 +299,55 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         """An image that shipped a pinned CLI and lost it is broken, not a fallback case.
 
         Running whatever is ambient there is the substitution trusted-first resolution
-        exists to prevent, by another route. The signal is the CLI's install root
-        (/usr/local/lib/node_modules/opencode-ai for opencode): present means a pinned
-        copy was installed, so /usr/local/bin is the only acceptable answer. Absent
-        means nothing was ever pinned — a checkout, a dev machine, or the base image,
-        whose test suite supplies its own fake CLIs.
+        exists to prevent, by another route. The signal is evidence that a pinned copy is
+        expected: `/usr/local/lib/node_modules/opencode-ai` for opencode, and the packaged
+        runtime install for the interpreter. Present means /usr/local/bin is the only
+        acceptable answer. Absent means nothing was ever pinned — a checkout, a dev
+        machine, or the base image, whose test suite supplies its own fake CLIs.
         """
+        for name in ("opencode", "python3"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                trusted = root / "trusted"
+                decoy = root / "decoy"
+                install_root = root / "pinned-evidence"
+                for directory in (trusted, decoy, install_root):
+                    directory.mkdir(parents=True)
+                target = decoy / name
+                target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                target.chmod(0o755)
+                path = f"{decoy}:/usr/bin:/bin"
+
+                refused = self._resolve_with_adapter_helper(
+                    name, trusted=trusted, path=path, install_root=install_root
+                )
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout.strip(), "")
+                # The trusted prefix is sandboxed in this harness, so assert on the part
+                # of the message that does not move.
+                self.assertIn("refusing to run an ambient one", refused.stderr)
+                self.assertIn(str(install_root), refused.stderr)
+
+                # Without the evidence the same missing binary falls back, which is what
+                # keeps checkouts and the base image's in-image suite working.
+                fallback = self._resolve_with_adapter_helper(
+                    name, trusted=trusted, path=path
+                )
+                self.assertEqual(fallback.returncode, 0, fallback.stderr)
+                self.assertEqual(fallback.stdout.strip(), str(target))
+
+    def test_adapter_prefers_a_present_pinned_cli_even_with_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trusted = root / "trusted"
             decoy = root / "decoy"
-            install_root = root / "node_modules" / "opencode-ai"
+            install_root = root / "pinned-evidence"
             for directory in (trusted, decoy, install_root):
                 directory.mkdir(parents=True)
             target = decoy / "opencode"
             target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             target.chmod(0o755)
             path = f"{decoy}:/usr/bin:/bin"
-
-            refused = self._resolve_with_adapter_helper(
-                "opencode", trusted=trusted, path=path, install_root=install_root
-            )
-            self.assertNotEqual(refused.returncode, 0)
-            self.assertEqual(refused.stdout.strip(), "")
-            # The trusted prefix is sandboxed in this harness, so assert on the part
-            # of the message that does not move.
-            self.assertIn("refusing to run an ambient one", refused.stderr)
-            self.assertIn(str(install_root), refused.stderr)
-
-            # A present pinned copy still wins, install root or not.
             pinned = trusted / "opencode"
             pinned.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             pinned.chmod(0o755)
@@ -330,6 +356,128 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             )
             self.assertEqual(resolved.returncode, 0, resolved.stderr)
             self.assertEqual(resolved.stdout.strip(), str(pinned))
+
+    def _run_adapter_with_sandboxed_prefixes(
+        self, root: Path, *, trusted: Path, evidence: Path | None
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the shipped adapter end to end with its absolute prefixes redirected.
+
+        Exactly two prefixes are rewritten — /usr/local/bin and the packaged runtime
+        install that is the interpreter's pinned-copy evidence — so everything else,
+        including the resolution order and the `env -i` invocation, is the shipped
+        script. `PYTHON` is deliberately unset: the point is what the adapter resolves
+        on its own.
+        """
+        text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
+        script = text.replace("/usr/local/bin", str(trusted))
+        script = script.replace(
+            "/opt/ai-review/src/ai_review",
+            str(evidence) if evidence is not None else str(root / "absent-evidence"),
+        )
+        patched = root / "opencode-sandboxed.sh"
+        patched.write_text(script, encoding="utf-8")
+
+        inputs = root / "inputs"
+        (inputs / "repo_snapshot").mkdir(parents=True, exist_ok=True)
+        prompt = inputs / "prompt.md"
+        prompt.write_text("probe\n", encoding="utf-8")
+        return subprocess.run(
+            ["/bin/sh", str(patched)],
+            env={
+                "PATH": f"{root / 'decoy'}:/usr/bin:/bin",
+                "HOME": str(root),
+                "AI_REVIEW_REVIEWER": "opencode",
+                "AI_REVIEW_STAGE": "review",
+                "AI_REVIEW_MODEL": "preflight/probe-model",
+                "AI_REVIEW_INPUT_DIR": str(inputs),
+                "AI_REVIEW_OUTPUT_DIR": str(root / "out"),
+                "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+                "AI_REVIEW_REQUIRE_REAL_OPENROUTER": "1",
+                "OPENROUTER_API_KEY": "sk-or-v1-test",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_adapter_never_executes_an_ambient_interpreter_when_one_is_pinned(self) -> None:
+        """End to end: the forwarded interpreter is executed, so it must be the pinned one.
+
+        A decoy `python3` sits first on the PATH and records the fact if it ever runs.
+        With pinned-copy evidence present and no trusted interpreter the adapter must
+        refuse before reaching it; with a trusted interpreter present that one must be
+        what runs.
+        """
+        for label, pin_interpreter in (("refuses the decoy", False), ("runs the pinned", True)):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                trusted = root / "trusted"
+                decoy = root / "decoy"
+                evidence = root / "packaged-runtime"
+                for directory in (trusted, decoy, evidence):
+                    directory.mkdir(parents=True)
+                # opencode must resolve so execution reaches interpreter resolution.
+                for directory in (trusted, decoy):
+                    stub = directory / "opencode"
+                    stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    stub.chmod(0o755)
+                decoy_ran = root / "decoy-python-ran"
+                decoy_python = decoy / "python3"
+                decoy_python.write_text(
+                    f'#!/bin/sh\n: > "{decoy_ran}"\nexit 0\n', encoding="utf-8"
+                )
+                decoy_python.chmod(0o755)
+                pinned_ran = root / "pinned-python-ran"
+                if pin_interpreter:
+                    pinned_python = trusted / "python3"
+                    pinned_python.write_text(
+                        f'#!/bin/sh\n: > "{pinned_ran}"\nexit 0\n', encoding="utf-8"
+                    )
+                    pinned_python.chmod(0o755)
+
+                result = self._run_adapter_with_sandboxed_prefixes(
+                    root, trusted=trusted, evidence=evidence
+                )
+
+                # Either way, the decoy must never have been executed.
+                self.assertFalse(
+                    decoy_ran.exists(),
+                    f"the ambient interpreter ran: {result.stderr}",
+                )
+                if pin_interpreter:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(pinned_ran.exists(), result.stderr)
+                    self.assertNotIn("refusing to run an ambient one", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 127)
+                    self.assertIn("refusing to run an ambient one", result.stderr)
+                    self.assertIn(str(evidence), result.stderr)
+
+    def test_adapter_falls_back_to_an_ambient_interpreter_without_pinned_evidence(self) -> None:
+        """A checkout has nothing pinned to prefer, so the fallback must still work.
+
+        The base image's in-image suite depends on the same property for its fake CLIs.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted = root / "trusted"
+            decoy = root / "decoy"
+            for directory in (trusted, decoy):
+                directory.mkdir(parents=True)
+            stub = decoy / "opencode"
+            stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            stub.chmod(0o755)
+            decoy_ran = root / "decoy-python-ran"
+            decoy_python = decoy / "python3"
+            decoy_python.write_text(f'#!/bin/sh\n: > "{decoy_ran}"\nexit 0\n', encoding="utf-8")
+            decoy_python.chmod(0o755)
+
+            result = self._run_adapter_with_sandboxed_prefixes(
+                root, trusted=trusted, evidence=None
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(decoy_ran.exists(), result.stderr)
 
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
         adapters = {

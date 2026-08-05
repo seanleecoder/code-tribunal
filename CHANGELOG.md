@@ -56,11 +56,13 @@ versioning.
   for the pinned one — the substitution the fixed trusted `PATH` exists to prevent.
   Resolving by absolute path ahead of the gate also means a `PATH` without
   `/usr/local/bin` can no longer make the adapter reject a pinned binary that is
-  present. When a pinned copy was installed but is missing from `/usr/local/bin` —
-  detected through its install root, `/usr/local/lib/node_modules/opencode-ai` — the
-  image is broken and the adapter now fails closed instead of running whatever is
-  ambient. Where nothing was pinned there is nothing to prefer, so ambient resolution
-  remains available for checkouts, dev machines, and the base image.
+  present. When a pinned copy is expected but is missing from `/usr/local/bin` — evidenced
+  by `/usr/local/lib/node_modules/opencode-ai` for `opencode` and by the packaged runtime
+  install for the interpreter — the image is broken and the adapter now fails closed
+  instead of running whatever is ambient. Both binaries carry that rule because both are
+  forwarded into the fixed environment and executed there, so exempting one would move the
+  substitution rather than prevent it. Where nothing was pinned there is nothing to prefer,
+  so ambient resolution remains available for checkouts, dev machines, and the base image.
 
 ### Fixed
 
