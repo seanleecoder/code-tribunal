@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -24,6 +25,11 @@ from .redact import redact_text
 from .schema import load_json_file, schema_dir
 
 _HOST = "127.0.0.1"
+# Matches either word order, because the wording is OpenCode's, not ours: any log
+# line that mentions both downloading and ripgrep means the pinned binary lost.
+_RIPGREP_FETCH_PATTERN = re.compile(
+    r"(?:download\w*[^\n]*ripgrep|ripgrep[^\n]*download\w*)", re.IGNORECASE
+)
 _SESSION_TITLE = "code-tribunal-ai-review"
 _SERVER_START_TIMEOUT_SECONDS = 15.0
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
@@ -107,12 +113,46 @@ def _request_json(
     return parsed
 
 
+def _assert_no_ripgrep_fetch(logs: deque[str]) -> None:
+    """Fail the review if OpenCode fetched its own ripgrep.
+
+    OpenCode's grep/glob tools resolve which("rg") first and otherwise download a
+    ripgrep release, verifying nothing but a non-zero byte length. The image ships a
+    pinned, checksum-verified rg on the adapter's fixed PATH so that never happens;
+    if it happens anyway, an unverified binary executed inside the reviewer and its
+    findings must not be posted. That makes this a hard failure rather than a log
+    line someone might notice.
+    """
+    for line in logs:
+        if _RIPGREP_FETCH_PATTERN.search(line):
+            raise OpenCodeClientError(
+                "opencode downloaded ripgrep at review time instead of using the "
+                f"pinned /usr/local/bin/rg: {line.strip()}"
+            )
+
+
+def _resolve_opencode_executable() -> str:
+    """Prefer the adapter's OPENCODE_BIN, but only if it is actually executable.
+
+    The adapter resolves the pinned binary on the ambient PATH and forwards it,
+    because the fixed trusted PATH it hands opencode governs which("rg") and must
+    not carry an injected binary directory. An unusable value (empty, relative,
+    stale) must not reach Popen as a raw FileNotFoundError; fall back to PATH
+    resolution so the failure is this module's own diagnosis.
+    """
+    forwarded = os.environ.get("OPENCODE_BIN", "")
+    if forwarded and os.path.isabs(forwarded) and os.access(forwarded, os.X_OK):
+        return forwarded
+    executable = shutil.which("opencode")
+    if executable is None:
+        raise OpenCodeClientError("pinned opencode executable was not found")
+    return executable
+
+
 def _start_server(
     root: Path,
 ) -> tuple[subprocess.Popen[str], str, deque[str], threading.Thread]:
-    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
-    if executable is None:
-        raise OpenCodeClientError("pinned opencode executable was not found")
+    executable = _resolve_opencode_executable()
     port = _free_loopback_port()
     process = subprocess.Popen(
         [executable, "--pure", "serve", "--hostname", _HOST, "--port", str(port)],
@@ -280,8 +320,9 @@ def run() -> int:
 
     process: subprocess.Popen[str] | None = None
     drain_thread: threading.Thread | None = None
+    logs: deque[str] = deque()
     try:
-        process, base_url, _logs, drain_thread = _start_server(root)
+        process, base_url, logs, drain_thread = _start_server(root)
         session = _request_json(
             base_url,
             "POST",
@@ -311,6 +352,10 @@ def run() -> int:
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
+    # After the server is stopped and its log drained, so a fetch logged late in the
+    # session is still caught. Deliberately outside the try/finally: this must raise
+    # instead of letting `batch` be printed.
+    _assert_no_ripgrep_fetch(logs)
 
     # Mirror adapter_runner._log_structured_output_usage's two wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the

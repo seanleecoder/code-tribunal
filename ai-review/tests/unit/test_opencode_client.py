@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import deque
 from pathlib import Path
 from unittest import mock
 
@@ -345,6 +346,65 @@ class OpenCodeClientTests(unittest.TestCase):
             self.assertRaisesRegex(opencode_client.OpenCodeClientError, "was not found"),
         ):
             opencode_client._start_server(Path(tmp))
+
+    def test_forwarded_opencode_bin_is_used_when_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "opencode"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            with mock.patch.dict(os.environ, {"OPENCODE_BIN": str(binary)}):
+                self.assertEqual(
+                    opencode_client._resolve_opencode_executable(), str(binary)
+                )
+
+    def test_unusable_opencode_bin_falls_back_to_path_resolution(self) -> None:
+        """A stale or relative value must not reach Popen as a FileNotFoundError."""
+        for value in ("", "opencode", "/nonexistent/opencode"):
+            with self.subTest(value=value):
+                with (
+                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
+                    mock.patch.object(
+                        opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
+                    ),
+                ):
+                    self.assertEqual(
+                        opencode_client._resolve_opencode_executable(),
+                        "/usr/local/bin/opencode",
+                    )
+                with (
+                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
+                    mock.patch.object(opencode_client.shutil, "which", return_value=None),
+                    self.assertRaisesRegex(
+                        opencode_client.OpenCodeClientError, "was not found"
+                    ),
+                ):
+                    opencode_client._resolve_opencode_executable()
+
+    def test_review_time_ripgrep_fetch_is_a_client_error(self) -> None:
+        """An unverified binary ran inside the reviewer; its findings must not post."""
+        for line in (
+            "INFO  downloading ripgrep 15.1.0",
+            "ripgrep not found, download started",
+            "DOWNLOADING RIPGREP",
+        ):
+            with (
+                self.subTest(line=line),
+                self.assertRaisesRegex(
+                    opencode_client.OpenCodeClientError, "downloaded ripgrep at review time"
+                ),
+            ):
+                opencode_client._assert_no_ripgrep_fetch(deque([line]))
+
+    def test_ordinary_server_logs_do_not_trip_the_ripgrep_guard(self) -> None:
+        opencode_client._assert_no_ripgrep_fetch(
+            deque(
+                [
+                    "INFO  server listening on 127.0.0.1:43126",
+                    "INFO  grep completed in 12ms",
+                    "INFO  downloading model list",
+                ]
+            )
+        )
 
     def test_unsupported_stage_is_a_client_error(self) -> None:
         with self.assertRaisesRegex(

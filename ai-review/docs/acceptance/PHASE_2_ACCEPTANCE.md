@@ -149,25 +149,69 @@ is therefore the reviewer's actual reach, not merely its working directory.
   `OPENCODE_DISABLE_MODELS_FETCH`.
 
 The provider-free half of the above is enforced by the image preflight
-(`scripts/smoke_opencode_search_tools.py`, run by the publish workflow's
-`opencode-search-smoke` job): the pinned `rg` wins on the adapter's fixed trusted
-PATH (with a decoy negative control), matches `ripgrep.pin`'s SHA-256 and version,
-and the pinned opencode server accepts the client's session-create permission
-rules including the `external_directory` deny.
+(`scripts/smoke_opencode_search_tools.py`). It is a step in the publish workflow's
+`build-preflight` job with no event condition, so it gates merge on pull requests and
+publication on main — deliberately not a separate job, because a separate job could
+only consume the image artifact, which pull requests do not upload, and would
+therefore skip exactly the runs where a `ripgrep.pin` or adapter change is under
+review. It asserts:
+
+- the `rg` that resolves on the adapter's fixed trusted PATH is
+  `/usr/local/bin/rg`, hashes to `ripgrep.pin`'s `binary_sha256`, and reports the
+  pinned version — with a decoy negative control proving the ambient PATH would
+  have found something else;
+- the adapter's own `resolve_trusted` picks `/usr/local/bin/opencode` even with a
+  decoy earlier on the ambient PATH. `OPENCODE_BIN` is resolved before `env -i` and
+  handed to the client, so an ambient-first lookup would let a preceding `opencode`
+  substitute itself for the pinned one;
+- the adapter's **own generated config**, captured from a real adapter run rather
+  than restated, resolves `external_directory` to `deny` for an external absolute
+  path while `read`, `glob`, and `grep` stay `allow`. Resolution is read from
+  `opencode --pure debug agent ai-reviewer`, i.e. OpenCode's own resolver, because
+  a session-create that returns an id proves only that the server tolerated the
+  rule's shape;
+- the pinned opencode server accepts **and retains** the client's session-create
+  rules: the session is read back and must still carry the `external_directory` deny.
+
+The probe runs with `--network none`, so it also fails if a regression restores the
+review-time ripgrep download. At review time that download is caught independently:
+`ai_review.opencode_client` scans the drained server log and fails the review rather
+than posting findings produced with an unverified binary.
+
+What the preflight deliberately does not claim is a tool-layer allow/deny decision,
+because the pinned server exposes no way to observe one without a provider:
+`/experimental/tool*` are read-only listings, the only tool-ish `POST` is
+`/session/{id}/shell` (bash, not `read`/`grep`), and
+`POST /api/session/{id}/permission` is not the tool layer's oracle — with the
+adapter's real config loaded it answers `deny` for everything, including in-root
+`read`/`glob`/`grep` that OpenCode's own resolver allows, because it resolves against
+the top-level `"*": "deny"` instead of the agent's allows. Forcing a real `grep` call
+requires a model. A probe-only stub provider on loopback could close that gap and is
+recorded as possible future work in SPEC-51; the live canary below covers it today.
 
 ### Rollout gate (post-merge, from trusted main)
 
-The remaining behavior needs a live provider and is deferred to rollout:
+The remaining behavior needs a live provider and a publication, and is deferred to
+rollout. Until step 1 runs, the null image digests in `release/release-inputs.json`
+and the older image pins in the consumer templates are the **expected**
+pre-publication state, not oversights: `scripts/check_release_inputs.py` validates the
+artifact as a draft, and the templates must not name a digest that does not exist yet.
+Run these in order:
 
-- **Canary:** a real review must show a `grep` tool call with `status != "error"`,
-  and no `downloading ripgrep` line in the adapter log (SPEC-51 acceptance).
-- **Publication:** build and publish the immutable base and reviewer images with
-  provenance attestation, then repin consumers (`.github/workflows/ai-review.yml`,
-  `ai-review/ci/review.github-actions.yml`, and
-  `ai-review/ci/review.gitlab-ci.yml` incl. `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the
-  new digests.
-- **Release inputs:** finalize `release/release-inputs.json` out of its draft
-  state so consumers reference the published digests.
+1. **Publication:** build and publish the immutable base and reviewer images with
+   provenance attestation from trusted `main`.
+2. **Repin consumers:** `.github/workflows/ai-review.yml`,
+   `ai-review/ci/review.github-actions.yml`, and `ai-review/ci/review.gitlab-ci.yml`
+   incl. `AI_REVIEW_TRUSTED_IMAGE_SHA`, to the published digests and source commit.
+3. **Release inputs:** finalize `release/release-inputs.json` out of its draft state
+   so consumers reference the published digests.
+4. **Canary:** a real review must show a `grep` tool call with `status != "error"`
+   **and a non-empty result**, plus no ripgrep-download line in the adapter log
+   (SPEC-51 acceptance). The non-empty requirement matters because a review root
+   whose path differs from its realpath (a symlinked `TMPDIR`, `/var` →
+   `/private/var`) can make every in-root path look external, so the reviewer is
+   denied wholesale and reads nothing — a silently blinded reviewer that an
+   error-free-call check alone would accept.
 
 Reviewer jobs that carry provider secrets must not trust MR-controlled adapter
 code, reviewer config, or wrapper edits. Those inputs should come from the

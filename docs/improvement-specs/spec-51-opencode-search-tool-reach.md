@@ -61,10 +61,18 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   OpenCode's resolution stops at `which("rg")` and no review-time download of an
   unverified executable can occur.
 - `ripgrep.pin` must record an exact version, the upstream release URL containing
-  that version, and a lowercase SHA-256 digest that is not the all-zero
-  placeholder — the same contract `cursor-agent.pin` already carries.
+  that version, and lowercase SHA-256 digests that are not the all-zero
+  placeholder — the contract `cursor-agent.pin` already carries, plus a second
+  digest for the extracted binary, because what must be trustworthy at review time
+  is the file that resolves on `PATH`, not the archive that was downloaded during
+  the build.
 - The pinned ripgrep version must equal the version the pinned `opencode-ai` would
   otherwise fetch, so the reviewer runs the ripgrep OpenCode was tested against.
+  The pin must name that `opencode-ai` version, and the pin check must enforce the
+  equality: a bump of either alone is a failure, not a silent mismatch.
+- A review-time ripgrep download must fail the review. The pinned binary exists so
+  that fetch never happens; if it happens, an unverified executable ran inside the
+  reviewer and its findings must not be posted.
 
 ## Scope
 
@@ -79,6 +87,8 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   is not sufficient.
 - `ripgrep.pin` validation in `scripts/check_supply_chain_pins.py`, and a
   `reviewer.Dockerfile` assertion that the pin is installed onto `PATH`.
+- A publication-gating image preflight that reads the effective permissions out of
+  OpenCode's own resolver, and a review-time failure on a ripgrep download.
 - Documentation of the reviewer's bounded filesystem reach.
 
 **Explicitly out of scope**
@@ -95,12 +105,54 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   blocks of the generated config and in the session-create request body.
 - `opencode --pure debug agent ai-reviewer`, run against the adapter's generated
   config, resolves `external_directory` for an external absolute path to `deny`
-  while `read`, `glob`, and `grep` stay enabled.
+  while `read`, `glob`, and `grep` stay enabled. This is asserted mechanically by
+  the image preflight against a config captured from a real adapter run, not
+  restated in the probe: session-create returning an id proves only that the server
+  tolerated the rule's shape, since a server that ignored an unknown permission key
+  would answer identically.
+- The preflight gates merge as well as publication — it is a step in the image build
+  job with no event condition, because a separate job could only consume the image
+  artifact, which pull requests do not upload, and would skip exactly the runs where
+  a pin or adapter change is under review. It runs with egress denied so a restored
+  review-time download cannot pass it.
+- The adapter must resolve the pinned CLIs from `/usr/local/bin` before consulting the
+  ambient PATH. `OPENCODE_BIN` (and the interpreter) are resolved before `env -i` and
+  forwarded into it, so an ambient-first lookup would let a binary earlier on the
+  runner's PATH substitute itself for the pinned one — the substitution the fixed
+  trusted PATH exists to prevent. The preflight proves this against a real decoy.
 - `scripts/check_supply_chain_pins.py` fails on a missing, malformed, off-host, or
-  placeholder `ripgrep.pin`, and on a `reviewer.Dockerfile` that does not install
-  it onto `PATH`.
-- The reviewer-image build fails if the pinned artifact's checksum does not match,
-  if `rg` does not resolve to `/usr/local/bin/rg`, or if its version differs from
-  the pin.
-- Live acceptance is deferred to rollout: a canary must show a `grep` tool call
-  with `status != "error"`, and no `downloading ripgrep` line in the adapter log.
+  placeholder `ripgrep.pin`, on a `binary_sha256` copied from the tarball digest, on
+  an `opencode_version` that disagrees with `package.json`, and on a
+  `reviewer.Dockerfile` that does not install the pin onto `PATH`, download the
+  pinned URL, or assert both digests.
+- The reviewer-image build fails if either pinned digest does not match, if `rg`
+  does not resolve to `/usr/local/bin/rg`, or if its version differs from the pin.
+- `ai_review.opencode_client` fails the review if the server log shows a ripgrep
+  download.
+- The session-create rules are asserted to be **retained**, not merely accepted: the
+  probe reads the session back and requires the `external_directory` deny to still be
+  present, so a server that dropped the unrecognized key fails.
+- Live acceptance is deferred to rollout: a canary must show a `grep` tool call with
+  `status != "error"` and a non-empty result, and no ripgrep-download line in the
+  adapter log. The non-empty requirement is load-bearing: if the review root's path
+  differs from its realpath, every in-root path can read as external and the
+  reviewer is denied wholesale, which an error-free-call check alone would accept.
+
+**Not achievable provider-free, and why.** A tool-layer allow/deny decision cannot be
+observed through the pinned server's API. `/experimental/tool` and
+`/experimental/tool/ids` are `GET` listings; the only tool-ish `POST` is
+`/session/{id}/shell`, which is the bash tool rather than `read`/`grep`; and
+`POST /api/session/{id}/permission` — which returns `{id, effect}` and looks like the
+decision oracle — disagrees with the tool layer: loaded with the adapter's real config
+it answers `deny` for every action, including `read`/`glob`/`grep` on absolute in-root
+paths that `debug agent` resolves to `allow`, because it resolves against the top-level
+`"*": "deny"` instead of the agent's allows. A probe built on it would assert the
+reviewer cannot read its own review root, which is false. Forcing a real `grep` call
+needs a model, i.e. a provider.
+
+Possible future work, not required here: serve an OpenAI-compatible stub model on
+loopback from the preflight, have it return a `grep` tool call on an external absolute
+path, and assert the tool is refused. That would give end-to-end tool-layer evidence
+without a real provider, at the cost of coupling a publication gate to the pinned
+CLI's provider-SDK wire format. Until then, OpenCode's own resolver is the
+provider-free oracle and the live canary is the end-to-end one.

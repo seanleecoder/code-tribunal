@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -197,8 +198,77 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         skip the pinned binary and silently restore the unverified download.
         """
         text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
-        self.assertIn('PATH="/usr/local/bin:/usr/bin:/bin"', text)
-        self.assertNotIn('PATH="${PATH:-', text)
+        env_line = re.search(r"(?m)^  PATH=.*$", text)
+        self.assertIsNotNone(env_line)
+        assert env_line is not None
+        self.assertEqual(env_line.group(0), '  PATH="/usr/local/bin:/usr/bin:/bin" \\')
+
+    def test_opencode_adapter_resolves_its_binaries_on_the_trusted_path_first(self) -> None:
+        """Forwarding an ambient-resolved binary would undo the fixed trusted PATH.
+
+        Both the pinned opencode and the interpreter are resolved before `env -i`,
+        because the fixed PATH is deliberate and a bare name (a venv or Homebrew
+        python3) would not be reachable from it. That resolution must prefer
+        /usr/local/bin, or a preceding `opencode` on the runner's ambient PATH could
+        substitute itself for the pinned one — the exact substitution the fixed PATH
+        exists to prevent.
+        """
+        text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
+        self.assertIn('if [ -x "/usr/local/bin/$1" ]; then', text)
+        self.assertIn('OPENCODE_BIN="$(resolve_trusted opencode)"', text)
+        self.assertIn("resolve_trusted python3", text)
+        self.assertIn('OPENCODE_BIN="$OPENCODE_BIN" \\', text)
+        # The trusted candidate must be tested before any ambient lookup.
+        helper = re.search(r"(?s)resolve_trusted\(\) \{.*?\n\}", text)
+        self.assertIsNotNone(helper)
+        assert helper is not None
+        body = helper.group(0)
+        self.assertLess(body.index("/usr/local/bin/$1"), body.index("command -v"))
+        # An explicit PYTHON is a caller's choice, not a lookup, so it wins outright.
+        self.assertIn('if [ -n "${PYTHON:-}" ]; then\n  PYTHON_BIN="$PYTHON"', text)
+
+    def test_opencode_adapter_prefers_the_trusted_binary_over_a_shadowing_decoy(self) -> None:
+        """Run the adapter's own resolver against a decoy earlier on the PATH.
+
+        Executes the helper as the adapter defines it, with a stand-in for the
+        trusted location, so this covers the resolution behavior and not just the
+        source text. The real /usr/local/bin case is covered by the image preflight
+        (scripts/smoke_opencode_search_tools.py), which cannot run here.
+        """
+        text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
+        helper = re.search(r"(?s)resolve_trusted\(\) \{.*?\n\}", text)
+        assert helper is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted = root / "trusted"
+            decoy = root / "decoy"
+            for directory in (trusted, decoy):
+                directory.mkdir()
+                target = directory / "opencode"
+                target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                target.chmod(0o755)
+            # Same helper, with the trusted prefix redirected into the sandbox.
+            script = helper.group(0).replace("/usr/local/bin", str(trusted))
+            resolved = subprocess.run(
+                ["/bin/sh", "-c", f"{script}\nresolve_trusted opencode"],
+                env={"PATH": f"{decoy}:/usr/bin:/bin"},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(resolved, str(trusted / "opencode"))
+
+            # With no trusted candidate the ambient fallback still resolves, so a
+            # checkout or dev machine keeps working.
+            (trusted / "opencode").unlink()
+            fallback = subprocess.run(
+                ["/bin/sh", "-c", f"{script}\nresolve_trusted opencode"],
+                env={"PATH": f"{decoy}:/usr/bin:/bin"},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(fallback, str(decoy / "opencode"))
 
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
         adapters = {

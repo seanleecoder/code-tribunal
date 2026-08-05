@@ -35,12 +35,25 @@ if ! command -v opencode >/dev/null 2>&1; then
   run_mock
 fi
 
-# Resolve the pinned opencode on the ambient PATH (the runner's, where the image
-# installs /usr/local/bin) and hand the client the exact path. The fixed trusted
-# PATH below governs what opencode itself finds — notably which("rg") — so it must
-# not carry an injected binary directory, but the opencode executable still has to
-# be reachable.
-OPENCODE_BIN="$(command -v opencode)"
+# Resolve a pinned CLI for forwarding into the fixed environment below, trusted
+# location first. /usr/local/bin is where the image installs the pinned CLIs, so it
+# must win over anything earlier on the runner's ambient PATH: forwarding an
+# ambient-resolved path would let a preceding `opencode` substitute itself for the
+# pinned one, which is exactly the substitution the fixed trusted PATH exists to
+# prevent. Ambient resolution remains only as a fallback for checkouts and dev
+# machines where the trusted location holds no such binary at all.
+resolve_trusted() {
+  if [ -x "/usr/local/bin/$1" ]; then
+    echo "/usr/local/bin/$1"
+    return 0
+  fi
+  command -v "$1" 2>/dev/null
+}
+
+# The fixed trusted PATH below governs what opencode itself finds — notably
+# which("rg") — so it must not carry an injected binary directory, but the opencode
+# executable still has to be reachable.
+OPENCODE_BIN="$(resolve_trusted opencode)"
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
@@ -191,7 +204,18 @@ EOF
 # a response schema. The internal client below uses the pinned server API so the
 # stage schema reaches OpenCode's required StructuredOutput tool. It keeps the
 # title static and data-free to avoid the separate title-inference request.
-PYTHON_BIN="${PYTHON:-python3}"
+# The interpreter is resolved like OPENCODE_BIN, and for both reasons: the fixed
+# trusted PATH below is deliberate, but a bare `python3` (a venv, a Homebrew
+# install, anything outside /usr/local/bin:/usr/bin:/bin) would not be reachable
+# from it — and an ambient-resolved python3 could itself be shadowed. An explicitly
+# set $PYTHON is honored verbatim, because that is a caller's deliberate choice, not
+# a lookup. Fall back to the unresolved name so the failure still names what was
+# missing.
+if [ -n "${PYTHON:-}" ]; then
+  PYTHON_BIN="$PYTHON"
+else
+  PYTHON_BIN="$(resolve_trusted python3 || printf 'python3')"
+fi
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
 # Fixed trusted PATH, not the runner's ambient one: /usr/local/bin must win so

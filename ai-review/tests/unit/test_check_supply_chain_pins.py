@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -168,11 +169,17 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ),
         )
 
+    _RIPGREP_TARBALL_SHA = "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599"
+    _RIPGREP_BINARY_SHA = "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2"
+    _RIPGREP_OPENCODE_VERSION = "1.18.12"
+
     _RIPGREP_PIN_OK = (
         "version=15.1.0\n"
+        "opencode_version=1.18.12\n"
         "url=https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/"
         "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz\n"
-        "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599\n"
+        f"sha256={_RIPGREP_TARBALL_SHA}\n"
+        f"binary_sha256={_RIPGREP_BINARY_SHA}\n"
     )
 
     _RIPGREP_STAGE_OK = (
@@ -181,22 +188,54 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         "COPY ai-review/images/ripgrep.pin ./ripgrep.pin\n"
         "RUN set -eu; \\\n"
         "    . ./ripgrep.pin; \\\n"
+        '    if [ "$sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
+        '    if [ "$binary_sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
         "    curl -fL \"$url\" -o ripgrep.tar.gz; \\\n"
-        "    echo \"$sha256  ripgrep.tar.gz\" | sha256sum -c -;\n"
+        "    echo \"$sha256  ripgrep.tar.gz\" | sha256sum -c -; \\\n"
+        "    echo \"$binary_sha256  /opt/ripgrep/rg\" | sha256sum -c -;\n"
         "FROM ${AI_REVIEW_BASE_IMAGE}\n"
     )
 
+    def _ripgrep_pin_issues(self, text: str, opencode_version: str | None = None) -> list[str]:
+        return check_supply_chain_pins._ripgrep_pin_issues(
+            text, opencode_version or self._RIPGREP_OPENCODE_VERSION
+        )
+
     def test_ripgrep_pin_happy_path_passes(self) -> None:
+        self.assertEqual(self._ripgrep_pin_issues(self._RIPGREP_PIN_OK), [])
+
+    def test_shipped_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
+        """The two pins are one decision: the pinned rg is the one this opencode fetches.
+
+        Checks the real files rather than a fixture, so a bump of either pin alone
+        fails here instead of at review time on a mismatched search binary.
+        """
+        package = json.loads(check_supply_chain_pins.PACKAGE_JSON.read_text(encoding="utf-8"))
         self.assertEqual(
-            check_supply_chain_pins._ripgrep_pin_issues(self._RIPGREP_PIN_OK),
+            self._ripgrep_pin_issues(
+                check_supply_chain_pins.RIPGREP_PIN.read_text(encoding="utf-8"),
+                str(package["dependencies"]["opencode-ai"]),
+            ),
             [],
         )
 
+    def test_detects_ripgrep_pin_opencode_version_drift(self) -> None:
+        issues = self._ripgrep_pin_issues(self._RIPGREP_PIN_OK, "1.19.0")
+        self.assertTrue(
+            any("opencode_version 1.18.12 does not match" in issue for issue in issues),
+            issues,
+        )
+
     def test_detects_malformed_ripgrep_pin(self) -> None:
-        issues = check_supply_chain_pins._ripgrep_pin_issues(
+        issues = self._ripgrep_pin_issues(
             "version=latest\n"
+            "opencode_version=1.18.12\n"
             "url=https://example.invalid/ripgrep-15.1.0.tar.gz\n"
             "sha256=not-a-sha\n"
+            "binary_sha256=also-not-a-sha\n"
+        )
+        self.assertIn(
+            "ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest", issues
         )
         self.assertIn("ripgrep.pin version must be an exact ripgrep version", issues)
         self.assertIn(
@@ -212,10 +251,33 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_detects_zero_ripgrep_pin_placeholder(self) -> None:
         self.assertIn(
             "ripgrep.pin sha256 must not be the all-zero placeholder",
-            check_supply_chain_pins._ripgrep_pin_issues(
+            self._ripgrep_pin_issues(
                 self._RIPGREP_PIN_OK.replace(
-                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                    f"sha256={self._RIPGREP_TARBALL_SHA}",
                     "sha256=" + "0" * 64,
+                )
+            ),
+        )
+
+    def test_detects_zero_ripgrep_binary_placeholder(self) -> None:
+        self.assertIn(
+            "ripgrep.pin binary_sha256 must not be the all-zero placeholder",
+            self._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace(
+                    f"binary_sha256={self._RIPGREP_BINARY_SHA}",
+                    "binary_sha256=" + "0" * 64,
+                )
+            ),
+        )
+
+    def test_detects_ripgrep_binary_digest_copied_from_the_tarball(self) -> None:
+        """A copy of the tarball digest asserts nothing about the file on PATH."""
+        self.assertIn(
+            "ripgrep.pin binary_sha256 must be the extracted rg digest, not the tarball",
+            self._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace(
+                    f"binary_sha256={self._RIPGREP_BINARY_SHA}",
+                    f"binary_sha256={self._RIPGREP_TARBALL_SHA}",
                 )
             ),
         )
@@ -223,10 +285,17 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_detects_missing_ripgrep_pin_key(self) -> None:
         self.assertIn(
             "ripgrep.pin missing sha256",
-            check_supply_chain_pins._ripgrep_pin_issues(
+            self._ripgrep_pin_issues(
+                self._RIPGREP_PIN_OK.replace(f"sha256={self._RIPGREP_TARBALL_SHA}\n", "")
+            ),
+        )
+
+    def test_detects_missing_ripgrep_binary_digest(self) -> None:
+        self.assertIn(
+            "ripgrep.pin missing binary_sha256",
+            self._ripgrep_pin_issues(
                 self._RIPGREP_PIN_OK.replace(
-                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
-                    "",
+                    f"binary_sha256={self._RIPGREP_BINARY_SHA}\n", ""
                 )
             ),
         )
@@ -234,9 +303,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_detects_ripgrep_pin_off_host_arch(self) -> None:
         self.assertIn(
             "ripgrep.pin url must reference the x86_64-unknown-linux-musl asset",
-            check_supply_chain_pins._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace("x86_64", "aarch64")
-            ),
+            self._ripgrep_pin_issues(self._RIPGREP_PIN_OK.replace("x86_64", "aarch64")),
         )
 
     def test_ripgrep_stage_happy_path_passes(self) -> None:
@@ -259,7 +326,51 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             "reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum",
             check_supply_chain_pins._ripgrep_stage_issues(
                 self._RIPGREP_STAGE_OK.replace(
-                    'echo "$sha256  ripgrep.tar.gz" | sha256sum -c -;', ""
+                    'echo "$sha256  ripgrep.tar.gz" | sha256sum -c -; \\\n', ""
+                )
+            ),
+        )
+
+    def test_ripgrep_stage_requires_binary_checksum(self) -> None:
+        self.assertIn(
+            "reviewer.Dockerfile ripgrep-bin stage must verify the extracted binary digest",
+            check_supply_chain_pins._ripgrep_stage_issues(
+                self._RIPGREP_STAGE_OK.replace(
+                    '    echo "$binary_sha256  /opt/ripgrep/rg" | sha256sum -c -;\n', ""
+                )
+            ),
+        )
+
+    def test_ripgrep_stage_requires_the_pinned_url_download(self) -> None:
+        """Hashing some other fetched file would satisfy the checksum steps alone."""
+        self.assertIn(
+            "reviewer.Dockerfile ripgrep-bin stage must download the pinned url",
+            check_supply_chain_pins._ripgrep_stage_issues(
+                self._RIPGREP_STAGE_OK.replace(
+                    'curl -fL "$url" -o ripgrep.tar.gz',
+                    "curl -fL https://example.invalid/rg.tar.gz -o ripgrep.tar.gz",
+                )
+            ),
+        )
+
+    def test_ripgrep_stage_requires_both_placeholder_rejections(self) -> None:
+        self.assertIn(
+            "reviewer.Dockerfile ripgrep-bin stage must reject both all-zero pin placeholders",
+            check_supply_chain_pins._ripgrep_stage_issues(
+                self._RIPGREP_STAGE_OK.replace(
+                    '    if [ "$binary_sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n',
+                    "",
+                )
+            ),
+        )
+
+    def test_runtime_guard_requires_the_binary_digest_assertion(self) -> None:
+        broken = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
+        self.assertIn(
+            "reviewer.Dockerfile must assert the pinned binary digest of /usr/local/bin/rg",
+            check_supply_chain_pins._ripgrep_runtime_guard_issues(
+                broken.replace(
+                    '    echo "$binary_sha256  /usr/local/bin/rg" | sha256sum -c -; \\\n', ""
                 )
             ),
         )
@@ -281,7 +392,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             mutated = Path(tmp) / "ripgrep.pin"
             mutated.write_text(
                 self._RIPGREP_PIN_OK.replace(
-                    "sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                    f"sha256={self._RIPGREP_TARBALL_SHA}",
                     "sha256=" + "0" * 64,
                 ),
                 encoding="utf-8",

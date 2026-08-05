@@ -317,18 +317,37 @@ def _ripgrep_stage_issues(reviewer: str) -> list[str]:
     issues: list[str] = []
     if "ripgrep.pin" not in stage:
         issues.append("reviewer.Dockerfile ripgrep-bin stage must read ripgrep.pin")
-    if "sha256sum -c -" not in stage:
+    # Both digests are required by name: the stage now checks two files, so a bare
+    # `sha256sum -c -` substring would keep passing after either one was deleted.
+    if not re.search(r'echo "\$sha256 .*" \| sha256sum -c -', stage):
         issues.append("reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum")
+    if not re.search(r'echo "\$binary_sha256 .*" \| sha256sum -c -', stage):
+        issues.append(
+            "reviewer.Dockerfile ripgrep-bin stage must verify the extracted binary digest"
+        )
+    # Without this, the checksummed file need not be the pinned URL's file: a stage
+    # that fetched some other artifact and hashed it would satisfy the checks above.
+    if not re.search(r'curl -fL "\$url"', stage):
+        issues.append("reviewer.Dockerfile ripgrep-bin stage must download the pinned url")
+    if stage.count('"0000000000000000000000000000000000000000000000000000000000000000"') < 2:
+        issues.append(
+            "reviewer.Dockerfile ripgrep-bin stage must reject both all-zero pin placeholders"
+        )
     return issues
 
 
-def _ripgrep_pin_issues(text: str) -> list[str]:
+def _ripgrep_pin_issues(text: str, opencode_version: str) -> list[str]:
     """Validate the pinned ripgrep artifact.
 
     OpenCode downloads ripgrep from GitHub releases at review time and verifies
     nothing but a non-zero byte length. The image ships this pinned, checksummed
     copy on PATH so that download never happens; an unpinned or placeholder value
     here silently restores the unverified fetch.
+
+    `opencode_version` is package.json's opencode-ai version. The pin must name the
+    same one, because the pinned ripgrep is only the right ripgrep for the opencode
+    that would otherwise have fetched it: bumping opencode alone must fail here
+    rather than silently stranding the reviewer on a mismatched search binary.
     """
     values: dict[str, str] = {}
     issues: list[str] = []
@@ -341,12 +360,20 @@ def _ripgrep_pin_issues(text: str) -> list[str]:
             continue
         key, value = line.split("=", 1)
         values[key] = value
-    for key in ("version", "url", "sha256"):
+    for key in ("version", "opencode_version", "url", "sha256", "binary_sha256"):
         if not values.get(key):
             issues.append(f"ripgrep.pin missing {key}")
     version = values.get("version", "")
     url = values.get("url", "")
     sha256 = values.get("sha256", "")
+    binary_sha256 = values.get("binary_sha256", "")
+    pinned_opencode = values.get("opencode_version", "")
+    if pinned_opencode and pinned_opencode != opencode_version:
+        issues.append(
+            f"ripgrep.pin opencode_version {pinned_opencode} does not match the "
+            f"opencode-ai {opencode_version} pinned in package.json; re-observe the "
+            "ripgrep version that opencode fetches (SUPPLY_CHAIN.md step 6)"
+        )
     if version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         issues.append("ripgrep.pin version must be an exact ripgrep version")
     if url and version and version not in url:
@@ -359,6 +386,15 @@ def _ripgrep_pin_issues(text: str) -> list[str]:
         issues.append("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest")
     if sha256 == "0" * 64:
         issues.append("ripgrep.pin sha256 must not be the all-zero placeholder")
+    if binary_sha256 and not re.fullmatch(r"[0-9a-f]{64}", binary_sha256):
+        issues.append("ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest")
+    if binary_sha256 == "0" * 64:
+        issues.append("ripgrep.pin binary_sha256 must not be the all-zero placeholder")
+    # The tarball digest and the extracted binary's digest cannot be equal. Copying
+    # one into the other would pass every check above while asserting nothing about
+    # the file that lands on PATH.
+    if binary_sha256 and binary_sha256 == sha256:
+        issues.append("ripgrep.pin binary_sha256 must be the extracted rg digest, not the tarball")
     return issues
 
 
@@ -379,6 +415,10 @@ def _ripgrep_runtime_guard_issues(reviewer: str) -> list[str]:
         )
     if not re.search(r'test "\$resolved" = "/usr/local/bin/rg"', reviewer):
         issues.append("reviewer.Dockerfile must assert rg resolves to /usr/local/bin/rg")
+    if not re.search(r'echo "\$binary_sha256  /usr/local/bin/rg" \| sha256sum -c -', reviewer):
+        issues.append(
+            "reviewer.Dockerfile must assert the pinned binary digest of /usr/local/bin/rg"
+        )
     return issues
 
 
@@ -478,7 +518,8 @@ def main() -> int:
     for issue in _cursor_agent_pin_issues(cursor_pin):
         error(issue)
         failures += 1
-    for issue in _ripgrep_pin_issues(ripgrep_pin):
+    pinned_opencode = str(package.get("dependencies", {}).get("opencode-ai", ""))
+    for issue in _ripgrep_pin_issues(ripgrep_pin, pinned_opencode):
         error(issue)
         failures += 1
     if not re.search(

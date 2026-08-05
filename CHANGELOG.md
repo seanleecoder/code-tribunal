@@ -27,15 +27,31 @@ versioning.
   adapter's `"*": "deny"` tool wildcard never covered it and its default was
   `{"*": "ask"}` — in a headless reviewer, an approval request nobody can answer
   rather than a refusal. The adapter and the session client now deny it
-  explicitly. `read`, `glob`, and `grep` remain allowed inside the root. See
+  explicitly, and the image preflight reads the resolved permissions out of OpenCode's
+  own resolver (`opencode --pure debug agent ai-reviewer`) against a config captured
+  from a real adapter run, so a config that drifts or a default that changes fails the
+  build. The preflight is a step in the image build job with no event condition, so it
+  gates merge on pull requests as well as publication on main. `read`, `glob`, and
+  `grep` remain allowed inside the root. See
   [SPEC-51](docs/improvement-specs/spec-51-opencode-search-tool-reach.md).
 
-- The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`.
-  OpenCode's `grep`/`glob` tools resolve `which("rg")` first and otherwise
+- The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`, and a
+  review-time ripgrep download now fails the review instead of producing postable
+  findings. OpenCode's `grep`/`glob` tools resolve `which("rg")` first and otherwise
   download ripgrep from GitHub releases at review time, verifying only that the
   response is non-empty; because the adapter gives each run a fresh `HOME`, that
   cache was always cold. No image previously installed ripgrep, so the tool had
   never worked — and a run with egress would have executed an unverified binary.
+  `ripgrep.pin` records the extracted binary's digest as well as the tarball's, so
+  what resolves on `PATH` is verified rather than only what was downloaded, and it
+  names the `opencode-ai` version it belongs to so the two pins cannot drift apart.
+
+- The OpenCode adapter resolves the pinned `opencode` and interpreter from
+  `/usr/local/bin` before consulting the ambient `PATH`. Both are resolved before
+  `env -i` and forwarded into it, so an ambient-first lookup let a binary earlier on
+  the runner's `PATH` substitute itself for the pinned one — the substitution the fixed
+  trusted `PATH` exists to prevent. Ambient resolution remains a fallback for
+  checkouts and dev machines where the trusted location holds no such binary.
 
 ### Fixed
 

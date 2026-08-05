@@ -10,6 +10,10 @@ RUN npm ci --omit=dev \
     && ./node_modules/.bin/codex --version \
     && ./node_modules/.bin/opencode --version
 
+# Deliberately parallel to the ripgrep-bin stage below (same pin contract: presence
+# checks, placeholder rejection, pinned URL, checksum, extract). The two stay
+# duplicated rather than sharing a base stage so a change to one pinned artifact's
+# verification cannot silently alter the other's.
 FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS cursor-cli
 
 WORKDIR /opt/cursor-agent-src
@@ -28,15 +32,20 @@ RUN set -eu; \
     find /usr/local/cursor-agent -type f -name cursor-agent -exec chmod 0755 {} \; ; \
     test -x /usr/local/cursor-agent/cursor-agent || find /usr/local/cursor-agent -maxdepth 3 -type f -perm /111 -print -quit | xargs -r -I{} ln -sf {} /usr/local/cursor-agent/cursor-agent
 
+# Deliberately parallel to the cursor-cli stage above; see the comment there for why
+# the verification bodies are not shared.
 FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS ripgrep-bin
 
 WORKDIR /opt/ripgrep-src
 COPY ai-review/images/ripgrep.pin ./ripgrep.pin
 RUN set -eu; \
     . ./ripgrep.pin; \
-    test -n "$version"; test -n "$url"; test -n "$sha256"; \
+    test -n "$version"; test -n "$url"; test -n "$sha256"; test -n "$binary_sha256"; \
     if [ "$sha256" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then \
       echo "ripgrep.pin must be refreshed with the artifact sha256 before building" >&2; exit 1; \
+    fi; \
+    if [ "$binary_sha256" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then \
+      echo "ripgrep.pin must be refreshed with the binary_sha256 before building" >&2; exit 1; \
     fi; \
     apt-get update; apt-get install -y --no-install-recommends ca-certificates curl tar; rm -rf /var/lib/apt/lists/*; \
     curl -fL "$url" -o ripgrep.tar.gz; \
@@ -45,6 +54,7 @@ RUN set -eu; \
     tar -xzf ripgrep.tar.gz -C /opt/ripgrep --strip-components=1; \
     test -f /opt/ripgrep/rg; \
     chmod 0755 /opt/ripgrep/rg; \
+    echo "$binary_sha256  /opt/ripgrep/rg" | sha256sum -c -; \
     /opt/ripgrep/rg --version
 
 FROM ${AI_REVIEW_BASE_IMAGE}
@@ -102,11 +112,14 @@ RUN claude --version \
 # OpenCode's grep/glob tools shell out to ripgrep, resolving which("rg") first and
 # otherwise downloading an unverified copy from GitHub at review time. Prove the
 # pinned binary is the one that will be found, on the PATH the adapter forwards —
-# not merely present somewhere in the image.
+# not merely present somewhere in the image. The binary digest is re-checked here
+# rather than only in the builder stage, because what matters is the identity of
+# the file that ended up on PATH after the COPY, not what was downloaded.
 RUN set -eu; \
     resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg')"; \
     test "$resolved" = "/usr/local/bin/rg"; \
     . /opt/ai-review/images/ripgrep.pin; \
+    echo "$binary_sha256  /usr/local/bin/rg" | sha256sum -c -; \
     rg --version | grep -F -- "ripgrep $version"
 
 # The adapter's read-only boundary depends on this pinned CLI surface. Fail the
