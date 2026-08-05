@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-from urllib.error import HTTPError
 
 from ai_review import opencode_client
 from ai_review.adapter_runner import _load_adapter_json
@@ -329,63 +328,30 @@ class OpenCodeClientTests(unittest.TestCase):
             # to reach the error rather than be dropped.
             self.assertIn("failed to bind port", str(caught.exception))
 
-    def test_http_failure_carries_the_server_log(self) -> None:
-        # OpenCode answers an internal failure with UnknownError plus a log ref and
-        # keeps the cause in its own log, which the adapter writes under out/.tmp and
-        # never uploads. GitLab job 2630753 failed exactly this way: HTTP 500 on the
-        # message POST, ref err_adda2891, and nothing anywhere that says why. The
-        # captured server output is the only remaining copy, so the error carries it.
+    def test_server_log_detail_is_added_only_when_there_is_output(self) -> None:
         server_log = opencode_client._ServerLog()
-        server_log.append("level=INFO message=process session.id=ses_test")
+        self.assertEqual(opencode_client._server_log_detail(server_log), "")
+        self.assertEqual(opencode_client._server_log_detail(None), "")
         server_log.append('level=ERROR ref=err_adda2891 cause="UnknownError: boom"')
-        body = b'{"name":"UnknownError","data":{"ref":"err_adda2891"}}'
+        detail = opencode_client._server_log_detail(server_log)
+        self.assertIn("err_adda2891", detail)
+        self.assertTrue(detail.startswith("; server_log="))
 
-        def raise_http(*_args: object, **_kwargs: object) -> None:
-            raise HTTPError(
-                "http://127.0.0.1:43123/session/ses_test/message",
-                500,
-                "Internal Server Error",
-                {},  # type: ignore[arg-type]
-                io.BytesIO(body),
-            )
+    def test_http_failure_reports_the_log_drained_after_the_server_stops(self) -> None:
+        """The detail must be read after the log reader is joined, not before.
 
-        with (
-            mock.patch.object(opencode_client, "urlopen", side_effect=raise_http),
-            self.assertRaisesRegex(opencode_client.OpenCodeClientError, "HTTP 500") as caught,
-        ):
-            opencode_client._request_json(
-                "http://127.0.0.1:43123/",
-                "POST",
-                "session/ses_test/message",
-                directory=Path("/tmp"),
-                body={},
-                timeout=1.0,
-                server_log=server_log,
-            )
+        OpenCode answers an internal failure with UnknownError plus a log ref and
+        keeps the cause in its own log, which the adapter writes under out/.tmp and
+        never uploads — GitLab job 2630753 failed exactly that way. The captured
+        server output is the only remaining copy, but it arrives on a pipe drained by
+        a separate thread: OpenCode logs the ERROR line before it answers, so reading
+        the buffer while the request error is being formatted races that thread and
+        the detail would appear or vanish with scheduling. _stop_server closes the
+        pipe and joins the reader, which is the first point the log is complete.
 
-        message = str(caught.exception)
-        self.assertIn("err_adda2891", message)
-        self.assertIn("UnknownError: boom", message)
-
-        # Without a log there is nothing to add, and the message must not grow an
-        # empty `server_log=` tail that reads as "the server said nothing".
-        with (
-            mock.patch.object(opencode_client, "urlopen", side_effect=raise_http),
-            self.assertRaises(opencode_client.OpenCodeClientError) as bare,
-        ):
-            opencode_client._request_json(
-                "http://127.0.0.1:43123/",
-                "POST",
-                "session/ses_test/message",
-                directory=Path("/tmp"),
-                body={},
-                timeout=1.0,
-            )
-        self.assertNotIn("server_log", str(bare.exception))
-
-    def test_run_passes_the_captured_server_log_to_both_requests(self) -> None:
-        # The log only reaches a failure if the call sites hand it over; a request
-        # that omits it fails opaquely no matter how good _server_log_detail is.
+        The fake here reproduces that ordering: the ERROR line lands only when the
+        server is stopped, so a detail read any earlier sees nothing.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             prompt = root / "prompt.md"
@@ -394,15 +360,22 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = None
             thread = mock.Mock()
             server_log = opencode_client._ServerLog()
-            seen: list[object] = []
 
             def request(
-                _base_url: str, _method: str, path: str, **kwargs: object
+                _base_url: str, _method: str, path: str, **_kwargs: object
             ) -> dict[str, object]:
-                seen.append(kwargs.get("server_log"))
                 if path == "session":
                     return {"id": "ses_test"}
-                return {"info": {"role": "assistant", "structured": {"findings": []}}}
+                raise opencode_client.OpenCodeClientError(
+                    'OpenCode API POST session/ses_test/message failed with HTTP 500: '
+                    '{"name":"UnknownError","data":{"ref":"err_adda2891"}}'
+                )
+
+            def stop(*_args: object, **_kwargs: object) -> None:
+                # What the real drain thread delivers once the pipe is closed and
+                # joined; before this point the buffer is empty.
+                server_log.append("level=INFO message=process session.id=ses_test")
+                server_log.append('level=ERROR ref=err_adda2891 cause="UnknownError: boom"')
 
             with (
                 mock.patch.dict(
@@ -421,12 +394,17 @@ class OpenCodeClientTests(unittest.TestCase):
                     return_value=(process, "http://127.0.0.1:43123/", server_log, thread),
                 ),
                 mock.patch.object(opencode_client, "_request_json", side_effect=request),
+                mock.patch.object(opencode_client, "_stop_server", side_effect=stop),
                 contextlib.redirect_stdout(io.StringIO()),
-                contextlib.redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(opencode_client.run(), 0)
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(opencode_client.main(), 1)
 
-            self.assertEqual(seen, [server_log, server_log])
+            reported = errors.getvalue()
+            self.assertIn("HTTP 500", reported)
+            self.assertIn("UnknownError: boom", reported)
+            self.assertIn("err_adda2891", reported)
 
     def test_start_server_reports_readiness_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

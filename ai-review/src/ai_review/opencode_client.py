@@ -89,7 +89,6 @@ def _request_json(
     directory: Path,
     body: dict[str, Any] | None = None,
     timeout: float,
-    server_log: _ServerLog | None = None,
 ) -> dict[str, Any]:
     payload = None
     headers = {"Accept": "application/json", "X-Opencode-Directory": str(directory)}
@@ -104,12 +103,9 @@ def _request_json(
         detail = exc.read().decode("utf-8", errors="replace")
         raise OpenCodeClientError(
             f"OpenCode API {method} {path} failed with HTTP {exc.code}: {_compact(detail)}"
-            f"{_server_log_detail(server_log)}"
         ) from exc
     except (OSError, URLError, TimeoutError) as exc:
-        raise OpenCodeClientError(
-            f"OpenCode API {method} {path} failed: {exc}{_server_log_detail(server_log)}"
-        ) from exc
+        raise OpenCodeClientError(f"OpenCode API {method} {path} failed: {exc}") from exc
     try:
         parsed = json_loads_no_duplicates(raw)
     except Exception as exc:
@@ -253,8 +249,10 @@ def _start_server(
     deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            detail = server_log.tail(8)
+            # Join first: the process just died and its last lines may still be in
+            # the pipe, which is exactly the output that explains why.
             drain_thread.join(timeout=_SERVER_STOP_TIMEOUT_SECONDS)
+            detail = server_log.tail(8)
             raise OpenCodeClientError(
                 f"opencode serve exited before readiness{': ' + detail if detail else ''}"
             )
@@ -271,8 +269,8 @@ def _start_server(
         except OpenCodeClientError:
             pass
         time.sleep(0.05)
-    detail = server_log.tail(8)
     _stop_server(process, drain_thread)
+    detail = server_log.tail(8)
     raise OpenCodeClientError(
         f"opencode serve did not become ready{': ' + detail if detail else ''}"
     )
@@ -394,36 +392,46 @@ def run() -> int:
     process: subprocess.Popen[str] | None = None
     drain_thread: threading.Thread | None = None
     server_log = _ServerLog()
+    session_failure: OpenCodeClientError | None = None
+    result: tuple[dict[str, Any] | list[Any], bool] | None = None
     try:
         process, base_url, server_log, drain_thread = _start_server(root)
-        session = _request_json(
-            base_url,
-            "POST",
-            "session",
-            directory=root,
-            body={"title": _SESSION_TITLE, "permission": _PERMISSION_RULES},
-            timeout=30.0,
-            server_log=server_log,
-        )
-        session_data = _response_data(session)
-        session_id = session_data.get("id")
-        if not isinstance(session_id, str) or not session_id:
-            raise OpenCodeClientError("OpenCode session creation returned no session id")
-        response = _request_json(
-            base_url,
-            "POST",
-            f"session/{session_id}/message",
-            directory=root,
-            body={
-                "agent": "ai-reviewer",
-                "model": {"providerID": "openrouter", "modelID": model},
-                "parts": [{"type": "text", "text": prompt}],
-                "format": {"type": "json_schema", "schema": schema},
-            },
-            timeout=_MESSAGE_TIMEOUT_SECONDS,
-            server_log=server_log,
-        )
-        batch, used_structured = _normalize_message(response, stage=stage)
+        try:
+            session = _request_json(
+                base_url,
+                "POST",
+                "session",
+                directory=root,
+                body={"title": _SESSION_TITLE, "permission": _PERMISSION_RULES},
+                timeout=30.0,
+            )
+            session_data = _response_data(session)
+            session_id = session_data.get("id")
+            if not isinstance(session_id, str) or not session_id:
+                raise OpenCodeClientError("OpenCode session creation returned no session id")
+            response = _request_json(
+                base_url,
+                "POST",
+                f"session/{session_id}/message",
+                directory=root,
+                body={
+                    "agent": "ai-reviewer",
+                    "model": {"providerID": "openrouter", "modelID": model},
+                    "parts": [{"type": "text", "text": prompt}],
+                    "format": {"type": "json_schema", "schema": schema},
+                },
+                timeout=_MESSAGE_TIMEOUT_SECONDS,
+            )
+            result = _normalize_message(response, stage=stage)
+        except OpenCodeClientError as exc:
+            # Held rather than raised: the server's own account of this failure is
+            # still in flight. OpenCode logs the ERROR line and its ref before it
+            # answers, but the log reader is a separate thread draining a pipe, so
+            # formatting the message here would race it and the detail would be
+            # present or absent depending on scheduling. _stop_server closes the
+            # pipe and joins that thread, which is the only point at which the log
+            # is known to be complete.
+            session_failure = exc
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
@@ -431,6 +439,15 @@ def run() -> int:
     # session is still caught. Deliberately outside the try/finally: this must raise
     # instead of letting `batch` be printed.
     _assert_no_ripgrep_fetch(server_log)
+    if session_failure is not None:
+        # Now that the log is drained, the cause OpenCode kept to itself travels with
+        # the failure into the job log and the status artifact.
+        raise OpenCodeClientError(
+            f"{session_failure}{_server_log_detail(server_log)}"
+        ) from session_failure
+    if result is None:
+        raise OpenCodeClientError("opencode client produced neither a result nor a failure")
+    batch, used_structured = result
 
     # Mirror adapter_runner._log_structured_output_usage's two wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the

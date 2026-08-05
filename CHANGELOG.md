@@ -27,7 +27,11 @@ versioning.
   points into `out/.tmp`, so it was discarded with the run and the `ref` named a record
   nobody could read. The client now starts `serve` with `--print-logs --log-level INFO`
   and includes the captured server output in session and message request failures, so
-  the cause travels with the error into the job log and the status artifact.
+  the cause travels with the error into the job log and the status artifact. The
+  detail is read after the server is stopped and its log reader joined: OpenCode logs
+  the ERROR line before it answers, and that log arrives on a pipe drained by another
+  thread, so formatting it at the point of failure would race the reader and make the
+  diagnosis depend on scheduling.
 
 ### Added
 
