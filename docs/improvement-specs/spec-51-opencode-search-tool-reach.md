@@ -120,6 +120,16 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   forwarded into it, so an ambient-first lookup would let a binary earlier on the
   runner's PATH substitute itself for the pinned one — the substitution the fixed
   trusted PATH exists to prevent. The preflight proves this against a real decoy.
+  Resolution must also come *before* the CLI-availability gate and go by absolute
+  path, so a PATH that omits `/usr/local/bin` can neither hide the pinned binary nor
+  make the gate reject it. In the packaged image — recognized by the adapter running
+  from `/opt/ai-review/adapters`, the copy the base image installed — a missing pinned
+  CLI is a broken image and must fail rather than fall back to an ambient binary;
+  ambient resolution remains a fallback only for checkouts and dev machines.
+- A review-time ripgrep fetch must be recognized as the server logs it, not by
+  scanning a retained buffer afterwards. The buffer is deliberately bounded for
+  diagnostics, so a fetch early in a real review is evicted long before the check
+  runs; a bounded buffer cannot be the substrate for the verdict.
 - `scripts/check_supply_chain_pins.py` fails on a missing, malformed, off-host, or
   placeholder `ripgrep.pin`, on a `binary_sha256` copied from the tarball digest, on
   an `opencode_version` that disagrees with `package.json`, and on a

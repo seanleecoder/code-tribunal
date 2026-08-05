@@ -15,6 +15,36 @@ if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
   run_mock
 fi
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+# Resolve a pinned CLI for forwarding into the fixed environment below, trusted
+# location first. /usr/local/bin is where the image installs the pinned CLIs, so it
+# must win over anything earlier on the runner's ambient PATH: forwarding an
+# ambient-resolved path would let a preceding `opencode` substitute itself for the
+# pinned one, which is exactly the substitution the fixed trusted PATH exists to
+# prevent.
+#
+# When this is the copy the base image installed (/opt/ai-review/adapters), the
+# trusted location is the only acceptable answer: a packaged reviewer whose pinned
+# CLI is missing has a broken image, and silently running an ambient binary instead
+# is the substitution again by another route. Ambient resolution stays a fallback
+# only for checkouts and dev machines, where there is no pinned install to prefer.
+#
+# Resolution happens before the availability gate below and by absolute path, so a
+# PATH that omits /usr/local/bin can neither hide the pinned binary nor cause the
+# gate to reject it.
+resolve_trusted() {
+  if [ -x "/usr/local/bin/$1" ]; then
+    echo "/usr/local/bin/$1"
+    return 0
+  fi
+  if [ "$SCRIPT_DIR" = "/opt/ai-review/adapters" ]; then
+    echo "packaged reviewer image has no pinned /usr/local/bin/$1; refusing to run an ambient one" >&2
+    return 1
+  fi
+  command -v "$1" 2>/dev/null
+}
+
 if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
   echo "OPENROUTER_BASE_URL must be unset or exactly https://openrouter.ai/api/v1" >&2
   exit 2
@@ -27,33 +57,20 @@ if [ -z "${AI_REVIEW_MODEL:-}" ]; then
   exit 2
 fi
 
-if ! command -v opencode >/dev/null 2>&1; then
+# The availability gate IS the resolution: the pinned binary is looked up first and
+# the result is what gets forwarded, so the gate can never reject a binary that
+# resolution would have found, nor accept one that resolution would refuse. The fixed
+# trusted PATH below governs what opencode itself finds — notably which("rg") — so it
+# must not carry an injected binary directory, but the opencode executable still has
+# to be reachable from it.
+OPENCODE_BIN="$(resolve_trusted opencode || true)"
+if [ -z "$OPENCODE_BIN" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
     echo "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
     exit 127
   fi
   run_mock
 fi
-
-# Resolve a pinned CLI for forwarding into the fixed environment below, trusted
-# location first. /usr/local/bin is where the image installs the pinned CLIs, so it
-# must win over anything earlier on the runner's ambient PATH: forwarding an
-# ambient-resolved path would let a preceding `opencode` substitute itself for the
-# pinned one, which is exactly the substitution the fixed trusted PATH exists to
-# prevent. Ambient resolution remains only as a fallback for checkouts and dev
-# machines where the trusted location holds no such binary at all.
-resolve_trusted() {
-  if [ -x "/usr/local/bin/$1" ]; then
-    echo "/usr/local/bin/$1"
-    return 0
-  fi
-  command -v "$1" 2>/dev/null
-}
-
-# The fixed trusted PATH below governs what opencode itself finds — notably
-# which("rg") — so it must not carry an injected binary directory, but the opencode
-# executable still has to be reachable.
-OPENCODE_BIN="$(resolve_trusted opencode)"
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
@@ -209,14 +226,16 @@ EOF
 # install, anything outside /usr/local/bin:/usr/bin:/bin) would not be reachable
 # from it — and an ambient-resolved python3 could itself be shadowed. An explicitly
 # set $PYTHON is honored verbatim, because that is a caller's deliberate choice, not
-# a lookup. Fall back to the unresolved name so the failure still names what was
-# missing.
+# a lookup.
 if [ -n "${PYTHON:-}" ]; then
   PYTHON_BIN="$PYTHON"
 else
-  PYTHON_BIN="$(resolve_trusted python3 || printf 'python3')"
+  PYTHON_BIN="$(resolve_trusted python3 || true)"
+  if [ -z "$PYTHON_BIN" ]; then
+    echo "python3 was not found for the $AI_REVIEW_REVIEWER reviewer client" >&2
+    exit 127
+  fi
 fi
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
 # Fixed trusted PATH, not the runner's ambient one: /usr/local/bin must win so
 # OpenCode's which("rg") resolves the pinned image rg and never falls through to

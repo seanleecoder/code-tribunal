@@ -37,7 +37,10 @@ versioning.
 
 - The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`, and a
   review-time ripgrep download now fails the review instead of producing postable
-  findings. OpenCode's `grep`/`glob` tools resolve `which("rg")` first and otherwise
+  findings — recognized as the server logs it, so the verdict does not depend on how
+  much was logged afterwards. The diagnostic buffer stays bounded, which is why it
+  cannot be what the check reads: a fetch early in a real review is evicted long
+  before the session ends. OpenCode's `grep`/`glob` tools resolve `which("rg")` first and otherwise
   download ripgrep from GitHub releases at review time, verifying only that the
   response is non-empty; because the adapter gives each run a fresh `HOME`, that
   cache was always cold. No image previously installed ripgrep, so the tool had
@@ -47,11 +50,16 @@ versioning.
   names the `opencode-ai` version it belongs to so the two pins cannot drift apart.
 
 - The OpenCode adapter resolves the pinned `opencode` and interpreter from
-  `/usr/local/bin` before consulting the ambient `PATH`. Both are resolved before
-  `env -i` and forwarded into it, so an ambient-first lookup let a binary earlier on
-  the runner's `PATH` substitute itself for the pinned one — the substitution the fixed
-  trusted `PATH` exists to prevent. Ambient resolution remains a fallback for
-  checkouts and dev machines where the trusted location holds no such binary.
+  `/usr/local/bin` before consulting the ambient `PATH`, and before the
+  CLI-availability gate. Both are resolved before `env -i` and forwarded into it, so an
+  ambient-first lookup let a binary earlier on the runner's `PATH` substitute itself
+  for the pinned one — the substitution the fixed trusted `PATH` exists to prevent.
+  Resolving by absolute path ahead of the gate also means a `PATH` without
+  `/usr/local/bin` can no longer make the adapter reject a pinned binary that is
+  present. In the packaged image, recognized by the adapter running from
+  `/opt/ai-review/adapters`, a missing pinned CLI now fails closed instead of running
+  whatever is ambient; ambient resolution remains a fallback for checkouts and dev
+  machines, where there is no pinned install to prefer.
 
 ### Fixed
 
