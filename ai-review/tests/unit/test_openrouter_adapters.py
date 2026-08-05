@@ -1208,7 +1208,9 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
         # cli_args is the argv the real client spawned the server with.
-        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
+        self.assertIn(
+            "--pure serve --print-logs --log-level INFO --hostname 127.0.0.1 --port ", cli_args
+        )
         self.assertNotIn("--title", cli_args)
         self.assertNotIn("--format", cli_args)
         self.assertNotIn("--model", cli_args)
@@ -1333,6 +1335,15 @@ PY
         # the sanitized snapshot stops bounding the reviewer's reach.
         self.assertEqual(agent["permission"]["external_directory"], {"*": "deny"})
         self.assertEqual(config["permission"]["external_directory"], {"*": "deny"})
+        # StructuredOutput is the tool OpenCode injects for
+        # format: {"type":"json_schema", …} and the only way a schema-conforming
+        # batch can come back. The "*" wildcard above filtered it out of the tool
+        # list sent to the model, so the reviewer was told to call a tool it was
+        # never offered and every response was flagged StructuredOutputError.
+        # Verified in the built image against a stub provider: without this rule
+        # the provider request carries only glob/grep/read.
+        self.assertEqual(agent["permission"]["StructuredOutput"], "allow")
+        self.assertEqual(config["permission"]["StructuredOutput"], "allow")
         self.assertEqual(agent["permission"]["bash"], "deny")
         self.assertEqual(agent["permission"]["edit"], "deny")
         self.assertEqual(agent["permission"]["write"], "deny")
@@ -1393,7 +1404,9 @@ PY
         self.assertIn("critiques", batch)
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
-        self.assertIn("--pure serve --hostname 127.0.0.1 --port ", cli_args)
+        self.assertIn(
+            "--pure serve --print-logs --log-level INFO --hostname 127.0.0.1 --port ", cli_args
+        )
         requests = meta["opencode_requests"]
         assert isinstance(requests, list)
         self.assertEqual(requests[0]["body"]["title"], "code-tribunal-ai-review")

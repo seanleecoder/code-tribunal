@@ -32,6 +32,10 @@ _RIPGREP_FETCH_PATTERN = re.compile(
 )
 _SESSION_TITLE = "code-tribunal-ai-review"
 _SERVER_START_TIMEOUT_SECONDS = 15.0
+# Enough to carry an OpenCode ERROR line and the request logging around it. The
+# stack is one long line, so the character limit does the real bounding.
+_SERVER_LOG_DETAIL_LINES = 12
+_SERVER_LOG_DETAIL_LIMIT = 4000
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
 _MESSAGE_TIMEOUT_SECONDS = 24 * 60 * 60
 _PERMISSION_RULES = [
@@ -137,6 +141,25 @@ class _ServerLog:
         return " | ".join(list(self.lines)[-count:])
 
 
+def _server_log_detail(server_log: _ServerLog | None) -> str:
+    """The server's own account of a failed request, for the error message.
+
+    OpenCode answers an internal failure with `UnknownError` and "Check server logs
+    for details" plus a `ref`; the cause and its stack exist only in the server's log,
+    keyed by that same ref. That log is written under XDG_DATA_HOME, which the adapter
+    points into `out/.tmp` — not an uploaded artifact — so without this the ref names
+    a record nobody can read, and a 500 is indistinguishable from any other 500.
+    `_start_server` passes `--print-logs` so those lines arrive on the captured
+    stdout; this puts them next to the failure that needs them.
+    """
+    if server_log is None:
+        return ""
+    detail = server_log.tail(_SERVER_LOG_DETAIL_LINES)
+    if not detail:
+        return ""
+    return f"; server_log={_compact(detail, limit=_SERVER_LOG_DETAIL_LIMIT)}"
+
+
 def _assert_no_ripgrep_fetch(server_log: _ServerLog) -> None:
     """Fail the review if OpenCode fetched its own ripgrep.
 
@@ -181,7 +204,25 @@ def _start_server(
     executable = _resolve_opencode_executable()
     port = _free_loopback_port()
     process = subprocess.Popen(
-        [executable, "--pure", "serve", "--hostname", _HOST, "--port", str(port)],
+        # --print-logs is not diagnostics-by-preference: OpenCode reports an internal
+        # failure as UnknownError plus a log ref, and writes the cause only to its own
+        # log file under XDG_DATA_HOME — which the adapter points at out/.tmp, so it is
+        # discarded with the run. Printing to stdout puts it in the captured server log
+        # instead. INFO is explicit rather than relying on the default: it carries the
+        # ERROR line, the per-request logging around it, and the permission decisions,
+        # without DEBUG's config-loading volume evicting them from the bounded buffer.
+        [
+            executable,
+            "--pure",
+            "serve",
+            "--print-logs",
+            "--log-level",
+            "INFO",
+            "--hostname",
+            _HOST,
+            "--port",
+            str(port),
+        ],
         cwd=root,
         env=os.environ.copy(),
         stdout=subprocess.PIPE,
@@ -208,8 +249,10 @@ def _start_server(
     deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            detail = server_log.tail(8)
+            # Join first: the process just died and its last lines may still be in
+            # the pipe, which is exactly the output that explains why.
             drain_thread.join(timeout=_SERVER_STOP_TIMEOUT_SECONDS)
+            detail = server_log.tail(8)
             raise OpenCodeClientError(
                 f"opencode serve exited before readiness{': ' + detail if detail else ''}"
             )
@@ -226,8 +269,8 @@ def _start_server(
         except OpenCodeClientError:
             pass
         time.sleep(0.05)
-    detail = server_log.tail(8)
     _stop_server(process, drain_thread)
+    detail = server_log.tail(8)
     raise OpenCodeClientError(
         f"opencode serve did not become ready{': ' + detail if detail else ''}"
     )
@@ -349,34 +392,46 @@ def run() -> int:
     process: subprocess.Popen[str] | None = None
     drain_thread: threading.Thread | None = None
     server_log = _ServerLog()
+    session_failure: OpenCodeClientError | None = None
+    result: tuple[dict[str, Any] | list[Any], bool] | None = None
     try:
         process, base_url, server_log, drain_thread = _start_server(root)
-        session = _request_json(
-            base_url,
-            "POST",
-            "session",
-            directory=root,
-            body={"title": _SESSION_TITLE, "permission": _PERMISSION_RULES},
-            timeout=30.0,
-        )
-        session_data = _response_data(session)
-        session_id = session_data.get("id")
-        if not isinstance(session_id, str) or not session_id:
-            raise OpenCodeClientError("OpenCode session creation returned no session id")
-        response = _request_json(
-            base_url,
-            "POST",
-            f"session/{session_id}/message",
-            directory=root,
-            body={
-                "agent": "ai-reviewer",
-                "model": {"providerID": "openrouter", "modelID": model},
-                "parts": [{"type": "text", "text": prompt}],
-                "format": {"type": "json_schema", "schema": schema},
-            },
-            timeout=_MESSAGE_TIMEOUT_SECONDS,
-        )
-        batch, used_structured = _normalize_message(response, stage=stage)
+        try:
+            session = _request_json(
+                base_url,
+                "POST",
+                "session",
+                directory=root,
+                body={"title": _SESSION_TITLE, "permission": _PERMISSION_RULES},
+                timeout=30.0,
+            )
+            session_data = _response_data(session)
+            session_id = session_data.get("id")
+            if not isinstance(session_id, str) or not session_id:
+                raise OpenCodeClientError("OpenCode session creation returned no session id")
+            response = _request_json(
+                base_url,
+                "POST",
+                f"session/{session_id}/message",
+                directory=root,
+                body={
+                    "agent": "ai-reviewer",
+                    "model": {"providerID": "openrouter", "modelID": model},
+                    "parts": [{"type": "text", "text": prompt}],
+                    "format": {"type": "json_schema", "schema": schema},
+                },
+                timeout=_MESSAGE_TIMEOUT_SECONDS,
+            )
+            result = _normalize_message(response, stage=stage)
+        except OpenCodeClientError as exc:
+            # Held rather than raised: the server's own account of this failure is
+            # still in flight. OpenCode logs the ERROR line and its ref before it
+            # answers, but the log reader is a separate thread draining a pipe, so
+            # formatting the message here would race it and the detail would be
+            # present or absent depending on scheduling. _stop_server closes the
+            # pipe and joins that thread, which is the only point at which the log
+            # is known to be complete.
+            session_failure = exc
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
@@ -384,6 +439,15 @@ def run() -> int:
     # session is still caught. Deliberately outside the try/finally: this must raise
     # instead of letting `batch` be printed.
     _assert_no_ripgrep_fetch(server_log)
+    if session_failure is not None:
+        # Now that the log is drained, the cause OpenCode kept to itself travels with
+        # the failure into the job log and the status artifact.
+        raise OpenCodeClientError(
+            f"{session_failure}{_server_log_detail(server_log)}"
+        ) from session_failure
+    if result is None:
+        raise OpenCodeClientError("opencode client produced neither a result nor a failure")
+    batch, used_structured = result
 
     # Mirror adapter_runner._log_structured_output_usage's two wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the
