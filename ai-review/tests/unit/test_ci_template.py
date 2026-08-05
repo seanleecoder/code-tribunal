@@ -1180,17 +1180,29 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CODEX_MODEL": "${{ vars.AI_REVIEW_CODEX_MODEL || '' }}",
             "AI_REVIEW_OPENCODE_MODEL": "${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}",
             "AI_REVIEW_CURSOR_MODEL": "${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}",
-            # The roster is the primary seat-selection knob, so the per-seat
-            # ENABLED flags must default to '' (no override) rather than a literal
-            # boolean: a hardcoded default here is a value config would treat as an
-            # explicit per-seat override and reject alongside AI_REVIEW_REVIEWERS.
+            # The per-seat ENABLED flags must reach the parser as unset when a
+            # roster is set, since a hardcoded boolean would permanently contradict
+            # it. They are blanked *only* when a roster is set: blanking them
+            # unconditionally fails `prepare` against a pinned image built before
+            # empty-as-unset, because the jobs run /opt/ai-review from the image
+            # rather than this checkout.
             "AI_REVIEW_REVIEWERS": "${{ vars.AI_REVIEW_REVIEWERS || '' }}",
-            "AI_REVIEW_CLAUDE_ENABLED": "${{ vars.AI_REVIEW_CLAUDE_ENABLED || '' }}",
-            "AI_REVIEW_CODEX_ENABLED": "${{ vars.AI_REVIEW_CODEX_ENABLED || '' }}",
-            "AI_REVIEW_OPENCODE_ENABLED": (
-                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || '' }}"
+            "AI_REVIEW_CLAUDE_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}"
             ),
-            "AI_REVIEW_CURSOR_ENABLED": "${{ vars.AI_REVIEW_CURSOR_ENABLED || '' }}",
+            "AI_REVIEW_CODEX_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}"
+            ),
+            "AI_REVIEW_OPENCODE_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}"
+            ),
+            "AI_REVIEW_CURSOR_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}"
+            ),
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
@@ -1468,18 +1480,24 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count("AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}"),
             1,
         )
-        self.assertEqual(
-            text.count(
-                "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || '' }}"
-            ),
-            1,
-        )
-        self.assertEqual(
-            text.count(
-                "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || '' }}"
-            ),
-            1,
-        )
+        # The per-seat flags keep their previous literal defaults when no roster is
+        # set, so this template still runs against an image built before
+        # empty-as-unset. Losing the `vars.AI_REVIEW_REVIEWERS == ''` guard would
+        # export '' unconditionally and fail `prepare` on the pinned runtime.
+        for name, literal in (
+            ("AI_REVIEW_CLAUDE_ENABLED", "'true'"),
+            ("AI_REVIEW_CODEX_ENABLED", "'true'"),
+            ("AI_REVIEW_OPENCODE_ENABLED", "'true'"),
+            ("AI_REVIEW_CURSOR_ENABLED", "'false'"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    text.count(
+                        f"{name}: ${{{{ vars.AI_REVIEW_REVIEWERS == '' "
+                        f"&& (vars.{name} || {literal}) || '' }}}}"
+                    ),
+                    1,
+                )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

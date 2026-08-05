@@ -66,6 +66,17 @@ only some pipeline jobs fails the cross-stage consistency check instead of
 producing a differently-sized panel per stage. Set it at repository/project or
 group scope.
 
+**Minimum runtime.** Every stage executes `/opt/ai-review` from the pinned base
+and reviewer images, not from your checkout, so `AI_REVIEW_REVIEWERS` is honored
+only by an image that ships roster support. On an older pinned runtime the
+variable is silently ignored and the panel stays at whatever `review.yaml`
+enables — there is no error, because the runtime has no concept of the variable
+to reject. Confirm the image pins before relying on the roster; the per-seat
+`AI_REVIEW_<REVIEWER>_ENABLED` flags work on every supported runtime. The
+canonical GitHub Actions workflow keeps those per-seat flags at their previous
+literal defaults whenever no roster is set, so updating the workflow template
+ahead of the image pins does not break `prepare`.
+
 The blocking, resolution, and quorum thresholds are authored against the
 configured reviewer count and take effect clamped to the enabled count, so
 changing the roster never requires editing them in lock-step. With the shipped
@@ -211,7 +222,7 @@ artifacts.
 
 | Variable | Default/source | Scope and validation |
 |---|---|---|
-| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Two to four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. |
+| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Two to four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support; older pinned runtimes ignore it silently. |
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |

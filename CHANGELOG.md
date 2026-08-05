@@ -37,11 +37,19 @@ versioning.
 
 - `AI_REVIEW_<REVIEWER>_ENABLED` now treats an empty or whitespace-only value as unset,
   matching the existing `_MODEL` and `_EFFORT` handling. The canonical GitHub Actions
-  workflow relies on this: its per-seat enablement variables default to `''` rather than a
-  literal boolean, which is what lets `AI_REVIEW_REVIEWERS` work without being permanently
-  contradicted by a workflow-scope default. Non-empty values keep the strict lowercase
-  `true`/`false` contract. `CURSOR_API_KEY` is still withheld from reviewer jobs unless
-  Cursor is on the panel, now honoring either selection mechanism.
+  workflow relies on this: when a roster is set its per-seat enablement variables resolve
+  to `''` rather than a literal boolean, which is what lets `AI_REVIEW_REVIEWERS` work
+  without being permanently contradicted by a workflow-scope default. They keep their
+  previous literal defaults when no roster is set, so the template still runs against an
+  image pinned before this change — CI stages execute `/opt/ai-review` from the pinned
+  images rather than the checkout, and an older runtime rejects an empty value instead of
+  treating it as unset. Non-empty values keep the strict lowercase `true`/`false` contract.
+  `CURSOR_API_KEY` is still withheld from reviewer jobs unless Cursor is on the panel, now
+  honoring either selection mechanism.
+
+  Note that `AI_REVIEW_REVIEWERS` itself requires an image that ships roster support: on an
+  older pinned runtime it is silently ignored and the panel stays at whatever `review.yaml`
+  enables. Confirm the image pins before relying on the roster.
 
 ### Fixed
 

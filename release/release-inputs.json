@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "e9c7642f01e1ec0662c093f33300e92c12c8e5823bb1f3a51f26a6209410f382"
+      "sha256": "f8bcabb37028bc28f8c6f400beb73ba544606d9eef9a159884e4ff494be4d63f"
     },
     "configuration": {
       "files": [
@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "c25127bdfd8bc41a50840103bc28f50cb2976b3a44878183d396876d4ff5ca06"
+      "sha256": "4eb73db5ccb1324d6d0ed5f7595db251b44baed9f9e66c3dba8a024d9af82cbd"
     },
     "image_recipes": {
       "files": [

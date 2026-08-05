@@ -40,15 +40,27 @@ env:
   # Panel roster. Every reviewer is a peer: set AI_REVIEW_REVIEWERS to a
   # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
   # enabled while every other configured seat sits out. Leave it unset to use the
-  # defaults in config/review.yaml. It is mutually exclusive with the per-reviewer
-  # ENABLED variables below, which is why those default to '' (unset) rather than
-  # a literal boolean — a hardcoded default here would permanently contradict any
-  # roster an operator sets.
+  # defaults in config/review.yaml.
+  #
+  # Requires a runtime that supports the roster. The jobs below execute
+  # /opt/ai-review from the pinned images, not this checkout, so an image built
+  # before roster support ignores this variable. Setting it without repinning
+  # silently leaves the panel unchanged — check the image pins first.
   AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
-  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || '' }}
-  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || '' }}
-  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || '' }}
-  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || '' }}
+  # The roster is mutually exclusive with these per-seat flags, so when a roster
+  # is set they must reach the config parser as unset ('') rather than as a
+  # hardcoded boolean that would permanently contradict it.
+  #
+  # They are only blanked when a roster is actually set. Older runtimes reject an
+  # empty value instead of treating it as unset, so blanking unconditionally would
+  # fail `prepare` on every run against a pinned image built before that change.
+  # Gating on the roster keeps this template working against both runtimes: no
+  # roster means the previous literal defaults, and the empty form is reached only
+  # by an operator who has opted into a feature that needs the newer image anyway.
+  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}
+  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}
+  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}
+  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}
   AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
   AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
   AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
