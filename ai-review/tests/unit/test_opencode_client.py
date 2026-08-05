@@ -257,6 +257,73 @@ class OpenCodeClientTests(unittest.TestCase):
             self.assertNotIn("used structured_output", logged)
             self.assertEqual(json.loads(output.getvalue()), {"findings": []})
 
+    def test_relative_root_is_resolved_before_it_reaches_the_server(self) -> None:
+        # The root is the server's cwd *and* the directory sent with every request,
+        # so a relative value is joined onto itself and the server fails realPath on
+        # out/.tmp/opencode-review-root.N/out/.tmp/opencode-review-root.N.
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp).resolve()
+            root = parent / "out" / ".tmp" / "opencode-review-root.1"
+            root.mkdir(parents=True)
+            prompt = parent / "prompt.md"
+            prompt.write_text("Return the stage payload.\n", encoding="utf-8")
+            process = mock.Mock()
+            process.poll.return_value = None
+            thread = mock.Mock()
+            directories: list[object] = []
+
+            def start_server(
+                server_root: Path,
+            ) -> tuple[object, str, opencode_client._ServerLog, object]:
+                directories.append(server_root)
+                return process, "http://127.0.0.1:43123/", opencode_client._ServerLog(), thread
+
+            def request(
+                _base_url: str, _method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
+                directories.append(kwargs["directory"])
+                if path == "session":
+                    return {"id": "ses_test"}
+                return {
+                    "data": {
+                        "info": {"role": "assistant", "structured": {"findings": []}},
+                        "parts": [],
+                    }
+                }
+
+            cwd = Path.cwd()
+            os.chdir(parent)
+            try:
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "AI_REVIEW_STAGE": "review",
+                            "AI_REVIEW_MODEL": "google/test-model",
+                            "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+                            "AI_REVIEW_OPENCODE_ROOT": "out/.tmp/opencode-review-root.1",
+                        },
+                        clear=True,
+                    ),
+                    mock.patch.object(
+                        opencode_client, "_start_server", side_effect=start_server
+                    ),
+                    mock.patch.object(opencode_client, "_request_json", side_effect=request),
+                ):
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        self.assertEqual(opencode_client.run(), 0)
+            finally:
+                os.chdir(cwd)
+
+            # The server cwd and every request directory: absolute, and the same
+            # single copy of the root path.
+            self.assertGreaterEqual(len(directories), 3)
+            for seen in directories:
+                self.assertEqual(Path(str(seen)), root)
+                self.assertTrue(Path(str(seen)).is_absolute())
+
     def test_critique_transport_uses_critique_schema(self) -> None:
         schema = opencode_client._load_transport_schema("critique")
         expected = load_json_file(

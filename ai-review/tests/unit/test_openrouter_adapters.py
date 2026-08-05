@@ -713,6 +713,7 @@ PY
         extra_env: dict[str, str] | None = None,
         prepare_snapshot: Callable[[Path], None] | None = None,
         stage: str = "review",
+        relative_dirs: bool = False,
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -763,6 +764,14 @@ PY
                 os.environ.pop(key, None)
             for key, value in (extra_env or {}).items():
                 os.environ[key] = value
+            # CI passes relative input/output dirs (AI_REVIEW_OUTPUT_DIR: out), which
+            # every other case here hides behind an absolute temp path. Reproduce that
+            # shape from the process cwd; the reads below stay absolute.
+            entry_cwd = Path.cwd()
+            if relative_dirs:
+                os.chdir(root)
+                os.environ["AI_REVIEW_INPUT_DIR"] = "inputs"
+                os.environ["AI_REVIEW_OUTPUT_DIR"] = "out"
             try:
                 self.assertEqual(run_adapter(reviewer, stage), 0)
                 stage_dir = {"review": "findings", "critique": "critiques"}[stage]
@@ -850,6 +859,7 @@ PY
                     meta["workspace_entries"] = workspace_entries
                 return batch, cli_args, cli_env, meta
             finally:
+                os.chdir(entry_cwd)
                 for key, value in previous.items():
                     if value is None:
                         os.environ.pop(key, None)
@@ -1351,6 +1361,27 @@ PY
         self.assertEqual(agent["permission"]["websearch"], "deny")
         self.assertEqual(agent["permission"]["task"], "deny")
         self.assertEqual(agent["permission"]["skill"], "deny")
+
+    def test_opencode_relative_output_dir_sends_an_unduplicated_review_root(self) -> None:
+        """A relative AI_REVIEW_OUTPUT_DIR must not double the review root.
+
+        The client uses the root as the server's cwd *and* as the directory it sends
+        with every request, so a relative root is resolved against itself: the
+        observed CI failure was realPath ENOENT on
+        out/.tmp/opencode-review-root.N/out/.tmp/opencode-review-root.N.
+        """
+        batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
+            "opencode", "opencode", relative_dirs=True
+        )
+
+        self.assertEqual(batch["adapter_status"], "success")
+        selected = str(meta["selected_dir"])
+        self.assertTrue(Path(selected).is_absolute(), selected)
+        self.assertEqual(selected.count("opencode-review-root."), 1, selected)
+        self.assertNotIn("/out/.tmp/out/", selected)
+        # The sanitized snapshot is what the reviewer actually saw, so the root
+        # the server was handed has to exist and hold it.
+        self.assertIn("README.md", meta["workspace_entries"])
 
     def test_opencode_effort_reaches_reasoning_effort(self) -> None:
         for configured in ("low", "medium", "high", "xhigh"):
