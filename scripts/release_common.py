@@ -72,6 +72,7 @@ HASH_GROUPS = {
         "ai-review/images/cursor-agent.pin",
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile",
+        "ai-review/images/ripgrep.pin",
     ),
     "configuration": ("ai-review/config/review.yaml",),
     "schemas": tuple(

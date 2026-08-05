@@ -37,6 +37,8 @@ COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
 COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
+COPY scripts/smoke_opencode_search_tools.py /opt/scripts/smoke_opencode_search_tools.py
+COPY scripts/smoke_opencode_search_tools.sh /opt/scripts/smoke_opencode_search_tools.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
 

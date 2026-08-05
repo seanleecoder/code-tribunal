@@ -30,6 +30,7 @@ wins.
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply trusted generated/lockfile/vendored exclusions only after a complete diff is fetched, with explicit coverage provenance and a first-class no-reviewable-changes gate. |
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 (title decision still in force) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
 | [SPEC-50](spec-50-opencode-structured-reviewer-output.md) | Implemented (post-1.0; runtime source only) | Obtain OpenCode reviewer output through the structured-output transport instead of parsing model prose, and stop treating reasoning parts as answer text in any adapter. |
+| [SPEC-51](spec-51-opencode-search-tool-reach.md) | Implemented (post-1.0; source and image recipe; after SPEC-50) | Deny OpenCode's `external_directory` permission so the sanitized review root actually bounds the reviewer, and ship a pinned checksum-verified ripgrep instead of letting OpenCode fetch and execute an unverified one at review time. |
 
 ## Active dependency order
 

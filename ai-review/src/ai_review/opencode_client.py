@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -24,6 +25,11 @@ from .redact import redact_text
 from .schema import load_json_file, schema_dir
 
 _HOST = "127.0.0.1"
+# Matches either word order, because the wording is OpenCode's, not ours: any log
+# line that mentions both downloading and ripgrep means the pinned binary lost.
+_RIPGREP_FETCH_PATTERN = re.compile(
+    r"(?:download\w*[^\n]*ripgrep|ripgrep[^\n]*download\w*)", re.IGNORECASE
+)
 _SESSION_TITLE = "code-tribunal-ai-review"
 _SERVER_START_TIMEOUT_SECONDS = 15.0
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
@@ -32,6 +38,11 @@ _PERMISSION_RULES = [
     {"permission": "question", "action": "deny", "pattern": "*"},
     {"permission": "plan_enter", "action": "deny", "pattern": "*"},
     {"permission": "plan_exit", "action": "deny", "pattern": "*"},
+    # Denied at the session too, not only in the adapter's agent config: every
+    # permission whose default is "ask" would otherwise block a headless session
+    # on an approval nobody can grant. OpenCode's default for external_directory
+    # is {"*": "ask"}, and the tool-level "*" wildcard does not cover it.
+    {"permission": "external_directory", "action": "deny", "pattern": "*"},
 ]
 
 
@@ -102,12 +113,72 @@ def _request_json(
     return parsed
 
 
-def _start_server(
-    root: Path,
-) -> tuple[subprocess.Popen[str], str, deque[str], threading.Thread]:
+class _ServerLog:
+    """The server's recent output, plus findings that must survive being scrolled off.
+
+    `lines` is deliberately bounded: the failure paths report the last lines seen, and
+    an unbounded buffer would hold a whole review's logging for no benefit. But a
+    bounded buffer cannot be the substrate for a security check — a ripgrep fetch
+    logged early in a long session is evicted long before the session ends — so
+    matching lines are recognized as they arrive and recorded separately, where later
+    output cannot displace them.
+    """
+
+    def __init__(self, maxlen: int = 80) -> None:
+        self.lines: deque[str] = deque(maxlen=maxlen)
+        self.ripgrep_fetch: str | None = None
+
+    def append(self, line: str) -> None:
+        self.lines.append(line)
+        if self.ripgrep_fetch is None and _RIPGREP_FETCH_PATTERN.search(line):
+            self.ripgrep_fetch = line
+
+    def tail(self, count: int) -> str:
+        return " | ".join(list(self.lines)[-count:])
+
+
+def _assert_no_ripgrep_fetch(server_log: _ServerLog) -> None:
+    """Fail the review if OpenCode fetched its own ripgrep.
+
+    OpenCode's grep/glob tools resolve which("rg") first and otherwise download a
+    ripgrep release, verifying nothing but a non-zero byte length. The image ships a
+    pinned, checksum-verified rg on the adapter's fixed PATH so that never happens;
+    if it happens anyway, an unverified binary executed inside the reviewer and its
+    findings must not be posted. That makes this a hard failure rather than a log
+    line someone might notice.
+
+    Reads the sticky record rather than rescanning the bounded buffer, so the verdict
+    does not depend on how much the server logged afterwards.
+    """
+    if server_log.ripgrep_fetch is not None:
+        raise OpenCodeClientError(
+            "opencode downloaded ripgrep at review time instead of using the "
+            f"pinned /usr/local/bin/rg: {server_log.ripgrep_fetch.strip()}"
+        )
+
+
+def _resolve_opencode_executable() -> str:
+    """Prefer the adapter's OPENCODE_BIN, but only if it is actually executable.
+
+    The adapter resolves the pinned binary on the ambient PATH and forwards it,
+    because the fixed trusted PATH it hands opencode governs which("rg") and must
+    not carry an injected binary directory. An unusable value (empty, relative,
+    stale) must not reach Popen as a raw FileNotFoundError; fall back to PATH
+    resolution so the failure is this module's own diagnosis.
+    """
+    forwarded = os.environ.get("OPENCODE_BIN", "")
+    if forwarded and os.path.isabs(forwarded) and os.access(forwarded, os.X_OK):
+        return forwarded
     executable = shutil.which("opencode")
     if executable is None:
         raise OpenCodeClientError("pinned opencode executable was not found")
+    return executable
+
+
+def _start_server(
+    root: Path,
+) -> tuple[subprocess.Popen[str], str, _ServerLog, threading.Thread]:
+    executable = _resolve_opencode_executable()
     port = _free_loopback_port()
     process = subprocess.Popen(
         [executable, "--pure", "serve", "--hostname", _HOST, "--port", str(port)],
@@ -120,14 +191,16 @@ def _start_server(
     )
     # Keep the most recent lines, not the first: a server that logs a banner
     # before failing would otherwise push the actual error out of the capture,
-    # and the failure paths below report these as the last lines seen.
-    logs: deque[str] = deque(maxlen=80)
+    # and the failure paths below report these as the last lines seen. Anything the
+    # review's outcome depends on is recorded by _ServerLog as it arrives, so it is
+    # not subject to that eviction.
+    server_log = _ServerLog()
 
     def drain() -> None:
         if process.stdout is None:
             return
         for line in process.stdout:
-            logs.append(line.rstrip())
+            server_log.append(line.rstrip())
 
     drain_thread = threading.Thread(target=drain, name="opencode-server-log", daemon=True)
     drain_thread.start()
@@ -135,7 +208,7 @@ def _start_server(
     deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            detail = " | ".join(list(logs)[-8:])
+            detail = server_log.tail(8)
             drain_thread.join(timeout=_SERVER_STOP_TIMEOUT_SECONDS)
             raise OpenCodeClientError(
                 f"opencode serve exited before readiness{': ' + detail if detail else ''}"
@@ -149,11 +222,11 @@ def _start_server(
                 timeout=1.0,
             )
             if health.get("healthy") is True:
-                return process, base_url, logs, drain_thread
+                return process, base_url, server_log, drain_thread
         except OpenCodeClientError:
             pass
         time.sleep(0.05)
-    detail = " | ".join(list(logs)[-8:])
+    detail = server_log.tail(8)
     _stop_server(process, drain_thread)
     raise OpenCodeClientError(
         f"opencode serve did not become ready{': ' + detail if detail else ''}"
@@ -275,8 +348,9 @@ def run() -> int:
 
     process: subprocess.Popen[str] | None = None
     drain_thread: threading.Thread | None = None
+    server_log = _ServerLog()
     try:
-        process, base_url, _logs, drain_thread = _start_server(root)
+        process, base_url, server_log, drain_thread = _start_server(root)
         session = _request_json(
             base_url,
             "POST",
@@ -306,6 +380,10 @@ def run() -> int:
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
+    # After the server is stopped and its log drained, so a fetch logged late in the
+    # session is still caught. Deliberately outside the try/finally: this must raise
+    # instead of letting `batch` be printed.
+    _assert_no_ripgrep_fetch(server_log)
 
     # Mirror adapter_runner._log_structured_output_usage's two wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the

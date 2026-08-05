@@ -208,6 +208,23 @@ jobs:
               --input "$AI_REVIEW_OUTPUT_DIR/consensus/consensus.json"
           '
 
+      - name: Verify pinned ripgrep and effective external-directory deny
+        # Spec-51 gate. Proves the pinned rg and opencode are the binaries that
+        # resolve on the adapter's fixed trusted PATH, and that the adapter's own
+        # generated config resolves external_directory to deny while read/grep/glob
+        # stay allowed.
+        #
+        # Deliberately a step in this job rather than a separate one, and with no
+        # event condition. It needs no secret, so unlike cursor-permission-smoke it
+        # needs no event restriction — and a separate job could only consume the image
+        # artifact, which is not uploaded for pull requests, so the probe would have
+        # skipped exactly the runs where a ripgrep.pin or adapter change is under
+        # review. Here it gates merge as well as publication, since publish needs
+        # this job. It runs before the artifact is saved so a failed probe cannot
+        # even hand an image downstream.
+        shell: bash
+        run: scripts/smoke_opencode_search_tools.sh "$AI_REVIEW_REVIEWER_TAG"
+
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
         shell: bash

@@ -15,6 +15,38 @@ if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
   run_mock
 fi
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+# Resolve a pinned CLI for forwarding into the fixed environment below, trusted
+# location first. /usr/local/bin is where the image installs the pinned CLIs, so it
+# must win over anything earlier on the runner's ambient PATH: forwarding an
+# ambient-resolved path would let a preceding `opencode` substitute itself for the
+# pinned one, which is exactly the substitution the fixed trusted PATH exists to
+# prevent.
+#
+# The optional second argument is evidence that this environment is expected to ship a
+# pinned copy of that CLI. If that evidence is present but /usr/local/bin/$1 is not, the
+# image shipped a pinned copy and lost it: that is a broken image, not a fallback case,
+# and running an ambient binary instead would be the same substitution by another route
+# — so it fails closed. Where nothing was ever pinned (a checkout, a dev machine, the
+# base image, whose test suite supplies its own fake CLIs) there is nothing to prefer,
+# and ambient resolution is the only thing left.
+#
+# Resolution happens before the availability gate below and by absolute path, so a
+# PATH that omits /usr/local/bin can neither hide the pinned binary nor cause the
+# gate to reject it.
+resolve_trusted() {
+  if [ -x "/usr/local/bin/$1" ]; then
+    echo "/usr/local/bin/$1"
+    return 0
+  fi
+  if [ -n "${2:-}" ] && [ -e "$2" ]; then
+    echo "$2 exists, so a pinned $1 is expected on /usr/local/bin but is missing; refusing to run an ambient one" >&2
+    return 1
+  fi
+  command -v "$1" 2>/dev/null
+}
+
 if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
   echo "OPENROUTER_BASE_URL must be unset or exactly https://openrouter.ai/api/v1" >&2
   exit 2
@@ -27,7 +59,14 @@ if [ -z "${AI_REVIEW_MODEL:-}" ]; then
   exit 2
 fi
 
-if ! command -v opencode >/dev/null 2>&1; then
+# The availability gate IS the resolution: the pinned binary is looked up first and
+# the result is what gets forwarded, so the gate can never reject a binary that
+# resolution would have found, nor accept one that resolution would refuse. The fixed
+# trusted PATH below governs what opencode itself finds — notably which("rg") — so it
+# must not carry an injected binary directory, but the opencode executable still has
+# to be reachable from it.
+OPENCODE_BIN="$(resolve_trusted opencode /usr/local/lib/node_modules/opencode-ai || true)"
+if [ -z "$OPENCODE_BIN" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
     echo "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
     exit 127
@@ -104,6 +143,14 @@ fi
 # Unquoted heredoc so $AI_REVIEW_MODEL and guarded optional fragments expand;
 # \$schema stays literal and the {env:OPENROUTER_API_KEY} template (no leading
 # $) is passed through untouched.
+#
+# external_directory must be denied explicitly. It is a permission key of its own,
+# so the "*": "deny" tool wildcard does not cover it, and OpenCode's default is
+# {"*": "ask"} — verified with `opencode --pure debug agent ai-reviewer` against
+# this exact config. Without the explicit rule, read/grep on an absolute path
+# outside the review root raises an approval request that nothing in a headless
+# reviewer can answer, and the sanitized snapshot boundary stops being the
+# reviewer's actual reach.
 OPENCODE_CONFIG_JSON=$(cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -136,7 +183,8 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
         "webfetch": "deny",
         "websearch": "deny",
         "task": "deny",
-        "skill": "deny"
+        "skill": "deny",
+        "external_directory": {"*": "deny"}
       },
       "// tools": "Trim schemas for tools already denied by permission; permission remains enforcement.",
       "tools": {
@@ -164,7 +212,8 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
     "webfetch": "deny",
     "websearch": "deny",
     "task": "deny",
-    "skill": "deny"
+    "skill": "deny",
+    "external_directory": {"*": "deny"}
   }
 }
 EOF
@@ -174,11 +223,39 @@ EOF
 # a response schema. The internal client below uses the pinned server API so the
 # stage schema reaches OpenCode's required StructuredOutput tool. It keeps the
 # title static and data-free to avoid the separate title-inference request.
-PYTHON_BIN="${PYTHON:-python3}"
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# The interpreter is resolved exactly like OPENCODE_BIN, under the same rule: it is
+# forwarded into the same fixed environment and then executed, so leaving it fail-open
+# while opencode fails closed would just move the substitution to the other binary. The
+# fixed trusted PATH below is deliberate, but a bare `python3` (a venv, a Homebrew
+# install, anything outside /usr/local/bin:/usr/bin:/bin) would not be reachable from it.
+#
+# Its pinned-copy evidence is the packaged runtime install rather than a python directory
+# on purpose: /usr/local/lib/python3.12 embeds the minor version, so the next base-image
+# digest bump would silently disable the check. The base image is an official python
+# image installed under /usr/local, so a packaged runtime without /usr/local/bin/python3
+# is broken by construction. Keeping the interpreter there is therefore a base-image
+# constraint, recorded in images/SUPPLY_CHAIN.md with the digest-refresh step.
+#
+# An explicitly set $PYTHON is honored verbatim and is deliberately not routed through
+# this rule: it is a caller's deliberate choice rather than a lookup, and the unit suite
+# supplies its own interpreter that way.
+if [ -n "${PYTHON:-}" ]; then
+  PYTHON_BIN="$PYTHON"
+else
+  PYTHON_BIN="$(resolve_trusted python3 /opt/ai-review/src/ai_review || true)"
+  if [ -z "$PYTHON_BIN" ]; then
+    echo "python3 was not found for the $AI_REVIEW_REVIEWER reviewer client" >&2
+    exit 127
+  fi
+fi
 PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
+# Fixed trusted PATH, not the runner's ambient one: /usr/local/bin must win so
+# OpenCode's which("rg") resolves the pinned image rg and never falls through to
+# a download or to some earlier rg on the ambient PATH. This is the exact PATH the
+# reviewer.Dockerfile final guard proves resolution on.
 env -i \
-  PATH="${PATH:-/usr/bin:/bin}" \
+  PATH="/usr/local/bin:/usr/bin:/bin" \
+  OPENCODE_BIN="$OPENCODE_BIN" \
   PYTHON="$PYTHON_BIN" \
   PYTHONPATH="$PYTHONPATH_VALUE" \
   TMPDIR="${TMPDIR:-/tmp}" \

@@ -146,7 +146,12 @@ class OpenCodeClientTests(unittest.TestCase):
                 mock.patch.object(
                     opencode_client,
                     "_start_server",
-                    return_value=(process, "http://127.0.0.1:43123/", [], thread),
+                    return_value=(
+                        process,
+                        "http://127.0.0.1:43123/",
+                        opencode_client._ServerLog(),
+                        thread,
+                    ),
                 ),
                 mock.patch.object(opencode_client, "_request_json", side_effect=request),
             ):
@@ -233,7 +238,12 @@ class OpenCodeClientTests(unittest.TestCase):
                 mock.patch.object(
                     opencode_client,
                     "_start_server",
-                    return_value=(process, "http://127.0.0.1:43123/", [], thread),
+                    return_value=(
+                        process,
+                        "http://127.0.0.1:43123/",
+                        opencode_client._ServerLog(),
+                        thread,
+                    ),
                 ),
                 mock.patch.object(opencode_client, "_request_json", side_effect=request),
             ):
@@ -345,6 +355,114 @@ class OpenCodeClientTests(unittest.TestCase):
             self.assertRaisesRegex(opencode_client.OpenCodeClientError, "was not found"),
         ):
             opencode_client._start_server(Path(tmp))
+
+    def test_forwarded_opencode_bin_is_used_when_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "opencode"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            with mock.patch.dict(os.environ, {"OPENCODE_BIN": str(binary)}):
+                self.assertEqual(
+                    opencode_client._resolve_opencode_executable(), str(binary)
+                )
+
+    def test_unusable_opencode_bin_falls_back_to_path_resolution(self) -> None:
+        """A stale or relative value must not reach Popen as a FileNotFoundError."""
+        for value in ("", "opencode", "/nonexistent/opencode"):
+            with self.subTest(value=value):
+                with (
+                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
+                    mock.patch.object(
+                        opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
+                    ),
+                ):
+                    self.assertEqual(
+                        opencode_client._resolve_opencode_executable(),
+                        "/usr/local/bin/opencode",
+                    )
+                with (
+                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
+                    mock.patch.object(opencode_client.shutil, "which", return_value=None),
+                    self.assertRaisesRegex(
+                        opencode_client.OpenCodeClientError, "was not found"
+                    ),
+                ):
+                    opencode_client._resolve_opencode_executable()
+
+    @staticmethod
+    def _server_log(*lines: str, maxlen: int = 80) -> opencode_client._ServerLog:
+        server_log = opencode_client._ServerLog(maxlen=maxlen)
+        for line in lines:
+            server_log.append(line)
+        return server_log
+
+    def test_review_time_ripgrep_fetch_is_a_client_error(self) -> None:
+        """An unverified binary ran inside the reviewer; its findings must not post."""
+        for line in (
+            "INFO  downloading ripgrep 15.1.0",
+            "ripgrep not found, download started",
+            "DOWNLOADING RIPGREP",
+        ):
+            with (
+                self.subTest(line=line),
+                self.assertRaisesRegex(
+                    opencode_client.OpenCodeClientError, "downloaded ripgrep at review time"
+                ),
+            ):
+                opencode_client._assert_no_ripgrep_fetch(self._server_log(line))
+
+    def test_ripgrep_fetch_survives_being_scrolled_out_of_the_log_buffer(self) -> None:
+        """The buffer is bounded; the verdict must not be.
+
+        A real review logs far more than the buffer holds, so a fetch line early in
+        the session is evicted long before the check runs. Recording the match as the
+        line arrives is what makes the guard hold for a session of any length.
+        """
+        server_log = self._server_log(
+            "INFO  downloading ripgrep 15.1.0",
+            *(f"INFO  tool call {index}" for index in range(200)),
+        )
+        self.assertNotIn(
+            "downloading ripgrep 15.1.0",
+            " ".join(server_log.lines),
+            "precondition: the fetch line must have been evicted from the buffer",
+        )
+        with self.assertRaisesRegex(
+            opencode_client.OpenCodeClientError, "downloaded ripgrep at review time"
+        ):
+            opencode_client._assert_no_ripgrep_fetch(server_log)
+
+    def test_ripgrep_fetch_is_recognized_while_the_server_log_is_drained(self) -> None:
+        """Detection happens in the drain thread, not in a later scan."""
+        with tempfile.TemporaryDirectory() as tmp:
+            process = mock.Mock()
+            process.poll.return_value = None
+            process.stdout = io.StringIO(
+                "INFO  downloading ripgrep 15.1.0\n"
+                + "".join(f"INFO  tool call {index}\n" for index in range(200))
+            )
+            with (
+                mock.patch.object(
+                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
+                ),
+                mock.patch.object(opencode_client, "_free_loopback_port", return_value=43127),
+                mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
+                mock.patch.object(
+                    opencode_client, "_request_json", return_value={"healthy": True}
+                ),
+            ):
+                _, _, server_log, drain_thread = opencode_client._start_server(Path(tmp))
+            drain_thread.join(timeout=5)
+            self.assertEqual(server_log.ripgrep_fetch, "INFO  downloading ripgrep 15.1.0")
+
+    def test_ordinary_server_logs_do_not_trip_the_ripgrep_guard(self) -> None:
+        opencode_client._assert_no_ripgrep_fetch(
+            self._server_log(
+                "INFO  server listening on 127.0.0.1:43126",
+                "INFO  grep completed in 12ms",
+                "INFO  downloading model list",
+            )
+        )
 
     def test_unsupported_stage_is_a_client_error(self) -> None:
         with self.assertRaisesRegex(

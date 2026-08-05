@@ -31,7 +31,7 @@
         "docs/getting-started/gitlab.md",
         "docs/operations.md"
       ],
-      "sha256": "4b3aa4128b08683122ac877886439ccd2755d8d924c48cb45fbf480ece1cec7e"
+      "sha256": "0c48f509ead9ff9ccfac9fbb3dc5ae6d76967f3464c6787ae3a10d897bb3ca4d"
     },
     "image_recipes": {
       "files": [
@@ -39,6 +39,7 @@
         "ai-review/images/cursor-agent.pin",
         "ai-review/images/package.json",
         "ai-review/images/reviewer.Dockerfile",
+        "ai-review/images/ripgrep.pin",
         "ai-review/tests/fixtures/diffs/simple.diff",
         "ai-review/tests/fixtures/golden/default_transitive_split_consensus.json",
         "ai-review/tests/fixtures/golden/render_body_hostile.json",
@@ -49,7 +50,7 @@
         "ai-review/tests/fixtures/opencode/review-reasoning-only.ndjson",
         "ai-review/tests/fixtures/repos/simple/src/foo.py"
       ],
-      "sha256": "de27c5d671f2394ab915ebcdb3397a7418864a8e996dafad90a233c434d312a9"
+      "sha256": "ff63af8e1e30333d4c6b352161d1f4c8c2332ff5eac8950e1ab29e4d677b4940"
     },
     "schemas": {
       "files": [

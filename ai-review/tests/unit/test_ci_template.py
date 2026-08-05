@@ -27,6 +27,9 @@ _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 _CURSOR_PERMISSION_SMOKE = (
     Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 )
+_OPENCODE_SEARCH_SMOKE_SH = (
+    Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.sh"
+)
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
 _CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
@@ -783,10 +786,65 @@ class GitLabCiTemplateTests(unittest.TestCase):
             cursor_smoke,
             r"uses: actions/download-artifact@[0-9a-f]{40} # v8\.0\.1",
         )
-        # Publish must not wait on the Cursor smoke.
+        # Publish must not wait on the Cursor smoke, because Cursor is disabled in
+        # review.yaml. The OpenCode search probe needs no entry here: it is a step in
+        # build-preflight, so this need already covers it.
         publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
         self.assertIsNotNone(publish_needs)
-        self.assertEqual(publish_needs.group(1), "build-preflight")
+        assert publish_needs is not None
+        needs = publish_needs.group(1)
+        self.assertNotIn("cursor-permission-smoke", needs)
+        self.assertEqual(needs, "build-preflight")
+
+    def test_opencode_search_smoke_gates_merge_and_publication(self) -> None:
+        """The OpenCode search probe must run on pull requests, not only on main.
+
+        It lives in build-preflight rather than a separate job: a separate job could
+        only consume the image artifact, which is not uploaded for pull requests, so
+        the probe would skip exactly the runs where a ripgrep.pin or adapter change is
+        under review. In build-preflight it gates merge, and publish's need on that
+        job makes it gate publication too.
+        """
+        if not _PUBLISH_WORKFLOW.exists():
+            self.skipTest("GitHub publish workflow is not present in this checkout")
+
+        text = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("opencode-search-smoke:", text)
+        preflight = _workflow_job(text, "build-preflight")
+        invocation = 'run: scripts/smoke_opencode_search_tools.sh "$AI_REVIEW_REVIEWER_TAG"'
+        self.assertIn(invocation, preflight)
+
+        probe_step = re.search(
+            r"(?ms)^      - name: Verify pinned ripgrep and effective external-directory deny\n"
+            r"(.*?)(?=^      - name: )",
+            preflight,
+        )
+        self.assertIsNotNone(probe_step, "the probe step must be followed by another step")
+        assert probe_step is not None
+        # No `if:` may narrow it: excluding pull requests is the defect this fixes.
+        self.assertNotRegex(probe_step.group(1), r"(?m)^        if:")
+        # It must gate the artifact rather than run after it is handed downstream.
+        self.assertLess(
+            preflight.index(invocation),
+            preflight.index("- name: Save preflighted image artifact"),
+        )
+        # Provider-free by construction; that is what lets it run on every event.
+        self.assertNotIn("secrets.", probe_step.group(1))
+
+        publish_needs = re.search(r"(?m)^    needs: (.+)$", _workflow_job(text, "publish"))
+        self.assertIsNotNone(publish_needs)
+        assert publish_needs is not None
+        self.assertIn("build-preflight", publish_needs.group(1))
+
+        # The probe must be the wrapper that isolates HOME and denies egress, so a
+        # reintroduced review-time ripgrep download cannot succeed.
+        wrapper = _OPENCODE_SEARCH_SMOKE_SH.read_text(encoding="utf-8")
+        # Assert the flag as an argument line, not merely as a mentioned string: the
+        # comment above it names the flag too, so a substring check would keep passing
+        # after the flag itself was deleted.
+        self.assertRegex(wrapper, r"(?m)^  --network none \\$")
+        self.assertRegex(wrapper, r"(?m)^  --mount \"type=bind,src=\$smoke_dir,dst=/smoke\" \\$")
+        self.assertIn('mkdir -p "$smoke_dir/home"', wrapper)
 
     def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
         if skip_reason := _cursor_publish_workflow_skip_reason():
@@ -919,6 +977,15 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
         self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--hostname'", text)
         self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--port'", text)
+        # OpenCode resolves which("rg") first and otherwise downloads an
+        # unverified ripgrep at review time. The build must prove the pinned
+        # binary is what resolves on the adapter's forwarded PATH.
+        self.assertIn("rg --version", text)
+        self.assertIn("COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg", text)
+        self.assertIn('test "$resolved" = "/usr/local/bin/rg"', text)
+        self.assertIn("env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", text)
+        self.assertIn('rg --version | grep -F -- "ripgrep $version"', text)
+        self.assertIn("sha256sum -c -", text)
         self.assertNotIn("opencode --pure run --help 2>&1 | grep -F -- '--title'", text)
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:
