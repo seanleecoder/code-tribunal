@@ -233,7 +233,7 @@ artifacts.
 
 | Variable | Default/source | Scope and validation |
 |---|---|---|
-| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Two to four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support; older pinned runtimes ignore it silently. |
+| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Two to four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support: an older pin fails `prepare` on GitHub and ignores the roster silently on GitLab — see [Choosing the panel](#choosing-the-panel). |
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
