@@ -7,7 +7,7 @@ variables:
   # Replace all three values together when bumping to a newer published commit.
   AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-e2464a93fb8cbcf839fd14be4b27db4d4854d24a@sha256:e855f2aee69f68ba99ed95ee16efb0ae2c87cca495ee3d6afb000a91822668a9"
   AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-e2464a93fb8cbcf839fd14be4b27db4d4854d24a@sha256:a5a08c685d8d0fac4c7874d8f8d36be37ad86056c19cc82dbaf9a10b9003100b"
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "5817e99f8d831a816056feb2dfd44fac85b5196c"
+  AI_REVIEW_TRUSTED_IMAGE_SHA: "e2464a93fb8cbcf839fd14be4b27db4d4854d24a"
   AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
