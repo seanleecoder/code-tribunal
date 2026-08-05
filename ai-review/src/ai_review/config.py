@@ -95,6 +95,17 @@ SECURITY_KEYS = {"allow_external_fork_secrets"}
 # carry quoting/injection payloads.
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
+# Smallest panel that can still corroborate a finding. Every reviewer is a peer
+# and any of them may be left out of the roster, but a one-seat "panel" would make
+# deterministic consensus a passthrough of a single model's output.
+#
+# This is a floor on *threshold clamping*, not a blanket rule: a config authored
+# with a single reviewer and matching thresholds of 1 stays valid (minimal and
+# single-seat deployments are supported). What it forbids is silently relaxing a
+# corroboration threshold below two because an operator switched seats off — that
+# case still fails loudly, as it does today.
+_MINIMUM_PANEL_REVIEWERS = 2
+
 
 def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) -> None:
     unknown = set(mapping) - allowed
@@ -128,6 +139,78 @@ def _env_flag(name: str, value: str) -> bool:
     raise ConfigError(f"{name} must be exactly 'true' or 'false' (lowercase), got {value!r}")
 
 
+def apply_reviewer_roster(
+    config: dict[str, Any],
+    raw: str | None,
+    per_seat_enabled_vars: list[str] | None = None,
+) -> None:
+    """Apply ``AI_REVIEW_REVIEWERS`` as the authoritative panel roster.
+
+    Every configured reviewer is a peer: listing a name enables that seat and
+    omitting it disables that seat. This is the whole point of the roster — a
+    single variable that cannot express an incoherent panel, unlike N independent
+    booleans where enabling one seat without disabling another silently changes
+    the panel size.
+
+    A disabled seat is not an error anywhere downstream: the adapter runner writes
+    a ``skipped`` batch and status without spawning its CLI, and consensus accepts
+    ``skipped`` artifacts from seats outside the roster. Because this mutates
+    ``enabled`` before ``validate_config``, the roster also flows into
+    ``effective_config_summary`` and therefore the cross-stage digest, so a roster
+    variable scoped to only some CI jobs is caught as configuration drift instead
+    of silently producing a differently-sized panel per stage.
+
+    ``per_seat_enabled_vars`` lists the ``AI_REVIEW_<NAME>_ENABLED`` variables that
+    were actually applied. Combining the two mechanisms is rejected rather than
+    resolved by precedence: either answer would surprise an operator who set both.
+    """
+    if raw is None or not raw.strip():
+        return
+
+    reviewers = config.get("reviewers")
+    if not isinstance(reviewers, dict):
+        raise ConfigError("reviewers must be a mapping")
+
+    if per_seat_enabled_vars:
+        raise ConfigError(
+            "AI_REVIEW_REVIEWERS selects the panel roster and cannot be combined "
+            f"with {sorted(per_seat_enabled_vars)}; unset the per-reviewer ENABLED "
+            "variables and list the seats you want in AI_REVIEW_REVIEWERS"
+        )
+
+    names = [item.strip() for item in raw.split(",")]
+    selected: list[str] = [name for name in names if name]
+    if not selected:
+        raise ConfigError(
+            "AI_REVIEW_REVIEWERS is set but names no reviewers; list at least two "
+            f"of {sorted(reviewers)} or unset the variable to use the config defaults"
+        )
+
+    duplicates = sorted({name for name in selected if selected.count(name) > 1})
+    if duplicates:
+        raise ConfigError(f"AI_REVIEW_REVIEWERS lists duplicate reviewers: {duplicates}")
+
+    unknown = sorted(set(selected) - set(reviewers))
+    if unknown:
+        raise ConfigError(
+            f"AI_REVIEW_REVIEWERS names unknown reviewers: {unknown}; "
+            f"configured reviewers are {sorted(reviewers)}"
+        )
+
+    if len(selected) < _MINIMUM_PANEL_REVIEWERS <= len(reviewers):
+        raise ConfigError(
+            f"AI_REVIEW_REVIEWERS must name at least {_MINIMUM_PANEL_REVIEWERS} "
+            f"reviewers to form a panel, got {selected}; a single reviewer has "
+            "nothing to corroborate against, so consensus would pass one model's "
+            "output straight through"
+        )
+
+    roster = set(selected)
+    for name, reviewer in reviewers.items():
+        if isinstance(reviewer, dict):
+            reviewer["enabled"] = name in roster
+
+
 def apply_env_overrides(config: dict[str, Any]) -> None:
     """Overlay runtime env vars onto the loaded config so operators can change
     models/toggles without rebuilding the image.
@@ -138,8 +221,18 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     the consensus stage fails if its view disagrees with the prepare manifest.
 
     Recognized overrides:
+    - ``AI_REVIEW_REVIEWERS`` -> the authoritative panel roster (see
+      ``apply_reviewer_roster``). Every reviewer named is enabled and every other
+      configured reviewer is disabled, so an operator selects the panel with one
+      variable instead of keeping N booleans in sync. Mutually exclusive with the
+      per-reviewer ``ENABLED`` flags below.
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
-    - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``
+    - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``. An empty
+      or whitespace-only value is treated as unset, exactly like ``MODEL`` and
+      ``EFFORT``, so a CI template can map an absent repository variable to ``''``
+      without forcing an override. Unlike ``AI_REVIEW_CRITIQUE_ENABLED``, GitLab
+      job creation is not gated on these vars, so the byte-for-byte mirror rule in
+      ``_env_flag`` has nothing to mirror here; non-empty values are still strict.
     - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` for
       Claude, Codex, and OpenCode (one of ``low|medium|high|xhigh|max``,
       validated in ``validate_config``; each adapter forwards only the levels
@@ -172,6 +265,7 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
 
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
+        per_seat_enabled: list[str] = []
         for name, reviewer in reviewers.items():
             if not isinstance(reviewer, dict):
                 continue
@@ -180,11 +274,15 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
             if model_env is not None and model_env.strip():
                 reviewer["model"] = model_env.strip()
             enabled_env = os.environ.get(f"{prefix}ENABLED")
-            if enabled_env is not None:
+            if enabled_env is not None and enabled_env.strip():
                 reviewer["enabled"] = _env_flag(f"{prefix}ENABLED", enabled_env)
+                per_seat_enabled.append(f"{prefix}ENABLED")
             effort_env = os.environ.get(f"{prefix}EFFORT")
             if effort_env is not None and effort_env.strip():
                 reviewer["effort"] = effort_env.strip()
+        apply_reviewer_roster(
+            config, os.environ.get("AI_REVIEW_REVIEWERS"), per_seat_enabled
+        )
 
     critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")
     if critique_env is not None:
@@ -451,34 +549,60 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(merge_gate, dict):
         raise ConfigError("merge_gate must be a mapping")
     _reject_unknown_keys(merge_gate, MERGE_GATE_KEYS, "merge_gate")
+    # Panel thresholds are authored against the *configured* seat count and take
+    # effect against the *enabled* count. The two bounds answer different
+    # questions: a threshold above the configured count is an authoring mistake
+    # that can never be satisfied at any roster, while a threshold above the
+    # enabled count is an operator selecting a smaller panel — clamped down so
+    # changing the roster never requires hand-editing thresholds in lock-step.
+    #
+    # Clamping stops at _MINIMUM_PANEL_REVIEWERS: shrinking a panel must never
+    # quietly drop a corroboration requirement to one voter. The post-clamp fit
+    # check below is what turns that into a loud failure, so reducing the shipped
+    # config to a single seat still errors instead of silently self-approving.
+    configured_count = len(reviewers)
     enabled_count = len(enabled_reviewers(config))
     if enabled_count < 1:
         raise ConfigError("at least one reviewer must be enabled")
+    clamp_floor = min(_MINIMUM_PANEL_REVIEWERS, configured_count)
+    clamp_to = max(enabled_count, clamp_floor)
     panel = config.get("panel", {})
     if not isinstance(panel, dict):
         raise ConfigError("panel must be a mapping")
     _reject_unknown_keys(panel, PANEL_KEYS, "panel")
-    min_successful = panel.get("min_successful_reviewers_for_blocking")
-    if type(min_successful) is not int or not (1 <= min_successful <= enabled_count):
-        raise ConfigError(
-            "panel.min_successful_reviewers_for_blocking must be between 1 and enabled reviewers"
-        )
-    min_resolution = panel.get("min_successful_reviewers_for_resolution")
-    if type(min_resolution) is not int or not (1 <= min_resolution <= enabled_count):
-        raise ConfigError(
-            "panel.min_successful_reviewers_for_resolution must be between 1 and enabled reviewers"
-        )
+
+    def _resolve_threshold(value: Any, minimum: int, path: str) -> int:
+        if type(value) is not int or not (minimum <= value <= configured_count):
+            raise ConfigError(
+                f"{path} must be between {minimum} and configured reviewers"
+            )
+        effective = min(value, clamp_to)
+        if effective > enabled_count:
+            raise ConfigError(
+                f"{path} is {effective} but only {enabled_count} reviewer(s) are "
+                "enabled; enable more reviewers or lower the threshold"
+            )
+        return effective
+
+    panel["min_successful_reviewers_for_blocking"] = _resolve_threshold(
+        panel.get("min_successful_reviewers_for_blocking"),
+        1,
+        "panel.min_successful_reviewers_for_blocking",
+    )
+    panel["min_successful_reviewers_for_resolution"] = _resolve_threshold(
+        panel.get("min_successful_reviewers_for_resolution"),
+        1,
+        "panel.min_successful_reviewers_for_resolution",
+    )
     quorum = panel.get("quorum", {})
     if not isinstance(quorum, dict):
         raise ConfigError("panel.quorum must be a mapping")
     _reject_unknown_keys(quorum, PANEL_QUORUM_KEYS, "panel.quorum")
-    votes_required = quorum.get("votes_required")
-    minimum_votes = 2 if enabled_count > 1 else 1
-    if type(votes_required) is not int or not (minimum_votes <= votes_required <= enabled_count):
-        raise ConfigError(
-            "panel.quorum.votes_required must be between "
-            f"{minimum_votes} and enabled reviewers"
-        )
+    quorum["votes_required"] = _resolve_threshold(
+        quorum.get("votes_required"),
+        _MINIMUM_PANEL_REVIEWERS if enabled_count > 1 else 1,
+        "panel.quorum.votes_required",
+    )
     grouping = panel.get("grouping", {})
     if grouping is None:
         grouping = {}

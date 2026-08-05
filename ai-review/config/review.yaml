@@ -4,10 +4,18 @@ schema_version: review_config.v1 # Schema version for config compatibility valid
 # (30-minute) timeout and critique process groups use a 900-second (15-minute)
 # timeout; the CI review and critique jobs add independent 40-minute and
 # 20-minute outer ceilings for wrapper and artifact overhead.
-# Per-reviewer `model` and `enabled` can be overridden at runtime without a
-# rebuild via AI_REVIEW_<REVIEWER>_MODEL / AI_REVIEW_<REVIEWER>_ENABLED
-# (e.g. AI_REVIEW_CLAUDE_MODEL, AI_REVIEW_CODEX_ENABLED). See
-# docs/configuration.md#environment-variables.
+# Every reviewer below is a peer seat, and any of them may be left out of the
+# panel. The primary way to choose the panel is AI_REVIEW_REVIEWERS, a
+# comma-separated roster (e.g. AI_REVIEW_REVIEWERS=claude,codex,cursor) that
+# enables exactly the seats it names and disables the rest. Two to four enabled
+# seats are supported; the panel thresholds below clamp to the enabled count, so
+# changing the roster never requires editing them in lock-step. A one-seat panel
+# is rejected — consensus needs a second opinion to corroborate against.
+# Per-reviewer `model` and `enabled` can also be overridden individually at
+# runtime without a rebuild via AI_REVIEW_<REVIEWER>_MODEL /
+# AI_REVIEW_<REVIEWER>_ENABLED (e.g. AI_REVIEW_CLAUDE_MODEL,
+# AI_REVIEW_CODEX_ENABLED); the per-seat ENABLED flags are mutually exclusive
+# with AI_REVIEW_REVIEWERS. See docs/configuration.md#environment-variables.
 reviewers:
   claude:
     enabled: true # Override: AI_REVIEW_CLAUDE_ENABLED
@@ -45,16 +53,16 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
     credential_variable: OPENROUTER_API_KEY # Environment variable holding provider API token
 
-  # Cursor is an experimental opt-in substitute reviewer. Its acceptance is
-  # required before enabling Cursor, but it does not block shipping 1.0.1.
-  # Cursor CLI cannot route through
-  # OpenRouter/BYOK/custom-base-URL; enabling it sends review prompts, diffs,
-  # and any repo snapshot content it reads to Cursor's backend as a deliberate
-  # second egress destination. Substitute opencode with:
-  # AI_REVIEW_CURSOR_ENABLED=true, AI_REVIEW_OPENCODE_ENABLED=false, and a
+  # Cursor is a peer reviewer seat that is off in the shipped default roster
+  # because selecting it has a consequence the other three do not: Cursor CLI
+  # cannot route through OpenRouter/BYOK/custom-base-URL, so enabling it sends
+  # review prompts, diffs, and any repo snapshot content it reads to Cursor's
+  # backend as a deliberate second egress destination. SPEC-21 acceptance is
+  # required before enabling it, but it does not block shipping 1.0.1. Select it
+  # by naming it in AI_REVIEW_REVIEWERS (e.g. claude,codex,cursor) and provide a
   # CURSOR_API_KEY secret. Do not use OPENROUTER_API_KEY for this reviewer.
   cursor:
-    enabled: false # Opt-in substitute for opencode. Override: AI_REVIEW_CURSOR_ENABLED
+    enabled: false # Peer seat, off by default (second egress destination). Select via AI_REVIEW_REVIEWERS or AI_REVIEW_CURSOR_ENABLED
     adapter: adapters/cursor.sh
     # Cursor has no separate effort option: reasoning depth is part of the
     # model variant. Use an exact slug reported by `cursor-agent --list-models`;
@@ -65,7 +73,9 @@ reviewers:
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
 
-# Panel voting and consensus aggregation rules
+# Panel voting and consensus aggregation rules. These are authored against the
+# configured reviewer count (4) and take effect clamped to the enabled count, so
+# a smaller roster degrades rather than failing validation.
 panel:
   min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
   min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs

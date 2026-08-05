@@ -446,8 +446,11 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("AI critique: [cursor]", text)
         self.assertIn("GitLab creates jobs from the included YAML", text)
         self.assertIn("consumer is still including an older template ref", text)
-        self.assertIn("with OpenCode", text)
+        # Cursor's jobs exist regardless of the roster; the reference must explain
+        # that a seat sitting out still gets jobs and that they are cheap no-ops.
+        self.assertIn("whatever the roster says", text)
         self.assertIn("complete quickly with skipped artifacts", text)
+        self.assertIn("second egress destination, not because it ranks below", text)
 
     def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -1177,12 +1180,29 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CODEX_MODEL": "${{ vars.AI_REVIEW_CODEX_MODEL || '' }}",
             "AI_REVIEW_OPENCODE_MODEL": "${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}",
             "AI_REVIEW_CURSOR_MODEL": "${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}",
-            "AI_REVIEW_CLAUDE_ENABLED": "${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}",
-            "AI_REVIEW_CODEX_ENABLED": "${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}",
-            "AI_REVIEW_OPENCODE_ENABLED": (
-                "${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
+            # The per-seat ENABLED flags must reach the parser as unset when a
+            # roster is set, since a hardcoded boolean would permanently contradict
+            # it. They are blanked *only* when a roster is set: blanking them
+            # unconditionally fails `prepare` against a pinned image built before
+            # empty-as-unset, because the jobs run /opt/ai-review from the image
+            # rather than this checkout.
+            "AI_REVIEW_REVIEWERS": "${{ vars.AI_REVIEW_REVIEWERS || '' }}",
+            "AI_REVIEW_CLAUDE_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}"
             ),
-            "AI_REVIEW_CURSOR_ENABLED": "${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}",
+            "AI_REVIEW_CODEX_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}"
+            ),
+            "AI_REVIEW_OPENCODE_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}"
+            ),
+            "AI_REVIEW_CURSOR_ENABLED": (
+                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
+                "(vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}"
+            ),
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
@@ -1205,6 +1225,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
         text = template.read_text(encoding="utf-8")
         expected_overrides = [
+            "AI_REVIEW_REVIEWERS",
             "AI_REVIEW_CLAUDE_MODEL",
             "AI_REVIEW_CODEX_MODEL",
             "AI_REVIEW_OPENCODE_MODEL",
@@ -1445,24 +1466,44 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
             2,
         )
+        # The Cursor credential reaches exactly one matrix entry, and only when
+        # Cursor is on the panel. Dropping `matrix.reviewer == 'cursor'` would put
+        # the key in every seat's job environment; dropping the roster-unset guard
+        # on the legacy flag would hand it to a seat the roster excluded.
         conditional_cursor_secret = (
-            "CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' "
+            "CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' "
+            "&& (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') "
+            "|| (vars.AI_REVIEW_REVIEWERS == '' "
+            "&& vars.AI_REVIEW_CURSOR_ENABLED == 'true')) "
             "&& secrets.CURSOR_API_KEY || '' }}"
         )
         self.assertEqual(text.count(conditional_cursor_secret), 2)
+        # No unconditional or matrix-blind form may survive anywhere in the file.
+        self.assertNotIn("CURSOR_API_KEY: ${{ (contains(", text)
+        self.assertNotIn("CURSOR_API_KEY: ${{ vars.", text)
         self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
         self.assertEqual(
-            text.count(
-                "AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}"
-            ),
+            text.count("AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}"),
             1,
         )
-        self.assertEqual(
-            text.count(
-                "AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}"
-            ),
-            1,
-        )
+        # The per-seat flags keep their previous literal defaults when no roster is
+        # set, so this template still runs against an image built before
+        # empty-as-unset. Losing the `vars.AI_REVIEW_REVIEWERS == ''` guard would
+        # export '' unconditionally and fail `prepare` on the pinned runtime.
+        for name, literal in (
+            ("AI_REVIEW_CLAUDE_ENABLED", "'true'"),
+            ("AI_REVIEW_CODEX_ENABLED", "'true'"),
+            ("AI_REVIEW_OPENCODE_ENABLED", "'true'"),
+            ("AI_REVIEW_CURSOR_ENABLED", "'false'"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    text.count(
+                        f"{name}: ${{{{ vars.AI_REVIEW_REVIEWERS == '' "
+                        f"&& (vars.{name} || {literal}) || '' }}}}"
+                    ),
+                    1,
+                )
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

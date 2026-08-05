@@ -7,6 +7,56 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- All four reviewers are peer seats, selectable with one variable. `AI_REVIEW_REVIEWERS`
+  takes a comma-separated roster (e.g. `AI_REVIEW_REVIEWERS=claude,codex,cursor`) that
+  enables exactly the seats it names and disables the rest, so any of Claude, Codex,
+  OpenCode, and Cursor may sit out — none is structurally fixed. Previously Cursor was a
+  documented "substitute" for OpenCode, swapped by keeping two independent booleans in
+  sync, which could silently produce a four-seat or two-seat panel. Unknown names,
+  duplicates, a single-seat roster, and combining the roster with the per-seat
+  `AI_REVIEW_<REVIEWER>_ENABLED` flags are all rejected at config load. The roster is part
+  of the effective-config digest, so one scoped to only some pipeline jobs fails the
+  cross-stage consistency check instead of producing a different panel per stage. The
+  shipped default roster is unchanged (Claude, Codex, OpenCode); Cursor stays off by
+  default for its separate egress destination, not because it ranks below the other seats.
+
+### Changed
+
+- Panel thresholds no longer have to be edited in lock-step with the reviewer set.
+  `panel.min_successful_reviewers_for_blocking`, `…_for_resolution`, and
+  `panel.quorum.votes_required` are now bounded by the *configured* reviewer count and
+  take effect clamped to the *enabled* count. With the shipped values (`2`/`2`/`2`) this
+  is a no-op at every supported panel size. Two consequences: a threshold above the
+  configured count is now rejected as an authoring error where it previously only failed
+  once the enabled count was too low, and clamping never drops a corroboration threshold
+  below two — reducing the shipped configuration to a single enabled seat still fails
+  loudly rather than self-approving. A configuration authored with one reviewer and
+  matching thresholds of `1` remains valid.
+
+- `AI_REVIEW_<REVIEWER>_ENABLED` now treats an empty or whitespace-only value as unset,
+  matching the existing `_MODEL` and `_EFFORT` handling. The canonical GitHub Actions
+  workflow relies on this: when a roster is set its per-seat enablement variables resolve
+  to `''` rather than a literal boolean, which is what lets `AI_REVIEW_REVIEWERS` work
+  without being permanently contradicted by a workflow-scope default. They keep their
+  previous literal defaults when no roster is set, so the template still runs against an
+  image pinned before this change — CI stages execute `/opt/ai-review` from the pinned
+  images rather than the checkout, and an older runtime rejects an empty value instead of
+  treating it as unset. Non-empty values keep the strict lowercase `true`/`false` contract.
+  `CURSOR_API_KEY` is supplied only to the Cursor matrix entry — the workflow now gates it
+  on `matrix.reviewer == 'cursor'`, where it was previously placed in every reviewer job's
+  environment whenever Cursor was enabled — and only when Cursor is on the panel. With a
+  roster set, a stale `AI_REVIEW_CURSOR_ENABLED=true` no longer grants the credential,
+  matching the roster's authority over selection.
+
+  `AI_REVIEW_REVIEWERS` requires an image that ships roster support, and the two platforms
+  behave differently on an older pin. GitHub Actions fails `prepare` loudly, because the
+  workflow resolves the per-seat flags to `''` and a runtime without empty-as-unset rejects
+  that value. GitLab ignores the roster silently, since that template sets no per-seat flags
+  for a stale runtime to reject. Confirm the image pins before relying on the roster —
+  mandatory on GitLab, where nothing will tell you.
+
 ### Fixed
 
 - The OpenCode reviewer can return a batch again. OpenCode injects a

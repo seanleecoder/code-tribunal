@@ -11,6 +11,7 @@ from ai_review.config import (
     apply_env_overrides,
     effective_config_digest,
     effective_config_summary,
+    enabled_reviewers,
     load_config,
     validate_config,
 )
@@ -187,6 +188,123 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+
+    def test_roster_selects_an_arbitrary_panel_without_claude(self) -> None:
+        # The point of the roster: no seat is structurally fixed. Claude sitting out
+        # is as ordinary as cursor sitting out.
+        with mock.patch.dict(
+            "os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}
+        ):
+            config = load_config(_REPO_CONFIG)
+
+        enabled = config["reviewers"]
+        self.assertFalse(enabled["claude"]["enabled"])
+        self.assertTrue(enabled["codex"]["enabled"])
+        self.assertTrue(enabled["opencode"]["enabled"])
+        self.assertTrue(enabled["cursor"]["enabled"])
+
+    def test_roster_selects_an_arbitrary_panel_without_codex(self) -> None:
+        with mock.patch.dict(
+            "os.environ", {"AI_REVIEW_REVIEWERS": " claude , opencode ,cursor"}
+        ):
+            config = load_config(_REPO_CONFIG)
+
+        enabled = config["reviewers"]
+        self.assertTrue(enabled["claude"]["enabled"])
+        self.assertFalse(enabled["codex"]["enabled"])
+        self.assertTrue(enabled["opencode"]["enabled"])
+        self.assertTrue(enabled["cursor"]["enabled"])
+
+    def test_roster_of_four_and_of_two_both_validate(self) -> None:
+        for roster, expected in (
+            ("claude,codex,opencode,cursor", 4),
+            ("claude,cursor", 2),
+        ):
+            with self.subTest(roster=roster):
+                with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
+                    config = load_config(_REPO_CONFIG)
+                self.assertEqual(len(enabled_reviewers(config)), expected)
+
+    def test_roster_round_trips_to_summary_and_changes_the_digest(self) -> None:
+        default = effective_config_digest(load_config(_REPO_CONFIG))
+        with mock.patch.dict(
+            "os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}
+        ):
+            config = load_config(_REPO_CONFIG)
+
+        summary = effective_config_summary(config)
+        self.assertFalse(summary["reviewers"]["claude"]["enabled"])
+        self.assertTrue(summary["reviewers"]["cursor"]["enabled"])
+        # A roster scoped to only some CI jobs must surface as config drift rather
+        # than a differently-sized panel per stage.
+        self.assertNotEqual(effective_config_digest(config), default)
+
+    def test_roster_rejects_unknown_reviewer(self) -> None:
+        # A typo must not silently shrink the panel to the names it did match.
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "cluade,codex,opencode"}),
+            self.assertRaisesRegex(ConfigError, "unknown reviewers.*cluade"),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_roster_rejects_duplicate_reviewer(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "claude,claude,codex"}),
+            self.assertRaisesRegex(ConfigError, "duplicate reviewers"),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_roster_rejects_naming_no_reviewers(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": " , "}),
+            self.assertRaisesRegex(ConfigError, "names no reviewers"),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_roster_rejects_single_seat_panel(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "claude"}),
+            self.assertRaisesRegex(ConfigError, "at least 2 reviewers"),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_roster_and_per_seat_enabled_flag_conflict_is_rejected(self) -> None:
+        # Either precedence would surprise an operator who set both, so refuse.
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "AI_REVIEW_REVIEWERS": "claude,codex",
+                    "AI_REVIEW_CURSOR_ENABLED": "true",
+                },
+            ),
+            self.assertRaisesRegex(ConfigError, "cannot be combined"),
+        ):
+            load_config(_REPO_CONFIG)
+
+    def test_unset_roster_leaves_yaml_defaults_alone(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        self.assertEqual(
+            sorted(enabled_reviewers(config)), ["claude", "codex", "opencode"]
+        )
+
+    def test_empty_enabled_override_is_treated_as_unset(self) -> None:
+        # The canonical GitHub Actions workflow maps absent repository variables to
+        # '', which must not count as a per-seat override — otherwise it would
+        # permanently conflict with the roster.
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AI_REVIEW_CURSOR_ENABLED": "",
+                "AI_REVIEW_CLAUDE_ENABLED": "   ",
+                "AI_REVIEW_REVIEWERS": "codex,opencode,cursor",
+            },
+        ):
+            config = load_config(_REPO_CONFIG)
+
+        self.assertEqual(
+            sorted(enabled_reviewers(config)), ["codex", "cursor", "opencode"]
+        )
 
     def test_cursor_enabled_override_round_trips_to_summary(self) -> None:
         from ai_review.config import effective_config_summary
@@ -424,9 +542,12 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             load_config(_REPO_CONFIG)
 
-    def test_resolution_threshold_must_fit_enabled_panel(self) -> None:
+    def test_resolution_threshold_must_fit_configured_panel(self) -> None:
+        # Out-of-range is measured against the *configured* seat count (4), not the
+        # enabled count: a threshold no roster could ever satisfy is an authoring
+        # error, while one merely above the current roster is clamped.
         config = load_config(_REPO_CONFIG)
-        for value in (0, 4, True, "2"):
+        for value in (0, 5, True, "2"):
             with self.subTest(value=value):
                 mutated = deepcopy(config)
                 mutated["panel"]["min_successful_reviewers_for_resolution"] = value
@@ -435,14 +556,44 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 ):
                     validate_config(mutated)
 
-    def test_votes_required_must_fit_enabled_panel(self) -> None:
+    def test_votes_required_must_fit_configured_panel(self) -> None:
         config = load_config(_REPO_CONFIG)
-        for value in (1, 4, True, "2"):
+        for value in (1, 5, True, "2"):
             with self.subTest(value=value):
                 mutated = deepcopy(config)
                 mutated["panel"]["quorum"]["votes_required"] = value
                 with self.assertRaisesRegex(ConfigError, "votes_required"):
                     validate_config(mutated)
+
+    def test_thresholds_clamp_to_the_enabled_panel(self) -> None:
+        # An authored threshold above the enabled count is an operator running a
+        # smaller panel, not a misconfiguration: clamp so a roster change never
+        # requires editing thresholds in lock-step.
+        config = load_config(_REPO_CONFIG)
+        config["panel"]["min_successful_reviewers_for_blocking"] = 4
+        config["panel"]["min_successful_reviewers_for_resolution"] = 4
+        config["panel"]["quorum"]["votes_required"] = 4
+        validate_config(config)
+
+        self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 3)
+        self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 3)
+        self.assertEqual(config["panel"]["quorum"]["votes_required"], 3)
+
+    def test_shipped_thresholds_are_unchanged_at_every_supported_panel_size(self) -> None:
+        # The clamp must be a no-op for the shipped 2/2/2 values, so enabling or
+        # disabling a seat cannot quietly change the decision policy.
+        for roster in (
+            "claude,codex",
+            "codex,opencode,cursor",
+            "claude,codex,opencode,cursor",
+        ):
+            with self.subTest(roster=roster):
+                with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
+                    config = load_config(_REPO_CONFIG)
+                panel = config["panel"]
+                self.assertEqual(panel["min_successful_reviewers_for_blocking"], 2)
+                self.assertEqual(panel["min_successful_reviewers_for_resolution"], 2)
+                self.assertEqual(panel["quorum"]["votes_required"], 2)
 
     def test_state_load_error_policy_defaults_false(self) -> None:
         config = load_config(_REPO_CONFIG)
