@@ -7,6 +7,42 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- All four reviewers are peer seats, selectable with one variable. `AI_REVIEW_REVIEWERS`
+  takes a comma-separated roster (e.g. `AI_REVIEW_REVIEWERS=claude,codex,cursor`) that
+  enables exactly the seats it names and disables the rest, so any of Claude, Codex,
+  OpenCode, and Cursor may sit out — none is structurally fixed. Previously Cursor was a
+  documented "substitute" for OpenCode, swapped by keeping two independent booleans in
+  sync, which could silently produce a four-seat or two-seat panel. Unknown names,
+  duplicates, a single-seat roster, and combining the roster with the per-seat
+  `AI_REVIEW_<REVIEWER>_ENABLED` flags are all rejected at config load. The roster is part
+  of the effective-config digest, so one scoped to only some pipeline jobs fails the
+  cross-stage consistency check instead of producing a different panel per stage. The
+  shipped default roster is unchanged (Claude, Codex, OpenCode); Cursor stays off by
+  default for its separate egress destination, not because it ranks below the other seats.
+
+### Changed
+
+- Panel thresholds no longer have to be edited in lock-step with the reviewer set.
+  `panel.min_successful_reviewers_for_blocking`, `…_for_resolution`, and
+  `panel.quorum.votes_required` are now bounded by the *configured* reviewer count and
+  take effect clamped to the *enabled* count. With the shipped values (`2`/`2`/`2`) this
+  is a no-op at every supported panel size. Two consequences: a threshold above the
+  configured count is now rejected as an authoring error where it previously only failed
+  once the enabled count was too low, and clamping never drops a corroboration threshold
+  below two — reducing the shipped configuration to a single enabled seat still fails
+  loudly rather than self-approving. A configuration authored with one reviewer and
+  matching thresholds of `1` remains valid.
+
+- `AI_REVIEW_<REVIEWER>_ENABLED` now treats an empty or whitespace-only value as unset,
+  matching the existing `_MODEL` and `_EFFORT` handling. The canonical GitHub Actions
+  workflow relies on this: its per-seat enablement variables default to `''` rather than a
+  literal boolean, which is what lets `AI_REVIEW_REVIEWERS` work without being permanently
+  contradicted by a workflow-scope default. Non-empty values keep the strict lowercase
+  `true`/`false` contract. `CURSOR_API_KEY` is still withheld from reviewer jobs unless
+  Cursor is on the panel, now honoring either selection mechanism.
+
 ### Fixed
 
 - The OpenCode reviewer can return a batch again. OpenCode injects a

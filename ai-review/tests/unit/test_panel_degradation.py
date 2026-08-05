@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from ai_review.config import effective_config_digest, effective_config_summary, load_config
 from ai_review.consensus import cli
@@ -165,6 +166,94 @@ class PanelDegradationTests(unittest.TestCase):
             self.assertEqual(group["decision"], "surface")
             self.assertTrue(group["block_merge"])
             self.assertTrue(consensus["summary"]["block_merge"])
+
+    def test_full_panel_on_a_roster_that_excludes_claude(self) -> None:
+        # Same end-to-end path as the default panel, but with a roster where the
+        # excluded seat is claude rather than cursor. Nothing about consensus,
+        # quorum, or blocking may depend on *which* seats were selected.
+        roster = "codex,opencode,cursor"
+        seats = ("codex", "cursor", "opencode")
+        with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
+            config = load_config(_REPO_CONFIG)
+            digest = effective_config_digest(config)
+            manifest = {
+                **_MANIFEST,
+                "effective_config": effective_config_summary(config),
+                "effective_config_sha256": digest,
+            }
+
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                input_dir = root / "inputs"
+                input_dir.mkdir(parents=True, exist_ok=True)
+                (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
+                write_canonical_json(input_dir / "manifest.json", manifest)
+
+                findings_dir = root / "findings"
+                for reviewer in seats:
+                    model = str(config["reviewers"][reviewer]["model"])
+                    raw = {
+                        "schema_version": "finding_batch.v1",
+                        "run_id": "local-test",
+                        "reviewer": reviewer,
+                        "adapter_status": "success",
+                        "model": model,
+                        "started_at": "2026-06-29T00:00:00Z",
+                        "completed_at": "2026-06-29T00:00:01Z",
+                        "findings": [_raw_security_blocker()],
+                    }
+                    write_canonical_json(
+                        findings_dir / f"{reviewer}.json",
+                        finalize_finding_batch(
+                            raw,
+                            reviewer=reviewer,
+                            model=model,
+                            run_id="local-test",
+                            started_at="2026-06-29T00:00:00Z",
+                            effective_config_sha256=digest,
+                            input_dir=input_dir,
+                        ),
+                    )
+                # The excluded seat still emits an artifact, exactly as the always-on
+                # CI matrix does for a seat that is not on the panel.
+                write_canonical_json(
+                    findings_dir / "claude.json",
+                    empty_finding_batch(
+                        "claude",
+                        "skipped",
+                        run_id="local-test",
+                        model=str(config["reviewers"]["claude"]["model"]),
+                        started_at="2026-06-29T00:00:00Z",
+                        effective_config_sha256=digest,
+                    ),
+                )
+
+                out_path = root / "out" / "consensus.json"
+                code = cli(
+                    [
+                        "--config",
+                        str(_REPO_CONFIG),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(findings_dir),
+                        "--out",
+                        str(out_path),
+                    ]
+                )
+                consensus = load_json_file(out_path)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(consensus["panel_status"], "full")
+        self.assertEqual(consensus["successful_reviewers"], list(seats))
+        self.assertEqual(consensus["resolution_eligible_reviewers"], list(seats))
+        self.assertEqual(consensus["failed_reviewers"], [])
+        self.assertEqual(len(consensus["groups"]), 1)
+        group = consensus["groups"][0]
+        self.assertEqual(group["vote_count"], 3)
+        self.assertEqual(group["decision"], "surface")
+        self.assertTrue(group["block_merge"])
+        self.assertTrue(consensus["summary"]["block_merge"])
 
     def test_degraded_panel_two_of_three_still_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

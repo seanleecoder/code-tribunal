@@ -21,7 +21,9 @@ internal container implementation, not a supported Python package or API.
   hardened mirrored child pipeline.
 - GitHub pull-request workflows for same-repository branches. External-fork
   reviews are skipped because provider secrets are deliberately withheld.
-- Claude, Codex, and OpenCode reviewers through the shipped adapters.
+- Claude, Codex, OpenCode, and Cursor reviewers through the shipped adapters.
+  All four are peer seats; `AI_REVIEW_REVIEWERS` selects which two to four of
+  them form the panel, and the rest sit out.
 - Deterministic consensus, persistent finding state, inline and summary
   posting, human disposition commands, and advisory or enforcing gates.
 
@@ -34,8 +36,9 @@ internal container implementation, not a supported Python package or API.
   it does not make findings authoritative.
 - A GitHub gate blocks merging only when the gate job is configured as a
   required check. GitLab requires **Pipelines must succeed**.
-- Cursor is an experimental opt-in substitute reviewer with a separate credential
-  and egress path. Supplemental real runs close the historical real-route and
+- Cursor is a peer reviewer seat that is off in the shipped default roster
+  because it has a separate credential and its own egress path. Supplemental real
+  runs close the historical real-route and
   artifact-validity subclaim, but Cursor remains disabled until the required
   SPEC-21 enablement gate passes: the exact Composer model, final-image real-key
   run, and hostile permission smoke. This does not block the 1.0.1 tag while

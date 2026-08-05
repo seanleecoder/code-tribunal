@@ -20,11 +20,20 @@ variables:
   # project/group/pipeline variables (inherited by every job). Prepare records
   # effective_config_sha256; consensus fails closed if a later job sees a
   # different effective config. Supported override names:
-  # AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL AI_REVIEW_OPENCODE_MODEL
-  # AI_REVIEW_CURSOR_MODEL AI_REVIEW_CLAUDE_ENABLED AI_REVIEW_CODEX_ENABLED
-  # AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED AI_REVIEW_CLAUDE_EFFORT
-  # AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT AI_REVIEW_CRITIQUE_ENABLED
-  # AI_REVIEW_MERGE_GATE_ENABLED AI_REVIEW_POSTING_MODE AI_REVIEW_STATE_BACKEND
+  # AI_REVIEW_REVIEWERS AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL
+  # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL AI_REVIEW_CLAUDE_ENABLED
+  # AI_REVIEW_CODEX_ENABLED AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED
+  # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT
+  # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_MERGE_GATE_ENABLED
+  # AI_REVIEW_POSTING_MODE AI_REVIEW_STATE_BACKEND
+  # AI_REVIEW_REVIEWERS is the panel roster: a comma-separated list of reviewers
+  # (e.g. "claude,codex,cursor") that enables exactly those seats and disables
+  # every other configured seat. All four reviewers are peers, so any of them may
+  # be left out. It is mutually exclusive with the per-reviewer *_ENABLED flags
+  # and must be project/group-scoped like every other override — a roster visible
+  # to only some jobs is caught by the effective_config_sha256 check, not silently
+  # applied per stage. Seats left out of the roster produce skipped artifacts, so
+  # their statically declared jobs below complete quickly and do not vote.
   # Do not set AI_REVIEW_LOCAL_MOCK as a project/pipeline variable in production
   # (mock is forbidden). Semantic grouping env overrides are rejected; use YAML
   # only if experimenting outside the 1.0 compatibility guarantee.

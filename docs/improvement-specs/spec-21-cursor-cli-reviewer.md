@@ -151,6 +151,14 @@ substitute configuration it is also 3; if an operator only disables opencode
 it is 2 — all satisfy `min_successful_reviewers_for_blocking: 2` and the
 `votes_required: 2` quorum, so no panel config change is needed.
 
+**Superseded:** the substitute framing above — and the two-boolean substitution
+recipe — was replaced by roster selection. All four reviewers are peers and
+`AI_REVIEW_REVIEWERS` selects which of them vote; panel thresholds are now
+authored against the configured seat count and clamped to the enabled count, so
+the fixed-at-3 reasoning in this section no longer applies. Cursor remains off in
+the shipped default roster for its egress properties, not its rank. See
+`docs/configuration.md#choosing-the-panel`.
+
 ### 2. `adapter_runner.py`
 
 - Add `"AI_REVIEW_REQUIRE_REAL_CURSOR"` to `_AI_REVIEW_ADAPTER_CONTROLS`.

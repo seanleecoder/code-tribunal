@@ -37,10 +37,18 @@ env:
   AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
   AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
   AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
-  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}
-  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}
-  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
-  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
+  # Panel roster. Every reviewer is a peer: set AI_REVIEW_REVIEWERS to a
+  # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
+  # enabled while every other configured seat sits out. Leave it unset to use the
+  # defaults in config/review.yaml. It is mutually exclusive with the per-reviewer
+  # ENABLED variables below, which is why those default to '' (unset) rather than
+  # a literal boolean — a hardcoded default here would permanently contradict any
+  # roster an operator sets.
+  AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
+  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || '' }}
+  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || '' }}
+  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || '' }}
+  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || '' }}
   AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
   AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
   AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
@@ -149,7 +157,12 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          # Withheld unless Cursor is actually on the panel, by either selection
+          # mechanism. Cursor's backend is a deliberate second egress destination,
+          # so a seat that is sitting out must not receive the credential. The
+          # roster check is a substring match because Actions expressions have no
+          # split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || vars.AI_REVIEW_CURSOR_ENABLED == 'true') && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
@@ -194,7 +207,12 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          # Withheld unless Cursor is actually on the panel, by either selection
+          # mechanism. Cursor's backend is a deliberate second egress destination,
+          # so a seat that is sitting out must not receive the credential. The
+          # roster check is a substring match because Actions expressions have no
+          # split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || vars.AI_REVIEW_CURSOR_ENABLED == 'true') && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
