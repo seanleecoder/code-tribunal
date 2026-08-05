@@ -56,10 +56,11 @@ versioning.
   for the pinned one — the substitution the fixed trusted `PATH` exists to prevent.
   Resolving by absolute path ahead of the gate also means a `PATH` without
   `/usr/local/bin` can no longer make the adapter reject a pinned binary that is
-  present. In the packaged image, recognized by the adapter running from
-  `/opt/ai-review/adapters`, a missing pinned CLI now fails closed instead of running
-  whatever is ambient; ambient resolution remains a fallback for checkouts and dev
-  machines, where there is no pinned install to prefer.
+  present. When a pinned copy was installed but is missing from `/usr/local/bin` —
+  detected through its install root, `/usr/local/lib/node_modules/opencode-ai` — the
+  image is broken and the adapter now fails closed instead of running whatever is
+  ambient. Where nothing was pinned there is nothing to prefer, so ambient resolution
+  remains available for checkouts, dev machines, and the base image.
 
 ### Fixed
 

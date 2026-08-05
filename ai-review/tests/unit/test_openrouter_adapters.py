@@ -215,7 +215,11 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         """
         text = (_ADAPTERS / "opencode.sh").read_text(encoding="utf-8")
         self.assertIn('if [ -x "/usr/local/bin/$1" ]; then', text)
-        self.assertIn('OPENCODE_BIN="$(resolve_trusted opencode || true)"', text)
+        self.assertIn(
+            'OPENCODE_BIN="$(resolve_trusted opencode '
+            '/usr/local/lib/node_modules/opencode-ai || true)"',
+            text,
+        )
         self.assertIn("resolve_trusted python3", text)
         self.assertIn('OPENCODE_BIN="$OPENCODE_BIN" \\', text)
         # The trusted candidate must be tested before any ambient lookup.
@@ -229,13 +233,13 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         # Resolution must precede the availability gate, or a PATH without
         # /usr/local/bin would reject a pinned binary that resolution would find.
         self.assertLess(
-            text.index('OPENCODE_BIN="$(resolve_trusted opencode || true)"'),
+            text.index("OPENCODE_BIN=\"$(resolve_trusted opencode "),
             text.index("opencode CLI is required for the"),
         )
         self.assertNotIn("if ! command -v opencode", text)
 
     def _resolve_with_adapter_helper(
-        self, name: str, *, script_dir: str, trusted: Path, path: str
+        self, name: str, *, trusted: Path, path: str, install_root: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Run the adapter's own `resolve_trusted`, with the trusted prefix sandboxed.
 
@@ -248,8 +252,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         helper = re.search(r"(?s)resolve_trusted\(\) \{.*?\n\}", text)
         assert helper is not None
         script = helper.group(0).replace("/usr/local/bin", str(trusted))
+        marker = f" {install_root}" if install_root is not None else ""
         return subprocess.run(
-            ["/bin/sh", "-c", f'SCRIPT_DIR="{script_dir}"\n{script}\nresolve_trusted {name}'],
+            ["/bin/sh", "-c", f"{script}\nresolve_trusted {name}{marker}"],
             env={"PATH": path},
             capture_output=True,
             text=True,
@@ -269,72 +274,62 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             path = f"{decoy}:/usr/bin:/bin"
 
             resolved = self._resolve_with_adapter_helper(
-                "opencode", script_dir=str(root), trusted=trusted, path=path
+                "opencode", trusted=trusted, path=path
             )
             self.assertEqual(resolved.returncode, 0, resolved.stderr)
             self.assertEqual(resolved.stdout.strip(), str(trusted / "opencode"))
 
-            # With no trusted candidate a checkout keeps working via the fallback.
+            # With nothing pinned a checkout keeps working via the fallback. The base
+            # image's in-image suite depends on this: it ships no opencode and the
+            # fake-CLI tests supply their own on the ambient PATH.
             (trusted / "opencode").unlink()
             fallback = self._resolve_with_adapter_helper(
-                "opencode", script_dir=str(root), trusted=trusted, path=path
+                "opencode", trusted=trusted, path=path
             )
             self.assertEqual(fallback.returncode, 0, fallback.stderr)
             self.assertEqual(fallback.stdout.strip(), str(decoy / "opencode"))
 
-    def test_packaged_adapter_refuses_an_ambient_cli_instead_of_falling_back(self) -> None:
-        """A packaged image with no pinned CLI is broken, not a fallback case.
+    def test_adapter_refuses_an_ambient_cli_when_a_pinned_one_was_installed(self) -> None:
+        """An image that shipped a pinned CLI and lost it is broken, not a fallback case.
 
-        Running whatever is ambient there is the substitution the trusted-first
-        resolution exists to prevent, by another route. The signal is where this copy
-        of the adapter lives: /opt/ai-review/adapters is the one the base image
-        installed.
+        Running whatever is ambient there is the substitution trusted-first resolution
+        exists to prevent, by another route. The signal is the CLI's install root
+        (/usr/local/lib/node_modules/opencode-ai for opencode): present means a pinned
+        copy was installed, so /usr/local/bin is the only acceptable answer. Absent
+        means nothing was ever pinned — a checkout, a dev machine, or the base image,
+        whose test suite supplies its own fake CLIs.
         """
-        for name in ("opencode", "python3"):
-            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                trusted = root / "trusted"
-                decoy = root / "decoy"
-                for directory in (trusted, decoy):
-                    directory.mkdir()
-                target = decoy / name
-                target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-                target.chmod(0o755)
-                path = f"{decoy}:/usr/bin:/bin"
-
-                refused = self._resolve_with_adapter_helper(
-                    name,
-                    script_dir="/opt/ai-review/adapters",
-                    trusted=trusted,
-                    path=path,
-                )
-                self.assertNotEqual(refused.returncode, 0)
-                self.assertEqual(refused.stdout.strip(), "")
-                self.assertIn("packaged reviewer image has no pinned", refused.stderr)
-
-                # The same missing binary outside the packaged root still falls back.
-                allowed = self._resolve_with_adapter_helper(
-                    name, script_dir=str(root), trusted=trusted, path=path
-                )
-                self.assertEqual(allowed.returncode, 0, allowed.stderr)
-                self.assertEqual(allowed.stdout.strip(), str(decoy / name))
-
-    def test_packaged_adapter_still_prefers_a_present_pinned_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trusted = root / "trusted"
-            trusted.mkdir()
-            target = trusted / "opencode"
+            decoy = root / "decoy"
+            install_root = root / "node_modules" / "opencode-ai"
+            for directory in (trusted, decoy, install_root):
+                directory.mkdir(parents=True)
+            target = decoy / "opencode"
             target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             target.chmod(0o755)
+            path = f"{decoy}:/usr/bin:/bin"
+
+            refused = self._resolve_with_adapter_helper(
+                "opencode", trusted=trusted, path=path, install_root=install_root
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(refused.stdout.strip(), "")
+            # The trusted prefix is sandboxed in this harness, so assert on the part
+            # of the message that does not move.
+            self.assertIn("refusing to run an ambient one", refused.stderr)
+            self.assertIn(str(install_root), refused.stderr)
+
+            # A present pinned copy still wins, install root or not.
+            pinned = trusted / "opencode"
+            pinned.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            pinned.chmod(0o755)
             resolved = self._resolve_with_adapter_helper(
-                "opencode",
-                script_dir="/opt/ai-review/adapters",
-                trusted=trusted,
-                path="/usr/bin:/bin",
+                "opencode", trusted=trusted, path=path, install_root=install_root
             )
             self.assertEqual(resolved.returncode, 0, resolved.stderr)
-            self.assertEqual(resolved.stdout.strip(), str(target))
+            self.assertEqual(resolved.stdout.strip(), str(pinned))
 
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
         adapters = {

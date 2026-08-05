@@ -24,11 +24,13 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 # pinned one, which is exactly the substitution the fixed trusted PATH exists to
 # prevent.
 #
-# When this is the copy the base image installed (/opt/ai-review/adapters), the
-# trusted location is the only acceptable answer: a packaged reviewer whose pinned
-# CLI is missing has a broken image, and silently running an ambient binary instead
-# is the substitution again by another route. Ambient resolution stays a fallback
-# only for checkouts and dev machines, where there is no pinned install to prefer.
+# The optional second argument is where the image installs that CLI. If the install
+# root is present but /usr/local/bin/$1 is not, the image shipped a pinned copy and
+# lost it: that is a broken image, not a fallback case, and running an ambient binary
+# instead would be the same substitution by another route — so it fails closed. Where
+# no pinned copy was ever installed (a checkout, a dev machine, the base image, whose
+# test suite supplies its own fake CLIs) there is nothing to prefer, and ambient
+# resolution is the only thing left.
 #
 # Resolution happens before the availability gate below and by absolute path, so a
 # PATH that omits /usr/local/bin can neither hide the pinned binary nor cause the
@@ -38,8 +40,8 @@ resolve_trusted() {
     echo "/usr/local/bin/$1"
     return 0
   fi
-  if [ "$SCRIPT_DIR" = "/opt/ai-review/adapters" ]; then
-    echo "packaged reviewer image has no pinned /usr/local/bin/$1; refusing to run an ambient one" >&2
+  if [ -n "${2:-}" ] && [ -e "$2" ]; then
+    echo "pinned $1 is installed at $2 but is not on /usr/local/bin; refusing to run an ambient one" >&2
     return 1
   fi
   command -v "$1" 2>/dev/null
@@ -63,7 +65,7 @@ fi
 # trusted PATH below governs what opencode itself finds — notably which("rg") — so it
 # must not carry an injected binary directory, but the opencode executable still has
 # to be reachable from it.
-OPENCODE_BIN="$(resolve_trusted opencode || true)"
+OPENCODE_BIN="$(resolve_trusted opencode /usr/local/lib/node_modules/opencode-ai || true)"
 if [ -z "$OPENCODE_BIN" ]; then
   if [ "$REQUIRE_REAL" = "1" ]; then
     echo "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2

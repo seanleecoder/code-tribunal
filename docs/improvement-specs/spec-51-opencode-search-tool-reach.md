@@ -122,10 +122,12 @@ participant can answer, so the outcome is a stalled session rather than a refusa
   trusted PATH exists to prevent. The preflight proves this against a real decoy.
   Resolution must also come *before* the CLI-availability gate and go by absolute
   path, so a PATH that omits `/usr/local/bin` can neither hide the pinned binary nor
-  make the gate reject it. In the packaged image — recognized by the adapter running
-  from `/opt/ai-review/adapters`, the copy the base image installed — a missing pinned
-  CLI is a broken image and must fail rather than fall back to an ambient binary;
-  ambient resolution remains a fallback only for checkouts and dev machines.
+  make the gate reject it. When a pinned copy was installed but is not on
+  `/usr/local/bin` — detected through the CLI's install root,
+  `/usr/local/lib/node_modules/opencode-ai` — the image is broken and resolution must
+  fail rather than fall back to an ambient binary. Where nothing was ever pinned there
+  is nothing to prefer, so ambient resolution stays available for checkouts, dev
+  machines, and the base image, whose in-image suite supplies its own fake CLIs.
 - A review-time ripgrep fetch must be recognized as the server logs it, not by
   scanning a retained buffer afterwards. The buffer is deliberately bounded for
   diagnostics, so a fetch early in a real review is evicted long before the check
