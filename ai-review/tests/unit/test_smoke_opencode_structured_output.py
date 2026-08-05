@@ -10,7 +10,9 @@ pinned server sends: tools as OpenAI-style function entries, tool results as
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import unittest
 from pathlib import Path
@@ -113,7 +115,7 @@ class ConfigMutationTests(unittest.TestCase):
     def test_control_refuses_a_config_that_never_carried_the_allow(self) -> None:
         # Otherwise the control "passes" against a config where there was nothing
         # to remove — which is precisely the broken state it exists to detect.
-        with self.assertRaises(SystemExit):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             smoke.strip_structured_output_permission(_config(agent_allow=False, top_allow=False))
 
 
@@ -151,6 +153,10 @@ class ProbeContractTests(unittest.TestCase):
             text,
         )
 
+    @unittest.skipUnless(
+        PUBLISH_WORKFLOW.exists(),
+        "repository-only publish workflow is absent from the runtime image",
+    )
     def test_build_runs_the_probe_with_no_event_condition(self) -> None:
         """It must gate pull requests too, where adapter changes are reviewed."""
         text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
