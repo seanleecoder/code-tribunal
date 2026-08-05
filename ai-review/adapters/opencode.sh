@@ -88,6 +88,11 @@ if [ -z "${AI_REVIEW_RENDERED_PROMPT:-}" ] || [ ! -f "$AI_REVIEW_RENDERED_PROMPT
 fi
 
 TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
+mkdir -p "$TMP_DIR"
+# Absolute paths so the review root never resolves twice: the client uses it both
+# as the server process cwd and as the directory it asks the server to work in, so
+# a relative root would be joined onto itself.
+TMP_DIR="$(cd "$TMP_DIR" && pwd)"
 REPO_SNAPSHOT_DIR="$AI_REVIEW_INPUT_DIR/repo_snapshot"
 OPENCODE_REVIEW_ROOT="$TMP_DIR/opencode-review-root.$$"
 OPENCODE_HOME_DIR="$TMP_DIR/opencode-home"

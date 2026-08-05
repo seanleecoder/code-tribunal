@@ -379,7 +379,9 @@ def run() -> int:
     stage = os.environ.get("AI_REVIEW_STAGE", "")
     model = os.environ.get("AI_REVIEW_MODEL", "")
     prompt_path = Path(os.environ.get("AI_REVIEW_RENDERED_PROMPT", ""))
-    root = Path(os.environ.get("AI_REVIEW_OPENCODE_ROOT", ""))
+    # Absolute: the root is both the server's cwd and the directory sent with every
+    # request, so a relative value would be resolved against itself.
+    root = Path(os.environ.get("AI_REVIEW_OPENCODE_ROOT", "")).resolve()
     if not model:
         raise OpenCodeClientError("AI_REVIEW_MODEL is required")
     if not prompt_path.is_file():
