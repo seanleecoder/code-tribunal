@@ -225,6 +225,23 @@ jobs:
         shell: bash
         run: scripts/smoke_opencode_search_tools.sh "$AI_REVIEW_REVIEWER_TAG"
 
+      - name: Verify the OpenCode structured-output transport
+        # Spec-51 follow-up. The reviewer returns its batch by calling the
+        # StructuredOutput tool OpenCode injects for a json_schema format, and the
+        # adapter's "*": "deny" permission wildcard once covered that tool: the model
+        # was told to call a tool it was never offered and every review failed. No
+        # other check could see it — the config was well-formed, the session was
+        # created, and permissions resolved as documented. This runs the shipped
+        # adapter and client against a loopback stub provider, so the transport is
+        # exercised on every build without a provider secret, and asserts the
+        # negative control (remove the permission, lose the tool and the run).
+        #
+        # Same placement rationale as the step above: a step in this job with no event
+        # condition, before the image artifact is saved, so it gates merge as well as
+        # publication and a failed probe cannot hand an image downstream.
+        shell: bash
+        run: scripts/smoke_opencode_structured_output.sh "$AI_REVIEW_REVIEWER_TAG"
+
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
         shell: bash

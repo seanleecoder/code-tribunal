@@ -32,6 +32,10 @@ _RIPGREP_FETCH_PATTERN = re.compile(
 )
 _SESSION_TITLE = "code-tribunal-ai-review"
 _SERVER_START_TIMEOUT_SECONDS = 15.0
+# Enough to carry an OpenCode ERROR line and the request logging around it. The
+# stack is one long line, so the character limit does the real bounding.
+_SERVER_LOG_DETAIL_LINES = 12
+_SERVER_LOG_DETAIL_LIMIT = 4000
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
 _MESSAGE_TIMEOUT_SECONDS = 24 * 60 * 60
 _PERMISSION_RULES = [
@@ -85,6 +89,7 @@ def _request_json(
     directory: Path,
     body: dict[str, Any] | None = None,
     timeout: float,
+    server_log: _ServerLog | None = None,
 ) -> dict[str, Any]:
     payload = None
     headers = {"Accept": "application/json", "X-Opencode-Directory": str(directory)}
@@ -99,9 +104,12 @@ def _request_json(
         detail = exc.read().decode("utf-8", errors="replace")
         raise OpenCodeClientError(
             f"OpenCode API {method} {path} failed with HTTP {exc.code}: {_compact(detail)}"
+            f"{_server_log_detail(server_log)}"
         ) from exc
     except (OSError, URLError, TimeoutError) as exc:
-        raise OpenCodeClientError(f"OpenCode API {method} {path} failed: {exc}") from exc
+        raise OpenCodeClientError(
+            f"OpenCode API {method} {path} failed: {exc}{_server_log_detail(server_log)}"
+        ) from exc
     try:
         parsed = json_loads_no_duplicates(raw)
     except Exception as exc:
@@ -135,6 +143,25 @@ class _ServerLog:
 
     def tail(self, count: int) -> str:
         return " | ".join(list(self.lines)[-count:])
+
+
+def _server_log_detail(server_log: _ServerLog | None) -> str:
+    """The server's own account of a failed request, for the error message.
+
+    OpenCode answers an internal failure with `UnknownError` and "Check server logs
+    for details" plus a `ref`; the cause and its stack exist only in the server's log,
+    keyed by that same ref. That log is written under XDG_DATA_HOME, which the adapter
+    points into `out/.tmp` — not an uploaded artifact — so without this the ref names
+    a record nobody can read, and a 500 is indistinguishable from any other 500.
+    `_start_server` passes `--print-logs` so those lines arrive on the captured
+    stdout; this puts them next to the failure that needs them.
+    """
+    if server_log is None:
+        return ""
+    detail = server_log.tail(_SERVER_LOG_DETAIL_LINES)
+    if not detail:
+        return ""
+    return f"; server_log={_compact(detail, limit=_SERVER_LOG_DETAIL_LIMIT)}"
 
 
 def _assert_no_ripgrep_fetch(server_log: _ServerLog) -> None:
@@ -181,7 +208,25 @@ def _start_server(
     executable = _resolve_opencode_executable()
     port = _free_loopback_port()
     process = subprocess.Popen(
-        [executable, "--pure", "serve", "--hostname", _HOST, "--port", str(port)],
+        # --print-logs is not diagnostics-by-preference: OpenCode reports an internal
+        # failure as UnknownError plus a log ref, and writes the cause only to its own
+        # log file under XDG_DATA_HOME — which the adapter points at out/.tmp, so it is
+        # discarded with the run. Printing to stdout puts it in the captured server log
+        # instead. INFO is explicit rather than relying on the default: it carries the
+        # ERROR line, the per-request logging around it, and the permission decisions,
+        # without DEBUG's config-loading volume evicting them from the bounded buffer.
+        [
+            executable,
+            "--pure",
+            "serve",
+            "--print-logs",
+            "--log-level",
+            "INFO",
+            "--hostname",
+            _HOST,
+            "--port",
+            str(port),
+        ],
         cwd=root,
         env=os.environ.copy(),
         stdout=subprocess.PIPE,
@@ -358,6 +403,7 @@ def run() -> int:
             directory=root,
             body={"title": _SESSION_TITLE, "permission": _PERMISSION_RULES},
             timeout=30.0,
+            server_log=server_log,
         )
         session_data = _response_data(session)
         session_id = session_data.get("id")
@@ -375,6 +421,7 @@ def run() -> int:
                 "format": {"type": "json_schema", "schema": schema},
             },
             timeout=_MESSAGE_TIMEOUT_SECONDS,
+            server_log=server_log,
         )
         batch, used_structured = _normalize_message(response, stage=stage)
     finally:

@@ -28,8 +28,10 @@ Proves, against the real pinned binaries:
 
 Tool-layer enforcement is not observable provider-free through the pinned server's
 API; see `_prove_session_permission_rules` for what was tried and why it does not
-work. Live `grep` usability, and the absence of a review-time ripgrep fetch in a real
-review, require a provider and stay the rollout canary (SPEC-51).
+work. Live `grep` usability — a real tool call with a non-empty result — is proven by
+the sibling probe `smoke_opencode_structured_output.py`, which scripts a loopback stub
+provider to force the call. What still needs a real provider and stays the rollout
+canary (SPEC-51) is that a real model produces a batch the runner accepts.
 """
 
 from __future__ import annotations

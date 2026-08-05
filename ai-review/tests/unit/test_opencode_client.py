@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
 from ai_review import opencode_client
 from ai_review.adapter_runner import _load_adapter_json
@@ -296,6 +297,9 @@ class OpenCodeClientTests(unittest.TestCase):
                         "/usr/local/bin/opencode",
                         "--pure",
                         "serve",
+                        "--print-logs",
+                        "--log-level",
+                        "INFO",
                         "--hostname",
                         "127.0.0.1",
                         "--port",
@@ -324,6 +328,105 @@ class OpenCodeClientTests(unittest.TestCase):
             # The server's own output is the only clue to why it died, so it has
             # to reach the error rather than be dropped.
             self.assertIn("failed to bind port", str(caught.exception))
+
+    def test_http_failure_carries_the_server_log(self) -> None:
+        # OpenCode answers an internal failure with UnknownError plus a log ref and
+        # keeps the cause in its own log, which the adapter writes under out/.tmp and
+        # never uploads. GitLab job 2630753 failed exactly this way: HTTP 500 on the
+        # message POST, ref err_adda2891, and nothing anywhere that says why. The
+        # captured server output is the only remaining copy, so the error carries it.
+        server_log = opencode_client._ServerLog()
+        server_log.append("level=INFO message=process session.id=ses_test")
+        server_log.append('level=ERROR ref=err_adda2891 cause="UnknownError: boom"')
+        body = b'{"name":"UnknownError","data":{"ref":"err_adda2891"}}'
+
+        def raise_http(*_args: object, **_kwargs: object) -> None:
+            raise HTTPError(
+                "http://127.0.0.1:43123/session/ses_test/message",
+                500,
+                "Internal Server Error",
+                {},  # type: ignore[arg-type]
+                io.BytesIO(body),
+            )
+
+        with (
+            mock.patch.object(opencode_client, "urlopen", side_effect=raise_http),
+            self.assertRaisesRegex(opencode_client.OpenCodeClientError, "HTTP 500") as caught,
+        ):
+            opencode_client._request_json(
+                "http://127.0.0.1:43123/",
+                "POST",
+                "session/ses_test/message",
+                directory=Path("/tmp"),
+                body={},
+                timeout=1.0,
+                server_log=server_log,
+            )
+
+        message = str(caught.exception)
+        self.assertIn("err_adda2891", message)
+        self.assertIn("UnknownError: boom", message)
+
+        # Without a log there is nothing to add, and the message must not grow an
+        # empty `server_log=` tail that reads as "the server said nothing".
+        with (
+            mock.patch.object(opencode_client, "urlopen", side_effect=raise_http),
+            self.assertRaises(opencode_client.OpenCodeClientError) as bare,
+        ):
+            opencode_client._request_json(
+                "http://127.0.0.1:43123/",
+                "POST",
+                "session/ses_test/message",
+                directory=Path("/tmp"),
+                body={},
+                timeout=1.0,
+            )
+        self.assertNotIn("server_log", str(bare.exception))
+
+    def test_run_passes_the_captured_server_log_to_both_requests(self) -> None:
+        # The log only reaches a failure if the call sites hand it over; a request
+        # that omits it fails opaquely no matter how good _server_log_detail is.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt = root / "prompt.md"
+            prompt.write_text("Return the stage payload.\n", encoding="utf-8")
+            process = mock.Mock()
+            process.poll.return_value = None
+            thread = mock.Mock()
+            server_log = opencode_client._ServerLog()
+            seen: list[object] = []
+
+            def request(
+                _base_url: str, _method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
+                seen.append(kwargs.get("server_log"))
+                if path == "session":
+                    return {"id": "ses_test"}
+                return {"info": {"role": "assistant", "structured": {"findings": []}}}
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AI_REVIEW_STAGE": "review",
+                        "AI_REVIEW_MODEL": "google/test-model",
+                        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+                        "AI_REVIEW_OPENCODE_ROOT": str(root),
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(
+                    opencode_client,
+                    "_start_server",
+                    return_value=(process, "http://127.0.0.1:43123/", server_log, thread),
+                ),
+                mock.patch.object(opencode_client, "_request_json", side_effect=request),
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(opencode_client.run(), 0)
+
+            self.assertEqual(seen, [server_log, server_log])
 
     def test_start_server_reports_readiness_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

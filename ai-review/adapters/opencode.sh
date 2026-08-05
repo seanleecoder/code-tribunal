@@ -151,6 +151,20 @@ fi
 # outside the review root raises an approval request that nothing in a headless
 # reviewer can answer, and the sanitized snapshot boundary stops being the
 # reviewer's actual reach.
+#
+# StructuredOutput must be allowed explicitly, for the opposite reason: it is the
+# tool OpenCode injects when the session request carries
+# format: {"type":"json_schema", …}, and it is the only way a schema-conforming
+# batch can be returned. The "*": "deny" wildcard covered it, so it was filtered
+# out of the tool list sent to the model — the reviewer was instructed by
+# OpenCode's own prompt to call a tool it was never offered, every response was
+# flagged StructuredOutputError, and every review failed. Verified in the built
+# reviewer image against a loopback stub provider: with the wildcard alone the
+# provider request carries only glob/grep/read; with this rule it carries
+# StructuredOutput as well and the batch comes back through info.structured.
+# The tool has no filesystem or network reach — it returns the model's answer —
+# so allowing it does not widen the review boundary that external_directory,
+# bash/edit/write and the empty snapshot root define.
 OPENCODE_CONFIG_JSON=$(cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -177,6 +191,7 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
         "read": "allow",
         "glob": "allow",
         "grep": "allow",
+        "StructuredOutput": "allow",
         "bash": "deny",
         "edit": "deny",
         "write": "deny",
@@ -206,6 +221,7 @@ $OPENCODE_AGENT_EXTRA_JSON      "permission": {
     "read": "allow",
     "glob": "allow",
     "grep": "allow",
+    "StructuredOutput": "allow",
     "bash": "deny",
     "edit": "deny",
     "write": "deny",

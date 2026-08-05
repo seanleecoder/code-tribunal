@@ -186,8 +186,28 @@ because the pinned server exposes no way to observe one without a provider:
 adapter's real config loaded it answers `deny` for everything, including in-root
 `read`/`glob`/`grep` that OpenCode's own resolver allows, because it resolves against
 the top-level `"*": "deny"` instead of the agent's allows. Forcing a real `grep` call
-requires a model. A probe-only stub provider on loopback could close that gap and is
-recorded as possible future work in SPEC-51; the live canary below covers it today.
+requires a model.
+
+That gap is now closed provider-free by the second preflight probe,
+`scripts/smoke_opencode_structured_output.sh`, which was the stub-provider follow-up
+SPEC-51 recorded as possible future work. It scripts a loopback OpenAI-compatible
+provider through the shipped adapter and client, so a real `grep` runs through the
+pinned `rg` inside the sanitized review root and must return a **non-empty** result,
+and the reviewer's batch must come back through the `StructuredOutput` tool. It also
+carries its own negative control: removing only the `StructuredOutput` permission from
+the captured config must remove the tool from the provider request and fail the run.
+
+That probe exists because the transport shipped broken. OpenCode injects
+`StructuredOutput` for a `json_schema` format and its own prompt requires the model to
+call it, but the adapter's `"*": "deny"` wildcard covered that tool, so it never
+reached the tool list: the reviewer was told to call a tool it was never offered, every
+response was flagged `StructuredOutputError`, and every review failed with zero
+findings. Nothing else could see it — the generated config was well-formed, the session
+was created, and permissions resolved exactly as this section documents. Only the tool
+list of a provider request shows it, and until this probe nothing was making one.
+
+The live canary below still covers what a stub cannot: that a real model, on a real
+endpoint, produces a batch the runner accepts.
 
 ### Rollout gate (post-merge, from trusted main)
 

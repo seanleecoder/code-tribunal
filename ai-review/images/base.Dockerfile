@@ -39,6 +39,8 @@ COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
 COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh
 COPY scripts/smoke_opencode_search_tools.py /opt/scripts/smoke_opencode_search_tools.py
 COPY scripts/smoke_opencode_search_tools.sh /opt/scripts/smoke_opencode_search_tools.sh
+COPY scripts/smoke_opencode_structured_output.py /opt/scripts/smoke_opencode_structured_output.py
+COPY scripts/smoke_opencode_structured_output.sh /opt/scripts/smoke_opencode_structured_output.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
 

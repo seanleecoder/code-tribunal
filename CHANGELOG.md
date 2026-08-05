@@ -7,6 +7,42 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- The OpenCode reviewer can return a batch again. OpenCode injects a
+  `StructuredOutput` tool when the session request carries
+  `format: {"type":"json_schema", …}`, and its own prompt requires the model to call
+  it — but the adapter's `"*": "deny"` permission wildcard covered that tool too, so
+  it was filtered out of the tool list sent to the model. Every response was flagged
+  `StructuredOutputError` and every review failed with zero findings. The tool is now
+  allowed explicitly in both permission blocks; it returns the model's answer and has
+  no filesystem or network reach, so the review boundary is unchanged. Verified in the
+  built reviewer image against a loopback stub provider, with the adapter's own
+  generated config and the sanitized review root: the tool is offered and the batch
+  arrives through `info.structured`, and removing the rule reproduces the failure.
+
+- An OpenCode server error is no longer unattributable. OpenCode answers an internal
+  failure with `UnknownError`, "Check server logs for details", and a log `ref`, and
+  writes the cause only to its own log file under `XDG_DATA_HOME` — which the adapter
+  points into `out/.tmp`, so it was discarded with the run and the `ref` named a record
+  nobody could read. The client now starts `serve` with `--print-logs --log-level INFO`
+  and includes the captured server output in session and message request failures, so
+  the cause travels with the error into the job log and the status artifact.
+
+### Added
+
+- A second OpenCode image preflight, `scripts/smoke_opencode_structured_output.sh`,
+  runs the shipped adapter and client against a loopback stub provider inside the
+  built reviewer image — the stub-provider follow-up SPEC-51 recorded as future work.
+  It proves the reviewer is actually offered the `StructuredOutput` tool and that its
+  batch survives the transport unchanged, and it carries its own negative control:
+  removing only that permission must remove the tool and fail the run. It also closes
+  the SPEC-51 canary gap that needed a live provider, forcing a real `grep` through
+  the pinned ripgrep inside the sanitized review root and requiring a **non-empty**
+  result, so a realpath-blinded reviewer cannot pass as error-free. Like the search
+  probe it is a step in the image build job with no event condition, so it gates
+  merge as well as publication, and it needs no provider secret.
+
 ### Changed
 
 - The OpenCode reviewer now obtains its batch through OpenCode's structured-output
