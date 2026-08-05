@@ -44,12 +44,18 @@ versioning.
   image pinned before this change — CI stages execute `/opt/ai-review` from the pinned
   images rather than the checkout, and an older runtime rejects an empty value instead of
   treating it as unset. Non-empty values keep the strict lowercase `true`/`false` contract.
-  `CURSOR_API_KEY` is still withheld from reviewer jobs unless Cursor is on the panel, now
-  honoring either selection mechanism.
+  `CURSOR_API_KEY` is supplied only to the Cursor matrix entry — the workflow now gates it
+  on `matrix.reviewer == 'cursor'`, where it was previously placed in every reviewer job's
+  environment whenever Cursor was enabled — and only when Cursor is on the panel. With a
+  roster set, a stale `AI_REVIEW_CURSOR_ENABLED=true` no longer grants the credential,
+  matching the roster's authority over selection.
 
-  Note that `AI_REVIEW_REVIEWERS` itself requires an image that ships roster support: on an
-  older pinned runtime it is silently ignored and the panel stays at whatever `review.yaml`
-  enables. Confirm the image pins before relying on the roster.
+  `AI_REVIEW_REVIEWERS` requires an image that ships roster support, and the two platforms
+  behave differently on an older pin. GitHub Actions fails `prepare` loudly, because the
+  workflow resolves the per-seat flags to `''` and a runtime without empty-as-unset rejects
+  that value. GitLab ignores the roster silently, since that template sets no per-seat flags
+  for a stale runtime to reject. Confirm the image pins before relying on the roster —
+  mandatory on GitLab, where nothing will tell you.
 
 ### Fixed
 

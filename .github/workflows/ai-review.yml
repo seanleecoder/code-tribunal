@@ -43,9 +43,12 @@ env:
   # defaults in config/review.yaml.
   #
   # Requires a runtime that supports the roster. The jobs below execute
-  # /opt/ai-review from the pinned images, not this checkout, so an image built
-  # before roster support ignores this variable. Setting it without repinning
-  # silently leaves the panel unchanged — check the image pins first.
+  # /opt/ai-review from the pinned images, not this checkout. Setting a roster
+  # while the pins predate roster support fails `prepare` loudly rather than
+  # changing the panel: the per-seat flags below resolve to '' and a runtime
+  # without empty-as-unset rejects that value. The failure is the intended signal
+  # to repin; it is not silent. Leaving the roster unset keeps this template fully
+  # compatible with the older pins.
   AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
   # The roster is mutually exclusive with these per-seat flags, so when a roster
   # is set they must reach the config parser as unset ('') rather than as a
@@ -169,12 +172,19 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          # Withheld unless Cursor is actually on the panel, by either selection
-          # mechanism. Cursor's backend is a deliberate second egress destination,
-          # so a seat that is sitting out must not receive the credential. The
-          # roster check is a substring match because Actions expressions have no
-          # split(); no other reviewer name contains "cursor".
-          CURSOR_API_KEY: ${{ (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || vars.AI_REVIEW_CURSOR_ENABLED == 'true') && secrets.CURSOR_API_KEY || '' }}
+          # Cursor's backend is a deliberate second egress destination, so this
+          # credential reaches exactly one matrix entry and only when Cursor is on
+          # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
+          # is evaluated per matrix entry, so without it every seat's job would
+          # carry the key whenever Cursor was selected.
+          #
+          # The legacy flag is consulted only when no roster is set. With a roster
+          # present it is ignored for panel selection, so honoring it here would
+          # hand the key to a Cursor seat the roster had excluded.
+          #
+          # The roster check is a substring match because Actions expressions have
+          # no split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
@@ -219,12 +229,19 @@ jobs:
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          # Withheld unless Cursor is actually on the panel, by either selection
-          # mechanism. Cursor's backend is a deliberate second egress destination,
-          # so a seat that is sitting out must not receive the credential. The
-          # roster check is a substring match because Actions expressions have no
-          # split(); no other reviewer name contains "cursor".
-          CURSOR_API_KEY: ${{ (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || vars.AI_REVIEW_CURSOR_ENABLED == 'true') && secrets.CURSOR_API_KEY || '' }}
+          # Cursor's backend is a deliberate second egress destination, so this
+          # credential reaches exactly one matrix entry and only when Cursor is on
+          # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
+          # is evaluated per matrix entry, so without it every seat's job would
+          # carry the key whenever Cursor was selected.
+          #
+          # The legacy flag is consulted only when no roster is set. With a roster
+          # present it is ignored for panel selection, so honoring it here would
+          # hand the key to a Cursor seat the roster had excluded.
+          #
+          # The roster check is a substring match because Actions expressions have
+          # no split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"

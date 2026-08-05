@@ -58,8 +58,10 @@ Rules, all enforced at config load with a loud `ConfigError`:
   can map absent repository variables to `''`.
 - Each selected seat needs its `credential_variable` present in the reviewer
   jobs, or that seat fails and the panel degrades. Cursor additionally requires
-  `CURSOR_API_KEY`, which the canonical workflow withholds unless Cursor is on
-  the panel.
+  `CURSOR_API_KEY`, which the canonical workflow supplies only to the Cursor
+  matrix entry and only when Cursor is on the panel. A stale
+  `AI_REVIEW_CURSOR_ENABLED=true` does not reopen that path: with a roster set the
+  legacy flag is ignored for credential gating as well as for selection.
 
 Roster changes are part of the effective-config digest, so a roster visible to
 only some pipeline jobs fails the cross-stage consistency check instead of
@@ -68,14 +70,23 @@ group scope.
 
 **Minimum runtime.** Every stage executes `/opt/ai-review` from the pinned base
 and reviewer images, not from your checkout, so `AI_REVIEW_REVIEWERS` is honored
-only by an image that ships roster support. On an older pinned runtime the
-variable is silently ignored and the panel stays at whatever `review.yaml`
-enables — there is no error, because the runtime has no concept of the variable
-to reject. Confirm the image pins before relying on the roster; the per-seat
-`AI_REVIEW_<REVIEWER>_ENABLED` flags work on every supported runtime. The
-canonical GitHub Actions workflow keeps those per-seat flags at their previous
-literal defaults whenever no roster is set, so updating the workflow template
-ahead of the image pins does not break `prepare`.
+only by an image that ships roster support. What happens on an older pin differs
+by platform:
+
+- **GitHub Actions** fails loudly. Setting a roster makes the canonical workflow
+  resolve the per-seat `AI_REVIEW_<REVIEWER>_ENABLED` variables to an empty
+  string, and a runtime without empty-as-unset rejects that value, so `prepare`
+  fails instead of reviewing with the wrong panel. Treat that failure as the
+  signal to repin. Leaving the roster unset keeps the workflow fully compatible
+  with older pins, because the per-seat variables then keep their previous
+  literal defaults.
+- **GitLab** ignores it silently. The template sets no per-seat flags of its own,
+  so there is nothing for a stale runtime to reject: the roster is simply not
+  read and the panel stays at whatever `review.yaml` enables.
+
+Confirm the image pins before relying on the roster — mandatory on GitLab, where
+nothing will tell you. The per-seat `AI_REVIEW_<REVIEWER>_ENABLED` flags work on
+every supported runtime.
 
 The blocking, resolution, and quorum thresholds are authored against the
 configured reviewer count and take effect clamped to the enabled count, so
@@ -248,7 +259,7 @@ artifacts.
 | `OPENROUTER_API_KEY` | reviewer jobs only | OpenRouter authentication for Claude/Codex/OpenCode. |
 | `ANTHROPIC_AUTH_TOKEN` | Claude reviewer only | Alternate Claude authentication for the pinned OpenRouter route; the canonical templates derive it from `OPENROUTER_API_KEY`. |
 | `ANTHROPIC_API_KEY` | Claude reviewer only | Native Anthropic credential recognized by the Claude CLI; cleared by the canonical OpenRouter route. |
-| `CURSOR_API_KEY` | Cursor reviewer jobs only | Cursor authentication and separate egress destination. |
+| `CURSOR_API_KEY` | Cursor reviewer/critique job only | Cursor authentication and separate egress destination. The canonical GitHub workflow gates it on `matrix.reviewer == 'cursor'`, so the other seats' jobs never carry it. |
 | `GITLAB_TOKEN` | trusted prepare/post jobs | GitLab API access with `api` scope. |
 | `GITHUB_TOKEN` | trusted prepare/post jobs | GitHub API access supplied by Actions. |
 | `GH_TOKEN` | trusted GitHub prepare/post jobs | Local or custom-workflow fallback when `GITHUB_TOKEN` is absent. |

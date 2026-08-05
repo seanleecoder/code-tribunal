@@ -1466,15 +1466,21 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
             2,
         )
-        # The Cursor credential is withheld unless Cursor is actually on the panel,
-        # by either selection mechanism. Missing the roster arm would hand a
-        # roster-selected Cursor seat an empty key and fail it on credentials.
+        # The Cursor credential reaches exactly one matrix entry, and only when
+        # Cursor is on the panel. Dropping `matrix.reviewer == 'cursor'` would put
+        # the key in every seat's job environment; dropping the roster-unset guard
+        # on the legacy flag would hand it to a seat the roster excluded.
         conditional_cursor_secret = (
-            "CURSOR_API_KEY: ${{ (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') "
-            "|| vars.AI_REVIEW_CURSOR_ENABLED == 'true') "
+            "CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' "
+            "&& (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') "
+            "|| (vars.AI_REVIEW_REVIEWERS == '' "
+            "&& vars.AI_REVIEW_CURSOR_ENABLED == 'true')) "
             "&& secrets.CURSOR_API_KEY || '' }}"
         )
         self.assertEqual(text.count(conditional_cursor_secret), 2)
+        # No unconditional or matrix-blind form may survive anywhere in the file.
+        self.assertNotIn("CURSOR_API_KEY: ${{ (contains(", text)
+        self.assertNotIn("CURSOR_API_KEY: ${{ vars.", text)
         self.assertNotIn("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}", text)
         self.assertEqual(
             text.count("AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}"),

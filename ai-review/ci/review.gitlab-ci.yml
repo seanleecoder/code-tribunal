@@ -37,9 +37,12 @@ variables:
   # AI_REVIEW_REVIEWERS requires a runtime that supports it. Jobs run
   # /opt/ai-review from $AI_REVIEW_BASE_IMAGE/$AI_REVIEW_REVIEWER_IMAGE, so an
   # image pinned before roster support ignores the variable and leaves the panel
-  # at the seats enabled in review.yaml — with no error. Confirm the image pins
-  # ship roster support before relying on it, or use the per-reviewer *_ENABLED
-  # flags, which every supported runtime honors.
+  # at the seats enabled in review.yaml — with no error. Unlike the GitHub
+  # workflow, which fails loudly on an older pin because it blanks the per-seat
+  # flags, nothing here makes a stale runtime detectable: this template sets no
+  # per-seat flags of its own, so an ignored roster is silent. Confirm the image
+  # pins ship roster support before relying on it, or use the per-reviewer
+  # *_ENABLED flags, which every supported runtime honors.
   # Do not set AI_REVIEW_LOCAL_MOCK as a project/pipeline variable in production
   # (mock is forbidden). Semantic grouping env overrides are rejected; use YAML
   # only if experimenting outside the 1.0 compatibility guarantee.
