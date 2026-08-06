@@ -270,7 +270,13 @@ size-accounting or drop loop. A partially rendered rationale is never posted.
    posted and there is exactly one refresh. The only real requirement is a packaging
    one — **SPEC-44's `render-body.v3` must not ship in a release of its own unless
    SPEC-45 is genuinely deferred**, because two sequential releases mean two refresh
-   waves across maintainers' open merge requests. The version string is not a
+   waves across maintainers' open merge requests.
+   *(Status at `2b8b2ce`: `render-body.v3` is merged on `main` and carried by the
+   published `1.0-e2464a9` images, but it is still unreleased — the highest tag is
+   `v1.0.1` and `release/1.0.2.md` is a draft. The either/or above is therefore still
+   live and is now a release-timing decision: cutting 1.0.2 without SPEC-45 spends the
+   first refresh wave, and `v4` would spend a second one. Deferring SPEC-45 past that
+   release is a legitimate answer; doing it by accident is not.)* The version string is not a
    compatibility surface; the marker grammar is, and it does not change.
 7. When implementation lands, update current consensus/rendering reference material
    and CHANGELOG in that implementation change. This proposed specification does

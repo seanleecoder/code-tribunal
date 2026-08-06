@@ -1,4 +1,4 @@
-# SPEC-21 — Cursor CLI as an opt-in substitute reviewer
+# SPEC-21 — Cursor CLI as an opt-in reviewer seat
 
 > **Status: implemented and shipping disabled; SPEC-21 acceptance is required
 > before Cursor can be enabled, not before v1.0.1 ships.**
@@ -23,8 +23,14 @@
 
 ## Why
 
-Operators want the option to swap the opencode seat for Cursor's CLI agent and
-its first-party Composer model.
+Operators want the option to review with Cursor's CLI agent and its first-party
+Composer model.
+
+*(Original wording: "swap the opencode seat for Cursor's CLI agent". Cursor is no
+longer a substitute for one particular seat — `AI_REVIEW_REVIEWERS` selects any
+roster from the four peer reviewers. The rest of this specification predates that
+change; where it describes the two-boolean substitution recipe, read it as history.
+See `docs/configuration.md#choosing-the-panel` for the shipped selection contract.)*
 
 **Constraint discovered up front (research verdict, 2026-07): the Cursor CLI
 cannot route through OpenRouter.** BYOK/custom-base-URL is an IDE-only feature
@@ -257,6 +263,16 @@ Mirror `opencode.sh` structure with `claude.sh`'s cd/absolute-path pattern:
   critique entries exit before credential validation or adapter invocation and
   emit skipped artifacts. This costs two short no-op jobs but avoids duplicating
   runtime enablement logic in workflow graph conditions.
+
+**Superseded wiring.** Both bullets above describe the templates as they were
+authored before roster selection. On `main` the shipped wiring differs: the GitHub
+workflow gates `CURSOR_API_KEY` on `matrix.reviewer == 'cursor'` rather than placing
+it in every reviewer job's environment, the per-seat `AI_REVIEW_<NAME>_ENABLED`
+variables resolve to `''` (empty is now *unset*, not a `ConfigError`) so
+`AI_REVIEW_REVIEWERS` is not permanently contradicted, and enablement is expressed as
+a roster rather than the `AI_REVIEW_CURSOR_ENABLED=true` +
+`AI_REVIEW_OPENCODE_ENABLED=false` pair. The matrix entries, the `optional: true`
+GitLab needs, and the no-op-when-disabled cost note are unchanged and still accurate.
 
 ### 5. Docker image + supply chain
 

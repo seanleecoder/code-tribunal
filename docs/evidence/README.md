@@ -155,7 +155,9 @@ the disabled default.
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
 - **Cursor reviewer is not yet accepted for enablement.** It is an
-  experimental opt-in substitute with a separate credential and egress path.
+  experimental opt-in peer seat — selected like any other through
+  `AI_REVIEW_REVIEWERS`, not a substitute for one particular reviewer — with a
+  separate credential and egress path.
   The supplemental [real-run record](record-cursor-real-runs.md) proves real
   execution and valid artifacts at historical coordinates only. The exact
   Composer model pin, the ask-mode product decision, a fresh final-image

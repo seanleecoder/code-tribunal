@@ -37,6 +37,25 @@ Two distinct problems follow:
    posts a reduced review; at a glance it looks like a clean run. During 1.0.0 this
    was caught only because someone read the consensus artifact.
 
+## Status refresh (main at `2b8b2ce`)
+
+The defect is unchanged: `confidence` is still in the `required` list of
+`/$defs/finding` and finalization still drops a finding that omits it. Two things
+about the *evidence* above have moved on, and neither closes the spec:
+
+- The shipped OpenCode default model is now `google/gemini-3.5-flash-lite`, not the
+  `google/gemini-3.1-flash-lite` recorded in the incident. The observation stands as
+  history; do not re-cite that model id as the current default.
+- OpenCode now obtains its batch through the structured-output transport
+  ([SPEC-50](spec-50-opencode-structured-reviewer-output.md)), which sends the stage
+  schema to the provider as `format: {"type":"json_schema", …}`. That makes a
+  schema-shaped omission less likely *on that one seat* when the provider honors the
+  schema. It is not a fix: the other three seats have no such transport, provider
+  compliance with a JSON schema is not guaranteed, and the drop happens in
+  finalization regardless of how the batch arrived. Re-measure the frequency before
+  arguing this is now rare, and do not let the transport decide the A/B/C question
+  below.
+
 ## Decision to make
 
 Not obviously "just default it" — `confidence` feeds grouping and voting, so a wrong

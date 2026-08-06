@@ -534,9 +534,9 @@ image and reported `model: auto`.
 6. Add the sanitized supplemental record only after all required paths are scoped
    `Status: passed` against the same `R` and final image pair. Repin the
    configuration and publisher workflow to the same exact model slug. Do not add
-   this record to release inputs. Cursor may remain disabled by default as an
-   accepted opt-in substitute; completing this gate is required only before
-   enabling Cursor.
+   this record to release inputs. Cursor may remain off the default roster as an
+   accepted opt-in seat; completing this gate is required only before adding
+   Cursor to a roster.
 
 ## After the release-gating runs pass
 

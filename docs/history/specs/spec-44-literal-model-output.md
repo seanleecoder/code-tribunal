@@ -1,5 +1,11 @@
 # SPEC-44 — Literal-safe rendering of model output
 
+- **Status:** Complete on `main`. Implemented as `render-body.v3`
+  (`ai_review.render.RENDER_BODY_VERSION`) in commit `60b9357`, with the
+  wrapping-code-span follow-up in `45b891f`. The acceptance criteria and required
+  tests below are covered by the security, body-hash, schema-validation, and posting
+  suites. Retained as implementation history; SPEC-45 and SPEC-46 continue to cite it
+  for the renderer boundary and section-descriptor structure it established.
 - **Severity:** High (untrusted model output can alter the review that a maintainer sees) · **Effort:** L (raised from M — see [Deviations](#deviations-from-the-original-draft)) · **ROI rank:** post-1.0
 - **Depends on:** none.
 
@@ -43,14 +49,14 @@ pipeline copies it from a validated finding, so the in-process path is safe by
 construction — but a consensus artifact loaded from disk can carry any string.
 
 On the enforcement axis, the posting stage does not validate its input at all.
-[`post.py`](../../ai-review/src/ai_review/post.py)'s `cli` does
+[`post.py`](../../../ai-review/src/ai_review/post.py)'s `cli` does
 `consensus = cast(Consensus, load_json_file(args.consensus))` — a `cast` is a typing
 annotation with no runtime effect — and goes straight to `post_consensus`, which renders
 `group['category']` into Markdown at
-[`render.py`](../../ai-review/src/ai_review/render.py). It then validates its *output*
+[`render.py`](../../../ai-review/src/ai_review/render.py). It then validates its *output*
 against `post_result.schema.json`. The consensus stage validates
 (`validate_consensus_inputs`) and the gate stage validates
-([`gate.py`](../../ai-review/src/ai_review/gate.py) `cli`), so posting is the sole
+([`gate.py`](../../../ai-review/src/ai_review/gate.py) `cli`), so posting is the sole
 consumer that trusts the artifact — and it is the one that renders to the platform.
 
 **This is a pre-existing gap, not one introduced here.** In the current product an altered
@@ -60,7 +66,7 @@ footer, and can supply wrong-typed `vote_count` / `block_merge` values, none of 
 literal API would cover. This specification therefore closes both conditions: it tightens
 `consensus.schema.json` *and* requires the posting stage to validate before any posting
 API call. Ratified in
-[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md).
+[ADR-0002](../../decisions/0002-post-1.0-review-output-policy.md).
 
 **What validation does not buy.** Schema validation is a shape-and-vocabulary check. It
 cannot reject a schema-valid but altered artifact and it establishes nothing about
@@ -75,7 +81,7 @@ field on the strength of validation.
 value is *displayed*. It has no effect on a value's *semantics*, and neither mechanism in
 this specification addresses artifact integrity. A schema-valid altered
 `summary.block_merge` still decides the merge gate in
-[`gate.py`](../../ai-review/src/ai_review/gate.py); a `decision` change still moves a
+[`gate.py`](../../../ai-review/src/ai_review/gate.py); a `decision` change still moves a
 finding between inline, summary, and dropped. Those consequences are out of scope here and
 are not claimed to be mitigated.
 
@@ -157,10 +163,10 @@ validation to the posting stage. No other schema meaning changes and no
 ### One renderer owns every free-text and path-shaped value
 
 Introduce a small renderer-owned literal API in
-[`ai-review/src/ai_review/render.py`](../../ai-review/src/ai_review/render.py), for
+[`ai-review/src/ai_review/render.py`](../../../ai-review/src/ai_review/render.py), for
 example `literal_span(value)` and `literal_block(value)`. Both `render_body` and the
 summary-entry renderer in
-[`ai-review/src/ai_review/post.py`](../../ai-review/src/ai_review/post.py) must call
+[`ai-review/src/ai_review/post.py`](../../../ai-review/src/ai_review/post.py) must call
 that API. They must not call `sanitize_model_text` and then interpolate the returned
 string directly into Markdown.
 
@@ -341,10 +347,10 @@ and idempotent upsert behavior remain unchanged.
    retention order. Patching the size arithmetic and the `drop_trailing_entry` tuple
    three times is how layout and size accounting drift apart. After this change,
    adding a section is data.
-5. In [`ai-review/src/ai_review/post.py`](../../ai-review/src/ai_review/post.py), validate
+5. In [`ai-review/src/ai_review/post.py`](../../../ai-review/src/ai_review/post.py), validate
    the loaded consensus artifact against `consensus.schema.json` in `cli`, **before
    `create_runtime_platform` and therefore before any posting API call**. Mirror the
-   established pattern in [`gate.py`](../../ai-review/src/ai_review/gate.py) `cli`
+   established pattern in [`gate.py`](../../../ai-review/src/ai_review/gate.py) `cli`
    exactly — `load_json_file`, `validate_instance(consensus, "consensus.schema.json")`,
    then `cast` — so the three stages that consume a consensus artifact treat it
    identically. The CLI is the correct boundary because it is the only place an
@@ -355,7 +361,7 @@ and idempotent upsert behavior remain unchanged.
    enum exemption, and it independently closes the pre-existing gap described in the
    rationale.
 6. In
-   [`ai-review/schemas/consensus.schema.json`](../../ai-review/schemas/consensus.schema.json),
+   [`ai-review/schemas/consensus.schema.json`](../../../ai-review/schemas/consensus.schema.json),
    tighten `$defs.group.properties.category` from `{"type": "string", "minLength": 1}` to
    the `finding_batch.schema.json` category enum (`security`, `correctness`,
    `performance`, `maintainability`, `style`, `test`, `other`). Keep
@@ -403,7 +409,7 @@ Reverting one without the others reopens the injection surface.
 
 These requirements changed after the first committed draft of this specification. The
 rendering-boundary decision was ratified in
-[ADR-0002](../decisions/0002-post-1.0-review-output-policy.md); the rest are defect fixes
+[ADR-0002](../../decisions/0002-post-1.0-review-output-policy.md); the rest are defect fixes
 or the scope consequences that follow from them.
 
 | Original requirement | Now | Reason | Decided in |

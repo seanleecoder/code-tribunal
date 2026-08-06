@@ -7,8 +7,18 @@
 
 The release audit identified inert, deprecated, or duplicated surface plus three
 large orchestration modules (`post.py` ~1,755 lines, `adapter_runner.py` ~884,
-`consensus.py` ~778). Some deletions belong at the 1.0 breaking boundary; structural
-decomposition should follow only after behavior is frozen by the correctness specs.
+`consensus.py` ~778 at the time of the audit). Some deletions belong at the 1.0
+breaking boundary; structural decomposition should follow only after behavior is
+frozen by the correctness specs.
+
+**Milestone B has not been re-scoped since, and the modules have grown.** On `main` at
+`2b8b2ce` they are `post.py` ~2,075, `adapter_runner.py` ~1,203, and `consensus.py`
+~1,044 lines — the post-1.0 correctness work (SPEC-44 rendering, SPEC-50 structured
+output, roster selection) added to all three. The split boundaries below still hold;
+only the sizes that motivated them are understated. Re-measure before planning the
+extraction commits, and note that SPEC-45 and SPEC-46 will add further rendering and
+consensus surface, so sequencing Milestone B after them avoids re-splitting the same
+files twice.
 
 This spec is deliberately conservative: delete or merge proven duplication, then
 extract cohesive units without changing platform behavior.
