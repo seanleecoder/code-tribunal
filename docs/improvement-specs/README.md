@@ -31,6 +31,7 @@ wins.
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 (title decision still in force) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
 | [SPEC-50](spec-50-opencode-structured-reviewer-output.md) | Implemented (post-1.0; in the published `1.0-e2464a9` images); live canary outstanding | Obtain OpenCode reviewer output through the structured-output transport instead of parsing model prose, and stop treating reasoning parts as answer text in any adapter. Image publication is done and the provider-free stub preflight gates merge; the real-OpenRouter canary run (`used structured_output`, `raw_finding_count > 0`) is not recorded yet. |
 | [SPEC-51](../history/specs/spec-51-opencode-search-tool-reach.md) | Complete on `main` — archived to [history](../history/specs/spec-51-opencode-search-tool-reach.md) | In the published `1.0-e2464a9` images; its deferred live canary was closed provider-free by `scripts/smoke_opencode_structured_output.py`, which forces a real `grep` with a non-empty result inside the sanitized root. |
+| [SPEC-52](spec-52-bounded-state-retention.md) | Proposed (post-1.0) | Observed live: a private GitLab MR crossed `max_state_bytes` (52,345 vs 50,000), `post` discarded a valid review before mutating, and the gate blocked. Compaction bounds only resolved/stale records, alias families and `run_history` grow without bound, and there is no shed step or configuration remedy — so every subsequent pipeline on that MR fails closed. |
 
 ## Active dependency order
 
@@ -79,7 +80,14 @@ completed for `v1.0.0`. Remaining order:
    [SPEC-48](spec-48-auditable-review-scope-exclusions.md): it depends on
    SPEC-47's target-revision source selection, sealed runtime ownership, and
    effective-config binding. Neither specification is currently implemented.
-7. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
+7. Land [SPEC-52](spec-52-bounded-state-retention.md) ahead of the remaining
+   post-1.0 sequence. It is independent of SPEC-45–48 and does not wait for
+   SPEC-47, but it is the only item here with a live, reproducing production
+   block: once an MR crosses `max_state_bytes` there is no configuration remedy
+   and no in-band recovery, so every later pipeline on it fails closed. SPEC-22
+   depends on the shed ladder it builds; SPEC-42 owns the `wontfix` gate question
+   it deliberately leaves alone.
+8. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
    enabling or advertising the Cursor reviewer. It does not block a release while
    Cursor stays off the default roster. Roster selection changed *how* Cursor is
    enabled, not the evidence it owes. Its acceptance checklist is canonical;
