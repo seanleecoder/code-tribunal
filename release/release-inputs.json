@@ -6,7 +6,7 @@
         "ai-review/ci/review.github-actions.yml",
         "ai-review/ci/review.gitlab-ci.yml"
       ],
-      "sha256": "139df36216637d60b83991359e6a50581c66b8fd75b278092da561a43b3a735f"
+      "sha256": "786764c423e6eaa3edde395586e9f987d0f88d3b00f4d639624c2d45089cf347"
     },
     "configuration": {
       "files": [
