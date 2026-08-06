@@ -32,6 +32,22 @@ currently discarded:
 - **cursor** (SPEC-21): the CLI emits no usage fields at all (open upstream
   feature request as of 2026-07).
 
+> **Transport refresh (main at `2b8b2ce`).** The problem statement stands — nothing
+> records token or cost data — but the OpenCode extraction plan above is written
+> against a transport that no longer exists.
+> [SPEC-50](spec-50-opencode-structured-reviewer-output.md) replaced `opencode --pure
+> run --format json` with a loopback `serve` session client
+> (`ai_review.opencode_client`), so there is no `step_finish` NDJSON stream to walk;
+> usage now has to come from the assistant message the session API returns, alongside
+> the `info.structured` payload the client already reads. Treat the field shape as
+> unverified and capture a real response before writing fixtures, exactly as this spec
+> already requires for the Claude stream. The pinned CLI versions have also moved:
+> `opencode-ai` 1.18.12, `@anthropic-ai/claude-code` 2.1.221, `@openai/codex` 0.146.0
+> (`ai-review/images/package.json`) — re-verify against those, not against 1.17.x and
+> 2.1.207. The Cursor row is unaffected in substance, but Cursor is now a peer seat
+> selected by roster rather than an opencode substitute, so a `null` usage seat can
+> appear in any panel shape.
+
 `adapter_runner._load_stream_json` walks every one of these events today and
 keeps only the findings JSON. The status artifact
 (`out/status/<reviewer>.json`, `adapter_status.schema.json`) already records

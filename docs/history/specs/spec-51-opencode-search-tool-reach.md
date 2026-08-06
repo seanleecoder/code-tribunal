@@ -1,12 +1,19 @@
 # SPEC-51 — Bound and supply the OpenCode search tools
 
-- **Status:** Implemented (post-1.0; runtime source and image recipe; immutable image publication and live-provider acceptance remain separate rollout work).
+- **Status:** Complete on `main`. Landed in `4b2b7cb`; the images built from
+  `main@e2464a9` ship the pinned ripgrep and the denied `external_directory`
+  permission, and the canonical templates and `AI_REVIEW_TRUSTED_IMAGE_SHA` are pinned
+  to them (`2b8b2ce`). The live-provider canary deferred below was closed
+  provider-free instead: `scripts/smoke_opencode_structured_output.py` — the stub-model
+  preflight this specification listed as possible future work — forces a real `grep`
+  through the pinned ripgrep inside the sanitized review root and requires a non-empty
+  result, and gates merge as well as publication.
 - **Classification:** S / reviewer isolation and supply-chain correctness.
 - **Severity:** High (two independent defects: an unverified binary fetched and executed at review time, and a filesystem boundary that held only by accident).
 - **Effort:** S.
-- **Depends on:** [SPEC-50](spec-50-opencode-structured-reviewer-output.md), which introduced the loopback session client this change extends.
+- **Depends on:** [SPEC-50](../../improvement-specs/spec-50-opencode-structured-reviewer-output.md), which introduced the loopback session client this change extends.
 - **Related work:** the snapshot-containment contract in
-  [SPEC-19](../history/specs/spec-19-opencode-reviewer-optimization.md), whose
+  [SPEC-19](spec-19-opencode-reviewer-optimization.md), whose
   sanitized review root this specification makes actually binding.
 
 ## Incident and forensic rationale
@@ -166,6 +173,12 @@ paths that `debug agent` resolves to `allow`, because it resolves against the to
 `"*": "deny"` instead of the agent's allows. A probe built on it would assert the
 reviewer cannot read its own review root, which is false. Forcing a real `grep` call
 needs a model, i.e. a provider.
+
+**Closed provider-free, after the fact.** The stub-model preflight described in the
+next paragraph landed as `scripts/smoke_opencode_structured_output.py`, so the live
+canary below was never needed: it forces a real `grep` through the pinned ripgrep
+inside the sanitized review root and requires a non-empty result, inside the built
+reviewer image, with no provider secret.
 
 Possible future work, not required here: serve an OpenAI-compatible stub model on
 loopback from the preflight, have it return a `grep` tool call on an external absolute

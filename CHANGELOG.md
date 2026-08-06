@@ -123,7 +123,7 @@ versioning.
   build. The preflight is a step in the image build job with no event condition, so it
   gates merge on pull requests as well as publication on main. `read`, `glob`, and
   `grep` remain allowed inside the root. See
-  [SPEC-51](docs/improvement-specs/spec-51-opencode-search-tool-reach.md).
+  [SPEC-51](docs/history/specs/spec-51-opencode-search-tool-reach.md).
 
 - The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`, and a
   review-time ripgrep download now fails the review instead of producing postable

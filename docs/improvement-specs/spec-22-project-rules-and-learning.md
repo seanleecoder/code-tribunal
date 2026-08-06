@@ -6,7 +6,19 @@
 - **Effort**: L overall; per-phase S–M (see Phasing)
 - **ROI rank**: unranked — proposed alongside Phase 4 (SPEC-19…21); independent of that phase's reviewer cost/panel work
 - **Depends on**: v0.4.0 platform abstraction (`platform/base.py` `ReviewPlatform` port, SPEC-15/16); the strict-schema and config-validation conventions of Phases 1–2
-- **Status**: PROPOSED design — nothing below is implemented; verified against `main` at v0.4.0
+- **Status**: PROPOSED design — nothing below is implemented; verified against `main` at v0.4.0.
+  **Stale baseline (reviewed at `2b8b2ce`).** The motivation is unchanged — reviews
+  still see no adopter context, and every adapter still strips project agent
+  configuration from the snapshot — but this document is written against a
+  pre-1.0 tree and against a trusted-input design that has since been specified
+  separately. Before executing any phase, rebase it on
+  [SPEC-47](spec-47-trusted-project-review-config.md), which owns the
+  target/base-revision policy channel, the resolved-policy artifact, and the
+  effective-config binding that Section 3.2's "why the target branch is trustworthy"
+  argument reinvents here. Phases that fetch project files from the target branch
+  should consume SPEC-47's channel rather than defining a second one, and the panel
+  described below is no longer fixed at three seats
+  (see `AI_REVIEW_REVIEWERS` roster selection).
 
 Baseline note: the original monolithic spec is archived
 (`docs/archived-improvement-plans/legacy-ai-review-implementation-ready-spec.md`)

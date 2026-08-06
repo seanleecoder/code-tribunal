@@ -47,3 +47,5 @@ README.
 | [SPEC-37](spec-37-final-release-artifacts.md) | Final release artifacts | Complete at `v1.0.0` |
 | [SPEC-38](spec-38-documentation-evidence-restructure.md) | Documentation/evidence restructuring | Complete at `v1.0.0` |
 | [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | 1.0.0 finalization execution plan | Complete at `v1.0.0` |
+| [SPEC-44](spec-44-literal-model-output.md) | Literal-safe rendering of model output | Complete on `main` — shipped as `render-body.v3`; SPEC-45/46 still cite its renderer boundary |
+| [SPEC-51](spec-51-opencode-search-tool-reach.md) | Bound and supply the OpenCode search tools | Complete on `main` — in the images pinned from `main@e2464a9`; its live canary was closed provider-free by the stub-model preflight |

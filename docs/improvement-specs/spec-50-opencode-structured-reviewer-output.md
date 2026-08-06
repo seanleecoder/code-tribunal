@@ -1,6 +1,15 @@
 # SPEC-50 — Enforce structured OpenCode reviewer output
 
-- **Status:** Implemented (post-1.0; runtime source only; immutable image publication and live-provider acceptance remain separate rollout work).
+- **Status:** Implemented (post-1.0). Landed in `fb0544d`, with the `StructuredOutput`
+  permission fix in `850c99b`; the images built from `main@e2464a9` carry both and the
+  canonical templates are pinned to them (`2b8b2ce`), so image publication is
+  no longer outstanding. `scripts/smoke_opencode_structured_output.py` proves the tool
+  is offered and the batch survives the transport inside the built image, against a
+  loopback stub provider, and gates merge as well as publication. **Outstanding:** the
+  real-OpenRouter rollout canary in the acceptance criteria — one live run recording
+  `status: success`, `raw_finding_count > 0`, and the `used structured_output` log
+  line. No such run is recorded in [`docs/evidence`](../evidence/README.md) yet; this
+  specification stays out of the completed history until it is.
 - **Classification:** S / reviewer-transport correctness.
 - **Severity:** High (the reviewer produced usable findings and the panel recorded zero, so the merge gate saw a silently degraded panel rather than a failure).
 - **Effort:** M.
@@ -176,4 +185,7 @@ provider change is permitted for this purpose. `reviewers.opencode.model` and
   image build/preflight pass without credentials or a real OpenRouter request.
 - Real OpenRouter verification is deferred to rollout: a canary must show
   `status: success`, `raw_finding_count > 0`, and the `used structured_output` log
-  line. `grep` is still expected to fail there until the ripgrep follow-up lands.
+  line. `grep` is still expected to fail there until the ripgrep follow-up lands —
+  that follow-up, [SPEC-51](../history/specs/spec-51-opencode-search-tool-reach.md),
+  has since landed and is in the pinned images, so a canary run today should show a
+  working `grep` as well.
