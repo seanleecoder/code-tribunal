@@ -1,10 +1,10 @@
 # Release process
 
-The 1.0.1 release uses the two-commit sequence in SPEC-40: immutable runtime
-source `R` produces both images, then release commit `P` pins every template to
-those image digests. `R..P` may contain only the reviewed release-path
-allowlist; the generated external manifest records both commits without
-creating a commit self-reference.
+Every release uses the two-commit sequence in SPEC-40: immutable runtime source
+`R` produces both images, then release commit `P` pins every template to those
+image digests. `R..P` may contain only the reviewed release-path allowlist; the
+generated external manifest records both commits without creating a commit
+self-reference.
 
 Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/TEMPLATE.md).
 
@@ -43,14 +43,15 @@ The active release version also determines the required notes file:
    Only then set `release-inputs.status` to `active` and re-run
    `python scripts/check_release_inputs.py` (active status rejects partial,
    SHA/digest-mismatched, or undeclared-waiver evidence).
-6. After final release commit `P` and tag `v1.0.1` exist, move
-   `CHANGELOG` `[Unreleased]` to `[1.0.1]`, finalize
-   [`release/1.0.1.md`](../../release/1.0.1.md), and build/validate the external
-   asset:
+6. Move `CHANGELOG` `[Unreleased]` to `[$V]`, finalize `release/$V.md`, and
+   create final release commit `P`. Set `V` to the release version (for example
+   `1.0.2`), build and validate the external asset against `P`, then create the
+   signed `v$V` tag on `P` with the manifest checksum in its certificate message:
 
    ```bash
+   V=1.0.2
    python scripts/build_release_manifest.py \
-     --tag v1.0.1 --runtime-source "$R" --release-commit "$P" \
+     --tag "v$V" --runtime-source "$R" --release-commit "$P" \
      --out /tmp/release-manifest.json
    python scripts/check_release_manifest.py /tmp/release-manifest.json
    sha256sum /tmp/release-manifest.json > /tmp/release-manifest.json.sha256
@@ -60,7 +61,7 @@ The active release version also determines the required notes file:
    path-level allowlist cannot prove. Then publish the reviewed tag, manifest,
    checksum, and release notes.
 
-Do not describe 1.0.1 as stable until the required live evidence is complete.
+Do not describe a release as stable until its required live evidence is complete.
 Never rebuild a release tag from a different source commit; publish a new patch
 release instead.
 
