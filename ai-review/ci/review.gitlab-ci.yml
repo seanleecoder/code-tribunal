@@ -5,9 +5,9 @@
 variables:
   # Public GHCR images, cut over from the Phase 5.5 private bootstrap refs.
   # Replace all three values together when bumping to a newer published commit.
-  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-2b8b2ced429309ccce541b1590500ffaba010567@sha256:97fe3a0e2b7eede26c7ea7abaac7976dee440cc7beed9c09f7106410c29abc56"
-  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-2b8b2ced429309ccce541b1590500ffaba010567@sha256:8d84d69cd945aa70b36849b11f86acba24a0b73ae50ae9b0b9b1c26c71bf76af"
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "2b8b2ced429309ccce541b1590500ffaba010567"
+  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250"
+  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:055c611afc0f49d1b2ffe8f77622ec449ee101e0b830e223633440f0073982ca"
+  AI_REVIEW_TRUSTED_IMAGE_SHA: "f21418f13bd0e0c67e250d1720887b71e6b1f519"
   AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
