@@ -1,72 +1,47 @@
-# Evidence record: cross-platform model-effort routes / pending
+# Evidence record: OpenCode max-effort route / 2026-08-10
 
-Status: pending
+Status: waived
 
-<!-- This is a separate record for effort-route validation. Do not append these
-     checks to the historical default-model smoke record. When the checks run,
-     replace each pending value with the same frozen source/image pair and
-     complete every platform row below. This record is not a release binding
-     until live validation is complete. -->
+Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
+Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
+Release-evidence-waived: OpenCode max effort was already accepted in real runs on an operator-controlled project; those runs are operator attestation rather than source-bound public evidence, and the final runtime change only normalizes a returned structured item after provider execution, so the operator accepted skipping a duplicate 1.0.2 rerun.
 
-Release-runtime-source: `<40-character-runtime-source-sha>`
-Release-base-digest: `sha256:<64-character-base-image-digest>`
-Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
-Release-evidence-waived: The Codex max and OpenCode xhigh routes are unvalidated at the real providers for 1.0.1. Effort levels are passed through without coercion, and a malformed model or effort value is rejected with model_error before the reviewer CLI is invoked, so a provider-side rejection surfaces as an adapter failure rather than a silent degradation to a different effort level. This record remains pending and must be completed before either route is advertised as validated.
-> **1.0.1 disposition: to be waived, not run.** These routes stay unproven at real
-> providers for this release. The intended waiver basis is that effort levels are
-> passed through without coercion and a malformed model or effort value is rejected
-> with `model_error` before the reviewer CLI is invoked, so a provider-side rejection
-> surfaces as an adapter failure rather than a silent degradation to a different
-> effort level. The machine-readable `Release-evidence-waived:` line is added **at
-> activation**, together with its registration under
-> `verification.evidence_waivers`. Provider rejection, when the checks do run, is a
-> failed validation — never a reason to omit or coerce the effort level. See the
-> [1.0.1 scoped campaign](README.md#101-evidence-matrix).
+> Sanitized record. Never record credentials, CLI session material, proprietary
+> source, or sensitive model content.
 
-This record covers the first real-provider route checks for the non-default
-effort settings: Codex with requested effort `max` and OpenCode with requested
-effort `xhigh`. Run the checks independently on GitHub Actions and GitLab CI
-against the same rebuilt base/reviewer image pair. The historical
-[default-model smoke record](record-github-default-model-smoke.md) is not
-evidence for these routes and must remain unchanged.
+## Scope
 
-## Required capture
+This row covers the non-default OpenCode `max` effort route added in 1.0.2. It does
+not cover the default-effort route, which has separate source-bound public evidence
+in [the GitHub default-model smoke](record-github-default-model-smoke.md), or make
+any claim about Codex effort settings.
 
-For every row, record the platform workflow/pipeline ID, relevant job IDs or
-run identifier, the frozen runtime source, both image digests, the actual model
-identifier, the requested and observed effort values, and the outcome. Capture
-provider acceptance or rejection explicitly; a rejected requested effort is a
-failed validation, not a successful default-effort substitution.
+## Evidence basis
 
-| Platform | Workflow / pipeline / run ID | Reviewer | Actual model | Requested effort | Observed effort | Outcome |
-|---|---|---|---|---|---|---|
-| GitHub Actions | pending | Codex | pending | `max` | pending | pending |
-| GitHub Actions | pending | OpenCode | pending | `xhigh` | pending | pending |
-| GitLab CI | pending | Codex | pending | `max` | pending | pending |
-| GitLab CI | pending | OpenCode | pending | `xhigh` | pending | pending |
+- The operator confirmed that OpenCode `max` effort was already exercised and
+  accepted in real runs on a real project. Those coordinates and artifacts are not
+  reproduced in this public repository, so the statement is recorded as operator
+  attestation, not promoted to a source/image-bound pass.
+- The checked adapter forwards `max` unchanged as `reasoningEffort`; it neither
+  rejects nor remaps the value. Focused tests cover the exact forwarding path.
+- Runtime source `54dffa1` differs from the previously frozen candidate only in the
+  post-provider OpenCode client handling of exact stringified structured items. It
+  does not alter model selection, effort selection, request construction, or the
+  provider route.
+- The final public campaign used default effort and therefore is not evidence for
+  `max`.
 
-## Preconditions
+## Residual risk
 
-- `AI_REVIEW_LOCAL_MOCK=0` and the platform's real-provider requirements were
-  enabled for every check.
-- The runtime source and both image digests above were verified before running;
-  no historical default-model run was reused.
-- Model/effort overrides and the effective adapter configuration were captured
-  from the run, without recording credentials or sensitive model content.
-
-## Actual result
-
-Pending. For each platform and reviewer, record the exact model and effective
-effort reported by the adapter, the provider response, and whether the route
-completed with the requested effort.
-
-## Audit
-
-Pending. Record the inspected job logs and artifacts, the source/image binding,
-and the non-disclosing credential audit result for all four checks.
+There is no public, independently inspectable 1.0.2 run that binds an observed
+provider acceptance of `max` to the exact source and image pair above. A future
+provider or CLI behavior change could therefore affect this route without being
+detected by the scoped public campaign. Provider rejection still fails closed as an
+adapter failure; the runtime never silently substitutes a lower effort.
 
 ## Verdict
 
-Pending. Replace with a scoped cross-platform pass/fail statement covering only
-the recorded runtime source, image pair, model identifiers, effort values, and
-platform topologies.
+Explicit current-release waiver, accepted by the operator. Historical real-project
+validation supports the decision, but the route is not advertised here as a new
+source-bound public pass.

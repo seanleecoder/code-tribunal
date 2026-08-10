@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-10
+
 ### Added
 
 - All four reviewers are peer seats, selectable with one variable. `AI_REVIEW_REVIEWERS`
@@ -58,6 +60,13 @@ versioning.
   mandatory on GitLab, where nothing will tell you.
 
 ### Fixed
+
+- OpenCode structured batches no longer lose a finding when the schema transport
+  returns an exact JSON-stringified object inside the `findings` or `critiques`
+  array. The client decodes only one unambiguous object with duplicate-key
+  rejection; prose, arrays, scalars, malformed JSON, and duplicate-key objects
+  remain on the fail-closed path. This was found by the 1.0.2 real-provider release
+  campaign and closed before the runtime and images were refrozen.
 
 - The OpenCode reviewer can return a batch again. OpenCode injects a
   `StructuredOutput` tool when the session request carries
