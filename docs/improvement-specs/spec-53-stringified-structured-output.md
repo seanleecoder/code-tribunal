@@ -55,8 +55,11 @@ quirk can take. Four gaps remain, each reproducible from the code as it stands o
    the wrong Python type — and the shared parser handles it for no seat at all. The four
    seats are claude, codex, opencode, and cursor (`ai-review/config/review.yaml:19`);
    `google/gemini-3.5-flash-lite` is the *model* currently configured on the opencode
-   seat, not a seat of its own. Every seat's `structured_output` reaches
-   `_coerce_adapter_root`, and none of them is decoded.
+   seat, not a seat of its own. The seats do not share a transport shape — only Claude
+   emits a `structured_output` field (`adapters/claude.sh:86`), Cursor returns a result
+   envelope (`adapters/cursor.sh:81`), and codex and OpenCode emit reviewer roots
+   directly — but every seat's *parsed reviewer payload* reaches `_coerce_adapter_root`,
+   and none of them is decoded.
 
 On the fourth point, be precise about both the claim and the evidence. The claim is a
 **shared-parser blind spot independent of model identity**: whichever provider, route, or
@@ -140,10 +143,13 @@ alike. The adapter-specific decoder is removed in the same change.
   | `{"findings": "[]"}` | 1 | empty array recovered; the line is still written |
   | nothing decodes | — | no line written |
 
-  Every other step in this pipeline that reshapes adapter output reports that it did.
-  A silent workaround becomes invisible load-bearing code: nothing would show how often
-  the quirk fires, and nothing would show when the provider stops emitting it and the
-  step becomes dead weight.
+  Reporting is required on its own merits, not by appeal to a rule the codebase does not
+  keep: the finalizer's drop paths report (`schema.py:439`, `:451`), but the list-root
+  coercion beside this step is silent. What makes this step different is that it exists
+  only to absorb a provider quirk. A silent workaround becomes invisible load-bearing
+  code: nothing would show how often the quirk fires, and nothing would show when the
+  provider stops emitting it and the step becomes dead weight that no one can safely
+  delete.
 
 ## Scope
 
@@ -203,8 +209,8 @@ alike. The adapter-specific decoder is removed in the same change.
   longer loses a recoverable finding.
 - A double-encoded item remains a string and is dropped by the finalizer, pinning the
   one-pass rule.
-- A non-OpenCode seat's `structured_output` receives the same decoding, pinning the
-  shared placement.
+- A non-OpenCode seat's parsed reviewer payload — Claude's `structured_output` is the
+  concrete case — receives the same decoding, pinning the shared placement.
 - With no stage, the step performs no string decoding and existing root coercion is
   unchanged. Both cases are covered: a dict payload carrying a stringified item, and the
   legacy list-root case that `stage is None` still wraps.
@@ -215,8 +221,6 @@ alike. The adapter-specific decoder is removed in the same change.
   just equality, so a silent rebuild cannot pass.
 - When something does decode, the input object and its nested containers are not mutated.
   The caller's payload must be as it was.
-- A double-encoded item remains a string and is dropped by the finalizer, pinning the
-  one-pass rule.
 - The decode line matches the `N` table above, including the `"[]"` case; a run in which
   nothing decodes writes no line, and a run that decodes writes exactly one line naming
   the stage and the count.
