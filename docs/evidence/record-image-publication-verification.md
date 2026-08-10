@@ -1,10 +1,10 @@
-# Evidence record: registry / image publication verification / 2026-08-09
+# Evidence record: registry / image publication verification / 2026-08-10
 
 Status: passed
 
-Release-runtime-source: f21418f13bd0e0c67e250d1720887b71e6b1f519
-Release-base-digest: sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250
-Release-reviewer-digest: sha256:055c611afc0f49d1b2ffe8f77622ec449ee101e0b830e223633440f0073982ca
+Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
+Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
 
 > Sanitized record. Never record credentials, CLI session material, proprietary
 > source, or sensitive model content.
@@ -15,11 +15,11 @@ release by construction.
 ## Identity
 
 - Registry: GHCR (`ghcr.io/seanleecoder/code-tribunal`), public
-- Date/time: 2026-08-09, ~22:17–22:24 UTC
-- Runtime source `R`: `f21418f13bd0e0c67e250d1720887b71e6b1f519`
-- Publication run: `31339040674` (`publish-ai-review-images.yml`, push to `main`)
-- Quality run for `R`: `31339040670` (`ci.yml`, `make quality`, success)
-- Image tag: `1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519` on both subjects
+- Date/time: 2026-08-10, ~08:18–08:24 UTC
+- Runtime source `R`: `54dffa130be5c921602f264a2123fda4b1895f13`
+- Publication run: `31369496025` (`publish-ai-review-images.yml`, push to `main`)
+- Quality run for `R`: `31369496045` (`ci.yml`, `make quality`, success)
+- Image tag: `1.0-54dffa130be5c921602f264a2123fda4b1895f13` on both subjects
 
 ## Preconditions
 
@@ -34,17 +34,16 @@ Both subjects verified independently:
 
 | Check | base | reviewer |
 |---|---|---|
-| Digest | `sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250` | `sha256:055c611afc0f49d1b2ffe8f77622ec449ee101e0b830e223633440f0073982ca` |
+| Digest | `sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4` | `sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab` |
 | Anonymous resolution | matches | matches |
 | `org.opencontainers.image.revision` | `= R` | `= R` |
 | Provenance attestation | verified | verified |
 
 - **Anonymous resolution** used `DOCKER_CONFIG` pointed at a fresh empty directory
-  with `docker manifest inspect`, so no stored credential could have been consulted.
-  Both digest-qualified subjects resolved successfully.
-- **Revision labels** read with
-  `docker buildx imagetools inspect --format '{{json .Image}}'` (the normal config,
-  because an empty `DOCKER_CONFIG` also hides CLI plugins). Both equal `R` exactly.
+  with `docker pull`, so no stored credential could have been consulted. Both tags
+  resolved to the recorded registry digests.
+- **Revision labels** read with `docker inspect` after those anonymous pulls. Both
+  equal `R` exactly.
 - **Attestations** verified separately with `gh attestation verify oci://… --repo
   seanleecoder/code-tribunal`, enforcing `--source-digest R`, `--source-ref
   refs/heads/main`, and signer workflow
@@ -62,9 +61,9 @@ Both subjects verified independently:
 ## Verdict
 
 Scoped pass. Both 1.0.2 candidate images resolve anonymously at the recorded digests,
-carry an OCI revision label equal to the frozen runtime source `f21418f`, and bear
+carry an OCI revision label equal to the frozen runtime source `54dffa1`, and bear
 provenance attestations signed by the publication workflow and bound to that source
-commit on `refs/heads/main`. Publication run `31339040674` built, preflighted,
+commit on `refs/heads/main`. Publication run `31369496025` built, preflighted,
 published, and attested both subjects. It does not establish anything about image
 contents beyond the workflow preflights, labels, and attestations, nor about
 non-amd64 platforms.
