@@ -1,13 +1,16 @@
 # Evidence record: GitHub revision-race and oversized-diff / 2026-07-21
 
-Status: partial
+Status: waived
 
-Release-evidence-waived: SPEC-34 revision races and oversized-diff HTTP 406 are regression-covered by test_input_bundle.py and test_github_platform.py across all three prepare boundaries plus the 406 path; the live windows are milliseconds wide and two were never reproducible live, and this row is classified live-optional and non-gating in the evidence matrix.
+Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
+Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
+Release-evidence-waived: github_platform.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.
 
-> **Reading this record: `Status: partial` here is not a release blocker.** The
-> status line stays `partial` because the live probes genuinely are partial; the
-> row is released under the waiver below, which `scripts/check_release_inputs.py`
-> honors in place of a `passed` status. Partial + registered waiver = non-gating.
+> **Reading this record:** the historical live probes below are partial. For
+> 1.0.2 the row is explicitly waived under the current source/image binding and
+> the reason above, which `scripts/check_release_inputs.py` matches against the
+> release-input registry.
 >
 > **Release waiver (2026-07-25).** This row is **not** release-gating for 1.0.0.
 > It is waived against runtime source `88bc9412b283d4a44328ab3ffd9f9708b0290f8e`

@@ -5,83 +5,45 @@ only sanitized identifiers, digests, expected/actual outcomes, and audit results
 Never store credentials, CLI session material, proprietary source, or sensitive
 model content.
 
-## 1.0.1 readiness gate
+## 1.0.2 release evidence
 
-The checked-in `release/release-inputs.json` is the **1.0.1 draft**. It must
-remain **`draft`** until every release-gating row is a scoped `Status: passed`
-against one frozen runtime source `R` and its attested base/reviewer digests (or
-carries an explicit
-`Release-evidence-waived: <reason>` line also registered under
-`verification.evidence_waivers` in the hashed release-inputs artifact).
-`scripts/check_release_inputs.py` rejects `status: active` when cited records
-are partial, bind a different SHA/digest pair, or waive without that registry
-entry.
+The 1.0.2 release binds every cited row to one frozen runtime and immutable image
+pair. `scripts/check_release_inputs.py` rejects activation when a cited record is
+not a matching scoped pass or does not carry an explicit waiver identical to its
+`verification.evidence_waivers` entry.
 
-The released 1.0.0 source/image coordinates are historical. Do not reactivate
-them for 1.0.1; bind this draft to the new runtime source and final image pair
-only after the new runs pass.
-
-## 1.0.1 evidence matrix
-
-The campaign was **scoped by change impact**, not a full matrix re-run. See the
-[triage table](../development/release-process.md#scoping-the-live-campaign) for the
-rule and [`release/1.0.1.md`](../../release/1.0.1.md) for this release's scoping
-record. `git diff v1.0.0..R` changed `anchors.py`, `render.py`, `post.py`,
-`schema.py`, `types.py`, `mock_reviewer.py`, `adapter_runner.py`,
-`config/review.yaml`, `consensus.schema.json`, and `base.Dockerfile`; it left
-`input_bundle.py`, `github_platform.py`, `gitlab_platform.py`, `gate.py`,
-`consensus.py`, and `scripts/verify_pipeline_trust.py` untouched.
-
-All rows below bind to `R = 5817e99f8d831a816056feb2dfd44fac85b5196c`, base
-`sha256:657d5e70…`, and reviewer `sha256:a4b35e46…`.
+All rows below bind to `R = 54dffa130be5c921602f264a2123fda4b1895f13`, base
+`sha256:960600d3…`, and reviewer `sha256:6bf8fdfb…`. The campaign was scoped by
+the [change-impact triage table](../development/release-process.md#scoping-the-live-campaign),
+with the rationale recorded in [`release/1.0.2.md`](../../release/1.0.2.md).
 
 | Suite | Tier | Status |
 |---|---|---|
-| Image publication verification | release-gating | **Passed** 2026-07-30 — anonymous digest resolution with `DOCKER_CONFIG` isolated to `{}`, OCI revision label equal to `R` on both subjects, provenance attestations bound to publication run `30536734285` and to `R`. [record](record-image-publication-verification.md) |
-| GitHub default-model panel (Chain A) | release-gating | **Passed** 2026-07-30 — PR #9, run `30540576843`. `anthropic/claude-haiku-4.5`, `openai/gpt-5.6-luna`, `google/gemini-3.5-flash-lite` all resolved at the real provider; `panel_status: full`, `panel_convergence: 1.0`, two real security findings posted inline, gate exit 7, `mergeStateStatus: BLOCKED`. [record](record-github-default-model-smoke.md) |
-| GitHub lifecycle (Chain B, **adding** fixture) | release-gating | **Passed** 2026-07-30 — PR #10, run `30541110970` attempts 1–6. **`accepted_finding_count == raw_finding_count == 1` with `dropped 0` on a finding on a newly added file**, posted on `src/audit.py:6`; plus unchanged rerun, in-place body update, `wontfix` with persistence, and reopen with identity preserved. [record](record-github-current-image.md) |
-| GitLab lifecycle (Chain B, condensed) | release-gating | **Passed** 2026-07-30 — MR `!13`, children `2718537416` / `2718551082`. Inline create on `src/audit.py:6`, in-place body update (`issue_id` held, `body_hash` changed), gate `failed_blocking_findings` agreeing with consensus and post, `detailed_merge_status: ci_must_pass` withholding the merge, and `render-body.v3` on the second render surface. [record](record-gitlab-current-image.md) |
-| `render-body.v3` refresh of a pre-v3 thread | release-gating | **Passed** 2026-07-30 — run `30543152373` converted comment `3650942127` (authored 2026-07-25 by the 1.0.0 pair) to v3 in place: one update, `issue_id` and marker grammar preserved, no duplicate. [record](record-render-body-v3-refresh.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | **Waived** — impact set carries no diff since `v1.0.0`; regression-covered by `test_verify_pipeline_trust.py` and the fork-secret withholding cases in `test_input_bundle.py`; passed live at 1.0.0 against the prior pair. [record](record-gitlab-hostile-mr.md) |
-| Codex `max` / OpenCode `xhigh` effort routes | release-gating | **Waived** — unvalidated at the real providers. A malformed model or effort value fails closed with `model_error` before the CLI is invoked, so provider rejection surfaces as an adapter failure rather than silent degradation. [record](record-model-effort-routes.md) |
-| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — 1.0.0 waiver carried forward; `github_platform.py` and `input_bundle.py` untouched. [record](record-github-revision-failures.md) |
-| Real 3-model panel on GitLab | — | **Not run.** The adapter path is platform-independent; the single GitHub panel proves the changed defaults resolve. |
-| Snapshot symlink containment (SPEC-31), gate/config artifact integrity (SPEC-33) | regression-covered | Not release-gating; `test_input_bundle.py`, `test_consensus_integrity.py`, `test_gate.py` are authoritative. |
+| Image publication verification | release-gating | **Passed** 2026-08-10 — public anonymous pulls resolved both tags to the recorded digests, both OCI revision labels equal `R`, and both provenance attestations verified against `refs/heads/main`, source digest `R`, and the publish workflow. Run `31369496025`; quality run `31369496045`. [record](record-image-publication-verification.md) |
+| GitHub default-model panel | release-gating | **Passed** 2026-08-10 — demo PR #14, run `31370873644`. Claude, Codex, and OpenCode resolved at the real provider; all three were resolution-eligible; `panel_status: full`; three findings posted; the required gate exited 7 on a genuine blocker. [record](record-github-default-model-smoke.md) |
+| OpenCode `max` effort | release-gating | **Waived** — the operator reports prior acceptance in real runs on a real project, but those runs are not a public exact-image binding. The final runtime delta is post-provider structured-item normalization, so a duplicate rerun was skipped under an explicit residual-risk waiver. [record](record-model-effort-routes.md) |
+| GitLab hostile-MR credential/enforcement boundary | release-gating | **Waived** — trust-boundary code is unchanged and remains covered by `test_verify_pipeline_trust.py` plus fork-secret withholding cases in `test_input_bundle.py`; the historical live pass stays supporting evidence only. [record](record-gitlab-hostile-mr.md) |
+| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — revision-race behavior is unchanged and the three boundaries plus oversized-diff 406 path remain covered by `test_input_bundle.py` and `test_github_platform.py`. [record](record-github-revision-failures.md) |
+| Cursor reviewer | enablement-gating, not release-gating | **Not enabled.** The publication job retained the `auto`-model skip annotation; Cursor stays disabled pending the SPEC-21 closure checklist. |
 
-Two findings recorded as confirmations of known behavior rather than defects: a human
-`/ai-review wontfix` does not clear the merge gate
-([SPEC-42](../improvement-specs/spec-42-wontfix-gate-semantics.md), still proposed),
-and a reused evidence branch carries its own workflow copy, so repinning a consumer's
-default branch does not repin its existing branches.
+The first candidate campaign (`f21418f…`, demo PR #12, run `31367545101`,
+attempts 1 and 2) is retained as a superseded failed validation. It exposed a
+repeatable string item inside OpenCode's schema-backed findings array. PR #116
+closed that gap, the runtime and images were refrozen, and only the final pair above
+was used for release evidence.
 
-## Operator checklist (1.0.1 final image pair)
+## Operator checklist (1.0.2 final image pair)
 
-1. Freeze runtime commit `R` that includes the intended mock/gate code.
-2. Publish attested base+reviewer images from exactly `R`; record anonymous
-   pull, OCI revision label, and provenance in
-   [`record-image-publication-verification.md`](record-image-publication-verification.md).
-   Remember `ai-review/src` ships in the **base** image — rebuild the base from `R`
-   first, then the reviewer `FROM` that base.
-3. Repin both GitHub workflow copies and the three GitLab pin variables together;
-   refresh `release/release-inputs.json` hashes.
-4. Run the scoped campaign above per [`RUNBOOK.md`](RUNBOOK.md): the one real
-   default-model panel (Chain A) **first**, before any mock variable exists, then
-   Chain B on each platform. Chain B requires `AI_REVIEW_LOCAL_MOCK=1` **and**
-   `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, with every `AI_REVIEW_REQUIRE_REAL_*=0`.
-   The GitHub Chain B fixture must **add** a file.
-5. Stamp each waived row with a `Release-evidence-waived: <reason>` line and
-   register the identical reason under `verification.evidence_waivers` in
-   `release/release-inputs.json`. A waiver missing either half is rejected.
-6. Audit every retained artifact and trace with
-   `python scripts/scan_evidence_leaks.py <dirs…>`, including the operator-only
-   `--exact-value-file` pass that 1.0.0 left as an unmet sign-off item.
-7. Set each non-waived release-gating record to `Status: passed` with matching
-   `Release-runtime-source` / `Release-base-digest` / `Release-reviewer-digest`
-   fields (see [`record-template.md`](record-template.md)).
-   Historical Identity-section source/image prose is not parsed as a release
-   binding; re-stamp older records with these explicit fields.
-8. Only then set the 1.0.1 `release-inputs.status` to `active`, cut release
-   commit `P`, build the external manifest, and create the `v1.0.1` tag.
+1. Runtime source, publication, public resolution, revision labels, and
+   attestations: complete.
+2. Canonical GitHub and GitLab consumers repinned together; release hashes
+   refreshed: complete.
+3. Real default-model panel with fail-closed required gate: complete.
+4. Waived rows stamped and registered with identical reasons: complete.
+5. Downloaded live artifacts scanned with pattern/entropy detectors: complete;
+   exact-value audit not performed and not claimed.
+6. Release inputs, changelog, historical snapshot, manifest, signed tag, and
+   published release: completed by the final release sequence.
 
 ## 1.0 historical evidence matrix
 
