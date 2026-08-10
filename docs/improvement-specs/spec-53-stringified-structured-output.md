@@ -1,4 +1,4 @@
-# SPEC-52 — Normalize stringified structured reviewer output at the shared boundary
+# SPEC-53 — Normalize stringified structured reviewer output at the shared boundary
 
 - **Status:** Proposed (post-1.0). A first, narrower fix for one shape of this quirk
   landed in [PR #116](https://github.com/seanleecoder/code-tribunal/pull/116) and shipped
@@ -6,8 +6,8 @@
   seat shares.
 - **Classification:** S / reviewer-transport correctness.
 - **Severity:** Medium. Every gap below fails closed — the effect is reduced review
-  coverage (a dropped finding, or a critic seat recorded as `schema_error`), never
-  malformed output accepted into the panel.
+  coverage (a dropped finding, or a whole reviewer or critic seat recorded as
+  `schema_error`), never malformed output accepted into the panel.
 - **Effort:** S.
 - **Depends on:** [SPEC-50](spec-50-opencode-structured-reviewer-output.md), which
   established the OpenCode structured-output transport, the rule that the client is the
@@ -50,18 +50,25 @@ quirk can take. Four gaps remain, each reproducible from the code as it stands o
    boundary — passes through untouched and fails as
    `adapter output findings must be an array`, taking the entire reviewer seat to
    `schema_error` rather than dropping one item.
-4. **The fix lives at one adapter's boundary.** The root cause is provider and
-   schema-transport behavior, not adapter behavior. The same model can be configured for
-   the codex, gemini, claude, and cursor CLI seats, whose `structured_output` flows
-   through `_coerce_adapter_root` with no decoding at all.
+4. **The fix lives at one adapter's boundary.** The root cause is a schema-transport
+   artifact — a payload that satisfies the transport while carrying a reviewer object in
+   the wrong Python type — and the shared parser handles it for no seat at all. The four
+   seats are claude, codex, opencode, and cursor (`ai-review/config/review.yaml:19`);
+   `google/gemini-3.5-flash-lite` is the *model* currently configured on the opencode
+   seat, not a seat of its own. Every seat's `structured_output` reaches
+   `_coerce_adapter_root`, and none of them is decoded.
 
-On the fourth point, be precise about the evidence: the shared runner **demonstrably**
-has the same blind spot for every seat, but no transport other than OpenCode over
-OpenRouter has been **observed** emitting this quirk. The shared placement is a
-blind-spot argument, not a reproduced second failure. It is adopted because a
-transport-layer artifact belongs at the transport-layer boundary and because the
-consolidation removes an adapter-specific branch — which is SPEC-50's stated doctrine —
-not because a second seat has failed.
+On the fourth point, be precise about both the claim and the evidence. The claim is a
+**shared-parser blind spot independent of model identity**: whichever provider, route, or
+model produces this shape, the runner does not handle it, and only the OpenCode client
+does. The claim deliberately does not rest on another seat being able to run the same
+route — it cannot, in the Cursor case, which has no OpenRouter path at all
+(`review.yaml:56`). The evidence is correspondingly narrow: no transport other than
+OpenCode over OpenRouter has been **observed** emitting this quirk. The shared placement
+is therefore a blind-spot argument, not a reproduced second failure. It is adopted
+because a transport-layer artifact belongs at the transport-layer boundary and because
+the consolidation removes an adapter-specific branch — which is SPEC-50's stated doctrine
+— not because a second seat has failed.
 
 ## Non-negotiable decision
 
@@ -78,19 +85,26 @@ alike. The adapter-specific decoder is removed in the same change.
   then decode the resulting object. That ordering is what closes gaps 1 and 2 together
   rather than one at a time.
 - **Stage-aware only.** `review` normalizes `findings`; `critique` normalizes
-  `critiques`. A `None` stage is a passthrough. Every runtime call site passes an
-  explicit stage, so inferring the key from the payload would grant the step reach the
-  pipeline never needs.
+  `critiques`. With no stage, the step **performs no string decoding**; it does not
+  otherwise alter behavior, so existing root coercion — including the `stage is None`
+  branch that wraps a recognizable critique-list root at `adapter_runner.py:274-282` —
+  is preserved exactly. Every runtime call site passes an explicit stage, so inferring
+  the key from the payload would grant the step reach the pipeline never needs.
 - **Per-item rule.** A `str` item that loads, via `json_loads_no_duplicates` with its
   duplicate-key rejection preserved, to a **dict** is replaced by that dict. Everything
   else — prose, scalars, nested arrays, malformed JSON, and a string that decodes to
   another string — is left exactly as it arrived and fails closed downstream.
 - **Whole-array rule.** A `str` **value** for `findings`/`critiques` that loads to a
   **list** is replaced by that list, after which the per-item rule runs over its
-  contents. This closes gap 3.
-- **One pass, no recursion.** A double-encoded item decodes to a `str` and is left alone.
-  This is deliberate and must be stated in the implementation's docstring; PR #116's
-  wording only implied it.
+  contents. This closes gap 3. The rule applies to the array **value** only: an *item*
+  that decodes to a list is not a batch and stays a string, which is the boundary PR
+  #116's `test_structured_output_decodes_exact_json_object_items` already pins.
+- **One pass, no recursion.** Each string is examined once. Elements newly exposed by the
+  whole-array decode are each examined once by the per-item rule — that is the same
+  single pass reaching them, not a second one — and a string that decodes to a scalar or
+  to another string is never re-decoded. So a double-encoded item decodes to a `str` and
+  is left alone. This is deliberate and must be stated in the implementation's docstring;
+  PR #116's wording only implied it.
 - **Copy-on-write.** The step returns the original object unchanged unless something
   actually decoded. PR #116's `changed` short-circuit is preserved.
 - **Fail-closed is unchanged.** Decoding is a transport concern and never grants
@@ -113,6 +127,18 @@ alike. The adapter-specific decoder is removed in the same change.
   ~~~text
   ai-review: <stage> decoded N stringified structured item(s)
   ~~~
+
+  `N` is **the number of strings this step replaced**: the whole-array string, if it
+  decoded, plus each item string that decoded. It is not the number of recovered reviewer
+  objects, which would report `0` for a payload that plainly did decode:
+
+  | Payload | `N` | Result |
+  |---|---|---|
+  | `{"findings": ["{…}"]}` | 1 | one object recovered from an item string |
+  | `{"findings": "[{…}]"}` | 1 | array recovered; its items were already objects |
+  | `{"findings": "[\"{…}\"]"}` | 2 | the array string, then the item string inside it |
+  | `{"findings": "[]"}` | 1 | empty array recovered; the line is still written |
+  | nothing decodes | — | no line written |
 
   Every other step in this pipeline that reshapes adapter output reports that it did.
   A silent workaround becomes invisible load-bearing code: nothing would show how often
@@ -179,14 +205,31 @@ alike. The adapter-specific decoder is removed in the same change.
   one-pass rule.
 - A non-OpenCode seat's `structured_output` receives the same decoding, pinning the
   shared placement.
-- A `None` stage passes through unmodified.
-- The two tests added by PR #116 —
-  `ai-review/tests/unit/test_opencode_client.py:36` and `:93` — stay green, now
-  exercising the shared path rather than the deleted adapter-specific decoder.
-- A run in which nothing decodes writes no decode line; a run in which items decode
-  writes exactly one line naming the stage and the count.
+- With no stage, the step performs no string decoding and existing root coercion is
+  unchanged. Both cases are covered: a dict payload carrying a stringified item, and the
+  legacy list-root case that `stage is None` still wraps.
+- Duplicate keys are rejected at **both** decode boundaries — inside an item string and
+  inside a whole-array string — so neither boundary becomes a way to smuggle past
+  `json_loads_no_duplicates`.
+- When nothing decodes, the original object is returned unchanged; assert identity, not
+  just equality, so a silent rebuild cannot pass.
+- When something does decode, the input object and its nested containers are not mutated.
+  The caller's payload must be as it was.
+- A double-encoded item remains a string and is dropped by the finalizer, pinning the
+  one-pass rule.
+- The decode line matches the `N` table above, including the `"[]"` case; a run in which
+  nothing decodes writes no line, and a run that decodes writes exactly one line naming
+  the stage and the count.
+- **The two tests added by PR #116 cannot survive unchanged.**
+  `ai-review/tests/unit/test_opencode_client.py:36` and `:93` call
+  `opencode_client._normalize_message` directly and assert that the client decodes; once
+  the client decoder is deleted, they fail. They are rewritten against the shared step —
+  moved to the runner's tests where they assert decoding, keeping whatever they assert
+  about `_normalize_message`'s own contract in place — with their coverage preserved,
+  including the item-decodes-to-a-list boundary at `:36`.
 - Targeted adapter tests, documentation checks, and full `make quality` pass without
-  credentials and without any real provider request.
+  credentials and without any real provider request. Acceptance is provider-free in full:
+  no criterion here depends on a live run.
 
 Files an implementer is expected to touch:
 
@@ -196,3 +239,10 @@ Files an implementer is expected to touch:
 - `ai-review/tests/unit/test_opencode_client.py`
 
 No schema, image, pin, or release-input change is required or permitted for this purpose.
+This is a source-only change, and the consequence must be stated rather than left
+implicit: the published `1.0-e2464a9` images do not contain the shared step and cannot
+emit its decode line, so **no acceptance criterion above may depend on a live provider
+run**, and none does. Observing the decode line against a real provider requires a
+separately authorized build, publish, repin, and canary — a rollout decision outside this
+specification. In particular, this specification neither blocks nor is blocked by the
+outstanding SPEC-50 canary, which runs the already-published images.
