@@ -31,6 +31,7 @@ wins.
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 (title decision still in force) | Give every OpenCode review/critique session a deterministic data-free title, preventing automatic title inference from making a second model request. |
 | [SPEC-50](spec-50-opencode-structured-reviewer-output.md) | Implemented (post-1.0; in the published `1.0-e2464a9` images); live canary outstanding | Obtain OpenCode reviewer output through the structured-output transport instead of parsing model prose, and stop treating reasoning parts as answer text in any adapter. Image publication is done and the provider-free stub preflight gates merge; the real-OpenRouter canary run (`used structured_output`, `raw_finding_count > 0`) is not recorded yet. |
 | [SPEC-51](../history/specs/spec-51-opencode-search-tool-reach.md) | Complete on `main` — archived to [history](../history/specs/spec-51-opencode-search-tool-reach.md) | In the published `1.0-e2464a9` images; its deferred live canary was closed provider-free by `scripts/smoke_opencode_structured_output.py`, which forces a real `grep` with a non-empty result inside the sanitized root. |
+| [SPEC-52](spec-52-stringified-structured-output.md) | Proposed (post-1.0) | Normalize provider-stringified structured reviewer output once at the shared runner boundary instead of at the OpenCode client, covering list roots, the text fallback, whole stringified arrays, and every non-OpenCode seat. PR #116 shipped the narrow per-item case in 1.0.2; the remaining shapes still cost a finding or a whole critic seat, always failing closed. Deliberately does not loosen `finalize_critique_batch`. |
 
 ## Active dependency order
 
@@ -50,10 +51,16 @@ completed for `v1.0.0`. Remaining order:
    published; this is the only acceptance item the specification still owes, and it is
    also the cheapest confirmation that the images now in the templates review
    correctly.
-4. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
+4. Land [SPEC-52](spec-52-stringified-structured-output.md) alongside that canary. It is
+   small, independent of the SPEC-44/45/46 review-output sequence, and touches the same
+   transport: it moves the PR #116 stringified-item workaround from the OpenCode client
+   to the shared runner boundary and covers the shapes #116 left open. Sequencing it here
+   means the canary and this fix exercise the same path, and the decode log line it adds
+   is what makes the quirk measurable in that run.
+5. Decide SPEC-41–43 (reviewer `confidence` handling, `wontfix` gate semantics,
    in-pipeline trusted-image enforcement). None is implemented; SPEC-43's hostile-MR
    finding still stands — nothing in-pipeline verifies the running image.
-5. Continue the post-1.0 review-output sequence in order: SPEC-44 literal-safe
+6. Continue the post-1.0 review-output sequence in order: SPEC-44 literal-safe
    rendering is implemented as `render-body.v3` and
    [archived to history](../history/specs/spec-44-literal-model-output.md); next is
    SPEC-45 critique provenance/suppression audit, then SPEC-46
@@ -73,13 +80,13 @@ completed for `v1.0.0`. Remaining order:
    [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md). All three specifications
    cite it from their "Deviations from the original draft" sections, which also record the
    SPEC-44 and SPEC-46 effort re-estimates from M to L.
-6. Establish trusted project-policy delivery with
+7. Establish trusted project-policy delivery with
    [SPEC-47](spec-47-trusted-project-review-config.md) before any consumer can
    narrow review scope. Then, and only then, deliver
    [SPEC-48](spec-48-auditable-review-scope-exclusions.md): it depends on
    SPEC-47's target-revision source selection, sealed runtime ownership, and
    effective-config binding. Neither specification is currently implemented.
-7. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
+8. Complete the required [SPEC-21](spec-21-cursor-cli-reviewer.md) gate before
    enabling or advertising the Cursor reviewer. It does not block a release while
    Cursor stays off the default roster. Roster selection changed *how* Cursor is
    enabled, not the evidence it owes. Its acceptance checklist is canonical;
