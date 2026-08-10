@@ -11,7 +11,7 @@ from unittest import mock
 
 from ai_review import opencode_client
 from ai_review.adapter_runner import _load_adapter_json
-from ai_review.schema import load_json_file
+from ai_review.schema import load_json_file, validate_instance
 
 
 class OpenCodeClientTests(unittest.TestCase):
@@ -31,6 +31,79 @@ class OpenCodeClientTests(unittest.TestCase):
         )
 
         self.assertEqual(batch, {"findings": []})
+        self.assertTrue(used_structured)
+
+    def test_structured_output_decodes_exact_json_object_items(self) -> None:
+        finding = {
+            "anchor": {
+                "new_path": "src/session.py",
+                "old_path": "src/session.py",
+                "side": "new",
+                "start": {"old_line": None, "new_line": 13, "line_code": None},
+                "end": {"old_line": None, "new_line": 13, "line_code": None},
+                "hunk_header": "@@ -0,0 +1,13 @@",
+                "context_hash": "0" * 64,
+                "symbol": "check_token",
+            },
+            "severity": "major",
+            "category": "security",
+            "title": "Timing-safe comparison",
+            "body": "A direct equality check leaks timing information.",
+            "evidence": ["token == expected"],
+            "suggestion": "Use hmac.compare_digest(token, expected).",
+            "confidence": 0.95,
+        }
+        batch, used_structured = opencode_client._normalize_message(
+            {
+                "info": {
+                    "role": "assistant",
+                    "structured": {
+                        "findings": [
+                            json.dumps(finding),
+                            "not reviewer JSON",
+                            json.dumps([finding]),
+                        ]
+                    },
+                },
+                "parts": [],
+            },
+            stage="review",
+        )
+
+        self.assertIsInstance(batch, dict)
+        assert isinstance(batch, dict)
+        self.assertEqual(
+            batch["findings"],
+            [finding, "not reviewer JSON", json.dumps([finding])],
+        )
+        self.assertTrue(used_structured)
+
+        clean_batch, _ = opencode_client._normalize_message(
+            {
+                "info": {
+                    "role": "assistant",
+                    "structured": {"findings": [json.dumps(finding)]},
+                },
+                "parts": [],
+            },
+            stage="review",
+        )
+        validate_instance(clean_batch, "raw_finding_batch.schema.json")
+
+    def test_structured_output_decodes_stringified_critiques(self) -> None:
+        critique = {"verdict": "agree", "rationale": "The finding is valid."}
+        batch, used_structured = opencode_client._normalize_message(
+            {
+                "info": {
+                    "role": "assistant",
+                    "structured": {"critiques": [json.dumps(critique)]},
+                },
+                "parts": [],
+            },
+            stage="critique",
+        )
+
+        self.assertEqual(batch, {"critiques": [critique]})
         self.assertTrue(used_structured)
 
     def test_provider_error_is_a_client_error(self) -> None:
