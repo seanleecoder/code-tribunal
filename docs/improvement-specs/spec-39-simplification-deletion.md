@@ -106,7 +106,7 @@ These break silently if missed. Each has a required mitigation.
 | `ruff` selects `F` | `pyproject.toml` | Any re-export needs the `from .x import y as y` form or an `__all__`, else `F401` |
 | `_process_state_for_persistence` has two callers (`plan_state` and `finalize_state`) | `ai-review/src/ai_review/post.py` | It lives in `state_plan.py` and `posting.py` imports it. Must not be duplicated |
 | `post_inline` and `finalize_state` mutate the shared `PostResult` dict and `StatePlan.planned_records` **in place** | `ai-review/src/ai_review/post.py` | Preserve the mutation contract exactly. Converting to returned deltas is a redesign and is out of scope |
-| `scripts/check_supply_chain_pins.py` runs **inside the base image** from `/opt/scripts` and must import only the standard library | `ai-review/images/base.Dockerfile` ships it; `.github/workflows/publish-ai-review-images.yml` mounts the repository tests read-only at `/opt/ai-review/tests` and runs `unittest discover`; `tests/unit/test_check_supply_chain_pins.py` resolves `parents[3]/"scripts"` → `/opt/scripts` and `exec_module`s it at **module level** | Never give this script a repository-only import. A missing module fails at *collection* inside the image, so no `skipUnless` can rescue it. `scripts/release_common.py` is not shipped, and must not be: it resolves `ROOT` from its own path, reads `release/release-inputs.json`, and shells out to `git` for index entries — none of `release/`, `.git`, or a `git` binary exists in the read-only runtime image |
+| `scripts/check_supply_chain_pins.py` runs **inside the base image** from `/opt/scripts` and must import only the standard library | `ai-review/images/base.Dockerfile` ships it; `.github/workflows/publish-ai-review-images.yml` mounts the repository tests read-only at `/opt/ai-review/tests` and runs `unittest discover`; `tests/unit/test_check_supply_chain_pins.py` resolves `parents[3]/"scripts"` → `/opt/scripts` and `exec_module`s it at **module level** | Never give this script a repository-only import. A missing module fails at *collection* inside the image, so no `skipUnless` can rescue it. `scripts/release_common.py` is not shipped, and must not be: it resolves `ROOT` from its own path, reads `release/release-inputs.json`, and shells out to `git` for index entries, but the image contains neither `release/` nor `.git` for those to operate on. Shipping release tooling into a published runtime image would also enlarge its attested surface for no runtime purpose. Note that `git` itself **is** installed in the base image, so absence of the binary is not the reason |
 | `ConsensusIntegrityError` is raised from **both** the retained core and the extracted critique code | `ai-review/src/ai_review/consensus.py` | Extract it to `consensus_errors.py` **before** splitting `critique.py`, or the two modules form an import cycle that fails at import time. See Part 3 step 0 |
 
 ### Part 1 — `post.py`, 2,075 lines to roughly 120
@@ -217,6 +217,17 @@ references **none**. The `critique` → `grouping` edge is likewise a single sym
 awk 'NR>=324 && NR<=574 && /ConsensusIntegrityError/' ai-review/src/ai_review/consensus.py
 ```
 
+Both inventories below were verified by enumerating every module-level name in the
+stated line ranges, not transcribed function by function — the grouping range holds
+18 names and the critique range 9. Re-enumerate against `main` before trusting them,
+because a hand reading silently drops type aliases and module constants:
+
+```sh
+python3 -c "import ast; t = ast.parse(open('ai-review/src/ai_review/consensus.py').read()); \
+print([(n.lineno, getattr(n, 'name', None) or n.targets[0].id) for n in t.body \
+if 45 <= n.lineno <= 262])"
+```
+
 Because that one back-reference would otherwise be a hard import cycle — the class
 is defined partway down `consensus.py`, so a `critique` module importing it from
 `consensus` fails on a partially-initialized module rather than merely lints badly —
@@ -242,19 +253,27 @@ the exception moves first:
 
 1. **`grouping.py`** (~215 lines) — `_changed_start_line`, `_ranges_overlap`,
    `_WORD_RE`, `_normalized_issue_tokens`, `_issue_text_similarity`,
-   `_semantic_grouping_enabled`, `_semantic_threshold`, `_duplicate_link_key`,
-   `same_issue`, `UnionFind`, `choose_primary_signature_finding`,
-   `issue_id_for_group`, `_group_anchor_path`, `_group_source_hash`,
-   `_group_sort_key`, `_split_transitive_component`, `group_findings`. This group
-   needs neither `render` nor `memory`, so the extraction is a real coupling
-   reduction. `tests/unit/test_grouping.py` already mirrors it.
+   `_semantic_grouping_enabled`, `_semantic_threshold`, **`DuplicateLink`**,
+   `_duplicate_link_key`, `same_issue`, `UnionFind`,
+   `choose_primary_signature_finding`, `issue_id_for_group`, `_group_anchor_path`,
+   `_group_source_hash`, `_group_sort_key`, `_split_transitive_component`,
+   `group_findings`. This group needs neither `render` nor `memory`, so the
+   extraction is a real coupling reduction. `tests/unit/test_grouping.py` already
+   mirrors it.
+
+   `DuplicateLink` is the `tuple[str, str]` alias, and it is easy to miss because a
+   function-by-function reading skips type aliases. `critique.py` annotates
+   `set[DuplicateLink]` in both `_valid_duplicate_links` and `_apply_critiques`, and
+   `critique.py` enters the mypy strict allowlist, so leaving the alias behind is a
+   build failure rather than a warning — and importing it from `consensus` would
+   recreate the very cycle step 0 exists to break.
 2. **`critique.py`** (~250 lines) — `_critique_enabled`, `_critique_sort_key`,
    `_severity_after_group_downgrade`, `_same_path_and_category`,
    `_source_finding_index`, `_valid_duplicate_links`, `_recompute_group_decision`,
    `_successful_critique_batches`, `_apply_critiques`. `_valid_duplicate_links` sits
-   at the grouping/critique intersection; it belongs here and imports
-   `_duplicate_link_key` from `grouping`, keeping the dependency one-directional
-   (`critique` → `grouping`).
+   at the grouping/critique intersection; it belongs here and imports **both
+   `DuplicateLink` and `_duplicate_link_key`** from `grouping`, keeping the
+   dependency one-directional (`critique` → `grouping`).
 
 `consensus.py` retains the re-exported `ConsensusIntegrityError`, `panel_status`,
 `_representative`, `_evidence_by_reviewer`, `decision_for_group`,
@@ -293,13 +312,30 @@ Then add `scripts/sync_workflows.py` (`--check` to verify, default to write) and
 `tests/unit/test_release_tools.py`, which already covers `release_common`, with cases
 for the helper including a deliberately desynced pair.
 
-Consolidation goes from three implementations to **two, not one**:
+Consolidation goes from three implementations of the comparison to **two, not one** —
+the shared helper in `release_common.py`, and the standalone in-image
+`check_supply_chain_pins.py`:
 
 - `scripts/check_release_inputs.py` delegates to the helper. It already imports
   `release_common`, so this adds no dependency.
 - `scripts/sync_workflows.py` uses the helper.
-- `ai-review/tests/unit/test_ci_template.py` may delegate to it. That file is
-  repository-only and already skips when the installed workflow is absent.
+- `ai-review/tests/unit/test_ci_template.py` delegates to it, but **only through a
+  function-local load placed after the existing `installed.exists()` skip**. This
+  file is mounted and discovered inside the base image like every other test, so a
+  module-level `release_common` import would fail at *collection* there — the same
+  trap as the frozen contract below, one file over. The skip is guaranteed to fire in
+  the image: `_REPO_ROOT` resolves to `/opt`, and `/opt/.github/workflows/ai-review.yml`
+  does not exist.
+
+  A plain `import release_common` will not work even in the repository: `scripts/` is
+  not an importable package and `pyproject.toml` puts only `ai-review/src` on
+  `pythonpath`. Follow `tests/unit/test_docs_contract.py`, which loads a
+  repository-only script with `importlib.util.spec_from_file_location` inside the
+  test body behind an existence guard. Do **not** copy
+  `tests/unit/test_release_tools.py`'s `sys.path` insertion: it is safe there only
+  because that module raises `unittest.SkipTest` at module level, which is not an
+  option here — it would skip this file's roughly forty other cases in the image and
+  lose real coverage.
 - **`scripts/check_supply_chain_pins.py` keeps its own byte comparison and must stay
   standard-library only.** See the frozen contract below. Add a comment in the script
   saying so and naming the shared helper as the canonical implementation for
@@ -324,13 +360,22 @@ importing, and the AST scan used by
 
 1. `notes`, `state_plan`, `summary_render`, `grouping`, `critique`, and
    `consensus_errors` each import cleanly with `requests` blocked.
-   `consensus_errors` is dependency-free by construction, so this also pins the
-   property that keeps Part 3's cycle closed.
 2. An AST check that none of those modules imports `ai_review.platform`,
    `platform.factory`, `gitlab_client`, `opencode_client`, or `requests`. This turns
    "posting state transitions can be tested without a platform client" into a
    standing guarantee rather than a one-time property.
-3. A `state_plan` unit test that drives `plan_state` with **no client constructed at
+3. A **module-specific** AST assertion that `consensus_errors.py` contains no
+   intra-package import whatsoever — rejecting `from . import x`, `from .anything
+   import y`, and `import ai_review.anything` alike.
+
+   This has to be its own assertion, because items 1 and 2 do not imply it. Blocking
+   `requests` and banning a list of client modules establishes a *different* property:
+   that planning code cannot reach a platform client. Neither would reject
+   `from .grouping import ...` inside `consensus_errors`, which is precisely the edit
+   that would reopen the cycle step 0 exists to break. Total package independence is
+   the property being protected, so assert that property directly rather than a ban
+   list that happens to pass today.
+4. A `state_plan` unit test that drives `plan_state` with **no client constructed at
    all**, proving the acceptance criterion directly.
 
 Add a short module-ownership table to `docs/development/architecture.md` — guidance,
