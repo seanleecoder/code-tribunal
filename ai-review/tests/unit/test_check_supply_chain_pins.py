@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -601,6 +603,41 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ["line 2 contains a YAML key inside an inline comment"],
         )
 
+    def test_detects_line_ending_only_drift_in_the_installed_workflow(self) -> None:
+        """The installed/canonical parity check must be byte-exact.
+
+        GitHub executes .github/workflows/ai-review.yml verbatim, so a CRLF copy
+        of an LF template is real drift. Path.read_text() translates \\r\\n to
+        \\n, so a text comparison reports the two as identical and this check
+        would pass on a file that is not a byte duplicate.
+
+        Asserts on the specific message rather than only on main()'s exit code:
+        the container-shape scans still pass on this copy, because they consume
+        the newline-normalized text, so the parity check is the only thing that
+        should fail here. An exit-code-only assertion would not prove that.
+        """
+        expected = ".github/workflows/ai-review.yml must match the canonical GitHub template"
+        original = check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW
+        canonical_bytes = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "ai-review.yml"
+            mutated.write_bytes(canonical_bytes.replace(b"\n", b"\r\n"))
+            self.assertNotEqual(mutated.read_bytes(), canonical_bytes)
+            # The premise: a text comparison cannot tell these apart.
+            self.assertEqual(
+                mutated.read_text(encoding="utf-8"),
+                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8"),
+            )
+
+            check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = mutated
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = original
+            self.assertIn(expected, stderr.getvalue())
+
     def test_allows_repository_only_ci_workflow_to_be_absent_from_runtime_image(self) -> None:
         original = check_supply_chain_pins.CI_WORKFLOW
         with tempfile.TemporaryDirectory() as tmp:
@@ -609,6 +646,52 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 self.assertEqual(check_supply_chain_pins.main(), 0)
             finally:
                 check_supply_chain_pins.CI_WORKFLOW = original
+
+
+    def test_script_imports_only_the_standard_library(self) -> None:
+        """The script runs inside the base image and must stay stdlib-only.
+
+        ai-review/images/base.Dockerfile ships it to /opt/scripts, and
+        .github/workflows/publish-ai-review-images.yml mounts the repository
+        tests read-only and runs unittest discover there. This test file resolves
+        parents[3]/"scripts" -> /opt/scripts and exec_modules the script at
+        *module* level, so a repository-only import fails at collection inside
+        the image, where no skipUnless can rescue it.
+
+        scripts/release_common.py is the canonical implementation of the workflow
+        parity comparison for repository-only callers, but it is not shipped and
+        must not be: it resolves ROOT from its own path, reads
+        release/release-inputs.json, and shells out to git for index entries,
+        and the image contains neither release/ nor .git for those to operate on.
+        Shipping release tooling into a published runtime image would also
+        enlarge its attested surface for no runtime purpose. Note that git itself
+        IS installed in the base image, so a missing binary is not the reason.
+
+        Asserted as an AST scan rather than a name list so a future import is
+        caught by shape, and here rather than by inspection because nothing else
+        in the script reveals the constraint.
+        """
+
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    # A relative import cannot resolve: the script is executed as
+                    # a standalone file from /opt/scripts, not as a package.
+                    roots.add(f".{node.module or ''}")
+                elif node.module:
+                    roots.add(node.module.split(".")[0])
+
+        non_stdlib = sorted(root for root in roots if root not in sys.stdlib_module_names)
+        self.assertEqual(
+            non_stdlib,
+            [],
+            "check_supply_chain_pins.py must import only the standard library; "
+            "it runs inside the base image, where these modules do not exist",
+        )
 
 
 if __name__ == "__main__":

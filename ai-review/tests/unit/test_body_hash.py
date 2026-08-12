@@ -4,7 +4,7 @@ import random
 import unittest
 from unittest.mock import patch
 
-from ai_review.post import _unwrap_span, parse_marker, parse_review_note, render_body
+from ai_review.notes import _unwrap_span, parse_marker, parse_review_note
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
     _encode_span,
@@ -12,6 +12,7 @@ from ai_review.render import (
     literal_span,
     platform_comment_limit,
     prose_block,
+    render_body,
 )
 
 

@@ -28,5 +28,13 @@ module = [
   "ai_review.gitlab_client",
   "ai_review.gate",
   "ai_review.post",
+  "ai_review.notes",
+  "ai_review.commands",
+  "ai_review.state_plan",
+  "ai_review.summary_render",
+  "ai_review.posting",
+  "ai_review.consensus_errors",
+  "ai_review.grouping",
+  "ai_review.critique",
 ]
 strict = true

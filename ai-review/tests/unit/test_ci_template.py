@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import posixpath
@@ -1116,6 +1117,31 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             installed.read_text(encoding="utf-8"),
             canonical.read_text(encoding="utf-8"),
         )
+
+        # Delegated to the shared helper, but only through a function-local load
+        # placed *after* the skip above. This file is mounted and discovered
+        # inside the base image like every other test, so a module-level
+        # release_common import would fail at collection there. The skip is
+        # guaranteed to fire in the image: _REPO_ROOT resolves to /opt, and
+        # /opt/.github/workflows/ai-review.yml does not exist.
+        #
+        # scripts/ is not an importable package and pyproject.toml puts only
+        # ai-review/src on pythonpath, so a plain `import release_common` fails
+        # even in the repository. This follows test_docs_contract.py's
+        # spec_from_file_location pattern. Deliberately NOT
+        # test_release_tools.py's sys.path insertion: that is safe only because
+        # the module raises SkipTest at module level, which here would skip this
+        # file's other ~40 cases in the image and lose real coverage.
+        release_common_path = root / "scripts" / "release_common.py"
+        if not release_common_path.is_file():
+            self.skipTest("repository-only release tooling is absent from the runtime image")
+        spec = importlib.util.spec_from_file_location("release_common", release_common_path)
+        if spec is None or spec.loader is None:
+            raise AssertionError(f"cannot load release helpers from {release_common_path}")
+        release_common = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release_common)
+
+        self.assertEqual(release_common.sync_workflows(check=True, root=root), ())
 
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

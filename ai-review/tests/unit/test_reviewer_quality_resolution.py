@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from ai_review.consensus import build_consensus
-from ai_review.post import _has_resolution_quorum
 from ai_review.schema import finalize_finding_batch, validate_instance
+from ai_review.state_plan import _has_resolution_quorum
 from ai_review.types import Consensus
 
 from .test_consensus_state_matching import _config, _manifest

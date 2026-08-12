@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_review import opencode_client
-from ai_review.adapter_runner import _load_adapter_json
+from ai_review.adapter_output import _load_adapter_json
 from ai_review.schema import load_json_file, validate_instance
 
 

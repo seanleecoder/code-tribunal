@@ -11,38 +11,44 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import ai_review.notes as notes_module
 import ai_review.post as post_module
+import ai_review.posting as posting_module
+import ai_review.state_plan as state_plan_module
+import ai_review.summary_render as summary_render_module
 from ai_review.anchors import context_hash_from_unified_diff
+from ai_review.commands import collect_human_commands
 from ai_review.gitlab_client import (
     MergeRequestVersion,
     build_position,
     root_note_id_from_discussion,
 )
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
-from ai_review.platform import ReviewPlatformError
-from ai_review.platform.github import GitHubReviewPlatform
-from ai_review.post import (
-    SummarySectionDescriptor,
-    _classify_post_groups,
-    _compose_summary_sections,
-    _desired_discussion_resolved,
-    _drop_lowest_priority_trailing_entry,
-    _initial_post_result,
-    collect_human_commands,
-    finalize_state,
+from ai_review.notes import (
     index_ai_review_discussions,
-    load_persisted_state,
     parse_marker,
     parse_review_note,
-    plan_state,
+)
+from ai_review.platform import ReviewPlatformError
+from ai_review.platform.github import GitHubReviewPlatform
+from ai_review.posting import (
+    _classify_post_groups,
+    _initial_post_result,
+    finalize_state,
+    load_persisted_state,
     post_consensus,
     post_inline,
     prepare_post_context,
     recover_state_from_discussions,
-    render_body,
-    source_hash,
 )
+from ai_review.render import render_body, source_hash
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.state_plan import _desired_discussion_resolved, plan_state
+from ai_review.summary_render import (
+    SummarySectionDescriptor,
+    _compose_summary_sections,
+    _drop_lowest_priority_trailing_entry,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient
@@ -1744,7 +1750,7 @@ class PostTests(unittest.TestCase):
         group["decision"] = "fyi"
         group["body"] = "First line\n \nSecond line"
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
 
@@ -1757,7 +1763,7 @@ class PostTests(unittest.TestCase):
         )
 
         group["body"] = "First line\n\nSecond line"
-        empty_body, _empty_body_hash = post_module.render_summary_body(
+        empty_body, _empty_body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
         empty_lines = empty_body.splitlines()
@@ -1776,7 +1782,7 @@ class PostTests(unittest.TestCase):
         group["title"] = "# title `with` math $x$"
         group["body"] = "- body\n> quote\n<!-- not a marker -->"
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
 
@@ -1936,15 +1942,15 @@ class PostTests(unittest.TestCase):
         # span wrapping the text between them. A title is a state-matching key
         # via title_fingerprint, so a mis-unwrap would route the group to a new
         # discussion instead of its existing one.
-        self.assertIsNone(post_module._unwrap_span("`foo` and `bar`"))
+        self.assertIsNone(notes_module._unwrap_span("`foo` and `bar`"))
         self.assertEqual(
-            post_module._parse_review_title("Title: `foo` and `bar`"),
+            notes_module._parse_review_title("Title: `foo` and `bar`"),
             ("`foo` and `bar`", True),
         )
         # Renderer output is unaffected: its delimiter is always longer than
         # any run inside the value.
-        self.assertEqual(post_module._unwrap_span("`` `x` ``"), "`x`")
-        self.assertEqual(post_module._unwrap_span("```` ```php ````"), "```php")
+        self.assertEqual(notes_module._unwrap_span("`` `x` ``"), "`x`")
+        self.assertEqual(notes_module._unwrap_span("```` ```php ````"), "```php")
 
     def test_span_parsing_is_linear_on_adversarial_backtick_runs(self) -> None:
         """Span recovery must not backtrack on attacker-controlled input.
@@ -1961,8 +1967,8 @@ class PostTests(unittest.TestCase):
         line = "`" * 200_000 + "x"
 
         started = time.perf_counter()
-        self.assertIsNone(post_module._unwrap_span(line))
-        self.assertIsNone(post_module._read_prose_review_body([line]))
+        self.assertIsNone(notes_module._unwrap_span(line))
+        self.assertIsNone(notes_module._read_prose_review_body([line]))
         elapsed = time.perf_counter() - started
 
         self.assertLess(elapsed, 2.0)
@@ -1990,7 +1996,7 @@ class PostTests(unittest.TestCase):
         )
 
         started = time.perf_counter()
-        self.assertIsNone(post_module._parse_review_header(line.strip()))
+        self.assertIsNone(notes_module._parse_review_header(line.strip()))
         self.assertIsNone(parse_review_note(line + "\n\n" + marker))
         elapsed = time.perf_counter() - started
 
@@ -2022,7 +2028,7 @@ class PostTests(unittest.TestCase):
             ("", None),
         ):
             with self.subTest(line=line):
-                self.assertEqual(post_module._parse_review_header(line), expected)
+                self.assertEqual(notes_module._parse_review_header(line), expected)
 
     def test_review_header_parsing_is_equivalent_to_the_replaced_pattern(self) -> None:
         """Differential check against the regex this parser replaced.
@@ -2066,7 +2072,7 @@ class PostTests(unittest.TestCase):
                 continue
             visited.add(line)
             expected = by_pattern(line)
-            parsed = post_module._parse_review_header(line)
+            parsed = notes_module._parse_review_header(line)
             if expected == "":
                 self.assertIsNone(parsed, f"expected refusal on {line!r}")
                 refused_empty += 1
@@ -2160,11 +2166,11 @@ class PostTests(unittest.TestCase):
             ("`foo\\`", "foo\\"),
         ):
             with self.subTest(rendered=rendered):
-                self.assertEqual(post_module._unwrap_span(rendered), expected)
+                self.assertEqual(notes_module._unwrap_span(rendered), expected)
 
         for rendered in ("`foo` and `bar`", "````", "``", "", "no span", "`unclosed"):
             with self.subTest(rendered=rendered):
-                self.assertIsNone(post_module._unwrap_span(rendered))
+                self.assertIsNone(notes_module._unwrap_span(rendered))
 
     def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
         for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
@@ -2282,21 +2288,21 @@ class PostTests(unittest.TestCase):
         second["issue_id"] = "c" * 64
         second["body"] = "B" * 40_000
 
-        github_body, github_hash = post_module.render_summary_body(
+        github_body, github_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
             50,
             posting_mode="github_reviews",
         )
-        github_repeat, github_repeat_hash = post_module.render_summary_body(
+        github_repeat, github_repeat_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
             50,
             posting_mode="github_reviews",
         )
-        gitlab_body, _gitlab_hash = post_module.render_summary_body(
+        gitlab_body, _gitlab_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
@@ -2308,7 +2314,7 @@ class PostTests(unittest.TestCase):
         self.assertIn("A" * 40_000, github_body)
         self.assertNotIn("B" * 40_000, github_body)
         self.assertIn("…and 1 more advisory findings (size limit)", github_body)
-        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(github_body))
+        self.assertIsNotNone(notes_module.SUMMARY_MARKER_RE.search(github_body))
         self.assertEqual(github_body, github_repeat)
         self.assertEqual(github_hash, github_repeat_hash)
         self.assertIn("A" * 40_000, gitlab_body)
@@ -2321,7 +2327,7 @@ class PostTests(unittest.TestCase):
         second["issue_id"] = "c" * 64
         second["body"] = "B" * 40_000
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [first, second],
             [],
@@ -2343,7 +2349,7 @@ class PostTests(unittest.TestCase):
             group["body"] = character * 40_000
             groups.append(group)
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [],
             groups,
@@ -2360,7 +2366,7 @@ class PostTests(unittest.TestCase):
         group["decision"] = "fyi"
         group["body"] = "A" * 70_000
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [group],
@@ -2383,7 +2389,7 @@ class PostTests(unittest.TestCase):
             group["body"] = character * 30_000
             fyi_groups.append(group)
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [fallback],
             fyi_groups,
@@ -2397,7 +2403,7 @@ class PostTests(unittest.TestCase):
         self.assertIn("Advisory (FYI) findings (showing 1 of 3):", body)
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertIn("…and 1 more advisory findings (configured count limit)", body)
-        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(body))
+        self.assertIsNotNone(notes_module.SUMMARY_MARKER_RE.search(body))
 
     def test_v3_title_recovery_is_lossy_for_newline_and_literal_backslash_n(self) -> None:
         encoded_newline = copy.deepcopy(self._consensus()["groups"][0])
@@ -2721,9 +2727,9 @@ class PostTests(unittest.TestCase):
         normalize_calls = 0
         compact_calls = 0
         overflow_calls = 0
-        real_normalize_state = post_module.normalize_state
-        real_compact_state = post_module.compact_state
-        real_state_overflow_reason = post_module.state_overflow_reason
+        real_normalize_state = posting_module.normalize_state
+        real_compact_state = state_plan_module.compact_state
+        real_state_overflow_reason = state_plan_module.state_overflow_reason
 
         def spy_normalize_state(*args: Any, **kwargs: Any) -> Any:
             nonlocal normalize_calls
@@ -2740,11 +2746,16 @@ class PostTests(unittest.TestCase):
             overflow_calls += 1
             return real_state_overflow_reason(*args, **kwargs)
 
+        # normalize_state is called from both modules: once by
+        # posting.load_persisted_state, and twice by
+        # state_plan._process_state_for_persistence. Both are patched so the
+        # counter still totals every call.
         with (
-            patch.object(post_module, "normalize_state", side_effect=spy_normalize_state),
-            patch.object(post_module, "compact_state", side_effect=spy_compact_state),
+            patch.object(posting_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(state_plan_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(state_plan_module, "compact_state", side_effect=spy_compact_state),
             patch.object(
-                post_module,
+                state_plan_module,
                 "state_overflow_reason",
                 side_effect=spy_state_overflow_reason,
             ),

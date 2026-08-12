@@ -12,7 +12,8 @@ import unittest
 from collections.abc import Callable
 from pathlib import Path
 
-from ai_review.adapter_runner import _EXIT_ERROR, _SHELL_MOCK_ALLOW_REFUSAL, run_adapter
+from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
+from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"

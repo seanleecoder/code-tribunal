@@ -9,7 +9,7 @@ RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 .PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain \
-	release-inputs docs-check \
+	release-inputs docs-check sync-workflows \
 	update-golden review-local consensus-local validate-local
 
 quality: docs-check lint test-strict typecheck supply-chain release-inputs compile
@@ -45,6 +45,11 @@ supply-chain:
 
 release-inputs:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_release_inputs.py
+
+# Generation counterpart to the parity checks in `supply-chain` and
+# `release-inputs`. Pass CHECK=1 to verify without writing.
+sync-workflows:
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/sync_workflows.py $(if $(CHECK),--check,)
 
 update-golden:
 	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests $(PYTHON) $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py

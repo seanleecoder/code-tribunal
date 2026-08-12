@@ -27,3 +27,42 @@ checksum detects corruption, not compromise of the bot credential or platform.
 Cross-stage run IDs and effective-config digests detect accidental or hostile
 artifact mixing within the trusted pipeline contract; they are not signatures
 against an artifact writer that already controls the trusted job.
+
+## Module ownership
+
+Guidance, not a checked contract — there are deliberately no line-count
+assertions. What *is* enforced lives in
+`ai-review/tests/unit/test_import_boundaries.py`: the pure modules cannot import
+a platform client or `requests`, and `consensus_errors` cannot import anything
+from the package at all.
+
+| Module | Owns | Platform access |
+|---|---|---|
+| `post.py` | `python -m ai_review.post` entry point only | via `posting` |
+| `posting.py` | Mutation orchestration: the one network layer for posting | yes |
+| `state_plan.py` | Pure state planning and record transitions | **never** |
+| `summary_render.py` | Summary-comment body composition and size fitting | **never** |
+| `notes.py` | Marker and review-note parsing | **never** |
+| `commands.py` | `/ai-review` command collection and author authorization | yes |
+| `consensus.py` | `python -m ai_review.consensus`; the deterministic reducer API | no |
+| `grouping.py` | Overlap, similarity, union-find grouping | **never** |
+| `critique.py` | Critique application and group re-decision | **never** |
+| `consensus_errors.py` | `ConsensusIntegrityError`, nothing else | **never** |
+| `adapter_runner.py` | `python -m ai_review.adapter_runner`; `run_adapter` | no |
+| `adapter_output.py` | Reviewer output parsing and root normalization | no |
+| `adapter_process.py` | Adapter subprocess lifecycle and environment | no |
+| `adapter_artifacts.py` | Status and debug artifact writing | no |
+
+Two rules are worth stating because breaking either is silent:
+
+- `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
+  point every reviewer seat funnels through. Do not add a second one.
+- `consensus_errors.py` exists solely to break an import cycle: `critique`
+  raises `ConsensusIntegrityError`, and the class is defined partway down
+  `consensus.py`, so importing it from there fails on a partially-initialized
+  module. `critique` must import it from `consensus_errors`, never from
+  `consensus`.
+
+`posting.post_inline` and `posting.finalize_state` mutate the shared
+`PostResult` dict and `StatePlan.planned_records` **in place**. That is the
+contract callers rely on; converting either to returned deltas is a redesign.

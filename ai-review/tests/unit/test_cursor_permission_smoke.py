@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.adapter_runner import _MODEL_ID_RE
+from ai_review.adapter_process import _MODEL_ID_RE
 
 _SMOKE = Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
 
