@@ -33,5 +33,6 @@ module = [
   "ai_review.state_plan",
   "ai_review.summary_render",
   "ai_review.posting",
+  "ai_review.consensus_errors",
 ]
 strict = true

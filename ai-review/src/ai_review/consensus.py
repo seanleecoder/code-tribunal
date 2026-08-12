@@ -15,6 +15,7 @@ from .config import (
     enabled_reviewers,
     load_config,
 )
+from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
 from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .memory import find_matching_record, state_from_aliases
 from .render import platform_comment_limit, render_body
@@ -26,10 +27,6 @@ from .schema import (
     write_canonical_json,
 )
 from .types import Consensus, FindingGroup, PanelStatus, State
-
-
-class ConsensusIntegrityError(ValueError):
-    """Fatal cross-stage artifact or effective-config integrity failure."""
 
 
 def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
