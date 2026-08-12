@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import ai_review.notes as notes_module
 import ai_review.post as post_module
+import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.commands import collect_human_commands
 from ai_review.gitlab_client import (
@@ -2725,8 +2726,8 @@ class PostTests(unittest.TestCase):
         compact_calls = 0
         overflow_calls = 0
         real_normalize_state = post_module.normalize_state
-        real_compact_state = post_module.compact_state
-        real_state_overflow_reason = post_module.state_overflow_reason
+        real_compact_state = state_plan_module.compact_state
+        real_state_overflow_reason = state_plan_module.state_overflow_reason
 
         def spy_normalize_state(*args: Any, **kwargs: Any) -> Any:
             nonlocal normalize_calls
@@ -2743,11 +2744,16 @@ class PostTests(unittest.TestCase):
             overflow_calls += 1
             return real_state_overflow_reason(*args, **kwargs)
 
+        # normalize_state is called from both modules after the state_plan
+        # extraction: once by post.load_persisted_state, and twice by
+        # state_plan._process_state_for_persistence. Both are patched so the
+        # counter still totals every call.
         with (
             patch.object(post_module, "normalize_state", side_effect=spy_normalize_state),
-            patch.object(post_module, "compact_state", side_effect=spy_compact_state),
+            patch.object(state_plan_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(state_plan_module, "compact_state", side_effect=spy_compact_state),
             patch.object(
-                post_module,
+                state_plan_module,
                 "state_overflow_reason",
                 side_effect=spy_state_overflow_reason,
             ),
