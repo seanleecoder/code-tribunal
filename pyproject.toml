@@ -31,5 +31,6 @@ module = [
   "ai_review.notes",
   "ai_review.commands",
   "ai_review.state_plan",
+  "ai_review.summary_render",
 ]
 strict = true

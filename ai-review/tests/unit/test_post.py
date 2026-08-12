@@ -14,6 +14,7 @@ from unittest.mock import patch
 import ai_review.notes as notes_module
 import ai_review.post as post_module
 import ai_review.state_plan as state_plan_module
+import ai_review.summary_render as summary_render_module
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.commands import collect_human_commands
 from ai_review.gitlab_client import (
@@ -30,11 +31,8 @@ from ai_review.notes import (
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.post import (
-    SummarySectionDescriptor,
     _classify_post_groups,
-    _compose_summary_sections,
     _desired_discussion_resolved,
-    _drop_lowest_priority_trailing_entry,
     _initial_post_result,
     finalize_state,
     load_persisted_state,
@@ -47,6 +45,11 @@ from ai_review.post import (
     source_hash,
 )
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.summary_render import (
+    SummarySectionDescriptor,
+    _compose_summary_sections,
+    _drop_lowest_priority_trailing_entry,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient
@@ -1748,7 +1751,7 @@ class PostTests(unittest.TestCase):
         group["decision"] = "fyi"
         group["body"] = "First line\n \nSecond line"
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
 
@@ -1761,7 +1764,7 @@ class PostTests(unittest.TestCase):
         )
 
         group["body"] = "First line\n\nSecond line"
-        empty_body, _empty_body_hash = post_module.render_summary_body(
+        empty_body, _empty_body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
         empty_lines = empty_body.splitlines()
@@ -1780,7 +1783,7 @@ class PostTests(unittest.TestCase):
         group["title"] = "# title `with` math $x$"
         group["body"] = "- body\n> quote\n<!-- not a marker -->"
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run", [], [group], 50, posting_mode="gitlab_discussions"
         )
 
@@ -2286,21 +2289,21 @@ class PostTests(unittest.TestCase):
         second["issue_id"] = "c" * 64
         second["body"] = "B" * 40_000
 
-        github_body, github_hash = post_module.render_summary_body(
+        github_body, github_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
             50,
             posting_mode="github_reviews",
         )
-        github_repeat, github_repeat_hash = post_module.render_summary_body(
+        github_repeat, github_repeat_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
             50,
             posting_mode="github_reviews",
         )
-        gitlab_body, _gitlab_hash = post_module.render_summary_body(
+        gitlab_body, _gitlab_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [first, second],
@@ -2325,7 +2328,7 @@ class PostTests(unittest.TestCase):
         second["issue_id"] = "c" * 64
         second["body"] = "B" * 40_000
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [first, second],
             [],
@@ -2347,7 +2350,7 @@ class PostTests(unittest.TestCase):
             group["body"] = character * 40_000
             groups.append(group)
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [],
             groups,
@@ -2364,7 +2367,7 @@ class PostTests(unittest.TestCase):
         group["decision"] = "fyi"
         group["body"] = "A" * 70_000
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [],
             [group],
@@ -2387,7 +2390,7 @@ class PostTests(unittest.TestCase):
             group["body"] = character * 30_000
             fyi_groups.append(group)
 
-        body, _body_hash = post_module.render_summary_body(
+        body, _body_hash = summary_render_module.render_summary_body(
             "run",
             [fallback],
             fyi_groups,
