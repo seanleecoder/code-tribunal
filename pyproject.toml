@@ -28,5 +28,6 @@ module = [
   "ai_review.gitlab_client",
   "ai_review.gate",
   "ai_review.post",
+  "ai_review.notes",
 ]
 strict = true

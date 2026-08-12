@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import ai_review.notes as notes_module
 import ai_review.post as post_module
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.gitlab_client import (
@@ -19,6 +20,11 @@ from ai_review.gitlab_client import (
     root_note_id_from_discussion,
 )
 from ai_review.memory import attach_state_hash, decode_state_note_body, encode_state_note
+from ai_review.notes import (
+    index_ai_review_discussions,
+    parse_marker,
+    parse_review_note,
+)
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.post import (
@@ -30,10 +36,7 @@ from ai_review.post import (
     _initial_post_result,
     collect_human_commands,
     finalize_state,
-    index_ai_review_discussions,
     load_persisted_state,
-    parse_marker,
-    parse_review_note,
     plan_state,
     post_consensus,
     post_inline,
@@ -1936,15 +1939,15 @@ class PostTests(unittest.TestCase):
         # span wrapping the text between them. A title is a state-matching key
         # via title_fingerprint, so a mis-unwrap would route the group to a new
         # discussion instead of its existing one.
-        self.assertIsNone(post_module._unwrap_span("`foo` and `bar`"))
+        self.assertIsNone(notes_module._unwrap_span("`foo` and `bar`"))
         self.assertEqual(
-            post_module._parse_review_title("Title: `foo` and `bar`"),
+            notes_module._parse_review_title("Title: `foo` and `bar`"),
             ("`foo` and `bar`", True),
         )
         # Renderer output is unaffected: its delimiter is always longer than
         # any run inside the value.
-        self.assertEqual(post_module._unwrap_span("`` `x` ``"), "`x`")
-        self.assertEqual(post_module._unwrap_span("```` ```php ````"), "```php")
+        self.assertEqual(notes_module._unwrap_span("`` `x` ``"), "`x`")
+        self.assertEqual(notes_module._unwrap_span("```` ```php ````"), "```php")
 
     def test_span_parsing_is_linear_on_adversarial_backtick_runs(self) -> None:
         """Span recovery must not backtrack on attacker-controlled input.
@@ -1961,8 +1964,8 @@ class PostTests(unittest.TestCase):
         line = "`" * 200_000 + "x"
 
         started = time.perf_counter()
-        self.assertIsNone(post_module._unwrap_span(line))
-        self.assertIsNone(post_module._read_prose_review_body([line]))
+        self.assertIsNone(notes_module._unwrap_span(line))
+        self.assertIsNone(notes_module._read_prose_review_body([line]))
         elapsed = time.perf_counter() - started
 
         self.assertLess(elapsed, 2.0)
@@ -1990,7 +1993,7 @@ class PostTests(unittest.TestCase):
         )
 
         started = time.perf_counter()
-        self.assertIsNone(post_module._parse_review_header(line.strip()))
+        self.assertIsNone(notes_module._parse_review_header(line.strip()))
         self.assertIsNone(parse_review_note(line + "\n\n" + marker))
         elapsed = time.perf_counter() - started
 
@@ -2022,7 +2025,7 @@ class PostTests(unittest.TestCase):
             ("", None),
         ):
             with self.subTest(line=line):
-                self.assertEqual(post_module._parse_review_header(line), expected)
+                self.assertEqual(notes_module._parse_review_header(line), expected)
 
     def test_review_header_parsing_is_equivalent_to_the_replaced_pattern(self) -> None:
         """Differential check against the regex this parser replaced.
@@ -2066,7 +2069,7 @@ class PostTests(unittest.TestCase):
                 continue
             visited.add(line)
             expected = by_pattern(line)
-            parsed = post_module._parse_review_header(line)
+            parsed = notes_module._parse_review_header(line)
             if expected == "":
                 self.assertIsNone(parsed, f"expected refusal on {line!r}")
                 refused_empty += 1
@@ -2160,11 +2163,11 @@ class PostTests(unittest.TestCase):
             ("`foo\\`", "foo\\"),
         ):
             with self.subTest(rendered=rendered):
-                self.assertEqual(post_module._unwrap_span(rendered), expected)
+                self.assertEqual(notes_module._unwrap_span(rendered), expected)
 
         for rendered in ("`foo` and `bar`", "````", "``", "", "no span", "`unclosed"):
             with self.subTest(rendered=rendered):
-                self.assertIsNone(post_module._unwrap_span(rendered))
+                self.assertIsNone(notes_module._unwrap_span(rendered))
 
     def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
         for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
@@ -2308,7 +2311,7 @@ class PostTests(unittest.TestCase):
         self.assertIn("A" * 40_000, github_body)
         self.assertNotIn("B" * 40_000, github_body)
         self.assertIn("…and 1 more advisory findings (size limit)", github_body)
-        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(github_body))
+        self.assertIsNotNone(notes_module.SUMMARY_MARKER_RE.search(github_body))
         self.assertEqual(github_body, github_repeat)
         self.assertEqual(github_hash, github_repeat_hash)
         self.assertIn("A" * 40_000, gitlab_body)
@@ -2397,7 +2400,7 @@ class PostTests(unittest.TestCase):
         self.assertIn("Advisory (FYI) findings (showing 1 of 3):", body)
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertIn("…and 1 more advisory findings (configured count limit)", body)
-        self.assertIsNotNone(post_module.SUMMARY_MARKER_RE.search(body))
+        self.assertIsNotNone(notes_module.SUMMARY_MARKER_RE.search(body))
 
     def test_v3_title_recovery_is_lossy_for_newline_and_literal_backslash_n(self) -> None:
         encoded_newline = copy.deepcopy(self._consensus()["groups"][0])
