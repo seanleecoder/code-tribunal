@@ -12,14 +12,13 @@ from pathlib import Path
 from unittest import mock
 
 from ai_review.adapter_output import _load_adapter_json
-from ai_review.adapter_runner import (
-    _EXIT_ERROR,
+from ai_review.adapter_process import (
     _SHELL_MOCK_ALLOW_REFUSAL,
     _build_adapter_env,
     _cli_reviewer_validation_error,
     _effective_adapter_timeout_seconds,
-    run_adapter,
 )
+from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import ConfigError
 from ai_review.schema import (
     AdapterModelError,
