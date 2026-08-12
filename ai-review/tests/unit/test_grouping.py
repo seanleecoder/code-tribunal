@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from ai_review.consensus import group_findings
+from ai_review.grouping import group_findings
 
 
 def _finding(

@@ -34,5 +34,6 @@ module = [
   "ai_review.summary_render",
   "ai_review.posting",
   "ai_review.consensus_errors",
+  "ai_review.grouping",
 ]
 strict = true
