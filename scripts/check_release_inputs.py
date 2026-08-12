@@ -22,6 +22,7 @@ from release_common import (
     computed_hashes,
     image_ref,
     load_json,
+    sync_workflows,
     validate_release_version,
 )
 
@@ -332,10 +333,14 @@ def validate_release_inputs(
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
     waivers = validate_evidence_records(data, root)
 
+    # Delegated to the shared helper, which scripts/sync_workflows.py also uses.
+    if drifted := sync_workflows(check=True, root=root):
+        raise ReleaseValidationError(
+            "installed GitHub workflow copies differ from their canonical templates: "
+            + ", ".join(drifted)
+            + " (run `make sync-workflows`)"
+        )
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
-    installed = (root / ".github/workflows/ai-review.yml").read_text(encoding="utf-8")
-    if canonical != installed:
-        raise ReleaseValidationError("the two GitHub workflow copies differ")
     if data["status"] == "active":
         assert isinstance(runtime_source, str)
         expected_refs = {role: image_ref(images[role], runtime_source) for role in images}

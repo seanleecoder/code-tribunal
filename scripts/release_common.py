@@ -18,6 +18,45 @@ class ReleaseValidationError(ValueError):
 
 FIXTURE_DIR = "ai-review/tests/fixtures"
 
+# Canonical template -> installed copy. GitHub only executes workflows that are
+# real files under .github/workflows, so the installed copy must stay a byte
+# duplicate of the canonical template rather than a symlink to it.
+WORKFLOW_PAIRS: tuple[tuple[str, str], ...] = (
+    ("ai-review/ci/review.github-actions.yml", ".github/workflows/ai-review.yml"),
+)
+
+
+def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
+    """Copy canonical workflows over their installed copies, or report drift.
+
+    In check mode nothing is written and the installed paths that differ from
+    their canonical template are returned. In write mode each mismatching
+    installed copy is overwritten and the paths that changed are returned. An
+    empty tuple therefore means "already in sync" in both modes.
+
+    This is the canonical implementation for repository-only callers.
+    scripts/check_supply_chain_pins.py deliberately keeps its own copy of the
+    comparison because it runs inside the base image and must import only the
+    standard library.
+    """
+    changed: list[str] = []
+    for canonical_rel, installed_rel in WORKFLOW_PAIRS:
+        canonical_path = root / canonical_rel
+        installed_path = root / installed_rel
+        if not canonical_path.is_file():
+            raise ReleaseValidationError(f"canonical workflow template is missing: {canonical_rel}")
+        canonical_text = canonical_path.read_text(encoding="utf-8")
+        installed_text = (
+            installed_path.read_text(encoding="utf-8") if installed_path.is_file() else None
+        )
+        if installed_text == canonical_text:
+            continue
+        changed.append(installed_rel)
+        if not check:
+            installed_path.parent.mkdir(parents=True, exist_ok=True)
+            installed_path.write_text(canonical_text, encoding="utf-8")
+    return tuple(changed)
+
 
 def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
     """Enumerate git-tracked files under a directory, in sorted order.

@@ -438,6 +438,13 @@ def main() -> int:
             shipped_workflows[path] = workflow_text
     installed_review_workflow = _read_optional(INSTALLED_GITHUB_REVIEW_WORKFLOW)
     canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
+    # This byte comparison is deliberately duplicated rather than delegated to
+    # release_common.sync_workflows, which is the canonical implementation for
+    # repository-only callers. This script runs INSIDE the base image from
+    # /opt/scripts and must import only the standard library: release_common is
+    # not shipped, and a repository-only import would fail at test *collection*
+    # inside the image, where no skipUnless can rescue it.
+    # tests/unit/test_check_supply_chain_pins.py asserts that constraint.
     if (
         installed_review_workflow is not None
         and installed_review_workflow != canonical_review_workflow

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -609,6 +611,52 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 self.assertEqual(check_supply_chain_pins.main(), 0)
             finally:
                 check_supply_chain_pins.CI_WORKFLOW = original
+
+
+    def test_script_imports_only_the_standard_library(self) -> None:
+        """The script runs inside the base image and must stay stdlib-only.
+
+        ai-review/images/base.Dockerfile ships it to /opt/scripts, and
+        .github/workflows/publish-ai-review-images.yml mounts the repository
+        tests read-only and runs unittest discover there. This test file resolves
+        parents[3]/"scripts" -> /opt/scripts and exec_modules the script at
+        *module* level, so a repository-only import fails at collection inside
+        the image, where no skipUnless can rescue it.
+
+        scripts/release_common.py is the canonical implementation of the workflow
+        parity comparison for repository-only callers, but it is not shipped and
+        must not be: it resolves ROOT from its own path, reads
+        release/release-inputs.json, and shells out to git for index entries,
+        and the image contains neither release/ nor .git for those to operate on.
+        Shipping release tooling into a published runtime image would also
+        enlarge its attested surface for no runtime purpose. Note that git itself
+        IS installed in the base image, so a missing binary is not the reason.
+
+        Asserted as an AST scan rather than a name list so a future import is
+        caught by shape, and here rather than by inspection because nothing else
+        in the script reveals the constraint.
+        """
+
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    # A relative import cannot resolve: the script is executed as
+                    # a standalone file from /opt/scripts, not as a package.
+                    roots.add(f".{node.module or ''}")
+                elif node.module:
+                    roots.add(node.module.split(".")[0])
+
+        non_stdlib = sorted(root for root in roots if root not in sys.stdlib_module_names)
+        self.assertEqual(
+            non_stdlib,
+            [],
+            "check_supply_chain_pins.py must import only the standard library; "
+            "it runs inside the base image, where these modules do not exist",
+        )
 
 
 if __name__ == "__main__":
