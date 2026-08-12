@@ -34,10 +34,18 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     installed copy is overwritten and the paths that changed are returned. An
     empty tuple therefore means "already in sync" in both modes.
 
+    The comparison is byte-exact, and deliberately so. GitHub executes the
+    installed file verbatim, so a line-ending difference is real drift rather
+    than an equivalent encoding. Path.read_text() enables universal newlines and
+    translates \r\n to \n, which would report a CRLF installed copy as identical
+    to an LF template and then decline to repair it; Path.write_text() is the
+    mirror problem, translating \n to os.linesep. Reading and writing bytes is
+    what makes the byte-duplicate contract above literally true.
+
     This is the canonical implementation for repository-only callers.
     scripts/check_supply_chain_pins.py deliberately keeps its own copy of the
     comparison because it runs inside the base image and must import only the
-    standard library.
+    standard library; that copy is byte-exact too, so all gates agree.
     """
     changed: list[str] = []
     for canonical_rel, installed_rel in WORKFLOW_PAIRS:
@@ -45,16 +53,14 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
         installed_path = root / installed_rel
         if not canonical_path.is_file():
             raise ReleaseValidationError(f"canonical workflow template is missing: {canonical_rel}")
-        canonical_text = canonical_path.read_text(encoding="utf-8")
-        installed_text = (
-            installed_path.read_text(encoding="utf-8") if installed_path.is_file() else None
-        )
-        if installed_text == canonical_text:
+        canonical_bytes = canonical_path.read_bytes()
+        installed_bytes = installed_path.read_bytes() if installed_path.is_file() else None
+        if installed_bytes == canonical_bytes:
             continue
         changed.append(installed_rel)
         if not check:
             installed_path.parent.mkdir(parents=True, exist_ok=True)
-            installed_path.write_text(canonical_text, encoding="utf-8")
+            installed_path.write_bytes(canonical_bytes)
     return tuple(changed)
 
 

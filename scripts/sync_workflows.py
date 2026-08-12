@@ -8,11 +8,19 @@ therefore `make quality` and CI), by check_release_inputs.py (via
 ai-review/tests/unit/test_ci_template.py. What was missing was a *generation*
 command. This is it.
 
-    scripts/sync_workflows.py            # write installed copies
-    scripts/sync_workflows.py --check    # report drift, write nothing
+    make sync-workflows           # write installed copies
+    make CHECK=1 sync-workflows   # report drift, write nothing
+
+Or through the interpreter directly. This file is not executable by design,
+matching its sibling repository-only checkers (check_docs.py,
+check_release_inputs.py, check_release_manifest.py, build_release_manifest.py,
+scan_evidence_leaks.py), none of which is ever invoked by bare path:
+
+    python3 scripts/sync_workflows.py [--check]
 
 The comparison itself lives in release_common.sync_workflows, which
-check_release_inputs.py also delegates to.
+check_release_inputs.py also delegates to. It is byte-exact: GitHub executes the
+installed file verbatim, so a line-ending difference is real drift.
 """
 
 from __future__ import annotations

@@ -968,6 +968,49 @@ class WorkflowSyncTests(unittest.TestCase):
             self.assertEqual(sync_workflows(check=False, root=root), (installed_rel,))
             self.assertEqual(installed.read_text(encoding="utf-8"), "name: canonical\n")
 
+    def test_line_ending_only_drift_is_detected_and_repaired(self) -> None:
+        """A CRLF installed copy is real drift, not an equivalent file.
+
+        Path.read_text() enables universal newlines and translates \\r\\n to \\n,
+        so a text comparison reports these two files as identical while their
+        bytes differ. GitHub executes the installed file verbatim, so the
+        comparison has to be byte-exact. Written with write_bytes rather than
+        write_text because write_text would translate \\n to os.linesep and make
+        this case platform-dependent.
+        """
+        _canonical_rel, installed_rel = WORKFLOW_PAIRS[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical, installed = self._pair(root, installed_text=None)
+            canonical.write_bytes(b"name: canonical\non: push\n")
+            installed.write_bytes(b"name: canonical\r\non: push\r\n")
+            # The premise: text comparison cannot tell these apart.
+            self.assertEqual(
+                canonical.read_text(encoding="utf-8"), installed.read_text(encoding="utf-8")
+            )
+            self.assertNotEqual(canonical.read_bytes(), installed.read_bytes())
+
+            self.assertEqual(sync_workflows(check=True, root=root), (installed_rel,))
+            self.assertEqual(sync_workflows(check=False, root=root), (installed_rel,))
+            self.assertEqual(installed.read_bytes(), canonical.read_bytes())
+            self.assertEqual(sync_workflows(check=True, root=root), ())
+
+    def test_write_mode_does_not_translate_line_endings(self) -> None:
+        """Write mode must reproduce canonical bytes, not re-encode them.
+
+        write_text with newline=None translates \\n to os.linesep, which would
+        emit CRLF on Windows and leave the installed copy permanently drifted
+        from an LF canonical template.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical, installed = self._pair(root, installed_text=None)
+            canonical.write_bytes(b"name: canonical\non: push\n")
+
+            sync_workflows(check=False, root=root)
+
+            self.assertEqual(installed.read_bytes(), b"name: canonical\non: push\n")
+
     def test_missing_canonical_template_is_an_error_not_silent_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

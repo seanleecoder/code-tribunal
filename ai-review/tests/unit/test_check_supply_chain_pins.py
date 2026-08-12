@@ -603,6 +603,41 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ["line 2 contains a YAML key inside an inline comment"],
         )
 
+    def test_detects_line_ending_only_drift_in_the_installed_workflow(self) -> None:
+        """The installed/canonical parity check must be byte-exact.
+
+        GitHub executes .github/workflows/ai-review.yml verbatim, so a CRLF copy
+        of an LF template is real drift. Path.read_text() translates \\r\\n to
+        \\n, so a text comparison reports the two as identical and this check
+        would pass on a file that is not a byte duplicate.
+
+        Asserts on the specific message rather than only on main()'s exit code:
+        the container-shape scans still pass on this copy, because they consume
+        the newline-normalized text, so the parity check is the only thing that
+        should fail here. An exit-code-only assertion would not prove that.
+        """
+        expected = ".github/workflows/ai-review.yml must match the canonical GitHub template"
+        original = check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW
+        canonical_bytes = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "ai-review.yml"
+            mutated.write_bytes(canonical_bytes.replace(b"\n", b"\r\n"))
+            self.assertNotEqual(mutated.read_bytes(), canonical_bytes)
+            # The premise: a text comparison cannot tell these apart.
+            self.assertEqual(
+                mutated.read_text(encoding="utf-8"),
+                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8"),
+            )
+
+            check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = mutated
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.INSTALLED_GITHUB_REVIEW_WORKFLOW = original
+            self.assertIn(expected, stderr.getvalue())
+
     def test_allows_repository_only_ci_workflow_to_be_absent_from_runtime_image(self) -> None:
         original = check_supply_chain_pins.CI_WORKFLOW
         with tempfile.TemporaryDirectory() as tmp:
