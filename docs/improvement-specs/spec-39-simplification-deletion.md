@@ -67,13 +67,15 @@ Both findings are recorded rather than silently dropped.
    → **Part 2**. No framework is introduced; the split is by concern, not by adapter.
 4. Split consensus grouping, critique application, and artifact I/O only where it
    reduces import coupling. Preserve one deterministic reducer API and golden cases.
-   → **Part 3** splits grouping and critique application. **Artifact I/O is
-   deliberately not split**: the condition fails, see "Deviations".
+   → **Part 3** splits grouping and critique application, preceded by extracting the
+   shared integrity exception so the two do not form an import cycle. **Artifact I/O
+   is deliberately not split**: the condition fails, see "Deviations".
 5. Consolidate duplicated GitHub installed/canonical workflow maintenance with a
    checked generation/sync command. GitHub still requires the installed copy under
    `.github/workflows`; do not replace it with a symlink. → **Part 4**. The parity
-   *check* already exists three times over; the remaining work is consolidation plus
-   the generation command.
+   *check* already exists three times over; the remaining work is the generation
+   command plus partial consolidation — one of the three must stay standalone because
+   it runs inside the base image.
 6. Move completed acceptance/spec history out of runtime images and adopter docs if
    it is not used by production or preflight. → **Already satisfied**; see "Item 6".
 
@@ -104,6 +106,8 @@ These break silently if missed. Each has a required mitigation.
 | `ruff` selects `F` | `pyproject.toml` | Any re-export needs the `from .x import y as y` form or an `__all__`, else `F401` |
 | `_process_state_for_persistence` has two callers (`plan_state` and `finalize_state`) | `ai-review/src/ai_review/post.py` | It lives in `state_plan.py` and `posting.py` imports it. Must not be duplicated |
 | `post_inline` and `finalize_state` mutate the shared `PostResult` dict and `StatePlan.planned_records` **in place** | `ai-review/src/ai_review/post.py` | Preserve the mutation contract exactly. Converting to returned deltas is a redesign and is out of scope |
+| `scripts/check_supply_chain_pins.py` runs **inside the base image** from `/opt/scripts` and must import only the standard library | `ai-review/images/base.Dockerfile` ships it; `.github/workflows/publish-ai-review-images.yml` mounts the repository tests read-only at `/opt/ai-review/tests` and runs `unittest discover`; `tests/unit/test_check_supply_chain_pins.py` resolves `parents[3]/"scripts"` → `/opt/scripts` and `exec_module`s it at **module level** | Never give this script a repository-only import. A missing module fails at *collection* inside the image, so no `skipUnless` can rescue it. `scripts/release_common.py` is not shipped, and must not be: it resolves `ROOT` from its own path, reads `release/release-inputs.json`, and shells out to `git` for index entries — none of `release/`, `.git`, or a `git` binary exists in the read-only runtime image |
+| `ConsensusIntegrityError` is raised from **both** the retained core and the extracted critique code | `ai-review/src/ai_review/consensus.py` | Extract it to `consensus_errors.py` **before** splitting `critique.py`, or the two modules form an import cycle that fails at import time. See Part 3 step 0 |
 
 ### Part 1 — `post.py`, 2,075 lines to roughly 120
 
@@ -201,7 +205,40 @@ Test edits: `tests/unit/test_adapter_runner.py`, `test_opencode_client.py`,
 `test_schema_validation.py`, `test_openrouter_adapters.py`, and
 `test_cursor_permission_smoke.py` for `_MODEL_ID_RE`.
 
-### Part 3 — `consensus.py`, 1,044 lines to roughly 450
+### Part 3 — `consensus.py`, 1,044 lines to roughly 575
+
+Coupling was measured before planning this split, and the result is what makes it
+safe: across the whole critique range, the **only** symbol referenced from the
+functions `consensus.py` retains is `ConsensusIntegrityError`. The grouping range
+references **none**. The `critique` → `grouping` edge is likewise a single symbol,
+`_duplicate_link_key`. Confirm this still holds before starting:
+
+```sh
+awk 'NR>=324 && NR<=574 && /ConsensusIntegrityError/' ai-review/src/ai_review/consensus.py
+```
+
+Because that one back-reference would otherwise be a hard import cycle — the class
+is defined partway down `consensus.py`, so a `critique` module importing it from
+`consensus` fails on a partially-initialized module rather than merely lints badly —
+the exception moves first:
+
+0. **`consensus_errors.py`** (~6 lines, standard library only, imports nothing from
+   the package). Move the `ConsensusIntegrityError` class definition verbatim,
+   docstring included. `consensus.py` then re-exports it with
+   `from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError`
+   — the `as` form is required, since `ruff` selects `F` and a bare re-export trips
+   `F401`. `critique.py` imports it from `consensus_errors`, never from `consensus`.
+   The public path `from ai_review.consensus import ConsensusIntegrityError` is
+   unchanged, so `tests/unit/test_consensus_integrity.py` and the
+   `except (ConsensusIntegrityError, SchemaValidationError, CanonicalError)` handler
+   in `cli` need no edit. Add the module to the mypy strict allowlist in this same
+   commit.
+
+   Rejected alternative: defining the class in `critique.py` needs no new module and
+   is also cycle-free, since the dependency runs `consensus` → `critique` →
+   `grouping`. But the error signals manifest, finding-batch, and effective-config
+   integrity failures raised from `validate_consensus_inputs`, so critique would be
+   the wrong owner.
 
 1. **`grouping.py`** (~215 lines) — `_changed_start_line`, `_ranges_overlap`,
    `_WORD_RE`, `_normalized_issue_tokens`, `_issue_text_similarity`,
@@ -219,11 +256,19 @@ Test edits: `tests/unit/test_adapter_runner.py`, `test_opencode_client.py`,
    `_duplicate_link_key` from `grouping`, keeping the dependency one-directional
    (`critique` → `grouping`).
 
-`consensus.py` retains `ConsensusIntegrityError`, `panel_status`, `_representative`,
-`_evidence_by_reviewer`, `decision_for_group`, `_batch_usable_for_panel`,
-`_require_quality_invariants`, `build_consensus`,
+`consensus.py` retains the re-exported `ConsensusIntegrityError`, `panel_status`,
+`_representative`, `_evidence_by_reviewer`, `decision_for_group`,
+`_batch_usable_for_panel`, `_require_quality_invariants`, `build_consensus`,
 `_require_effective_config_integrity`, `require_critique_provenance`,
 `validate_consensus_inputs`, and `cli` — one deterministic reducer API, unchanged.
+
+Those retained bodies total roughly 571 lines, so **~575 is the floor** for the
+extractions item 4 authorizes, not an approximation that further tidying can beat.
+A fourth extraction of the validation trio — `_require_effective_config_integrity`,
+`require_critique_provenance`, `validate_consensus_inputs`, about 173 lines — would
+reach roughly 400, but item 4 does not authorize it and this specification does not
+propose it. Reaching a rounder number is not a reason to extract, and compressing
+retained bodies to hit one would violate the moves-are-moves guardrail above.
 
 ### Part 4 — item 5, workflow sync consolidation
 
@@ -232,7 +277,8 @@ The parity itself is already gated three times: `scripts/check_supply_chain_pins
 `scripts/check_release_inputs.py` (via `make release-inputs`), and
 `GitHubActionsTemplateTests.test_installed_workflow_matches_canonical_template` in
 `ai-review/tests/unit/test_ci_template.py`. The two files are byte-identical today.
-What is missing is a *generation* command and a single implementation.
+What is missing is a *generation* command, and a shared implementation for the
+callers that can use one.
 
 Add to `scripts/release_common.py`, which already registers both paths in
 `canonical_templates` and `ALLOWED_RELEASE_PATHS`:
@@ -242,11 +288,30 @@ Add to `scripts/release_common.py`, which already registers both paths in
   mismatching paths.
 
 Then add `scripts/sync_workflows.py` (`--check` to verify, default to write) and a
-`sync-workflows` Makefile target, and repoint all three existing assertions at the
-shared helper. **Keep all three call sites**: they stay in `make quality` and
-`make release-inputs`, so no gate weakens — only the duplicated implementation
-collapses. Extend `tests/unit/test_release_tools.py`, which already covers
-`release_common`, with cases for the helper including a deliberately desynced pair.
+`sync-workflows` Makefile target. **Keep all three call sites** — they stay in
+`make quality` and `make release-inputs`, so no gate weakens. Extend
+`tests/unit/test_release_tools.py`, which already covers `release_common`, with cases
+for the helper including a deliberately desynced pair.
+
+Consolidation goes from three implementations to **two, not one**:
+
+- `scripts/check_release_inputs.py` delegates to the helper. It already imports
+  `release_common`, so this adds no dependency.
+- `scripts/sync_workflows.py` uses the helper.
+- `ai-review/tests/unit/test_ci_template.py` may delegate to it. That file is
+  repository-only and already skips when the installed workflow is absent.
+- **`scripts/check_supply_chain_pins.py` keeps its own byte comparison and must stay
+  standard-library only.** See the frozen contract below. Add a comment in the script
+  saying so and naming the shared helper as the canonical implementation for
+  repository-only callers, because nothing else in the file reveals the constraint.
+
+The residual duplication is therefore intentional and contract-driven rather than
+overlooked. It is also small: the check is a byte comparison of two files.
+
+To stop the constraint being rediscovered the hard way, add a guard to
+`tests/unit/test_check_supply_chain_pins.py`: an AST scan asserting the script's
+import statements name only standard-library modules. That test runs in the image
+too, where it is cheap and where the constraint actually bites.
 
 Do not replace the installed copy with a symlink. GitHub requires the real file.
 
@@ -257,8 +322,10 @@ already in the repository — the subprocess harness that blocks `requests` befo
 importing, and the AST scan used by
 `ImportBoundaryTests`/`tests/unit/test_platform_runtime.py`:
 
-1. `notes`, `state_plan`, `summary_render`, `grouping`, and `critique` each import
-   cleanly with `requests` blocked.
+1. `notes`, `state_plan`, `summary_render`, `grouping`, `critique`, and
+   `consensus_errors` each import cleanly with `requests` blocked.
+   `consensus_errors` is dependency-free by construction, so this also pins the
+   property that keeps Part 3's cycle closed.
 2. An AST check that none of those modules imports `ai_review.platform`,
    `platform.factory`, `gitlab_client`, `opencode_client`, or `requests`. This turns
    "posting state transitions can be tested without a platform client" into a
@@ -380,8 +447,14 @@ sync: append a comment to `.github/workflows/ai-review.yml`, confirm both
 then restore it.
 
 Definition of done: `make quality` green, golden fixtures untouched in `git status`,
-`post.py` around 120 lines, `consensus.py` around 450, `adapter_runner.py` around
+`post.py` around 120 lines, `consensus.py` around 575, `adapter_runner.py` around
 500, and `plan_state` exercised by a test that constructs no platform client.
+
+These targets are derived by summing the line ranges each part moves and subtracting
+from the current totals, not estimated. `post.py` retains its header plus `cli`
+(about 111 lines); `adapter_runner.py` retains `run_adapter` at 402 lines plus `cli`
+and its imports. Re-derive them against `main` before treating a miss as a problem —
+the split boundaries are the requirement, and the counts are only a check on them.
 
 ## Acceptance criteria
 
