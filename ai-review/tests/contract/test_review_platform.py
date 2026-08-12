@@ -4,10 +4,10 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from ai_review.commands import collect_human_commands
 from ai_review.platform import ReviewPlatform
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.platform.gitlab import GitLabReviewPlatform
-from ai_review.post import collect_human_commands
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient

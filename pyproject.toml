@@ -29,5 +29,6 @@ module = [
   "ai_review.gate",
   "ai_review.post",
   "ai_review.notes",
+  "ai_review.commands",
 ]
 strict = true

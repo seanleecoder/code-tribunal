@@ -14,6 +14,7 @@ from unittest.mock import patch
 import ai_review.notes as notes_module
 import ai_review.post as post_module
 from ai_review.anchors import context_hash_from_unified_diff
+from ai_review.commands import collect_human_commands
 from ai_review.gitlab_client import (
     MergeRequestVersion,
     build_position,
@@ -34,7 +35,6 @@ from ai_review.post import (
     _desired_discussion_resolved,
     _drop_lowest_priority_trailing_entry,
     _initial_post_result,
-    collect_human_commands,
     finalize_state,
     load_persisted_state,
     plan_state,
