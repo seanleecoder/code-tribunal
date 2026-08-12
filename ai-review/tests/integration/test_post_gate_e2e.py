@@ -17,7 +17,7 @@ from ai_review.gate import evaluate_gate
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import parse_marker
-from ai_review.post import post_consensus
+from ai_review.posting import post_consensus
 from ai_review.schema import finalize_finding_batch, load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]

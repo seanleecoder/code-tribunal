@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import ai_review.notes as notes_module
 import ai_review.post as post_module
+import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 import ai_review.summary_render as summary_render_module
 from ai_review.anchors import context_hash_from_unified_diff
@@ -30,21 +31,19 @@ from ai_review.notes import (
 )
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
-from ai_review.post import (
+from ai_review.post import render_body, source_hash
+from ai_review.posting import (
     _classify_post_groups,
-    _desired_discussion_resolved,
     _initial_post_result,
     finalize_state,
     load_persisted_state,
-    plan_state,
     post_consensus,
     post_inline,
     prepare_post_context,
     recover_state_from_discussions,
-    render_body,
-    source_hash,
 )
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.state_plan import _desired_discussion_resolved, plan_state
 from ai_review.summary_render import (
     SummarySectionDescriptor,
     _compose_summary_sections,
@@ -2728,7 +2727,7 @@ class PostTests(unittest.TestCase):
         normalize_calls = 0
         compact_calls = 0
         overflow_calls = 0
-        real_normalize_state = post_module.normalize_state
+        real_normalize_state = posting_module.normalize_state
         real_compact_state = state_plan_module.compact_state
         real_state_overflow_reason = state_plan_module.state_overflow_reason
 
@@ -2747,12 +2746,12 @@ class PostTests(unittest.TestCase):
             overflow_calls += 1
             return real_state_overflow_reason(*args, **kwargs)
 
-        # normalize_state is called from both modules after the state_plan
-        # extraction: once by post.load_persisted_state, and twice by
+        # normalize_state is called from both modules: once by
+        # posting.load_persisted_state, and twice by
         # state_plan._process_state_for_persistence. Both are patched so the
         # counter still totals every call.
         with (
-            patch.object(post_module, "normalize_state", side_effect=spy_normalize_state),
+            patch.object(posting_module, "normalize_state", side_effect=spy_normalize_state),
             patch.object(state_plan_module, "normalize_state", side_effect=spy_normalize_state),
             patch.object(state_plan_module, "compact_state", side_effect=spy_compact_state),
             patch.object(
