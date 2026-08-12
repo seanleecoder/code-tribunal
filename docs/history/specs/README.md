@@ -46,6 +46,8 @@ README.
 | [SPEC-36](spec-36-types-quality-gates.md) | Typed contract alignment and quality gates | Complete on `main` |
 | [SPEC-37](spec-37-final-release-artifacts.md) | Final release artifacts | Complete at `v1.0.0` |
 | [SPEC-38](spec-38-documentation-evidence-restructure.md) | Documentation/evidence restructuring | Complete at `v1.0.0` |
+| [SPEC-39](spec-39-simplification-deletion.md) | 1.0 surface simplification and posting decomposition | Complete on `main` — milestone A pre-1.0, milestone B in `09f4e65`; golden and E2E fixtures unchanged, with [live closure validation](spec-39-simplification-deletion.md#closure-validation-at-09f4e65) on both platforms |
 | [SPEC-40](spec-40-1.0-finalization-execution-plan.md) | 1.0.0 finalization execution plan | Complete at `v1.0.0` |
 | [SPEC-44](spec-44-literal-model-output.md) | Literal-safe rendering of model output | Complete on `main` — shipped as `render-body.v3`; SPEC-45/46 still cite its renderer boundary |
+| [SPEC-50](spec-50-opencode-structured-reviewer-output.md) | Enforce structured OpenCode reviewer output | Complete on `main` — transport, permission fix, and merge-gating stub preflight shipped; its real-provider rollout canary is recorded in a [supplemental record](../../evidence/record-opencode-structured-output-canary.md) at `09f4e65`, with the released-pin equivalent tracked as an evidence gap |
 | [SPEC-51](spec-51-opencode-search-tool-reach.md) | Bound and supply the OpenCode search tools | Complete on `main` — in the images pinned from `main@e2464a9`; its live canary was closed provider-free by the stub-model preflight |

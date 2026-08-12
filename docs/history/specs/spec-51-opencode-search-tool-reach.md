@@ -11,7 +11,7 @@
 - **Classification:** S / reviewer isolation and supply-chain correctness.
 - **Severity:** High (two independent defects: an unverified binary fetched and executed at review time, and a filesystem boundary that held only by accident).
 - **Effort:** S.
-- **Depends on:** [SPEC-50](../../improvement-specs/spec-50-opencode-structured-reviewer-output.md), which introduced the loopback session client this change extends.
+- **Depends on:** [SPEC-50](spec-50-opencode-structured-reviewer-output.md), which introduced the loopback session client this change extends.
 - **Related work:** the snapshot-containment contract in
   [SPEC-19](spec-19-opencode-reviewer-optimization.md), whose
   sanitized review root this specification makes actually binding.

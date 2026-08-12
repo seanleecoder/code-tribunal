@@ -52,9 +52,10 @@ repo's canonical template.
   fake "real" evidence. **Delete them again after every Chain B campaign.**
 
 **What changes per release:** the six container digest pins in the workflow (jobs
-`prepare`, `review`, `critique`, `consensus`, `post`, `gate`). As of this writing they
-are still the 1.0.0 pair, `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e` with base
-`sha256:f2a433ac…` and reviewer `sha256:2fd84c43…`. Copy the workflow from the new `R`
+`prepare`, `review`, `critique`, `consensus`, `post`, `gate`). On `main` they are the
+1.0.2 pair, `1.0-54dffa130be5c921602f264a2123fda4b1895f13`; the two `evidence/spec39-*`
+branches below carry `1.0-09f4e659333746b3d3a307e80cc70a1078c3c162` (base
+`sha256:482dd139…`, reviewer `sha256:782e2d1f…`). Copy the workflow from the new `R`
 rather than hand-editing pins: an older copy can carry env keys that a newer `R`
 rejects (the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides were one such case).
 
@@ -70,6 +71,7 @@ Existing branches, all worth keeping:
 | `evidence/github-lifecycle` | original finding-lifecycle fixture |
 | `evidence/github-revision-race`, `evidence/github-revision-staging`, `evidence/github-manifest-base`, `evidence/github-manifest-head` | SPEC-34 revision-boundary fixtures |
 | `evidence/p0-template` | template-adoption fixture |
+| `evidence/spec39-real-09f4e65`, `evidence/spec39-chain-b-09f4e65` | SPEC-39 milestone B closure runs at `09f4e65` (PRs #15 and #16, both closed). The Chain B branch is the reusable **added-file** mock fixture: `src/report.py` carries a `records[0]` marker |
 | `chore/adopt-canonical-workflow-<R-short>` | the repin PR; merged, not squashed |
 
 1.0.0 used PR #4 to adopt the workflow at `R = 88bc941`, PRs #5/#6 for Chain B, and
@@ -106,13 +108,24 @@ Public, project id `84667714`. Verified present:
   with `inherit.variables: false`, `strategy: mirror`, both
   `forward.yaml_variables` and `forward.pipeline_variables` false, and exactly two
   same-project includes — `review-child.gitlab-ci.yml` and `review.gitlab-ci.yml` —
-  at **one identical SHA**, currently `97e05fddf9f5466ccee385344a7aaeac500e4aa2`.
+  at **one identical SHA**. On `main` that is
+  `283ef756a15241d75e4e59ec855e8799b9385ca4`; the `evidence/spec39-real-09f4e65`
+  branch points both includes at `299ca5035e72fd0bd2a1ba61e625135c78c36527`.
 
 The **three GitLab pin variables** live in the template project's
 `ai-review/ci/review.gitlab-ci.yml` `variables:` block, not in the consumer, and must
 be replaced together: `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and
-`AI_REVIEW_TRUSTED_IMAGE_SHA`. All three still carry the 1.0.0 pair. Push the update
-as a new template commit and then point **both** consumer includes at that new SHA.
+`AI_REVIEW_TRUSTED_IMAGE_SHA`. Push the update as a new template commit and then point
+**both** consumer includes at that new SHA. Template commit
+`299ca5035e72fd0bd2a1ba61e625135c78c36527` carries the `09f4e65` trio.
+
+> **Copy the template files from the product repo; do not hand-edit the pins.** The
+> template commit before `299ca50` had drifted: it predated the `AI_REVIEW_REVIEWERS`
+> roster documentation and still carried the **20-minute** review job timeout against
+> a 1,800-second review process timeout, so a slow real review could be killed by the
+> outer job ceiling. Copying `ai-review/ci/` from the product repo picked up the
+> 40-minute ceiling along with the pins. This is the GitLab counterpart of the
+> workflow-copy warning above, and it is why "repin" means "recopy and repin".
 
 **Two branch classes, and the distinction is load-bearing:**
 
@@ -120,6 +133,7 @@ as a new template commit and then point **both** consumer includes at that new S
   The protected `GITLAB_TOKEN` injects only on protected refs; from an unprotected
   branch it is withheld and prepare and posting fail outright. Protected today:
   `main`, `evidence/chain-a-88bc941`, `evidence/chain-b-88bc941`,
+  `evidence/spec39-real-09f4e65`,
   `evidence/gitlab-lifecycle`, `evidence/gitlab-symlink-containment`, and the five
   `evidence/p0-symlink-{relative,parent,dangling,directory,proc-environ}` branches.
   **Protect each new `evidence/chain-*` branch before opening its MR** — this is the
@@ -136,7 +150,18 @@ without SSH push access.
 
 MR history: 1.0.0 used `!10` (Chain A, protected), `!11` (Chain B, protected), and
 `!12` (hostile, unprotected `hostile/unprotected-88bc941`). `!1`–`!9` are the earlier
-P0 symlink and hostile-forwarding fixtures. All are closed; none should be deleted.
+P0 symlink and hostile-forwarding fixtures. `!14` is the SPEC-39 closure run at
+`09f4e65`. All are closed; none should be deleted.
+
+> **The per-seat `*_ENABLED` variables and `AI_REVIEW_REVIEWERS` are mutually
+> exclusive, and both consumers hold persistent per-seat variables.** Setting
+> `AI_REVIEW_REVIEWERS` as a project variable on GitLab therefore fails prepare at
+> config load with `cannot be combined with [...]` until the per-seat variables are
+> deleted — a correct fail-closed, but it costs a pipeline. To trim the roster on
+> these consumers, set the per-seat flags (`AI_REVIEW_CLAUDE_ENABLED` and friends),
+> which is what their existing variables already use. On GitHub the copied workflow
+> blanks the per-seat flags whenever `AI_REVIEW_REVIEWERS` is set, so the roster
+> variable is safe there.
 
 Mock toggles go in as **project** CI/CD variables, not manual "Run pipeline"
 variables: project variables apply to push-triggered `merge_request_event` pipelines

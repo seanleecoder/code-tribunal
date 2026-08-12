@@ -1,25 +1,32 @@
 # SPEC-50 — Enforce structured OpenCode reviewer output
 
-- **Status:** Implemented (post-1.0). Landed in `fb0544d`, with the `StructuredOutput`
+- **Status:** Complete on `main`. Landed in `fb0544d`, with the `StructuredOutput`
   permission fix in `850c99b`; the images built from `main@e2464a9` carry both and the
-  canonical templates are pinned to them (`2b8b2ce`), so image publication is
+  canonical templates were pinned to them (`2b8b2ce`), so image publication is
   no longer outstanding. `scripts/smoke_opencode_structured_output.py` proves the tool
   is offered and the batch survives the transport inside the built image, against a
-  loopback stub provider, and gates merge as well as publication. **Outstanding:** the
-  real-OpenRouter rollout canary in the acceptance criteria — one live run recording
-  `status: success`, `raw_finding_count > 0`, and the `used structured_output` log
-  line. No such run is recorded in [`docs/evidence`](../evidence/README.md) yet; this
-  specification stays out of the completed history until it is.
+  loopback stub provider, and gates merge as well as publication. The
+  **real-OpenRouter rollout canary is now recorded**: all three conditions —
+  `status: success`, `raw_finding_count > 0`, and the `used structured_output` log line
+  — were observed together on the OpenCode seat against a real provider in GitLab MR
+  `!14`, child pipeline `2755154596`, job `15864567373`
+  ([record](../../evidence/record-opencode-structured-output-canary.md)). Two scope limits
+  carry forward and are tracked as evidence gaps rather than open specification work:
+  that run used `09f4e65` images rather than a released pair, so it is **supplemental,
+  not release-gating**; and critique was disabled, so the critique-stage transport stays
+  regression-covered. The canary shows no `grep` activity either — the job log carries
+  no tool-call output — but that expectation was closed provider-free by the smoke
+  script above, per [SPEC-51](spec-51-opencode-search-tool-reach.md).
 - **Classification:** S / reviewer-transport correctness.
 - **Severity:** High (the reviewer produced usable findings and the panel recorded zero, so the merge gate saw a silently degraded panel rather than a failure).
 - **Effort:** M.
-- **Supersedes:** [SPEC-49](spec-49-opencode-session-title-inference.md). SPEC-49's
+- **Supersedes:** [SPEC-49](../../improvement-specs/spec-49-opencode-session-title-inference.md). SPEC-49's
   recorded decision — a fixed, data-free session title — remains in force; only its
   `opencode --pure run --title` *mechanism* is replaced, because the session is now
   created through the server API. SPEC-49's rationale is preserved unedited as the
   forensic record of the title-inference incident.
 - **Depends on:** the existing OpenCode adapter contract in
-  [SPEC-19](../history/specs/spec-19-opencode-reviewer-optimization.md).
+  [SPEC-19](spec-19-opencode-reviewer-optimization.md).
 
 ## Incident and forensic rationale
 
@@ -186,6 +193,13 @@ provider change is permitted for this purpose. `reviewers.opencode.model` and
 - Real OpenRouter verification is deferred to rollout: a canary must show
   `status: success`, `raw_finding_count > 0`, and the `used structured_output` log
   line. `grep` is still expected to fail there until the ripgrep follow-up lands —
-  that follow-up, [SPEC-51](../history/specs/spec-51-opencode-search-tool-reach.md),
+  that follow-up, [SPEC-51](spec-51-opencode-search-tool-reach.md),
   has since landed and is in the pinned images, so a canary run today should show a
   working `grep` as well.
+  **Met** on 2026-08-12 for the three required conditions
+  ([record](../../evidence/record-opencode-structured-output-canary.md)). The `grep`
+  addendum is **not** shown by that run — the job log carries no tool-call output — and
+  is not re-opened here: SPEC-51 closed it provider-free with a real `rg` invocation
+  inside the sanitized review root. Because the canary ran on `09f4e65` images rather
+  than a released pair, the record is supplemental; a release-gating equivalent is
+  tracked as an evidence gap, not as unfinished work in this specification.

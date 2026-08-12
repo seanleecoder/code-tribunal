@@ -1,6 +1,6 @@
 # SPEC-49 — Suppress OpenCode session-title inference
 
-- **Status:** Superseded by [SPEC-50](spec-50-opencode-structured-reviewer-output.md).
+- **Status:** Superseded by [SPEC-50](../history/specs/spec-50-opencode-structured-reviewer-output.md).
   The fixed, data-free session title below remains in force; SPEC-50 replaces only the
   `opencode --pure run --title` mechanism, because the session is now created through
   the server API. Everything recorded here is preserved unedited as the forensic record

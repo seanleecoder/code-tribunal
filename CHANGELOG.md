@@ -7,6 +7,22 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Internal decomposition only, no behavior change (SPEC-39 milestone B). The three
+  large orchestration modules were split along existing cohesive boundaries:
+  `post.py` keeps only the CLI entry point, with command parsing, pure state
+  planning (`state_plan.py`), mutation orchestration (`posting.py`), and summary
+  rendering (`summary_render.py`) extracted out; `adapter_runner.py` separates
+  output parsing/finalization from subprocess lifecycle; and `consensus.py`
+  separates critique application (`critique.py`) from grouping. The shipped
+  `python -m ai_review.post` / `.consensus` / `.adapter_runner` entry points,
+  configuration keys, artifact schemas, and rendered output are unchanged — the
+  golden consensus and post→gate end-to-end fixtures are byte-identical. Posting
+  state transitions can now be tested without constructing a platform client, and
+  an import-boundary test keeps the planning modules free of platform clients and
+  `requests`.
+
 ## [1.0.2] - 2026-08-10
 
 ### Added
@@ -113,7 +129,7 @@ versioning.
   `format: {"type":"json_schema", …}` and emits the reviewer batch directly, so
   OpenCode no longer depends on the model volunteering a schema-conforming
   payload. See
-  [SPEC-50](docs/improvement-specs/spec-50-opencode-structured-reviewer-output.md).
+  [SPEC-50](docs/history/specs/spec-50-opencode-structured-reviewer-output.md).
 
 - Reviewer image pins are refreshed to OpenCode `1.18.12`, Claude Code
   `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its

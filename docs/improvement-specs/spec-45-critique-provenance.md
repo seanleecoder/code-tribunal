@@ -271,12 +271,14 @@ size-accounting or drop loop. A partially rendered rationale is never posted.
    one — **SPEC-44's `render-body.v3` must not ship in a release of its own unless
    SPEC-45 is genuinely deferred**, because two sequential releases mean two refresh
    waves across maintainers' open merge requests.
-   *(Status at `2b8b2ce`: `render-body.v3` is merged on `main` and carried by the
-   published `1.0-e2464a9` images, but it is still unreleased — the highest tag is
-   `v1.0.1` and `release/1.0.2.md` is a draft. The either/or above is therefore still
-   live and is now a release-timing decision: cutting 1.0.2 without SPEC-45 spends the
-   first refresh wave, and `v4` would spend a second one. Deferring SPEC-45 past that
-   release is a legitimate answer; doing it by accident is not.)* The version string is not a
+   *(Status at `09f4e65`: **the release-timing decision was taken — by shipping.**
+   `v1.0.2` is tagged and ships `render-body.v3` without SPEC-45, so the first refresh
+   wave is already spent across maintainers' open change requests. The either/or above is
+   therefore resolved, and what remains is narrower: a later `v4` would spend a **second**
+   wave, so SPEC-45 should now either land inside a release that changes the body format
+   for another reason, or accept that second wave explicitly. Deferring SPEC-45 past 1.0.2
+   was a legitimate answer; the point of the warning was that it should be chosen rather
+   than defaulted into, and the record does not show it being chosen.)* The version string is not a
    compatibility surface; the marker grammar is, and it does not change.
 7. When implementation lands, update current consensus/rendering reference material
    and CHANGELOG in that implementation change. This proposed specification does

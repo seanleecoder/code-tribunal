@@ -47,7 +47,7 @@ about the *evidence* above have moved on, and neither closes the spec:
   `google/gemini-3.1-flash-lite` recorded in the incident. The observation stands as
   history; do not re-cite that model id as the current default.
 - OpenCode now obtains its batch through the structured-output transport
-  ([SPEC-50](spec-50-opencode-structured-reviewer-output.md)), which sends the stage
+  ([SPEC-50](../history/specs/spec-50-opencode-structured-reviewer-output.md)), which sends the stage
   schema to the provider as `format: {"type":"json_schema", …}`. That makes a
   schema-shaped omission less likely *on that one seat* when the provider honors the
   schema. It is not a fix: the other three seats have no such transport, provider

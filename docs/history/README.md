@@ -36,8 +36,12 @@ not operator guidance. Current state:
   regression tests.
 - SPEC-37 (final release artifacts), SPEC-38 (documentation/live evidence), and
   SPEC-40 (release handoff) completed at `v1.0.0`.
-- SPEC-39 milestone A landed with the container-only distribution cleanup;
-  milestone B remains post-1.0 work.
+- SPEC-39 is complete: milestone A landed with the container-only distribution
+  cleanup, and milestone B's internal decomposition landed post-1.0 in `09f4e65`.
+- SPEC-44, SPEC-50, and SPEC-51 completed post-1.0. SPEC-50's real-provider rollout
+  canary is recorded as supplemental evidence at `09f4e65`; a release-gating equivalent
+  bound to a released image pair is still open and tracked in
+  [evidence gaps](../evidence/README.md#known-gaps-and-missing-evidence).
 - SPEC-20–22 remain proposals and are not product features.
 - SPEC-41–43 are post-1.0 proposals raised by the 1.0.0 live evidence.
 

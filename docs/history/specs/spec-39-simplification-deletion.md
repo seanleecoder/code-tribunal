@@ -1,5 +1,16 @@
 # SPEC-39 — Simplify the 1.0 surface and decompose posting internals
 
+- **Status:** Complete on `main`. Milestone A landed with the container-only
+  distribution cleanup; Milestone B landed in `09f4e65` (PR #118) as the ordered
+  extraction commits described below. Both the definition of done and the
+  acceptance criteria are met: `make quality` is green (912 passed), the golden
+  consensus and post→gate E2E fixtures are byte-identical without
+  `make update-golden`, and the resulting sizes are `post.py` 53, `consensus.py`
+  577, `adapter_runner.py` 463, with `posting.py` 857, `state_plan.py` 530,
+  `critique.py` 270, and `summary_render.py` 242 extracted out. `plan_state` is
+  exercised without constructing a platform client. Behavior was additionally
+  validated live at `09f4e65` on both consumer platforms — see
+  [the closure evidence below](#closure-validation-at-09f4e65).
 - **Severity:** Medium (contract clarity / maintainability) · **Effort:** L, split into milestones · **ROI rank:** 9
 - **Depends on:** SPEC-35 distribution decision; SPEC-36 typed-contract cleanup.
 
@@ -11,12 +22,12 @@ large orchestration modules (`post.py` ~1,755 lines, `adapter_runner.py` ~884,
 breaking boundary; structural decomposition should follow only after behavior is
 frozen by the correctness specs.
 
-**Milestone B was re-scoped on 2026-08-12 and is now executable.** The modules had
-grown when the audit re-measured them at `2b8b2ce` — `post.py` ~2,075,
-`adapter_runner.py` ~1,203, `consensus.py` ~1,044 — because the post-1.0 correctness
-work (SPEC-44 rendering, SPEC-50 structured output, roster selection) landed in all
-three. Those figures are **still current on `main`**: the files have not drifted
-since, and the split boundaries hold.
+**Milestone B was re-scoped on 2026-08-12 and executed the same day** (`09f4e65`).
+The modules had grown when the audit re-measured them at `2b8b2ce` — `post.py`
+~2,075, `adapter_runner.py` ~1,203, `consensus.py` ~1,044 — because the post-1.0
+correctness work (SPEC-44 rendering, SPEC-50 structured output, roster selection)
+landed in all three. Those figures were still current when the extraction began, and
+the split boundaries held.
 
 The original guidance to sequence Milestone B after SPEC-45 and SPEC-46 has been
 **consciously waived**. Both remain proposed, and waiting indefinitely keeps the
@@ -546,3 +557,47 @@ commit is independently revertible. The riskiest are the `posting.py` extraction
 which carries the in-place mutation contract between `post_inline` and
 `finalize_state`, and the `critique.py` extraction, which touches the largest
 consensus function. Revert those first if golden or E2E output moves.
+
+## Closure validation at `09f4e65`
+
+Milestone B is a no-behavior-change decomposition, so the regression suite and the
+frozen golden/E2E fixtures are the primary acceptance. Two live runs were made in
+addition, on the standing consumer projects in
+[`docs/evidence/CONSUMER-PROJECTS.md`](../../evidence/CONSUMER-PROJECTS.md), against
+images built from this runtime source (`1.0-09f4e659…`, base
+`sha256:482dd139…`, reviewer `sha256:782e2d1f…`). These are **scoped confirmation
+runs recorded here for provenance, not release-gating evidence records** — they were
+driven from a two-seat panel with critique disabled, so they are not the release
+matrix's three-model default-model smoke.
+
+**Real panel (both platforms, critique off, seats Claude + OpenCode, default cheap
+models).** The panel was given one genuine `IndexError` defect.
+
+| Platform | Change request | Outcome |
+|---|---|---|
+| GitHub | [demo PR #15](https://github.com/seanleecoder/code-tribunal-demo/pull/15), run `31629255355` | Claude `raw=1, accepted=1`; roster left Codex and Cursor skipped; inline discussion `3769377627` created at `src/access.py:18`; state comment written; gate passed (single vote, non-blocking surface at `votes_required=2`). |
+| GitLab | demo MR `!14`, child pipeline `2755154596` | Both seats converged (`panel_convergence: 1.0`); inline note `3679145597` created at `src/access.py:16`; gate passed. |
+
+**Deterministic mock lifecycle (GitHub, zero tokens), one PR driven through three
+attempts of run `31629919411` by flipping `AI_REVIEW_MOCK_SCENARIO` only.** The
+fixture **adds** a file, so this also re-confirms the added-file anchor path.
+
+| Step | Scenario | Result |
+|---|---|---|
+| 1 | `blocking` | `accepted_finding_count == raw_finding_count == 1` on both seats, `panel_convergence: 1.0`, `block_merge: true`, discussion `3769428333` created, gate exit `7`. |
+| 2 | `blocking_alt` | `created: 0, updated: 1` — the same `discussion_id` and the same `issue_id`, so finding identity survived the body change. Gate still exit `7`. |
+| 3 | `none` | `resolved: 1`, zero groups, gate passed — absence-based resolution. |
+
+The posting state transitions, roster selection, consensus grouping/quorum, and gate
+exit codes that Milestone B moved between modules therefore all behave as before on
+the real platform APIs. Both consumers were returned to their mock-free resting
+state afterwards.
+
+One incidental finding, unrelated to this specification: the real GitLab run logged
+`ai-review: review adapter used structured_output` with `raw_finding_count > 0` on the
+OpenCode seat against a real provider — which was exactly the rollout canary
+[SPEC-50](spec-50-opencode-structured-reviewer-output.md) had outstanding. It has since
+been written up as a supplemental
+[evidence record](../../evidence/record-opencode-structured-output-canary.md) and
+SPEC-50 is closed; because this run used `09f4e65` images rather than a released pair,
+that record is not release-gating.
