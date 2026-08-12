@@ -210,8 +210,8 @@ Test edits: `tests/unit/test_adapter_runner.py`, `test_opencode_client.py`,
 Coupling was measured before planning this split, and the result is what makes it
 safe: across the whole critique range, the **only** symbol referenced from the
 functions `consensus.py` retains is `ConsensusIntegrityError`. The grouping range
-references **none**. The `critique` → `grouping` edge is likewise a single symbol,
-`_duplicate_link_key`. Confirm this still holds before starting:
+references **none**. The `critique` → `grouping` edge is two symbols,
+`DuplicateLink` and `_duplicate_link_key`. Confirm this still holds before starting:
 
 ```sh
 awk 'NR>=324 && NR<=574 && /ConsensusIntegrityError/' ai-review/src/ai_review/consensus.py
@@ -222,11 +222,37 @@ stated line ranges, not transcribed function by function — the grouping range 
 18 names and the critique range 9. Re-enumerate against `main` before trusting them,
 because a hand reading silently drops type aliases and module constants:
 
-```sh
-python3 -c "import ast; t = ast.parse(open('ai-review/src/ai_review/consensus.py').read()); \
-print([(n.lineno, getattr(n, 'name', None) or n.targets[0].id) for n in t.body \
-if 45 <= n.lineno <= 262])"
+```python
+# Enumerate both ranges. A grouping-only pass would miss a new critique-level alias
+# or constant, which is the same omission this command exists to catch.
+import ast
+
+t = ast.parse(open("ai-review/src/ai_review/consensus.py").read())
+
+
+def top(lo, hi):
+    out = []
+    for n in t.body:
+        if not lo <= n.lineno <= hi:
+            continue
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            out.append(n.name)
+        else:
+            out += [
+                x.id
+                for x in ast.walk(n)
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store)
+            ]
+    return out
+
+
+print("grouping", top(45, 262))   # expect 18 names
+print("critique", top(324, 574))  # expect 9 names
 ```
+
+Walking `Store` targets rather than reading `.targets[0]` is deliberate: it survives
+annotated assignments and bare expressions appearing in either range, so the check
+still runs after `main` moves.
 
 Because that one back-reference would otherwise be a hard import cycle — the class
 is defined partway down `consensus.py`, so a `critique` module importing it from
