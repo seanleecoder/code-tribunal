@@ -1,3 +1,11 @@
+"""``python -m ai_review.post`` entry point.
+
+The shipped CLI entry point named by ai-review/ci/review.github-actions.yml,
+ai-review/ci/review.gitlab-ci.yml, and .github/workflows/ai-review.yml. The
+implementation lives in the modules this delegates to: commands, notes,
+state_plan, summary_render, and posting.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -7,43 +15,8 @@ from typing import cast
 from .config import load_config
 from .platform.runtime import create_runtime_platform
 from .posting import post_consensus
-from .render import (
-    compute_body_hash as _compute_body_hash,
-)
-from .render import (
-    render_body as _render_body,
-)
-from .render import (
-    source_hash as _source_hash,
-)
 from .schema import load_json_file, validate_instance, write_canonical_json
-from .types import (
-    Consensus,
-    FindingGroup,
-)
-
-
-def source_hash(source_finding_ids: list[str]) -> str:
-    return _source_hash(source_finding_ids)
-
-
-def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
-    return _compute_body_hash(group, body_without_marker)
-
-
-def render_body(
-    group: FindingGroup,
-    successful_reviewer_count: int,
-    run_id: str,
-    *,
-    posting_mode: str,
-) -> tuple[str, str]:
-    return _render_body(
-        group,
-        successful_reviewer_count,
-        run_id,
-        posting_mode=posting_mode,
-    )
+from .types import Consensus
 
 
 def cli(argv: list[str] | None = None) -> int:

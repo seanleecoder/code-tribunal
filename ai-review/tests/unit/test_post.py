@@ -31,7 +31,6 @@ from ai_review.notes import (
 )
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
-from ai_review.post import render_body, source_hash
 from ai_review.posting import (
     _classify_post_groups,
     _initial_post_result,
@@ -42,6 +41,7 @@ from ai_review.posting import (
     prepare_post_context,
     recover_state_from_discussions,
 )
+from ai_review.render import render_body, source_hash
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from ai_review.state_plan import _desired_discussion_resolved, plan_state
 from ai_review.summary_render import (
