@@ -490,7 +490,7 @@ def run() -> int:
         raise OpenCodeClientError("opencode client produced neither a result nor a failure")
     batch, used_structured = result
 
-    # Mirror adapter_runner._log_structured_output_usage's two wordings so job
+    # Mirror adapter_output._log_structured_output_usage's two wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the
     # schema transport from the text fallback.
     stage_label = stage or "review"
