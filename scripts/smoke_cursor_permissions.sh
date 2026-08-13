@@ -16,10 +16,12 @@ fi
 # This literal is contract-tested against ai_review.adapter_runner._MODEL_ID_RE.
 # Both validators use this same literal with full-match semantics: the adapter
 # calls Pattern.fullmatch(), and this smoke calls re.fullmatch() below.
-# The permission smoke is an enablement gate, so the discovery placeholder `auto`
-# must fail before any Docker invocation can spend a real key.
+# This smoke produces evidence about one specific model, so `auto` is refused
+# here before any Docker invocation can spend a real key. That is a property of
+# the evidence, not of the product: `auto` is a valid Cursor selector and is
+# accepted by the config parser and the adapter for ordinary runs.
 if [ -z "$cursor_model" ] || [ "$cursor_model" = "auto" ]; then
-  echo "Cursor permission smoke requires an exact Composer model slug before Cursor can be enabled; empty and 'auto' model arguments are invalid" >&2
+  echo "Cursor permission smoke needs an exact model slug: its result is evidence about that one model, and 'auto' lets Cursor choose. This is not a restriction on running Cursor with 'auto'." >&2
   exit 2
 fi
 if ! python3 - "$cursor_model" "$model_id_pattern" <<'PY'
@@ -30,7 +32,7 @@ if re.fullmatch(sys.argv[2], sys.argv[1]) is None:
     raise SystemExit(1)
 PY
 then
-  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact Composer slug before Cursor can be enabled" >&2
+  echo "Cursor permission smoke model argument has unsupported characters; use the adapter model-id grammar and an exact model slug" >&2
   exit 2
 fi
 

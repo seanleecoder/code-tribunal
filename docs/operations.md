@@ -28,8 +28,7 @@ state migration.
    version changes. This should update existing identities, not duplicate them.
 8. Verify state ownership, posting, commands, and the gate before enforcing it.
 9. Leave Cursor off unless you deliberately accept its separate egress path. It
-   is a supported peer seat; enabling it requires `CURSOR_API_KEY` and an exact
-   `AI_REVIEW_CURSOR_MODEL` slug.
+   is a supported peer seat; enabling it requires `CURSOR_API_KEY`.
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
 `needs`, overrides, dashboards, and scripts that refer to the old job names:
 

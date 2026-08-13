@@ -109,7 +109,10 @@ Still open for SPEC-21 Cursor enablement:
 ## Verdict
 
 Supporting pass for real Cursor integration at the two recorded historical
-source/image coordinates. This closes the live execution/artifact-validity
-subclaim but does not close SPEC-21 Cursor enablement, establish the exact
-Composer model id, or prove real-image write/shell denial. Keep Cursor disabled
-for consumers.
+source/image coordinates. Scoped to those coordinates: it establishes live
+execution and artifact validity, and does **not** establish behavior for any
+particular model id or prove real-image write/shell denial.
+
+This is a record of what these runs showed at the time, not a current
+restriction. SPEC-21 has since closed and Cursor is a supported peer seat; see
+the [configuration reference](../configuration.md) for current guidance.

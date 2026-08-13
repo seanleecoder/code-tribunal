@@ -41,7 +41,7 @@ internal container implementation, not a supported Python package or API.
   runs and the SPEC-21 acceptance evidence close its enablement: the seat is a
   supported peer reviewer. It stays **off in the shipped default roster** so that
   second egress path is always an explicit choice; select it by naming it in
-  `AI_REVIEW_REVIEWERS` and supplying `CURSOR_API_KEY` with an exact model slug.
+  `AI_REVIEW_REVIEWERS` and supplying `CURSOR_API_KEY`.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the

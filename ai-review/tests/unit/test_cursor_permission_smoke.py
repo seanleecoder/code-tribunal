@@ -217,11 +217,18 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
             return result
 
     def test_invalid_model_is_rejected_before_docker(self) -> None:
+        """Refused before Docker can spend a real key.
+
+        `auto` is refused here because this smoke produces evidence about one
+        specific model and `auto` lets Cursor choose — not because `auto` is
+        invalid to run with. The config parser and the adapter both accept it, so
+        the message must not read as a product restriction.
+        """
         cases = (
-            ("", "exact Composer model slug"),
+            ("", "exact model slug"),
             ("composer model", "unsupported characters"),
             ("cursor/composer-1\n", "unsupported characters"),
-            ("auto", "exact Composer model slug"),
+            ("auto", "exact model slug"),
         )
         for model, expected_error in cases:
             with self.subTest(model=model):
@@ -229,7 +236,7 @@ exit "${FAKE_DOCKER_HOSTILE_STATUS:-0}"
 
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(expected_error, result.stderr)
-                self.assertIn("before Cursor can be enabled", result.stderr)
+                self.assertNotIn("before Cursor can be enabled", result.stderr)
                 self.assertEqual(result.invocation_count, 0)
 
     def test_model_id_grammar_matches_adapter_contract(self) -> None:

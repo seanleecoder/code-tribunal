@@ -232,7 +232,7 @@ artifacts.
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
-| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. `auto` is discovery-only and is not valid Cursor-enablement evidence. |
+| `AI_REVIEW_CURSOR_MODEL` | `auto` | Cursor model selector; effort is encoded in the model variant. `auto` is a valid Cursor CLI value and is fine in production — it delegates model choice to Cursor. Pin an exact slug when you need model-stable reproducibility, which is also what an evidence campaign proving behavior for one model requires. |
 | `AI_REVIEW_CLAUDE_ENABLED` | YAML `enabled` (`true`) | Exact lowercase `true` or `false`; empty means no override. Rejected alongside `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_CODEX_ENABLED` | YAML `enabled` (`true`) | Same. |
 | `AI_REVIEW_OPENCODE_ENABLED` | YAML `enabled` (`true`) | Same. |

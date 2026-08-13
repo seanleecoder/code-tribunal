@@ -382,7 +382,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
+| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical SPEC-21 checklist, run the required final-image evidence, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -397,12 +397,12 @@ Actual result / Audit / Verdict.
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
+| 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run and permission smoke |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
-evidence; Run 6 is a required Cursor-enablement gate, not a release-gating row.
+evidence; Run 6 is optional and gates nothing.
 The product decision must choose and record the ask-mode/blocking contract; it
 does not make the acceptance row optional.
 
@@ -501,19 +501,18 @@ raw findings, `usable_for_resolution: true`, and the panel lists Cursor as a
 successful reviewer. These checks establish real-route wiring and artifact
 validity only.
 
-The remaining enablement sequence is intentionally separate: identify and pin
-the exact Composer model slug (the recorded runs only say `model: auto`), then
-complete Run 6 below. Keep Cursor disabled until the enablement evidence passes;
-ordinary review success is not permission-denial evidence.
+These runs recorded `model: auto`, so they say nothing about any particular
+model; ordinary review success is also not permission-denial evidence.
 
-### Run 6 — Cursor enablement acceptance (required before enablement)
+### Run 6 — Cursor model-specific evidence (optional)
 
-Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
-for the normative acceptance criteria. Run this only after the reviewer image
-and runtime source proposed for enablement are frozen. It does not block the
-1.0.1 tag while Cursor remains disabled. The historical GitLab/GitHub runs in
-Run 5 cannot be reused as the enablement pass because they used an older reviewer
-image and reported `model: auto`.
+**Not a gate.** SPEC-21 is closed and Cursor is a supported peer seat, so nothing
+below is required before enabling it. This is the procedure for producing evidence
+bound to one *specific* Cursor model and reviewer image — which is why it pins an
+exact slug where ordinary operation may use `auto`. Run it when a deployment needs
+that, or when a release intends to ship Cursor on the default roster and therefore
+wants a gating row of its own. The Run 5 records cannot serve: they used an older
+reviewer image and reported `model: auto`.
 
 1. Freeze `R`, build and attest the final base/reviewer pair, validate
    `cursor-agent.pin`, and record immutable digests/provenance.

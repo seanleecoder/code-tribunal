@@ -90,11 +90,21 @@ versioning.
 - **SPEC-21 is closed: Cursor is a supported peer reviewer seat.** The operator
   guides, `review.yaml`, the operations runbook, and the evidence index no longer
   describe it as experimental, as a "substitute" for another seat, or as blocked
-  on an enablement queue. Nothing about the shipped default changes — Cursor stays
-  off in the default roster because enabling it is a deliberate second egress
-  destination to Cursor's backend, not because acceptance was outstanding. Select
-  it with `AI_REVIEW_REVIEWERS`, supply `CURSOR_API_KEY`, and pin an exact
-  `AI_REVIEW_CURSOR_MODEL` slug; the shipped `auto` remains discovery-only.
+  on an enablement queue, and the completed specification is deleted rather than
+  kept in the open-specification index. Nothing about the shipped default changes
+  — Cursor stays off in the default roster because enabling it is a deliberate
+  second egress destination to Cursor's backend, not because acceptance was
+  outstanding. Select it with `AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`.
+
+- **`AI_REVIEW_CURSOR_MODEL: auto` is documented as what it is: valid.** `auto` is
+  a Cursor CLI model selector that delegates model choice to Cursor, and both the
+  configuration parser and the adapter have always accepted it. Documentation had
+  called it a "discovery-only placeholder" that was "not valid Cursor-enablement
+  evidence" — an evidence-campaign requirement stated as a product restriction.
+  Pin an exact slug when you want model-stable reproducibility. The permission
+  smoke still refuses `auto`, correctly: its output is evidence about one specific
+  model, which is a property of the evidence rather than of the product, and its
+  messages now say so.
   Released records under `release/` and the historical evidence rows keep their
   wording, which describes what was true at those releases.
 

@@ -96,16 +96,6 @@ acceptance records were deleted rather than archived; see
 [documentation history](../history/README.md#completed-specifications-and-pre-10-acceptance-records)
 for why, and `git log` for the files.
 
-## Cursor enablement queue (SPEC-21)
-
-**Closed.** Cursor is a supported peer reviewer seat. It stays off in the shipped
-default roster because enabling it is a deliberate second egress destination, not
-because acceptance is outstanding.
-
-This heading is retained because the operator guides and the operations runbook
-link to it. The rows in the 1.0 matrix below, and the 1.0.2 release evidence
-above, describe what was true at those releases and are unchanged.
-
 ### Known gaps and missing evidence
 
 - **Positive changed-body in-place update — closed 2026-07-25.** Demonstrated live
@@ -122,8 +112,9 @@ above, describe what was true at those releases and are unchanged.
   release campaign has exercised it. The supplemental
   [real-run record](record-cursor-real-runs.md) covers historical coordinates.
   A release that ships Cursor on the default roster would need its own gating row.
-  The literal `auto` model stays discovery-only: pin an exact slug with
-  `AI_REVIEW_CURSOR_MODEL`.
+  Note the distinction: `auto` is a valid Cursor selector for production use, but
+  evidence proving behavior for a *specific* model needs an explicit slug, which is
+  why `smoke_cursor_permissions.sh` requires one.
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted
