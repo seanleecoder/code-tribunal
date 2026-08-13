@@ -64,6 +64,10 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     return tuple(changed)
 
 
+# The release-input contract this tooling accepts. v2 is v1 without the per-file-set
+# `hashes` member; historical snapshots keep v1 and their own validator.
+RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
+
 ALLOWED_RELEASE_PATHS = (
     ".github/workflows/ai-review.yml",
     "ai-review/ci/review.github-actions.yml",

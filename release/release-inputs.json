@@ -11,7 +11,7 @@
   },
   "release_version": "1.0.2",
   "runtime_source": "54dffa130be5c921602f264a2123fda4b1895f13",
-  "schema_version": "code_tribunal.release_inputs.v1",
+  "schema_version": "code_tribunal.release_inputs.v2",
   "status": "active",
   "verification": {
     "ci_run_id": "31369496045",

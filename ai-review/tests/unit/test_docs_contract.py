@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -414,9 +415,29 @@ class DocumentationContractTests(unittest.TestCase):
                 parts = command.split()
                 if parts[:2] == ["python", "-m"]:
                     target = source_root / (parts[2].replace(".", "/") + ".py")
-                else:
-                    target = _REPO_ROOT / parts[0]
+                    self.assertTrue(target.is_file(), f"{command!r} names a missing {target}")
+                    continue
+
+                bare = parts[0] != "python"
+                target = _REPO_ROOT / (parts[0] if bare else parts[1])
                 self.assertTrue(target.is_file(), f"{command!r} names a missing {target}")
+                if not bare:
+                    continue
+                # A bare path is only a command if the shell can actually run it.
+                # Most repository-only checkers are non-executable by design (see
+                # scripts/sync_workflows.py) and must be documented with an explicit
+                # `python` prefix; existence alone let the reference publish
+                # `scripts/pipeline_trust.py …`, which has neither the bit nor a
+                # shebang, as the way to audit a consumer's GitLab composition.
+                self.assertTrue(
+                    os.access(target, os.X_OK),
+                    f"{command!r} runs a bare path that is not executable; "
+                    f"document it as `python {parts[0]} …` or chmod +x",
+                )
+                self.assertTrue(
+                    target.read_bytes().startswith(b"#!"),
+                    f"{command!r} runs a bare path with no shebang",
+                )
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

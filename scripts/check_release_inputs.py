@@ -15,6 +15,7 @@ from release_common import (
     IMAGE_NAME_RE,
     PLACEHOLDER_RE,
     RELEASE_INPUTS,
+    RELEASE_INPUTS_SCHEMA_VERSION,
     ROOT,
     ReleaseValidationError,
     canonical_json_bytes,
@@ -245,6 +246,16 @@ def validate_evidence_records(
 def validate_release_inputs(
     data: dict[str, Any], root: Path = ROOT
 ) -> list[tuple[str, str]]:
+    # Version first: the key set below is compared exactly, so a v1 artifact would
+    # otherwise be reported as having a stray `hashes` key rather than as speaking
+    # a retired dialect. v2 is v1 without that member — one identifier covering
+    # both shapes is what leaves schema_version unable to say which parser applies.
+    if data.get("schema_version") == "code_tribunal.release_inputs.v1":
+        raise ReleaseValidationError(
+            "code_tribunal.release_inputs.v1 is retired: drop the `hashes` member "
+            f"and set schema_version to {RELEASE_INPUTS_SCHEMA_VERSION}. Historical "
+            "snapshots keep v1 and are validated from their own tag."
+        )
     _require_keys(
         data,
         {
@@ -257,7 +268,7 @@ def validate_release_inputs(
         },
         "release inputs",
     )
-    if data["schema_version"] != "code_tribunal.release_inputs.v1":
+    if data["schema_version"] != RELEASE_INPUTS_SCHEMA_VERSION:
         raise ReleaseValidationError("unsupported release-input schema_version")
     validate_release_version(data["release_version"])
     if data["status"] not in {"draft", "active"}:
