@@ -12,14 +12,14 @@ import ai_review.post as post_module
 import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.gitlab_client import (
-    MergeRequestVersion,
-)
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
 )
 from ai_review.platform import ReviewPlatformError
+from ai_review.platform.gitlab import (
+    MergeRequestVersion,
+)
 from ai_review.posting import (
     _classify_post_groups,
     _initial_post_result,
@@ -585,7 +585,7 @@ class PostTests(PostCase):
 
     def test_post_run_to_run_upsert_reuses_existing_discussion_with_reduced_panel(self) -> None:
         class StatefulClient(FakePostClient):
-            def create_discussion(  # type: ignore[no-untyped-def]
+            def create_inline_comment(  # type: ignore[no-untyped-def]
                 self, project_id, mr_iid, body, position
             ):
                 self.created += 1
@@ -767,10 +767,10 @@ class PostTests(PostCase):
         validate_instance(result, "post_result.schema.json")
 
     def test_post_create_discussion_none_response_is_skipped(self) -> None:
-        # Bug #7: create_discussion returning None (204/empty) must not crash the post
+        # Bug #7: create_inline_comment returning None (204/empty) must not crash the post
         # stage or leave an inconsistent count; the group is skipped with a warning.
         class NoneCreateClient(FakePostClient):
-            def create_discussion(self, project_id, mr_iid, body, position):  # type: ignore[no-untyped-def]
+            def create_inline_comment(self, project_id, mr_iid, body, position):  # type: ignore[no-untyped-def]
                 return None
 
         client = NoneCreateClient("head")
@@ -789,7 +789,7 @@ class PostTests(PostCase):
         # SPEC-30: update_comment failures must not abort before post_result.json;
         # degrade like create — warning + summary fallback + partial_failed.
         class UpdateFailClient(FakePostClient):
-            def update_discussion_note(
+            def update_comment(
                 self,
                 project_id: str,
                 mr_iid: str,
@@ -925,7 +925,7 @@ class PostTests(PostCase):
 
     def test_post_state_overflow_fails_closed_before_mutation(self) -> None:
         client = FakePostClient("head")
-        client.list_mr_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
+        client.list_state_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
         result = post_consensus(
             client,  # type: ignore[arg-type]
             {
@@ -948,22 +948,7 @@ class PostTests(PostCase):
 
     def test_post_writes_persisted_state_note(self) -> None:
         class StateClient(FakePostClient):
-            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
-                return list(self.mr_notes)
-
-            def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
-                return self.list_mr_notes(project_id, change_id)
-
             def resolve_thread(
-                self,
-                project_id: str,
-                change_id: str,
-                thread_id: str,
-                resolved: bool = True,
-            ) -> dict[str, Any]:
-                return self.resolve_discussion(project_id, change_id, thread_id, resolved)
-
-            def resolve_discussion(
                 self,
                 project_id: str,
                 mr_iid: str,

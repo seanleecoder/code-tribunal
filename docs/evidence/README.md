@@ -252,7 +252,7 @@ source ai-review/src/ai_review/critique.py contains int(group["critique_noise_co
 source ai-review/src/ai_review/critique.py contains if critic not in set(group["contributing_reviewers"])
 source ai-review/src/ai_review/mock_reviewer.py contains if line.kind != "added":
 source ai-review/src/ai_review/mock_reviewer.py contains "side": "new",
-source ai-review/src/ai_review/gitlab_client.py contains chunks.append(f"--- a/{old_path}")
+source ai-review/src/ai_review/platform/gitlab.py contains chunks.append(f"--- a/{old_path}")
 source ai-review/src/ai_review/summary_render.py contains anchor.get("new_path") or anchor.get("old_path")
 -->
 

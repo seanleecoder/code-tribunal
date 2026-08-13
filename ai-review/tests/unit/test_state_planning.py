@@ -7,14 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from ai_review.commands import collect_human_commands
-from ai_review.gitlab_client import (
-    MergeRequestVersion,
-)
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     index_ai_review_discussions,
 )
 from ai_review.platform.github import GitHubReviewPlatform
+from ai_review.platform.gitlab import (
+    MergeRequestVersion,
+)
 from ai_review.posting import (
     _initial_post_result,
     finalize_state,
@@ -44,7 +44,7 @@ class StatePlanningTests(PostCase):
             def current_user(self) -> dict[str, Any]:
                 raise RuntimeError("user lookup failed")
 
-            def list_mr_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
+            def list_state_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
                 return []
 
         with self.assertRaisesRegex(RuntimeError, "current_user"):

@@ -24,7 +24,6 @@ PURE_MODULES = (
 
 FORBIDDEN_IMPORTS = (
     "ai_review.platform",
-    "gitlab_client",
     "opencode_client",
     "requests",
 )
@@ -92,9 +91,10 @@ class ImportBoundaryTests(unittest.TestCase):
             # test_platform_runtime.test_cli_modules_do_not_select_concrete_platforms
             # for the converse rule that keeps CLI modules out of this set.
             Path("platform/runtime.py"),
-            Path("gitlab_client.py"),
         }
-        needles = ("gitlab_client", "GitLabReviewPlatform", "GitLabApiError")
+        # "gitlab_client" is gone from this list along with the module: naming a
+        # module that no longer exists would make the rule pass without checking.
+        needles = ("GitLabReviewPlatform", "GitLabApiError", "GitLabReviewPlatformError")
         offenders: list[str] = []
         for path in src.rglob("*.py"):
             rel = path.relative_to(src)
