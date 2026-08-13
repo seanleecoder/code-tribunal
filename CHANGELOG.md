@@ -42,15 +42,30 @@ versioning.
   `…_SEMANTIC_THRESHOLD`. Setting any of them raises a configuration error naming
   the replacement. GitLab project and group variables outlive the template
   revisions that read them, so a stale override has to fail loudly rather than be
-  silently ignored after a repin. The rejections may be dropped after the 1.1
-  migration window.
+  silently ignored after a repin. The rejections are a migration aid and may be
+  dropped in the next major release.
 
-- The release-inputs artifact no longer declares per-file-set `hashes`. The six
-  aggregate SHA-256 groups were compared against hashes recomputed from the same
-  checkout being validated, so they could only report a stale field, never a
-  substitution — `runtime_source` already commits to every byte of the tree.
+- **Breaking: release inputs are now `code_tribunal.release_inputs.v2`.** v2 is
+  v1 without the per-file-set `hashes` member. The six aggregate SHA-256 groups
+  were compared against hashes recomputed from the same checkout being validated,
+  so they could only report a stale field, never a substitution —
+  `runtime_source` already commits to every byte of the tree.
+
+  ### Migrating a `code_tribunal.release_inputs.v1` document
+
+  | v1 | v2 |
+  |---|---|
+  | `hashes` | **delete** |
+  | `schema_version: code_tribunal.release_inputs.v1` | `code_tribunal.release_inputs.v2` |
+
+  Current tooling rejects v1 outright, naming this migration. The version is
+  checked before the exact key set, so a v1 artifact is told it speaks a retired
+  dialect rather than reported as carrying a stray key. Historical snapshots under
+  `release/history/` keep v1 and stay byte-identical: validate one from its own
+  release tag, with the validator that shipped beside it.
+
   Evidence-record freshness, waiver registration, and image-digest binding are
-  unchanged. Historical snapshots under `release/history/` keep their `hashes`.
+  unchanged.
 
 ### Changed
 
@@ -61,12 +76,27 @@ versioning.
   shipped configuration states the value explicitly and is unaffected.
 
 - Installed-workflow parity (`.github/workflows/ai-review.yml` against
-  `ai-review/ci/review.github-actions.yml`) is gated once, by
-  `make workflow-parity`, which is wired into `make quality` and can also repair
-  the drift with `make sync-workflows`. The same byte comparison previously ran
-  in `check_supply_chain_pins.py`, `check_release_inputs.py`, and
-  `test_ci_template.py`; none could repair what it reported, and the
-  supply-chain copy ran inside the base image, where `.github/` does not exist.
+  `ai-review/ci/review.github-actions.yml`) has **one implementation** in
+  `release_common.sync_workflows`, with two callers. `make workflow-parity` is the
+  repository gate and, via `make sync-workflows`, the repair command; the
+  standalone release-manifest validator calls the same implementation
+  independently, because it may run from a tagged worktree where `make quality`
+  never did. Four separate copies of the byte comparison previously lived in
+  `check_supply_chain_pins.py`, `check_release_inputs.py`, `test_ci_template.py`
+  and the generator; none could repair what it reported, and the supply-chain copy
+  ran inside the base image, where `.github/` does not exist — it guarded a file
+  it could not see.
+
+- **SPEC-21 is closed: Cursor is a supported peer reviewer seat.** The operator
+  guides, `review.yaml`, the operations runbook, and the evidence index no longer
+  describe it as experimental, as a "substitute" for another seat, or as blocked
+  on an enablement queue. Nothing about the shipped default changes — Cursor stays
+  off in the default roster because enabling it is a deliberate second egress
+  destination to Cursor's backend, not because acceptance was outstanding. Select
+  it with `AI_REVIEW_REVIEWERS`, supply `CURSOR_API_KEY`, and pin an exact
+  `AI_REVIEW_CURSOR_MODEL` slug; the shipped `auto` remains discovery-only.
+  Released records under `release/` and the historical evidence rows keep their
+  wording, which describes what was true at those releases.
 
 - `pipeline_trust.py` moved from the runtime package to `scripts/`, where
   `SECURITY_MODEL.md` already pointed readers. Nothing in the pipeline imported

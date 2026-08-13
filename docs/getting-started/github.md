@@ -30,7 +30,7 @@ In **Settings → Secrets and variables → Actions**, create:
 | Kind | Name | Required | Purpose |
 |---|---|---:|---|
 | Secret | `OPENROUTER_API_KEY` | yes | Claude, Codex, and OpenCode model calls |
-| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Experimental Cursor substitute; do not enable until SPEC-21 passes |
+| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Peer reviewer seat; required only when Cursor is on the roster |
 | Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | conditional | Fine-grained token for resolve/unresolve; configure it for organization-repository command authorization or whenever the built-in token is rejected |
 | Variable | `AI_REVIEW_MANUAL` | optional | Exact `true` disables automatic review jobs; use manual dispatch |
 
@@ -54,13 +54,14 @@ advisory rollout. The shipped default is `false` so a transient state-load error
 starts from empty recoverable state (conservative repost risk) rather than
 failing prepare.
 
-### Cursor (experimental)
+### Cursor
 
-Cursor is disabled by default. Enabling it sends review prompts, diffs, and any
-snapshot content the Cursor CLI reads to Cursor's backend as a second egress
-destination. Leave it disabled unless you deliberately accept that path; it
-cannot be enabled until the required [SPEC-21 enablement
-queue](../evidence/README.md#cursor-enablement-queue-spec-21) passes.
+Cursor is a supported peer reviewer seat, off in the shipped default roster.
+Enabling it sends review prompts, diffs, and any snapshot content the Cursor CLI
+reads to Cursor's backend as a second egress destination, so leave it off unless
+you deliberately accept that path. Select it by naming it in
+`AI_REVIEW_REVIEWERS`, supply `CURSOR_API_KEY`, and set `AI_REVIEW_CURSOR_MODEL`
+to an exact model slug — the shipped `auto` placeholder is for discovery only.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them

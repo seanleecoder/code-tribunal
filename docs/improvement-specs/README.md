@@ -16,7 +16,7 @@ completed spec is a description of work already visible in the code, tests, and
 | Spec | Status | Summary |
 |---|---|---|
 | [SPEC-20](spec-20-reviewer-usage-accounting.md) | Proposed; stale baseline | Reviewer token/cost accounting. Predates the SPEC-50 session transport and current CLI pins; rebase before executing. |
-| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Implemented (experimental) | Cursor is a peer seat selected by `AI_REVIEW_REVIEWERS`. Its remaining enablement decisions are the [acceptance checklist](spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist). |
+| [SPEC-21](spec-21-cursor-cli-reviewer.md) | Complete | Cursor is a supported peer seat selected by `AI_REVIEW_REVIEWERS`, off in the shipped default roster because enabling it is a second egress destination. |
 | [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed; stale baseline | Project rules and learning. Predates SPEC-47's trusted policy channel and the reviewer roster; rebase before executing. |
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel. Observed live; still unfixed. |
 | [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |

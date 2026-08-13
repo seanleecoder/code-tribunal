@@ -27,10 +27,9 @@ state migration.
 7. Expect a one-time update of existing bot-authored bodies when the render-body
    version changes. This should update existing identities, not duplicate them.
 8. Verify state ownership, posting, commands, and the gate before enforcing it.
-9. Leave Cursor disabled unless you deliberately accept its separate egress path;
-   it is experimental and cannot be enabled until the
-   [SPEC-21 enablement queue](evidence/README.md#cursor-enablement-queue-spec-21)
-   passes.
+9. Leave Cursor off unless you deliberately accept its separate egress path. It
+   is a supported peer seat; enabling it requires `CURSOR_API_KEY` and an exact
+   `AI_REVIEW_CURSOR_MODEL` slug.
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
 `needs`, overrides, dashboards, and scripts that refer to the old job names:
 

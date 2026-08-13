@@ -57,9 +57,9 @@ reviewers:
   # because selecting it has a consequence the other three do not: Cursor CLI
   # cannot route through OpenRouter/BYOK/custom-base-URL, so enabling it sends
   # review prompts, diffs, and any repo snapshot content it reads to Cursor's
-  # backend as a deliberate second egress destination. SPEC-21 acceptance is
-  # required before enabling it, but it does not block shipping 1.0.1. Select it
-  # by naming it in AI_REVIEW_REVIEWERS (e.g. claude,codex,cursor) and provide a
+  # backend as a deliberate second egress destination. The seat is supported;
+  # off by default is about that egress path, not about maturity. Select it by
+  # naming it in AI_REVIEW_REVIEWERS (e.g. claude,codex,cursor) and provide a
   # CURSOR_API_KEY secret. Do not use OPENROUTER_API_KEY for this reviewer.
   cursor:
     enabled: false # Peer seat, off by default (second egress destination). Select via AI_REVIEW_REVIEWERS or AI_REVIEW_CURSOR_ENABLED

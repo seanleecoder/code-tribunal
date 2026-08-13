@@ -736,6 +736,28 @@ class ReleaseToolTests(unittest.TestCase):
             ):
                 validate_manifest(manifest, release_inputs, root)
 
+    def test_release_inputs_v1_is_rejected_with_migration_guidance(self) -> None:
+        """The version check must win over the exact-key comparison.
+
+        A v1 artifact carries `hashes`, which v2's key set does not allow. Checking
+        keys first would report a stray member and say nothing about the contract
+        the document actually speaks, so the ordering in validate_release_inputs is
+        deliberate — and this asserts it rather than leaving it to be undone by a
+        later tidy-up.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._draft(root)
+            data["schema_version"] = "code_tribunal.release_inputs.v1"
+            data["hashes"] = {"configuration": {"files": [], "sha256": "0" * 64}}
+
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                r"release_inputs\.v1 is retired.*`hashes`.*release_inputs\.v2",
+            ):
+                validate_release_inputs(data, root)
+
     def test_manifest_validator_rejects_an_installed_workflow_only_release(self) -> None:
         """A release may not ship an installed workflow that differs from canonical.
 

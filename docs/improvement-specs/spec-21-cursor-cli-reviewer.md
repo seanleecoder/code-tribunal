@@ -1,7 +1,9 @@
 # SPEC-21 — Cursor CLI as an opt-in reviewer seat
 
-> **Status: implemented and shipping disabled; SPEC-21 acceptance is required
-> before Cursor can be enabled, not before v1.0.1 ships.**
+> **Status: complete. Cursor is a supported peer reviewer seat.**
+> It remains off in the shipped default roster because enabling it is a second
+> egress destination, not because acceptance is outstanding. The requirement
+> sections below are retained as the record of what closure required.
 > The implementation and unit-test sections below have landed — see
 > `ai-review/adapters/cursor.sh`, the `cursor` block in
 > [`review.yaml`](../../ai-review/config/review.yaml), and

@@ -110,8 +110,9 @@ STATE_BACKEND_BY_POSTING_MODE = {
 # keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
 # AI_REVIEW_CURSOR_EFFORT rejected in validate_config.
 #
-# Removable after the 1.1 migration window; this is a migration aid, not a
-# permanent contract.
+# Removable in the next major release; this is a migration aid, not a permanent
+# contract. Naming a minor version would have been incoherent — the change that
+# retired these is itself breaking, so the next release cannot be a minor one.
 RETIRED_ENV_OVERRIDES = {
     "AI_REVIEW_STATE_BACKEND": (
         "the state backend follows posting.mode; set AI_REVIEW_POSTING_MODE "
