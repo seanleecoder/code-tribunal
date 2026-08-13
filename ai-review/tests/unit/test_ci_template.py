@@ -1097,10 +1097,18 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("--critiques-dir out/critiques", text)
 
     def test_codex_critique_uses_critique_schema(self) -> None:
-        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
+        """The stage selects the schema, and codex passes what the stage selected.
 
-        self.assertIn("raw_finding_batch.schema.json", text)
-        self.assertIn("critique_batch.schema.json", text)
+        Selection moved into the shared adapter scaffolding when the four seats
+        stopped each carrying their own copy, so the pairing is asserted across the
+        two files rather than within one.
+        """
+        common = (_CODEX_ADAPTER.parent / "common.sh").read_text(encoding="utf-8")
+        self.assertIn("raw_finding_batch.schema.json", common)
+        self.assertIn("critique_batch.schema.json", common)
+
+        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
+        self.assertIn("resolve_output_schema", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
 
