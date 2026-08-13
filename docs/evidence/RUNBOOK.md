@@ -395,7 +395,7 @@ Actual result / Audit / Verdict.
 | 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
 | 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
 

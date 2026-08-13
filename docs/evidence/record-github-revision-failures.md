@@ -36,7 +36,7 @@ Release-evidence-waived: github_platform.py and input_bundle.py carry no revisio
 Covers evidence-matrix row **GitHub revision failures**: revision race at
 prepare boundaries and oversized raw-diff failure. Procedure:
 [evidence README, "GitHub failure procedure"](README.md); spec:
-[SPEC-34](../history/specs/spec-34-github-revision-bound-input.md).
+SPEC-34.
 
 ## Identity
 

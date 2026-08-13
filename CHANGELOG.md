@@ -183,7 +183,7 @@ versioning.
   `format: {"type":"json_schema", …}` and emits the reviewer batch directly, so
   OpenCode no longer depends on the model volunteering a schema-conforming
   payload. See
-  [SPEC-50](docs/history/specs/spec-50-opencode-structured-reviewer-output.md).
+  SPEC-50.
 
 - Reviewer image pins are refreshed to OpenCode `1.18.12`, Claude Code
   `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its
@@ -202,7 +202,7 @@ versioning.
   build. The preflight is a step in the image build job with no event condition, so it
   gates merge on pull requests as well as publication on main. `read`, `glob`, and
   `grep` remain allowed inside the root. See
-  [SPEC-51](docs/history/specs/spec-51-opencode-search-tool-reach.md).
+  SPEC-51.
 
 - The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`, and a
   review-time ripgrep download now fails the review instead of producing postable

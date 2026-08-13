@@ -2073,7 +2073,7 @@ The executable templates are the only source of truth for CI syntax:
 - [`ai-review/ci/review-child.gitlab-ci.yml`](../../ai-review/ci/review-child.gitlab-ci.yml)
   supplies the child pipeline's single stage.
 - The [GitLab integration guide](../getting-started/gitlab.md)
-  and [trusted-CI runbook](../history/specs/spec-06-trusted-ci-runbook.md)
+  and trusted-CI runbook
   contain consumer examples.
 
 This specification intentionally does not embed a copy of the executable YAML.

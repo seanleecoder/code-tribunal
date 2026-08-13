@@ -35,7 +35,7 @@ currently discarded:
 > **Transport refresh (main at `2b8b2ce`).** The problem statement stands — nothing
 > records token or cost data — but the OpenCode extraction plan above is written
 > against a transport that no longer exists.
-> [SPEC-50](spec-50-opencode-structured-reviewer-output.md) replaced `opencode --pure
+> SPEC-50 replaced `opencode --pure
 > run --format json` with a loopback `serve` session client
 > (`ai_review.opencode_client`), so there is no `step_finish` NDJSON stream to walk;
 > usage now has to come from the assistant message the session API returns, alongside

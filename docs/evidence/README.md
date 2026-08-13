@@ -86,12 +86,15 @@ classified by whether a live run proves something the regression suite cannot:
 | Suite | Status | Evidence |
 |---|---|---|
 | Cursor reviewer real-run adapter and critique | **Observed; SPEC-21 partial; historical supporting evidence only** | [Supplemental record](record-cursor-real-runs.md): private GitLab pipeline `185695` and public GitHub workflow `30080420563` both produced successful, resolution-eligible Cursor artifacts and full panels. Both recorded `model: auto`; neither exercised the hostile permission-denial prompt or the 1.0.1 image pair. |
+| OpenCode structured-output rollout canary (SPEC-50) | **Observed; not bound to a released image pair** | [Supplemental record](record-opencode-structured-output-canary.md): GitLab MR `!14`, child pipeline `2755154596`, job `15864567373` on `09f4e65` images showed `status: success`, `raw_finding_count: 1`, and the `used structured_output` log line from a real provider. Two-seat panel, critique off. The status artifact has no structured-output field, so the job log is the load-bearing evidence. |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
 check or all current-image lifecycle paths. Previous GitLab runs proved a real
-consumer flow but not the hostile-MR deployment boundary. See
-[legacy acceptance](../history/README.md#legacy-milestone-acceptance).
+consumer flow but not the hostile-MR deployment boundary. Those pre-1.0
+acceptance records were deleted rather than archived; see
+[documentation history](../history/README.md#completed-specifications-and-pre-10-acceptance-records)
+for why, and `git log` for the files.
 
 ## Cursor enablement queue (SPEC-21)
 
@@ -115,6 +118,20 @@ the disabled default.
   `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
+- **The OpenCode structured-output canary has no release-gating record.** The
+  transport was observed working against a real provider — `status: success`,
+  `raw_finding_count: 1`, and the `used structured_output` log line together in the
+  [supplemental record](record-opencode-structured-output-canary.md) — but on `09f4e65`
+  images, so it carries no `Release-*` binding and is not cited by release inputs. The
+  1.0.2 release-gating panel record cannot stand in for it: that run returned a valid
+  but **empty** OpenCode batch, so it fails `raw_finding_count > 0` and makes no
+  transport claim. Closing this at gating tier needs one real OpenCode review on a
+  released pin with a non-empty batch. It is cheap on GitHub, whose consumer workflow
+  already pins the active release runtime, so no repin is required — but budget more
+  than one attempt, because the seat has returned an empty batch before, and give the
+  fixture an obvious defect. The critique-stage transport and the reviewer search tools
+  remain regression-covered only; the search tools are closed provider-free by
+  `scripts/smoke_opencode_structured_output.py`.
 - **Cursor reviewer is not yet accepted for enablement.** It is an
   experimental opt-in peer seat — selected like any other through
   `AI_REVIEW_REVIEWERS`, not a substitute for one particular reviewer — with a
@@ -126,13 +143,130 @@ the disabled default.
   required. Do not add Cursor to release inputs, enable it, or advertise it as
   acceptance-complete until those required checks pass. The literal `auto`
   model is discovery-only and is never valid enablement evidence.
-- **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
-  1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
-  defect, so no live run has ever exercised a finding on a newly added or deleted
-  file. Shipping the fix does not by itself close this — a Chain B run with an
-  **adding** fixture is required, asserting
-  `accepted_finding_count == raw_finding_count`. It is the headline run of the 1.0.1
-  campaign above. See the carried coverage-gap table in the [runbook](RUNBOOK.md).
+- **The added-file path is closed — do not re-run it as a gap.** The 1.0.0 matrix used
+  modify-only fixtures to work around the GitHub `/dev/null` anchor defect, and the
+  1.0.1 campaign closed the added-file half as its headline run: GitHub Chain B, PR #10,
+  workflow run `30541110970` at runtime source `5817e99`, with
+  `accepted_finding_count == raw_finding_count` on all three seats and inline comment
+  `3682518404` posted **on the added file itself**
+  ([record](record-github-current-image.md)). Re-confirmed at `09f4e65` by the SPEC-39
+  Chain B run, which also added a file, reported `accepted == raw` on both seats, and
+  posted comment `3769428333` on the added `src/report.py:6` (`side: RIGHT`)
+  (closure evidence) —
+  that one is a supplemental re-confirmation, not gating evidence. Note neither record is
+  cited by the active 1.0.2 inputs, so this path is proven historically rather than
+  re-proven per release.
+- **The deleted-file path still has no live evidence, and it splits in two.** The 1.0.1
+  added-file record states its own limit — "It does not establish deleted-file
+  behavior" — and deletion is the other shape that triggered the original `/dev/null`
+  anchor defect. The two halves differ in what can actually be driven:
+  - **A diff that *contains* a deletion — drivable with the mock today, zero tokens, and
+    only on GitHub.** This is the shape the 1.0.0 defect really broke: the raise happened
+    while *scanning* the diff, before the anchor's own paths were compared, so a deleted
+    file anywhere in the diff poisoned findings on **other** files. Probe: a Chain B
+    fixture on **GitHub** that deletes one file while adding or modifying another carrying
+    the `records[0]` marker. Assert `accepted_finding_count == raw_finding_count` **and**
+    that the discussion posted on the marker file at the marker line. **A GitLab run does
+    not close this and must not be accepted as closure:** GitLab's diff text is
+    synthesized from API metadata as `--- a/<old>` / `+++ b/<new>` with each side falling
+    back to the other, so it never emits the `/dev/null` sentinel and cannot reach the
+    defect; only GitHub fetches a real git diff carrying it.
+  - **A finding anchored *to* the deleted path — not drivable with the mock.** The
+    deterministic mock cannot express it: both anchor selectors in
+    `ai-review/src/ai_review/mock_reviewer.py` skip any diff line whose `kind` is not
+    `added`, and `_anchor` hard-codes `side: "new"` with `old_line: None`, so a
+    deleting-only fixture returns an empty batch — a failure that mimics the very defect
+    it was meant to test. The product path itself is supported: `side` accepts `old`, and
+    both platforms map it (GitLab `position.old_path`/`old_line`, GitHub `LEFT`). Closing
+    it needs either a **real two-seat run** over a diff that deletes code — still
+    non-deterministic, because the model must choose to anchor in the removed region — or
+    a deletion-capable mock scenario, the deterministic option, not currently scheduled.
+    It must be **two** seats, not one: a one-name roster is rejected by
+    `_MINIMUM_PANEL_REVIEWERS`, and a single enabled seat fails threshold clamping while
+    `votes_required` is `2`, so one seat is unreachable both ways without a custom image
+    carrying a one-reviewer `review.yaml` (project-supplied policy is SPEC-47, still
+    proposed).
+
+    **Two seats are the floor, but they are not automatically sufficient — an inline
+    object appears only on specific decision paths, and which ones exist depends on
+    whether critique runs.** A `fyi` decision is the failure mode to watch: with the
+    shipped `fyi_mode: summary_comment` it yields a summary line and **no platform
+    position at all**, and the summary's own location text prefers `new_path`/`new_line`,
+    so it cannot even distinguish sides. A `fyi` outcome cannot close this gap.
+
+    - **Critique off** (what this probe prescribes, to keep it cheap) — `decision_for_group`
+      surfaces on exactly two paths: `vote_count >= votes_required` (2 seats emitting a
+      matching finding), or `vote_count == 1` with `final_severity: blocker` in a
+      `severity_policy.single_reviewer_blocker` category (`[security, correctness]`).
+      Anything else is `fyi`.
+    - **Critique on** (the shipped default: `critique.enabled: true`) — a **third** path
+      opens. `_recompute_group_decision` escalates a `fyi` group to `surface` when
+      `critique_support_count > 0` and `critique.allow_advisory_escalation` is true, which
+      is the shipped default; the escalation stays non-blocking. For this probe that is
+      the *most achievable* route, because eligible critics exclude the group's own
+      contributing reviewers — on a two-seat panel the peer seat that did **not** find the
+      deletion-anchored issue is exactly the seat that can support it into an inline post.
+      Critique on also adds a way to **lose** the finding: a group is dropped outright when
+      `critique_noise_count` exceeds half the eligible critics. Choose deliberately —
+      critique on costs critique tokens and risks the drop, critique off needs either two
+      independent matching findings or a qualifying blocker.
+
+    So the probe is non-deterministic on two axes: the model must anchor in the removed
+    region **and** the group must land on a surfacing path. Before treating a run as
+    proof, read the consensus artifact and record which path it took — `decision`,
+    `vote_count` and `contributing_reviewers`, `final_severity`, and
+    `critique_support_count` (plus `critique_noise_count` if the group was dropped).
+    Without `critique_support_count` an escalated advisory is indistinguishable from a
+    quorum surface.
+
+    For the record, the `09f4e65` runs ran with **critique disabled** and so exercised
+    only the first two paths — which is why they cannot be cited for the third: GitHub took
+    the single-reviewer-blocker path (`vote_count: 1`,
+    `contributing_reviewers: ['claude']`, `final_severity: blocker`,
+    `critique_support_count: 0`) and GitLab took the quorum path (`vote_count: 2`,
+    `['claude', 'opencode']`, `final_severity: major`, `critique_support_count: 0`).
+    Neither shows a non-blocker surfacing without quorum.
+
+  For either half, **counts alone never establish placement**: `accepted == raw` plus
+  "some inline discussion" is equally satisfied by a comment on the wrong file or on the
+  new side — and a `fyi` decision produces no inline object at all. Assert the posted
+  object's own coordinates — for a deleted-path anchor, GitLab `position.old_path` equal
+  to the deleted path with `position.old_line` set to the pre-image line and
+  `position.new_line` null, or GitHub `side: "LEFT"` with `line` as the pre-image line —
+  and record the decision inputs that produced it: `decision`, `vote_count`,
+  `contributing_reviewers`, `final_severity`, and `critique_support_count`. Those five
+  distinguish a quorum surface from a single-reviewer-blocker surface from a
+  critique-escalated advisory; fewer than five leaves the route ambiguous. See the carried
+  coverage-gap table in the [runbook](RUNBOOK.md).
+
+<!-- verified-claims:
+config panel.quorum.votes_required == 2
+config posting.fyi_mode == summary_comment
+config severity_policy.single_reviewer_blocker.categories == [security, correctness]
+config critique.enabled == true
+config critique.allow_advisory_escalation == true
+const ai_review.config._MINIMUM_PANEL_REVIEWERS == 2
+source ai-review/src/ai_review/consensus.py contains if len(reviewers) >= votes_required:
+source ai-review/src/ai_review/critique.py contains int(group["critique_support_count"]) > 0
+source ai-review/src/ai_review/critique.py contains int(group["critique_noise_count"]) > len(eligible_critics) / 2
+source ai-review/src/ai_review/critique.py contains if critic not in set(group["contributing_reviewers"])
+source ai-review/src/ai_review/mock_reviewer.py contains if line.kind != "added":
+source ai-review/src/ai_review/mock_reviewer.py contains "side": "new",
+source ai-review/src/ai_review/gitlab_client.py contains chunks.append(f"--- a/{old_path}")
+source ai-review/src/ai_review/summary_render.py contains anchor.get("new_path") or anchor.get("old_path")
+-->
+
+> **The premises above are machine-checked.** The paragraphs in this section assert
+> specific runtime behavior — panel floors, decision paths, mock capabilities, per-platform
+> diff shapes — and every one of those assertions was, at some point, written from
+> narrative rather than from the code. The `verified-claims` comment beside this entry
+> declares those premises, and `scripts/check_docs.py` proves each against
+> `ai-review/config/review.yaml`, module constants, and source text on every
+> `make docs-check`. If you change a threshold, a decision branch, or the mock's anchor
+> selection, this section fails until the prose and the claim are both updated. Add a claim
+> whenever you write a new behavioral assertion here; the checker cannot protect a premise
+> nobody declared, and it cannot tell you an assertion is too weak to prove what you
+> claim.
 - **`render-body.v3` has no live rendering or migration evidence.** The format
   changed after `v1.0.0`, so no live run has confirmed that prose renders as wrapping
   code spans on either platform without autolink/mention/issue-reference expansion,
