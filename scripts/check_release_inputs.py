@@ -12,14 +12,12 @@ from typing import Any
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
-    HASH_GROUPS,
     IMAGE_NAME_RE,
     PLACEHOLDER_RE,
     RELEASE_INPUTS,
     ROOT,
     ReleaseValidationError,
     canonical_json_bytes,
-    computed_hashes,
     image_ref,
     load_json,
     validate_release_version,
@@ -255,7 +253,6 @@ def validate_release_inputs(
             "status",
             "runtime_source",
             "images",
-            "hashes",
             "verification",
         },
         "release inputs",
@@ -296,12 +293,14 @@ def validate_release_inputs(
                     f"active release inputs require complete images.{role}"
                 )
 
-    expected_hashes = computed_hashes(root)
-    if data["hashes"] != expected_hashes:
-        raise ReleaseValidationError("checked file-set hashes are stale; run --write-hashes")
-    if set(data["hashes"]) != set(HASH_GROUPS):
-        raise ReleaseValidationError("release input hash groups do not match the checked registry")
-
+    # There is deliberately no per-file-set hash field. Six aggregate SHA-256s over
+    # hand-listed file groups used to live here, compared against hashes recomputed
+    # from the same checkout being validated — so the comparison could only ever
+    # report "someone edited one of these files without re-running --write-hashes",
+    # never a substitution. `runtime_source` is already a cryptographic commitment
+    # to every byte of the tree, and validate_release_coordinates proves the release
+    # commit changed only ALLOWED_RELEASE_PATHS relative to it. The hashes added a
+    # standing maintenance obligation on top of a strictly stronger binding.
     verification = data["verification"]
     if not isinstance(verification, dict):
         raise ReleaseValidationError("verification must be an object")
@@ -368,13 +367,9 @@ def validate_release_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?", type=Path, default=RELEASE_INPUTS)
-    parser.add_argument("--write-hashes", action="store_true")
     args = parser.parse_args()
     try:
         data = load_json(args.path)
-        if args.write_hashes:
-            data["hashes"] = computed_hashes(ROOT)
-            args.path.write_bytes(canonical_json_bytes(data))
         waivers = validate_release_inputs(data)
     except ReleaseValidationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

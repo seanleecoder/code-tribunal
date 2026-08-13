@@ -9,6 +9,8 @@ publication run IDs, cited records, and registered waivers.
 The tagged [`release/1.0.0.md`](../1.0.0.md) describes the release-time state
 for `v1.0.0`; it is not a statement about the current branch. Current release
 tooling reads `release/release-inputs.json`; it must not use a snapshot here to
-reinterpret an older release or validate it against hashes from a newer branch.
+reinterpret an older release. The snapshots below retain the `hashes` object that
+`code_tribunal.release_inputs.v1` carried at the time; current inputs no longer
+declare one, and the validator no longer reads it.
 To validate a historical manifest, use a worktree at that release's tag as described in the [release
 process](../../docs/development/release-process.md#validating-a-historical-manifest).

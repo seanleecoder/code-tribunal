@@ -36,8 +36,7 @@ was used for release evidence.
 
 1. Runtime source, publication, public resolution, revision labels, and
    attestations: complete.
-2. Canonical GitHub and GitLab consumers repinned together; release hashes
-   refreshed: complete.
+2. Canonical GitHub and GitLab consumers repinned together: complete.
 3. Real default-model panel with fail-closed required gate: complete.
 4. Waived rows stamped and registered with identical reasons: complete.
 5. Downloaded live artifacts scanned with pattern/entropy detectors: complete;

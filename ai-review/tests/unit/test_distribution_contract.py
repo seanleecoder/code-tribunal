@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
-import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -144,56 +142,11 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertIn("executed=$((ran - skipped))", workflow)
         self.assertIn('if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]', workflow)
 
-    def test_fixture_enumeration_excludes_untracked_and_ignored_files(self) -> None:
-        """Exercise the enumerator against a real tree containing junk.
-
-        Asserting that the enumerated list has no `__pycache__` or dot-files is
-        tautological while the implementation is `git ls-files`, which cannot return
-        them. This drives the helper against a checkout that actually contains an
-        untracked file, an ignored artifact and a tracked one, so a regression to an
-        unfiltered walk fails here rather than only on a machine that happens to have
-        stale bytes lying around.
-        """
-        module = self._release_common()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            fixtures = root / module.FIXTURE_DIR
-            (fixtures / "repos" / "simple" / "src" / "__pycache__").mkdir(parents=True)
-            (fixtures / "diffs").mkdir(parents=True)
-            (fixtures / "diffs" / "simple.diff").write_text("tracked\n", encoding="utf-8")
-            (fixtures / "untracked.json").write_text("untracked\n", encoding="utf-8")
-            (fixtures / ".DS_Store").write_text("junk\n", encoding="utf-8")
-            (
-                fixtures / "repos" / "simple" / "src" / "__pycache__" / "x.pyc"
-            ).write_text("junk\n", encoding="utf-8")
-            for command in (
-                ["git", "init", "-q"],
-                ["git", "add", module.FIXTURE_DIR + "/diffs/simple.diff"],
-            ):
-                subprocess.run(command, cwd=root, check=True, capture_output=True)
-
-            enumerated = module._tracked_files(module.FIXTURE_DIR, root)
-
-        self.assertEqual((module.FIXTURE_DIR + "/diffs/simple.diff",), enumerated)
-
-    def test_release_hash_set_is_derived_from_the_root_being_validated(self) -> None:
-        """The fixture list must follow the tree under validation, not the importer.
-
-        Baking it into HASH_GROUPS at import time meant an alternate-tree or
-        historical validation hashed one checkout against another's file list.
-        """
-        module = self._release_common()
-
-        self.assertNotIn(
-            module.FIXTURE_DIR,
-            " ".join(module.HASH_GROUPS["image_recipes"]),
-            "fixtures must not be frozen into HASH_GROUPS at import time",
-        )
-        resolved = module.hash_groups(_REPO_ROOT)["image_recipes"]
-        self.assertTrue(
-            any(path.startswith(module.FIXTURE_DIR) for path in resolved),
-            "hash_groups() must append the fixtures for the given root",
-        )
+    # Two cases lived here covering the release hash groups: that fixture
+    # enumeration used `git ls-files` rather than an unfiltered walk, and that the
+    # fixture list was resolved against the root under validation instead of frozen
+    # into HASH_GROUPS at import. Both went with the hash groups themselves --
+    # `runtime_source` already commits to those bytes.
 
     def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
         """The overlay hides the shipped fixtures, so assert them first.

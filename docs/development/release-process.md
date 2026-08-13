@@ -25,14 +25,17 @@ The active release version also determines the required notes file:
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
 3. Build base and reviewer images from exactly `R`; record the immutable image
    subjects, digests, publication run, attestations, and anonymous pulls.
-4. Update both GitHub workflow copies, the three GitLab pin variables, and
+4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
-   completes; refresh and validate the checked file-set hashes:
+   completes, then validate:
 
    ```bash
-   python scripts/check_release_inputs.py --write-hashes
    make quality
    ```
+
+   `make quality` runs `workflow-parity`, which regenerates nothing but reports
+   an installed workflow copy that has drifted from its canonical template; use
+   `make sync-workflows` to repair it.
 
 5. Run the GitHub and GitLab live evidence matrix. Each cited record under
    `docs/evidence/` must either declare exact `Status: passed` with
@@ -154,11 +157,11 @@ That is an account-level action and is not automated here.
 
 ## Validating a historical manifest
 
-An external manifest is bound to the release-inputs artifact and checked-file
-hashes from its own release. Do not validate a downloaded historical manifest
-from a newer branch, where `release/release-inputs.json` may already describe a
-new draft release. Create a worktree at the manifest's tag and run the validator
-there:
+An external manifest is bound to the release-inputs artifact from its own release
+by a SHA-256 over that artifact's bytes. Do not validate a downloaded historical
+manifest from a newer branch, where `release/release-inputs.json` may already
+describe a new draft release. Create a worktree at the manifest's tag and run the
+validator there:
 
 ```bash
 git worktree add /tmp/code-tribunal-v1.0.0 v1.0.0

@@ -556,7 +556,7 @@ image and reported `model: auto`.
 3. **Retarget the release inputs to the pair under test (release-blocking).**
    Update `runtime_source`, both image digests, the canonical template pins, the
    recorded publication and CI run IDs, and the evidence references together, then
-   re-run `check_release_inputs.py --write-hashes` and `make quality`. This is an
+   re-run `make quality`. This is an
    operator/CI action because it needs the published digests. (1.0.0: publication
    run `30125524008`, CI run `30125523924`, base `sha256:f2a433ac…`, reviewer
    `sha256:2fd84c43…`. Remember the **three** GitLab pin variables and **both**

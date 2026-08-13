@@ -6,7 +6,6 @@ import io
 import json
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -56,12 +55,9 @@ try:
         DIGEST_RE,
         WORKFLOW_PAIRS,
         ReleaseValidationError,
-        aggregate_hash,
         canonical_json_bytes,
-        computed_hashes,
         disallowed_release_paths,
         git_is_ancestor,
-        hash_groups,
         image_ref,
         sha256_bytes,
         sync_workflows,
@@ -73,31 +69,22 @@ finally:
 
 
 class ReleaseToolTests(unittest.TestCase):
-    def _tree(self, destination: Path) -> None:
-        """Build a minimal checkout of every hashed file, as a real git repository.
+    # Every file validate_release_inputs() reads. It used to be derived from
+    # hash_groups(), which additionally forced the synthetic tree to be a real git
+    # checkout so `git ls-files` could enumerate fixtures for the image-recipe hash.
+    # With the hash groups gone, the templates it actually parses are the whole list.
+    VALIDATED_FILES = (
+        ".github/workflows/ai-review.yml",
+        "ai-review/ci/review.github-actions.yml",
+        "ai-review/ci/review.gitlab-ci.yml",
+    )
 
-        Fixture enumeration uses `git ls-files` against the root being validated, so
-        the synthetic tree must be a git checkout rather than a bare directory. That
-        mirrors the real requirement: release hashes are only derivable from a
-        checkout, which is what the release process already prescribes.
-        """
-        paths = {item for group in hash_groups(REPO_ROOT).values() for item in group}
-        paths.update(
-            {
-                ".github/workflows/ai-review.yml",
-                "ai-review/ci/review.github-actions.yml",
-                "ai-review/ci/review.gitlab-ci.yml",
-            }
-        )
-        for relative in paths:
+    def _tree(self, destination: Path) -> None:
+        """Build a minimal checkout of every file release validation reads."""
+        for relative in self.VALIDATED_FILES:
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO_ROOT / relative, target)
-        for command in (
-            ["git", "init", "-q"],
-            ["git", "add", "-A"],
-        ):
-            subprocess.run(command, cwd=destination, check=True, capture_output=True)
 
     @property
     def draft_release_tag(self) -> str:
@@ -111,7 +98,6 @@ class ReleaseToolTests(unittest.TestCase):
         data = json.loads(
             (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
         )
-        data["hashes"] = computed_hashes(root)
         return data
 
     def _write_matching_evidence(
@@ -611,7 +597,6 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(
                 ReleaseValidationError, "GitHub template pins do not match release inputs"
             ):
@@ -634,7 +619,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "GitHub template pins"):
                 validate_release_inputs(data, root)
 
@@ -657,7 +641,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "role registry"):
                 validate_release_inputs(data, root)
 
@@ -675,7 +658,6 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "GitLab template pins"):
                 validate_release_inputs(data, root)
 
@@ -705,21 +687,11 @@ class ReleaseToolTests(unittest.TestCase):
                     with self.assertRaisesRegex(ReleaseValidationError, message):
                         validate_release_inputs(data, root)
 
-    def test_config_schema_and_lock_drift_are_rejected(self) -> None:
-        for relative in (
-            "ai-review/config/review.yaml",
-            "ai-review/schemas/state.schema.json",
-            "ai-review/images/package-lock.json",
-            "ai-review/images/base.Dockerfile",
-        ):
-            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                self._tree(root)
-                data = self._draft(root)
-                path = root / relative
-                path.write_bytes(path.read_bytes() + b"\n")
-                with self.assertRaisesRegex(ReleaseValidationError, "hashes are stale"):
-                    validate_release_inputs(data, root)
+    # Config/schema/lockfile drift was previously caught by comparing a declared
+    # per-file-set hash against one recomputed from the same checkout — which only
+    # ever proved the field had been regenerated since the last edit. `runtime_source`
+    # is the commitment to those bytes, and validate_release_coordinates() (covered
+    # below) is what proves the release commit did not move them.
 
     def test_placeholder_is_rejected_even_in_draft(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -729,23 +701,6 @@ class ReleaseToolTests(unittest.TestCase):
             data["verification"]["ci_run_id"] = "TBD"
             with self.assertRaisesRegex(ReleaseValidationError, "placeholder"):
                 validate_release_inputs(data, root)
-
-    def test_aggregate_hash_is_order_independent_and_content_sensitive(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "a").write_text("first", encoding="utf-8")
-            (root / "b").write_text("second", encoding="utf-8")
-            original = aggregate_hash(root, ["b", "a"])
-            self.assertEqual(original, aggregate_hash(root, ["a", "b"]))
-            (root / "a").write_text("changed", encoding="utf-8")
-            self.assertNotEqual(original, aggregate_hash(root, ["a", "b"]))
-
-    def test_aggregate_hash_reports_missing_checked_file_cleanly(self) -> None:
-        with (
-            tempfile.TemporaryDirectory() as temporary,
-            self.assertRaisesRegex(ReleaseValidationError, "cannot hash checked file missing"),
-        ):
-            aggregate_hash(Path(temporary), ["missing"])
 
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
@@ -900,7 +855,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            inputs["hashes"] = computed_hashes(root)
             release_inputs.write_bytes(canonical_json_bytes(inputs))
             manifest["release_inputs_sha256"] = sha256_bytes(release_inputs.read_bytes())
             with self.assertRaisesRegex(ReleaseValidationError, "must be active"):
