@@ -159,42 +159,6 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         self.assertEqual(consensus["summary"]["panel_convergence"], 1.0)
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_semantic_grouping_reaches_quorum_in_full_consensus_output(self) -> None:
-        config = _config()
-        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 0.2}}
-        first = _finding(
-            "claude",
-            "1" * 64,
-            title="Missing None guard before config lookup",
-            context_hash="1" * 64,
-            title_fingerprint="a" * 64,
-            evidence_fingerprint="b" * 64,
-            symbol=None,
-        )
-        first["body"] = "The config lookup raises KeyError when required values are absent."
-        second = _finding(
-            "codex",
-            "2" * 64,
-            title="Config lookup lacks guard for absent values",
-            context_hash="2" * 64,
-            title_fingerprint="c" * 64,
-            evidence_fingerprint="d" * 64,
-            symbol=None,
-        )
-        second["body"] = "Required values that are absent make the config lookup raise KeyError."
-
-        consensus = build_consensus(
-            _manifest(),
-            [_batch("claude", first), _batch("codex", second)],
-            config,
-        )
-
-        self.assertEqual(len(consensus["groups"]), 1)
-        self.assertEqual(consensus["groups"][0]["vote_count"], 2)
-        self.assertEqual(consensus["groups"][0]["decision"], "surface")
-        self.assertEqual(consensus["summary"]["panel_convergence"], 1.0)
-        validate_instance(consensus, "consensus.schema.json")
-
     def test_panel_convergence_counts_only_surfaced_groups(self) -> None:
         config = _config()
         config["panel"]["min_successful_reviewers_for_blocking"] = 3

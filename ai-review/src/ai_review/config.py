@@ -33,27 +33,24 @@ REVIEWER_REQUIRED_KEYS = {
     "credential_variable",
 }
 REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_seconds"}
-# The critique CI templates reserve 300 seconds outside the adapter process.
-# Legacy configs without the stage-specific field must not inherit the longer
-# review budget and run past the 20-minute critique job ceiling.
-_LEGACY_CRITIQUE_TIMEOUT_CEILING_SECONDS = 900
+# Critique budget when a reviewer does not state one. The critique CI job's outer
+# ceiling is 20 minutes and reserves 300 seconds outside the adapter process, so
+# this must stay below it. A flat default, deliberately: the previous behavior
+# reinterpreted `timeout_seconds` as the critique budget and then capped it here,
+# which made one field silently mean two different things.
+DEFAULT_CRITIQUE_TIMEOUT_SECONDS = 900
 PANEL_KEYS = {
     "min_successful_reviewers_for_blocking",
     "min_successful_reviewers_for_resolution",
     "quorum",
-    "grouping",
 }
 PANEL_QUORUM_KEYS = {"votes_required"}
-PANEL_GROUPING_KEYS = {"semantic"}
-PANEL_SEMANTIC_KEYS = {"enabled", "threshold"}
 SEVERITY_POLICY_KEYS = {"single_reviewer_blocker", "quorum_blocker"}
 SINGLE_REVIEWER_BLOCKER_KEYS = {"categories"}
 QUORUM_BLOCKER_KEYS = {"block_merge"}
 CRITIQUE_KEYS = {
     "enabled",
-    "rounds",
     "blind_reviewer_identity",
-    "can_add_quorum_votes",
     "allow_advisory_escalation",
     "allow_severity_downgrade",
 }
@@ -89,6 +86,13 @@ LIMIT_KEYS = {
     "max_prompt_bytes",
 }
 SECURITY_KEYS = {"allow_external_fork_secrets"}
+
+# The one state backend each posting mode can use. Derived rather than configured;
+# see _validate_posting.
+STATE_BACKEND_BY_POSTING_MODE = {
+    "gitlab_discussions": "gitlab_mr_state_note",
+    "github_reviews": "github_pr_comment",
+}
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
 # levels; a closed set also means the value that reaches shell argv can never
@@ -242,27 +246,12 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
     - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
-    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``
-    - ``AI_REVIEW_STATE_BACKEND`` -> ``state.backend``
-
-    Semantic grouping is YAML-only and outside the 1.0 compatibility guarantee.
-    ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`` /
-    ``AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD`` are rejected if set.
+    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. ``state.backend`` follows it
+      automatically; there is no separate state-backend override.
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
     """
-    for rejected in (
-        "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
-        "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
-    ):
-        if os.environ.get(rejected) is not None:
-            raise ConfigError(
-                f"{rejected} is not a supported 1.0 operator control; set "
-                "panel.grouping.semantic in YAML only (experimental, outside "
-                "the 1.0 compatibility guarantee)"
-            )
-
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
         per_seat_enabled: list[str] = []
@@ -304,11 +293,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         if isinstance(posting, dict):
             posting["mode"] = posting_mode_env.strip()
 
-    state_backend_env = os.environ.get("AI_REVIEW_STATE_BACKEND")
-    if state_backend_env is not None and state_backend_env.strip():
-        state = config.setdefault("state", {})
-        if isinstance(state, dict):
-            state["backend"] = state_backend_env.strip()
 
 
 def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
@@ -327,8 +311,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     quorum = panel.get("quorum", {}) if isinstance(panel, dict) else {}
-    grouping = panel.get("grouping", {}) if isinstance(panel, dict) else {}
-    semantic = grouping.get("semantic", {}) if isinstance(grouping, dict) else {}
     severity = config.get("severity_policy", {}) if isinstance(config, dict) else {}
     single = severity.get("single_reviewer_blocker", {}) if isinstance(severity, dict) else {}
     quorum_blocker = severity.get("quorum_blocker", {}) if isinstance(severity, dict) else {}
@@ -355,9 +337,7 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
             if isinstance(reviewer, dict)
         },
         "critique_enabled": bool(critique.get("enabled")),
-        "critique_rounds": int(critique.get("rounds", 0) or 0),
         "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
-        "critique_can_add_quorum_votes": bool(critique.get("can_add_quorum_votes")),
         "critique_allow_advisory_escalation": bool(critique.get("allow_advisory_escalation")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
@@ -376,12 +356,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "severity_quorum_blocker_block_merge": bool(
             isinstance(quorum_blocker, dict) and quorum_blocker.get("block_merge") is True
         ),
-        "panel_grouping_semantic_enabled": bool(
-            isinstance(semantic, dict) and semantic.get("enabled") is True
-        ),
-        "panel_grouping_semantic_threshold": (
-            float(semantic.get("threshold", 0.5)) if isinstance(semantic, dict) else 0.5
-        ),
     }
 
 
@@ -390,24 +364,27 @@ def resolve_reviewer_timeout_seconds(
 ) -> int:
     """Resolve a reviewer stage budget before the runner's reserve.
 
-    ``review_config.v1`` files predating the stage-specific critique field use
-    ``timeout_seconds`` as their critique budget. Cap that legacy fallback at
-    900 seconds so it fits the current critique CI ceiling; explicit
-    ``critique_timeout_seconds`` values remain intentional configuration.
+    ``timeout_seconds`` is required; ``critique_timeout_seconds`` falls back to
+    ``DEFAULT_CRITIQUE_TIMEOUT_SECONDS``. It used to fall back to
+    ``timeout_seconds`` instead, capped at the same 900s so an inherited review
+    budget could not overrun the critique job ceiling. The cap made the fallback
+    safe but not clear: a reviewer with ``timeout_seconds: 1800`` silently got 900
+    for critique, and one with ``timeout_seconds: 600`` silently got 600. A flat
+    default says the same thing without overloading the field.
     """
-    if stage not in {"review", "critique"}:
+    if stage == "review":
+        timeout_key = "timeout_seconds"
+        configured_timeout = reviewer_config.get(timeout_key)
+    elif stage == "critique":
+        timeout_key = "critique_timeout_seconds"
+        configured_timeout = reviewer_config.get(
+            timeout_key, DEFAULT_CRITIQUE_TIMEOUT_SECONDS
+        )
+    else:
         raise ConfigError(f"unsupported reviewer stage: {stage}")
 
-    timeout_key = "timeout_seconds" if stage == "review" else "critique_timeout_seconds"
-    legacy_critique_fallback = stage == "critique" and timeout_key not in reviewer_config
-    if legacy_critique_fallback:
-        timeout_key = "timeout_seconds"
-
-    configured_timeout = reviewer_config.get(timeout_key)
     if type(configured_timeout) is not int or configured_timeout <= 0:
         raise ConfigError(f"reviewer {timeout_key} must be a positive integer")
-    if legacy_critique_fallback:
-        return min(configured_timeout, _LEGACY_CRITIQUE_TIMEOUT_CEILING_SECONDS)
     return configured_timeout
 
 
@@ -480,14 +457,23 @@ def _validate_posting(config: dict[str, Any]) -> None:
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     state.setdefault("fail_closed_on_load_error", False)
-    backend = state.setdefault(
-        "backend", "github_pr_comment" if mode == "github_reviews" else "gitlab_mr_state_note"
-    )
-    allowed = {"gitlab_mr_state_note", "github_pr_comment"}
-    if backend not in allowed:
-        raise ConfigError(f"state.backend must be one of {sorted(allowed)}")
-    if mode == "github_reviews" and backend != "github_pr_comment":
-        raise ConfigError("posting.mode github_reviews requires state.backend github_pr_comment")
+    # state.backend is derived from posting.mode, not chosen. Each mode has exactly
+    # one usable backend, and the previous free choice made one incoherent pairing
+    # authorable: validation rejected github_reviews with a GitLab backend but
+    # accepted gitlab_discussions with github_pr_comment, which cannot work.
+    #
+    # A config may still restate the derived value — consumer configs carrying the
+    # key stay valid, and revalidating an already-resolved config is idempotent —
+    # but a value that disagrees with the mode is an error rather than a silent
+    # overwrite.
+    derived_backend = STATE_BACKEND_BY_POSTING_MODE[mode]
+    declared_backend = state.get("backend")
+    if declared_backend is not None and declared_backend != derived_backend:
+        raise ConfigError(
+            f"state.backend is derived from posting.mode: {mode} implies "
+            f"{derived_backend}, got {declared_backend!r}; remove the key"
+        )
+    state["backend"] = derived_backend
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -535,16 +521,11 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError("critique must be a mapping")
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
     critique.setdefault("enabled", False)
-    critique.setdefault("rounds", 0)
     critique.setdefault("blind_reviewer_identity", True)
-    critique.setdefault("can_add_quorum_votes", False)
     critique.setdefault("allow_advisory_escalation", True)
     critique.setdefault("allow_severity_downgrade", False)
-    rounds = critique.get("rounds")
-    if rounds not in {0, 1}:
-        raise ConfigError("critique.rounds must be 0 or 1 for v1")
-    if critique.get("can_add_quorum_votes") is not False:
-        raise ConfigError("critique.can_add_quorum_votes must be false in v1")
+    if not isinstance(critique.get("enabled"), bool):
+        raise ConfigError("critique.enabled must be a boolean")
     merge_gate = config.setdefault("merge_gate", {})
     if not isinstance(merge_gate, dict):
         raise ConfigError("merge_gate must be a mapping")
@@ -603,24 +584,6 @@ def validate_config(config: dict[str, Any]) -> None:
         _MINIMUM_PANEL_REVIEWERS if enabled_count > 1 else 1,
         "panel.quorum.votes_required",
     )
-    grouping = panel.get("grouping", {})
-    if grouping is None:
-        grouping = {}
-        panel["grouping"] = grouping
-    if not isinstance(grouping, dict):
-        raise ConfigError("panel.grouping must be a mapping")
-    _reject_unknown_keys(grouping, PANEL_GROUPING_KEYS, "panel.grouping")
-    semantic = grouping.setdefault("semantic", {})
-    if not isinstance(semantic, dict):
-        raise ConfigError("panel.grouping.semantic must be a mapping")
-    _reject_unknown_keys(semantic, PANEL_SEMANTIC_KEYS, "panel.grouping.semantic")
-    semantic.setdefault("enabled", False)
-    semantic.setdefault("threshold", 0.5)
-    if not isinstance(semantic.get("enabled"), bool):
-        raise ConfigError("panel.grouping.semantic.enabled must be a boolean")
-    threshold = semantic.get("threshold")
-    if not isinstance(threshold, int | float) or not (0.0 <= float(threshold) <= 1.0):
-        raise ConfigError("panel.grouping.semantic.threshold must be between 0.0 and 1.0")
     limits = config.get("limits", {})
     if not isinstance(limits, dict):
         raise ConfigError("limits must be a mapping")

@@ -98,9 +98,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             return 0
 
         critique_config = config.get("critique", {})
-        if stage == "critique" and (
-            critique_config.get("enabled") is not True or int(critique_config.get("rounds", 0)) == 0
-        ):
+        if stage == "critique" and critique_config.get("enabled") is not True:
             _write_empty(
                 output_dir,
                 output_file,

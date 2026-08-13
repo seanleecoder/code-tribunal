@@ -53,36 +53,13 @@ class GroupingTests(unittest.TestCase):
         )
         self.assertEqual(sorted(len(group) for group in groups), [1, 2])
 
-    def test_semantic_grouping_connects_same_bug_with_different_fingerprints(self) -> None:
-        groups = group_findings(
-            [
-                _finding(
-                    "1" * 64,
-                    "src/foo.py",
-                    "1" * 64,
-                    title="Missing None guard before config lookup",
-                    body="The config lookup raises KeyError when required values are absent.",
-                    title_fingerprint="a" * 64,
-                    evidence_fingerprint="b" * 64,
-                    line=42,
-                ),
-                _finding(
-                    "2" * 64,
-                    "src/foo.py",
-                    "2" * 64,
-                    title="Config lookup lacks guard for absent values",
-                    body="Required values that are absent make the config lookup raise KeyError.",
-                    title_fingerprint="c" * 64,
-                    evidence_fingerprint="d" * 64,
-                    line=43,
-                ),
-            ],
-            grouping_config={"semantic": {"enabled": True, "threshold": 0.2}},
-        )
+    def test_reworded_findings_with_distinct_fingerprints_stay_separate(self) -> None:
+        """Grouping never joins findings on wording alone.
 
-        self.assertEqual([len(group) for group in groups], [2])
-
-    def test_semantic_grouping_is_opt_in(self) -> None:
+        These two describe the same bug in different words at adjacent lines, with
+        different context hashes and fingerprints. An opt-in Jaccard similarity
+        signal used to join them when enabled; nothing does now.
+        """
         findings = [
             _finding(
                 "1" * 64,
@@ -108,58 +85,16 @@ class GroupingTests(unittest.TestCase):
 
         self.assertEqual([len(group) for group in group_findings(findings)], [1, 1])
 
-    def test_transitive_overlap_chain_splits_dissimilar_ends(self) -> None:
-        groups = group_findings(
-            [
-                _finding(
-                    "1" * 64,
-                    "src/foo.py",
-                    "1" * 64,
-                    title="Null config access crashes",
-                    body="The config lookup raises KeyError for missing required values.",
-                    title_fingerprint="a" * 64,
-                    evidence_fingerprint="b" * 64,
-                    line=10,
-                ),
-                _finding(
-                    "2" * 64,
-                    "src/foo.py",
-                    "2" * 64,
-                    title="Config lookup lacks missing value guard",
-                    body="Missing required values make the config lookup raise KeyError.",
-                    title_fingerprint="c" * 64,
-                    evidence_fingerprint="shared" * 10 + "0000",
-                    line=12,
-                ),
-                _finding(
-                    "3" * 64,
-                    "src/foo.py",
-                    "3" * 64,
-                    title="SQL query builds raw user input",
-                    body="The database query concatenates untrusted user input into SQL text.",
-                    title_fingerprint="e" * 64,
-                    evidence_fingerprint="shared" * 10 + "0000",
-                    line=14,
-                ),
-            ],
-            grouping_config={"semantic": {"enabled": True, "threshold": 0.2}},
-        )
-
-        self.assertEqual([len(group) for group in groups], [2, 1])
-
     def test_labeled_grouping_fixture_corpus(self) -> None:
         fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "grouping" / "corpus.json"
         corpus = json.loads(fixture_path.read_text(encoding="utf-8"))
 
         for case in corpus["cases"]:
             with self.subTest(case=case["name"]):
-                groups = group_findings(
-                    case["findings"],
-                    grouping_config=case.get("grouping_config"),
-                )
+                groups = group_findings(case["findings"])
                 self.assertEqual([len(group) for group in groups], case["expected_group_sizes"])
 
-    def test_transitive_overlap_chain_splits_with_semantic_disabled(self) -> None:
+    def test_transitive_overlap_chain_splits_dissimilar_ends(self) -> None:
         groups = group_findings(
             [
                 _finding(
@@ -200,15 +135,13 @@ class GroupingTests(unittest.TestCase):
             _finding("1" * 64, "src/foo.py", "1" * 64, title="Null config access crashes", line=10),
             _finding("2" * 64, "src/foo.py", "2" * 64, title="Config lookup lacks guard", line=12),
         ]
-        grouping_config = {"semantic": {"enabled": True, "threshold": 0.2}}
-
         first = [
             [item["source_finding_id"] for item in group]
-            for group in group_findings(findings, grouping_config=grouping_config)
+            for group in group_findings(findings)
         ]
         second = [
             [item["source_finding_id"] for item in group]
-            for group in group_findings(list(reversed(findings)), grouping_config=grouping_config)
+            for group in group_findings(list(reversed(findings)))
         ]
 
         self.assertEqual(first, second)

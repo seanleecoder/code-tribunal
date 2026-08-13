@@ -34,6 +34,14 @@ def _load_validate_output():
     return module
 
 
+_GOLDEN_CONSENSUS = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "golden"
+    / "default_transitive_split_consensus.json"
+)
+
+
 class SchemaValidationTests(unittest.TestCase):
     def test_renderer_exempt_enums_are_closed_in_consensus_schema(self) -> None:
         consensus_schema = load_json_file(
@@ -51,9 +59,7 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertEqual(consensus_group["category"]["enum"], finding_group["category"]["enum"])
 
     def test_consensus_group_category_outside_enum_is_rejected(self) -> None:
-        fixture = load_json_file(
-            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
-        )
+        fixture = load_json_file(_GOLDEN_CONSENSUS)
         fixture["groups"][0]["category"] = "correctness **not a category**"
 
         with self.assertRaises(SchemaValidationError):
@@ -62,9 +68,7 @@ class SchemaValidationTests(unittest.TestCase):
     def test_consensus_rejects_empty_display_fields_and_unknown_adjusted_severity(
         self,
     ) -> None:
-        fixture = load_json_file(
-            Path(__file__).resolve().parents[1] / "fixtures" / "golden" / "semantic_consensus.json"
-        )
+        fixture = load_json_file(_GOLDEN_CONSENSUS)
         invalid_values = [
             ("empty evidence", {"evidence_by_reviewer": {"claude": ""}}),
             ("whitespace evidence", {"evidence_by_reviewer": {"claude": " \t\n"}}),
@@ -439,9 +443,7 @@ class SchemaValidationTests(unittest.TestCase):
                         "    block_merge: true",
                         "critique:",
                         "  enabled: false",
-                        "  rounds: 0",
                         "  blind_reviewer_identity: true",
-                        "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",
                         "posting:",
                         "  mode: gitlab_discussions",

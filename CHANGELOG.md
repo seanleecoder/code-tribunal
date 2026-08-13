@@ -7,6 +7,76 @@ versioning.
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking (`review_config.v1`): four configuration keys are gone.** A config
+  that still declares `critique.rounds`, `critique.can_add_quorum_votes`, or
+  anything under `panel.grouping.semantic` is now rejected with an unknown-key
+  error; remove those keys. None of them was a real choice:
+  - `critique.can_add_quorum_votes` was validated to reject any value but
+    `false`, and nothing read it.
+  - `critique.rounds` was a second boolean that had to agree with
+    `critique.enabled` before critique ran. `critique.enabled` is now the only
+    switch.
+  - `panel.grouping.semantic` enabled an opt-in Jaccard similarity comparison
+    over finding titles and bodies. It shipped disabled, sat outside the 1.0
+    compatibility guarantee, and its two environment overrides were rejected by
+    name. Grouping now rests entirely on identity that survives rewording —
+    path, category, side, context hash, fingerprints, and symbol. The golden
+    consensus fixture for the default path is byte-identical.
+  - `state.backend` is derived from `posting.mode` rather than chosen, and
+    `AI_REVIEW_STATE_BACKEND` no longer exists. A config may still restate the
+    matching value, so most consumer configs need no edit; a value that
+    contradicts the mode is now an error. Each mode has exactly one usable
+    backend, and the previous free choice made `gitlab_discussions` +
+    `github_pr_comment` authorable even though it cannot work.
+
+  The removals change `effective_config_summary`, and therefore the cross-stage
+  effective-config digest. Prepare, review, consensus, post, and gate recompute
+  it per run, so no artifact migration is needed.
+
+- The release-inputs artifact no longer declares per-file-set `hashes`. The six
+  aggregate SHA-256 groups were compared against hashes recomputed from the same
+  checkout being validated, so they could only report a stale field, never a
+  substitution — `runtime_source` already commits to every byte of the tree.
+  Evidence-record freshness, waiver registration, and image-digest binding are
+  unchanged. Historical snapshots under `release/history/` keep their `hashes`.
+
+### Changed
+
+- `critique_timeout_seconds` now defaults to a flat 900 seconds when a reviewer
+  omits it. It previously fell back to that reviewer's `timeout_seconds` capped
+  at 900, so a seat with `timeout_seconds: 1800` silently got 900 for critique
+  while one with `600` silently got 600 — one field meaning two things. The
+  shipped configuration states the value explicitly and is unaffected.
+
+- Installed-workflow parity (`.github/workflows/ai-review.yml` against
+  `ai-review/ci/review.github-actions.yml`) is gated once, by
+  `make workflow-parity`, which is wired into `make quality` and can also repair
+  the drift with `make sync-workflows`. The same byte comparison previously ran
+  in `check_supply_chain_pins.py`, `check_release_inputs.py`, and
+  `test_ci_template.py`; none could repair what it reported, and the
+  supply-chain copy ran inside the base image, where `.github/` does not exist.
+
+- `pipeline_trust.py` moved from the runtime package to `scripts/`, where
+  `SECURITY_MODEL.md` already pointed readers. Nothing in the pipeline imported
+  it — it audits a consumer's `.gitlab-ci.yml` — so it no longer ships inside
+  the published images. `scripts/verify_pipeline_trust.py` is absorbed into it.
+
+- Internal decomposition only, no behavior change (SPEC-39 milestone B). The three
+  large orchestration modules were split along existing cohesive boundaries:
+  `post.py` keeps only the CLI entry point, with command parsing, pure state
+  planning (`state_plan.py`), mutation orchestration (`posting.py`), and summary
+  rendering (`summary_render.py`) extracted out; `adapter_runner.py` separates
+  output parsing/finalization from subprocess lifecycle; and `consensus.py`
+  separates critique application (`critique.py`) from grouping. The shipped
+  `python -m ai_review.post` / `.consensus` / `.adapter_runner` entry points,
+  configuration keys, artifact schemas, and rendered output are unchanged — the
+  golden consensus and post→gate end-to-end fixtures are byte-identical. Posting
+  state transitions can now be tested without constructing a platform client, and
+  an import-boundary test keeps the planning modules free of platform clients and
+  `requests`.
+
 ## [1.0.2] - 2026-08-10
 
 ### Added
@@ -113,7 +183,7 @@ versioning.
   `format: {"type":"json_schema", …}` and emits the reviewer batch directly, so
   OpenCode no longer depends on the model volunteering a schema-conforming
   payload. See
-  [SPEC-50](docs/improvement-specs/spec-50-opencode-structured-reviewer-output.md).
+  [SPEC-50](docs/history/specs/spec-50-opencode-structured-reviewer-output.md).
 
 - Reviewer image pins are refreshed to OpenCode `1.18.12`, Claude Code
   `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its

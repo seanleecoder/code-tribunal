@@ -166,25 +166,19 @@ template.
 | `severity_policy.single_reviewer_blocker.categories` | list, `[security, correctness]` | Categories eligible for the single-reviewer blocker policy. |
 | `severity_policy.quorum_blocker.block_merge` | boolean, `true` | Permit quorum-backed blocker groups to set `block_merge`. |
 
-Semantic grouping keys remain in the shipped YAML with `enabled: false` but are
-**outside the 1.0 compatibility guarantee** (experimental). Do not enable them in
-production. Environment overrides
-`AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
-`AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` are rejected.
-
-| Experimental YAML key | Type/default | Meaning |
-|---|---|---|
-| `panel.grouping.semantic.enabled` | boolean, `false` | Opt-in deterministic title/body similarity grouping; unsupported for 1.0. |
-| `panel.grouping.semantic.threshold` | number, `0.5` | Jaccard threshold from 0.0 through 1.0 when experimental grouping is enabled. |
+Grouping carries no text-similarity setting. An opt-in Jaccard comparison over
+titles and bodies shipped disabled and outside the 1.0 compatibility guarantee;
+it has been removed. Findings are grouped on identity that survives rewording —
+path, category, side, context hash, fingerprints, and symbol — so two reviewers
+describing one bug in different words group when they anchor to the same code,
+not when they happen to choose similar phrasing.
 
 ### Critique
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `critique.enabled` | boolean, `true` | Run blind peer assessment. |
-| `critique.rounds` | integer, `1` | Must be 0 or 1 in v1. One round can affect consensus. |
 | `critique.blind_reviewer_identity` | boolean, `true` | Replace reviewer identities with stable anonymous labels. |
-| `critique.can_add_quorum_votes` | boolean, `false` | Must remain false in v1. Critiques are not reviewer votes. |
 | `critique.allow_advisory_escalation` | boolean, `true` | Surface peer-supported advisory evidence without making it blocking. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
 
@@ -201,7 +195,6 @@ production. Environment overrides
 | `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
 | `merge_gate.enabled` | boolean, `true` | Enforce finding-based blocking. Operational post/state failures still fail. |
-| `state.backend` | enum, `gitlab_mr_state_note` | GitLab default; GitHub requires `github_pr_comment`. |
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
 | `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
@@ -248,7 +241,6 @@ artifacts.
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; disables finding blocking only. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
-| `AI_REVIEW_STATE_BACKEND` | YAML | `gitlab_mr_state_note` or `github_pr_comment`; must match posting mode. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
 
@@ -282,8 +274,6 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 | `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 

@@ -19,7 +19,7 @@ from ai_review.adapter_process import (
     _effective_adapter_timeout_seconds,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.config import ConfigError
+from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -42,9 +42,7 @@ _CONFIG_TAIL = [
     "    block_merge: true",
     "critique:",
     "  enabled: false",
-    "  rounds: 0",
     "  blind_reviewer_identity: true",
-    "  can_add_quorum_votes: false",
     "  allow_advisory_escalation: false",
     "posting:",
     "  mode: gitlab_discussions",
@@ -124,23 +122,31 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
             _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
         )
 
-    def test_legacy_config_critique_fallback_is_capped_at_ci_ceiling(self) -> None:
-        reviewer_config = {"timeout_seconds": 1800}
+    def test_omitted_critique_budget_uses_the_flat_default(self) -> None:
+        """An absent critique budget does not depend on the review budget.
 
-        self.assertEqual(
-            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
-        )
+        It previously fell back to `timeout_seconds` capped at the same 900s, so
+        these two configs got different critique budgets (900 and 600) from a field
+        that says nothing about critique. Both now get DEFAULT_CRITIQUE_TIMEOUT_SECONDS.
+        """
+        for review_budget in (1800, 600):
+            with self.subTest(timeout_seconds=review_budget):
+                self.assertEqual(
+                    _effective_adapter_timeout_seconds(
+                        {"timeout_seconds": review_budget}, "critique"
+                    ),
+                    DEFAULT_CRITIQUE_TIMEOUT_SECONDS - 5,
+                )
 
-    def test_legacy_config_critique_fallback_preserves_shorter_budget(self) -> None:
-        reviewer_config = {"timeout_seconds": 600}
+    def test_non_positive_critique_budget_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ConfigError, r"reviewer critique_timeout_seconds"):
+            _effective_adapter_timeout_seconds(
+                {"timeout_seconds": 1800, "critique_timeout_seconds": 0}, "critique"
+            )
 
-        self.assertEqual(
-            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 595
-        )
-
-    def test_legacy_config_timeout_errors_name_present_field(self) -> None:
+    def test_non_positive_review_budget_is_rejected(self) -> None:
         with self.assertRaisesRegex(ConfigError, r"reviewer timeout_seconds"):
-            _effective_adapter_timeout_seconds({"timeout_seconds": 0}, "critique")
+            _effective_adapter_timeout_seconds({"timeout_seconds": 0}, "review")
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):
@@ -1289,9 +1295,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                         *_CONFIG_TAIL[:10],
                         "critique:",
                         "  enabled: true",
-                        "  rounds: 1",
                         "  blind_reviewer_identity: true",
-                        "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",
                         "  allow_severity_downgrade: false",
                         *_CONFIG_TAIL[16:],

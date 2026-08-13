@@ -1140,7 +1140,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         critique = _workflow_job(text, "critique")
 
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
-        self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        # The state backend is derived from posting.mode; the template must not
+        # restate it, or the two could be scoped to different jobs.
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
         self.assertRegex(review, r"(?m)^    timeout-minutes: 40$")
         self.assertRegex(critique, r"(?m)^    timeout-minutes: 20$")
@@ -1219,6 +1221,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
 
     def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
@@ -1239,7 +1242,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED",
             "AI_REVIEW_MERGE_GATE_ENABLED",
             "AI_REVIEW_POSTING_MODE",
-            "AI_REVIEW_STATE_BACKEND",
         ]
         self.assertIn("effective_config_sha256", text)
         self.assertIn("Environment-consistency contract", text)
@@ -1248,6 +1250,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                 self.assertIn(name, text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         # Critique enablement remains an explicit top-level variable shared by
         # job rules and apply_env_overrides.
         self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")

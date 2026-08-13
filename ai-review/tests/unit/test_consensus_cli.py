@@ -79,8 +79,7 @@ class ConsensusCliTests(unittest.TestCase):
             manifest["effective_config"] = {
                 "reviewers": {},
                 "critique_enabled": False,
-                "critique_rounds": 0,
-                "merge_gate_enabled": False,
+                                "merge_gate_enabled": False,
             }
             manifest["effective_config_sha256"] = "a" * 64
             write_canonical_json(input_dir / "manifest.json", manifest)
@@ -143,9 +142,7 @@ class ConsensusCliTests(unittest.TestCase):
                         "    block_merge: true",
                         "critique:",
                         "  enabled: true",
-                        "  rounds: 1",
                         "  blind_reviewer_identity: true",
-                        "  can_add_quorum_votes: false",
                         "  allow_advisory_escalation: false",
                         "  allow_severity_downgrade: false",
                         "posting:",

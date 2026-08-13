@@ -321,7 +321,7 @@ class PostTests(unittest.TestCase):
             Path(__file__).resolve().parents[1]
             / "fixtures"
             / "golden"
-            / "semantic_consensus.json"
+            / "default_transitive_split_consensus.json"
         )
         config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 

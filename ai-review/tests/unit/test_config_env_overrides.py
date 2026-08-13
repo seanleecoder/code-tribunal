@@ -27,7 +27,7 @@ def _base_config() -> dict:
             "opencode": {"model": "google/gemini-3.5-flash-lite", "enabled": True},
             "cursor": {"model": "auto", "enabled": False},
         },
-        "critique": {"enabled": True, "rounds": 1},
+        "critique": {"enabled": True},
         "merge_gate": {"enabled": True},
     }
 
@@ -142,21 +142,25 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertFalse(config["critique"]["enabled"])
         self.assertFalse(config["merge_gate"]["enabled"])
 
-    def test_platform_overrides_apply_together(self) -> None:
+    def test_posting_mode_override_carries_the_state_backend(self) -> None:
+        """One variable moves the platform. AI_REVIEW_STATE_BACKEND no longer exists:
+        the backend follows posting.mode, so the pair could not disagree even when
+        set in only some CI jobs."""
         config = _base_config()
         config["posting"] = {"mode": "gitlab_discussions"}
-        config["state"] = {"backend": "gitlab_mr_state_note"}
+        config["state"] = {}
         with mock.patch.dict(
             "os.environ",
-            {
-                "AI_REVIEW_POSTING_MODE": "github_reviews",
-                "AI_REVIEW_STATE_BACKEND": "github_pr_comment",
-            },
+            {"AI_REVIEW_POSTING_MODE": "github_reviews"},
             clear=True,
         ):
             apply_env_overrides(config)
+
         self.assertEqual(config["posting"]["mode"], "github_reviews")
-        self.assertEqual(config["state"]["backend"], "github_pr_comment")
+        # apply_env_overrides does not resolve the backend; _validate_posting does,
+        # which is what test_github_platform_env_overrides_load_valid_config covers
+        # end to end through load_config.
+        self.assertNotIn("backend", config["state"])
 
     def test_non_exact_boolean_value_fails_loudly(self) -> None:
         # Exact lowercase true/false only (mirrors GitLab == "true"): "1"/"yes"/typos
@@ -332,10 +336,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
     def test_github_platform_env_overrides_load_valid_config(self) -> None:
         with mock.patch.dict(
             "os.environ",
-            {
-                "AI_REVIEW_POSTING_MODE": "github_reviews",
-                "AI_REVIEW_STATE_BACKEND": "github_pr_comment",
-            },
+            {"AI_REVIEW_POSTING_MODE": "github_reviews"},
         ):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["posting"]["mode"], "github_reviews")
@@ -603,57 +604,28 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
         self.assertFalse(config["state"]["fail_closed_on_load_error"])
 
-    def test_semantic_grouping_env_overrides_are_rejected(self) -> None:
-        rejected_envs = (
-            {"AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": "true"},
-            {"AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": "0.7"},
-            {
-                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": "false",
-                "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": "0.5",
-            },
-        )
-        for env in rejected_envs:
-            with (
-                self.subTest(env=env),
-                mock.patch.dict("os.environ", env),
-                self.assertRaisesRegex(ConfigError, "not a supported 1.0 operator control"),
-            ):
-                load_config(_REPO_CONFIG)
-
-    def test_panel_semantic_grouping_config_is_validated(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 1.5}}
-
-        with self.assertRaisesRegex(ConfigError, "panel.grouping.semantic.threshold"):
-            validate_config(config)
-
-    def test_effective_config_summary_includes_semantic_grouping(self) -> None:
+    def test_effective_config_summary_covers_decision_critical_policy(self) -> None:
         from ai_review.config import effective_config_summary
 
         config = load_config(_REPO_CONFIG)
-        config["panel"]["grouping"] = {"semantic": {"enabled": True, "threshold": 0.75}}
-        validate_config(config)
 
         summary = effective_config_summary(config)
-        self.assertTrue(summary["panel_grouping_semantic_enabled"])
-        self.assertEqual(summary["panel_grouping_semantic_threshold"], 0.75)
         self.assertEqual(summary["posting_mode"], "gitlab_discussions")
         self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
         self.assertEqual(summary["panel_min_successful_reviewers_for_blocking"], 2)
         self.assertEqual(summary["panel_quorum_votes_required"], 2)
         self.assertIn("security", summary["severity_single_reviewer_blocker_categories"])
         self.assertTrue(summary["severity_quorum_blocker_block_merge"])
-        self.assertFalse(summary["critique_can_add_quorum_votes"])
         self.assertTrue(summary["critique_allow_advisory_escalation"])
 
 
 class PostingModeConfigTests(unittest.TestCase):
-    def test_github_reviews_requires_github_state_backend(self) -> None:
+    def test_state_backend_contradicting_the_posting_mode_is_rejected(self) -> None:
         config = load_config(_REPO_CONFIG)
         config["posting"]["mode"] = "github_reviews"
         config["state"]["backend"] = "gitlab_mr_state_note"
 
-        with self.assertRaisesRegex(ConfigError, "github_reviews requires state.backend"):
+        with self.assertRaisesRegex(ConfigError, "derived from posting.mode"):
             validate_config(config)
 
     def test_github_reviews_accepts_github_state_backend(self) -> None:

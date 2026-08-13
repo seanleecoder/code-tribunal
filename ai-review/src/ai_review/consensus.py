@@ -199,9 +199,7 @@ def build_consensus(
             if _critique_enabled(config)
             else set()
         )
-        for findings in group_findings(
-            all_findings, valid_duplicate_links, config.get("panel", {}).get("grouping")
-        ):
+        for findings in group_findings(all_findings, valid_duplicate_links):
             issue_id = issue_id_for_group(findings)
             representative = _representative(findings)
             decision, block_merge, require_ack, final_severity = decision_for_group(

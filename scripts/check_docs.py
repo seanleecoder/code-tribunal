@@ -90,8 +90,6 @@ ENV_RE = re.compile(
 TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
 REJECTED_ENV_NAMES = {
     "AI_REVIEW_CURSOR_EFFORT",
-    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
-    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
 }
@@ -250,10 +248,18 @@ def _config_leaf_paths(value: object, prefix: str = "") -> set[str]:
 
 
 def _source_environment_names() -> set[str]:
+    """Environment names the current sources actually mention.
+
+    Build artifacts are skipped: a stale ai_review.egg-info/PKG-INFO embeds an old
+    copy of the README and would keep demanding a documentation row for a variable
+    the sources no longer set, failing docs-check on gitignored output nobody edited.
+    """
     names: set[str] = set()
     for root in SOURCE_ENV_PATHS:
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix in {".pyc", ".json"}:
+                continue
+            if any(part.endswith(".egg-info") or part == "__pycache__" for part in path.parts):
                 continue
             try:
                 names.update(ENV_RE.findall(path.read_text(encoding="utf-8")))

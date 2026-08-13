@@ -25,7 +25,7 @@ variables:
   # AI_REVIEW_CODEX_ENABLED AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED
   # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT
   # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_MERGE_GATE_ENABLED
-  # AI_REVIEW_POSTING_MODE AI_REVIEW_STATE_BACKEND
+  # AI_REVIEW_POSTING_MODE
   # AI_REVIEW_REVIEWERS is the panel roster: a comma-separated list of reviewers
   # (e.g. "claude,codex,cursor") that enables exactly those seats and disables
   # every other configured seat. All four reviewers are peers, so any of them may
@@ -44,8 +44,7 @@ variables:
   # pins ship roster support before relying on it, or use the per-reviewer
   # *_ENABLED flags, which every supported runtime honors.
   # Do not set AI_REVIEW_LOCAL_MOCK as a project/pipeline variable in production
-  # (mock is forbidden). Semantic grouping env overrides are rejected; use YAML
-  # only if experimenting outside the 1.0 compatibility guarantee.
+  # (mock is forbidden).
 
 .ai_review_rules:
   rules:
