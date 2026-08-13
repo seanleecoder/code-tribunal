@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from .base import ReviewPlatform
-from .factory import create_github_platform, create_gitlab_platform
+from .github import GitHubReviewPlatform
+from .gitlab import GitLabReviewPlatform
 
 
 class PlatformRuntimeError(RuntimeError):
@@ -38,13 +39,13 @@ def create_runtime_platform(
                 "AI_REVIEW_GITHUB_BOT_LOGIN to verify state-comment ownership"
             )
         if bot_login:
-            return create_github_platform(
+            return GitHubReviewPlatform(
                 api_url,
                 token or "dry-run-token",
                 bot_login=bot_login,
                 resolution_token=resolution_token,
             )
-        return create_github_platform(
+        return GitHubReviewPlatform(
             api_url,
             token or "dry-run-token",
             resolution_token=resolution_token,
@@ -62,7 +63,7 @@ def create_runtime_platform(
     gitlab_api_url = runtime_env.get("CI_API_V4_URL") or runtime_env.get("GITLAB_API_URL")
     if not gitlab_api_url and not allow_dry_run_defaults:
         raise PlatformRuntimeError("gitlab_discussions requires CI_API_V4_URL or GITLAB_API_URL")
-    return create_gitlab_platform(
+    return GitLabReviewPlatform(
         gitlab_api_url or "https://gitlab.example.com/api/v4",
         token or "dry-run-token",
         token_header="PRIVATE-TOKEN",

@@ -10,14 +10,14 @@ from ai_review.platform.runtime import PlatformRuntimeError, create_runtime_plat
 
 
 class PlatformRuntimeTests(unittest.TestCase):
-    def test_factory_has_no_ignored_access_parameter(self) -> None:
+    def test_runtime_has_no_ignored_access_parameter(self) -> None:
         self.assertNotIn("access", inspect.signature(create_runtime_platform).parameters)
 
-    def test_github_mode_uses_github_factory(self) -> None:
+    def test_github_mode_constructs_the_github_platform(self) -> None:
         config = {"posting": {"mode": "github_reviews"}}
         platform = object()
         with mock.patch(
-            "ai_review.platform.runtime.create_github_platform", return_value=platform
+            "ai_review.platform.runtime.GitHubReviewPlatform", return_value=platform
         ) as factory:
             self.assertIs(
                 create_runtime_platform(
@@ -34,7 +34,7 @@ class PlatformRuntimeTests(unittest.TestCase):
 
     def test_gitlab_mode_uses_gitlab_token(self) -> None:
         config = {"posting": {"mode": "gitlab_discussions"}}
-        with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
+        with mock.patch("ai_review.platform.runtime.GitLabReviewPlatform") as factory:
             create_runtime_platform(
                 config,
                 env={
@@ -64,7 +64,7 @@ class PlatformRuntimeTests(unittest.TestCase):
                 self.assertIn("no longer accepted", str(ctx.exception))
 
     def test_github_mode_passes_configured_bot_login(self) -> None:
-        with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
+        with mock.patch("ai_review.platform.runtime.GitHubReviewPlatform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
                 env={
@@ -80,7 +80,7 @@ class PlatformRuntimeTests(unittest.TestCase):
         )
 
     def test_github_mode_passes_dedicated_resolution_token(self) -> None:
-        with mock.patch("ai_review.platform.runtime.create_github_platform") as factory:
+        with mock.patch("ai_review.platform.runtime.GitHubReviewPlatform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "github_reviews"}},
                 env={
@@ -133,7 +133,7 @@ class PlatformRuntimeTests(unittest.TestCase):
             )
 
     def test_gitlab_dry_run_allows_placeholder_defaults(self) -> None:
-        with mock.patch("ai_review.platform.runtime.create_gitlab_platform") as factory:
+        with mock.patch("ai_review.platform.runtime.GitLabReviewPlatform") as factory:
             create_runtime_platform(
                 {"posting": {"mode": "gitlab_discussions"}},
                 env={},
@@ -145,26 +145,23 @@ class PlatformRuntimeTests(unittest.TestCase):
             token_header="PRIVATE-TOKEN",
         )
 
-    def test_cli_modules_do_not_select_concrete_factories(self) -> None:
+    def test_cli_modules_do_not_select_concrete_platforms(self) -> None:
+        # The trusted composition root is the only place that picks a concrete
+        # platform. A CLI module importing GitHubReviewPlatform/GitLabReviewPlatform
+        # directly would bypass the credential and bot-identity checks in
+        # create_runtime_platform.
         source_root = Path(__file__).resolve().parents[2] / "src" / "ai_review"
         for module_name in ("post.py", "input_bundle.py"):
             with self.subTest(module=module_name):
                 source = (source_root / module_name).read_text(encoding="utf-8")
                 tree = ast.parse(source)
-                imported_modules: set[str] = set()
                 imported_names: set[str] = set()
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
-                        imported_modules.add(node.module or "")
                         imported_names.update(alias.name for alias in node.names)
-                    elif isinstance(node, ast.Import):
-                        imported_modules.update(alias.name for alias in node.names)
 
-                self.assertFalse(
-                    any(module.endswith("platform.factory") for module in imported_modules)
-                )
                 self.assertTrue(
-                    {"create_gitlab_platform", "create_github_platform"}.isdisjoint(imported_names)
+                    {"GitLabReviewPlatform", "GitHubReviewPlatform"}.isdisjoint(imported_names)
                 )
                 self.assertIn("create_runtime_platform", imported_names)
 

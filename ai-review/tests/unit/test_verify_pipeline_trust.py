@@ -1,10 +1,37 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
-from ai_review.pipeline_trust import RESERVED_DIRECT_JOB_NAMES, find_trust_issues
+
+_PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_trust.py"
+
+
+def _load_pipeline_trust():
+    """Load the repository-only trust auditor from scripts/.
+
+    It lives outside ``ai_review`` because nothing in the pipeline imports it: it
+    audits a *consumer's* .gitlab-ci.yml, and shipping it in the runtime image
+    only added surface. Loaded by path so this test does not depend on scripts/
+    being on sys.path.
+    """
+    if "pipeline_trust" in sys.modules:
+        return sys.modules["pipeline_trust"]
+    spec = importlib.util.spec_from_file_location("pipeline_trust", _PIPELINE_TRUST)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"cannot load trust auditor from {_PIPELINE_TRUST}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pipeline_trust"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_pipeline_trust = _load_pipeline_trust()
+RESERVED_DIRECT_JOB_NAMES = _pipeline_trust.RESERVED_DIRECT_JOB_NAMES
+find_trust_issues = _pipeline_trust.find_trust_issues
 
 TRUSTED_PROJECT = "org/code-tribunal-ci"
 TRUSTED_SHA = "a" * 40

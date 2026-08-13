@@ -35,7 +35,7 @@ What actually contained it, and why 1.0.0 shipped anyway:
 
 - the branch was unprotected, so GitLab withheld both protected credentials — the
   hostile job confirmed `OPENROUTER_API_KEY absent` and `GITLAB_TOKEN absent`;
-- [`verify_pipeline_trust.py`](../../scripts/verify_pipeline_trust.py) does detect the
+- [`pipeline_trust.py`](../../scripts/pipeline_trust.py) does detect the
   composition, exiting 1 on exactly these two mutations — but it is an operator-run
   static check, not an in-pipeline gate;
 - the documented acceptance criterion for that evidence row is satisfied by *either*
