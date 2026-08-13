@@ -331,9 +331,11 @@ def validate_release_inputs(
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
     waivers = validate_evidence_records(data, root)
 
-    # Canonical-template -> installed-copy parity is not checked here. It is a
-    # repository-hygiene invariant, not a release-input one, and `make
-    # workflow-parity` is the single gate that both reports and repairs it.
+    # Canonical-template -> installed-copy parity is not checked here. In the
+    # repository `make workflow-parity` gates it and can repair it; for a release
+    # it is checked by check_release_manifest.validate_manifest, which is the
+    # validator that runs standalone from a tagged worktree. Both call the one
+    # implementation in release_common.sync_workflows.
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     if data["status"] == "active":
         assert isinstance(runtime_source, str)

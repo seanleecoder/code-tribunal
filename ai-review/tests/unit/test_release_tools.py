@@ -736,6 +736,35 @@ class ReleaseToolTests(unittest.TestCase):
             ):
                 validate_manifest(manifest, release_inputs, root)
 
+    def test_manifest_validator_rejects_an_installed_workflow_only_release(self) -> None:
+        """A release may not ship an installed workflow that differs from canonical.
+
+        ALLOWED_RELEASE_PATHS allowlists the canonical template and its installed
+        copy independently, so a release commit touching only
+        .github/workflows/ai-review.yml clears the coordinate check. GitHub
+        executes that file verbatim, so without a parity check here the manifest
+        would certify a release running bytes the canonical pin validation never
+        examined — a different image, action, or permission set.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            manifest, _inputs, release_inputs, changed_paths = self._build_valid_manifest(root)
+
+            installed = root / ".github/workflows/ai-review.yml"
+            installed.write_text(
+                installed.read_text(encoding="utf-8") + "\n# smuggled\n", encoding="utf-8"
+            )
+
+            with (
+                mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
+                mock.patch(
+                    "check_release_manifest.git_changed_paths", return_value=changed_paths
+                ),
+                self.assertRaisesRegex(ReleaseValidationError, "canonical"),
+            ):
+                validate_manifest(manifest, release_inputs, root)
+
     def test_manifest_generator_rejects_disallowed_runtime_change(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

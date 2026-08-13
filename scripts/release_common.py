@@ -70,7 +70,6 @@ ALLOWED_RELEASE_PATHS = (
     "ai-review/ci/review.gitlab-ci.yml",
     "CHANGELOG.md",
     "docs/evidence/",
-    "docs/history/specs/",
     "docs/improvement-specs/",
     "release/",
 )
