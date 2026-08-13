@@ -244,18 +244,9 @@ Files an implementer is expected to touch:
 
 No schema, image, pin, or release-input change is required or permitted for this purpose.
 This is a source-only change, and the consequence must be stated rather than left
-implicit: every image published so far — including the `1.0-e2464a9` pair this
-specification was drafted against and the `54dffa1` pair 1.0.2 ships — predates the
-shared step and cannot emit its decode line, so **no acceptance criterion above may
-depend on a live provider run**, and none does. Observing the decode line against a real
-provider requires a separately authorized build, publish, repin, and canary — a rollout
-decision outside this specification.
-
-In particular, this specification neither blocks nor is blocked by
-SPEC-50's rollout
-canary, which is now **recorded and closed** — observed at `09f4e65`
-([record](../evidence/record-opencode-structured-output-canary.md), supplemental rather
-than release-gating because those images are unreleased). That closure does not change
-the independence argument; it is the reason for it. The canary ran a runtime that
-predates this change, so it could not have exercised the shared decode step either way,
-and a green canary is not evidence for or against the gaps enumerated above.
+implicit: the published `1.0-e2464a9` images do not contain the shared step and cannot
+emit its decode line, so **no acceptance criterion above may depend on a live provider
+run**, and none does. Observing the decode line against a real provider requires a
+separately authorized build, publish, repin, and canary — a rollout decision outside this
+specification. In particular, this specification neither blocks nor is blocked by the
+outstanding SPEC-50 canary, which runs the already-published images.
