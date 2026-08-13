@@ -589,7 +589,15 @@ class ReleaseToolTests(unittest.TestCase):
             stderr.getvalue(),
         )
 
-    def test_mismatched_github_pin_is_rejected(self) -> None:
+    def test_single_divergent_github_job_pin_is_rejected(self) -> None:
+        """One job container pinned off the released digest fails validation.
+
+        This case previously asserted the installed/canonical parity message,
+        because mutating the canonical template also desynchronized the installed
+        copy. Parity is now the business of `make workflow-parity` alone, so what
+        remains — and what actually concerns release inputs — is that the
+        template's pins match the digests being released.
+        """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._tree(root)
@@ -604,7 +612,9 @@ class ReleaseToolTests(unittest.TestCase):
                 encoding="utf-8",
             )
             data["hashes"] = computed_hashes(root)
-            with self.assertRaisesRegex(ReleaseValidationError, "workflow copies differ"):
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "GitHub template pins do not match release inputs"
+            ):
                 validate_release_inputs(data, root)
 
     def test_consistently_mismatched_github_pins_are_rejected(self) -> None:

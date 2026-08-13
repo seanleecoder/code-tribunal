@@ -22,7 +22,6 @@ from release_common import (
     computed_hashes,
     image_ref,
     load_json,
-    sync_workflows,
     validate_release_version,
 )
 
@@ -333,13 +332,9 @@ def validate_release_inputs(
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
     waivers = validate_evidence_records(data, root)
 
-    # Delegated to the shared helper, which scripts/sync_workflows.py also uses.
-    if drifted := sync_workflows(check=True, root=root):
-        raise ReleaseValidationError(
-            "installed GitHub workflow copies differ from their canonical templates: "
-            + ", ".join(drifted)
-            + " (run `make sync-workflows`)"
-        )
+    # Canonical-template -> installed-copy parity is not checked here. It is a
+    # repository-hygiene invariant, not a release-input one, and `make
+    # workflow-parity` is the single gate that both reports and repairs it.
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     if data["status"] == "active":
         assert isinstance(runtime_source, str)

@@ -42,10 +42,11 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     mirror problem, translating \n to os.linesep. Reading and writing bytes is
     what makes the byte-duplicate contract above literally true.
 
-    This is the canonical implementation for repository-only callers.
-    scripts/check_supply_chain_pins.py deliberately keeps its own copy of the
-    comparison because it runs inside the base image and must import only the
-    standard library; that copy is byte-exact too, so all gates agree.
+    This is the only implementation of the comparison. Copies previously lived in
+    check_supply_chain_pins.py, check_release_inputs.py, and test_ci_template.py;
+    none of them could repair the drift they reported, and the one in
+    check_supply_chain_pins.py ran inside the base image, where .github/ does not
+    exist and it therefore always passed. `make workflow-parity` is the single gate.
     """
     changed: list[str] = []
     for canonical_rel, installed_rel in WORKFLOW_PAIRS:
