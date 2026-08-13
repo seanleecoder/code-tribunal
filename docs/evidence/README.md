@@ -186,26 +186,45 @@ the disabled default.
     carrying a one-reviewer `review.yaml` (project-supplied policy is SPEC-47, still
     proposed).
 
-    **Two seats are the floor, but they are not automatically sufficient — the run only
-    produces an inline object on two paths.** `decision_for_group` surfaces a group
-    inline when either at least `votes_required` (2) seats emit a matching finding, or
-    exactly one seat emits it with `final_severity: blocker` in a
-    `severity_policy.single_reviewer_blocker` category (`[security, correctness]`).
-    Anything else decides `fyi`, and with the shipped `fyi_mode: summary_comment` that
-    yields a summary line and **no platform position at all** — the summary's own
-    location text prefers `new_path`/`new_line`, so it cannot even distinguish sides.
-    A `fyi` outcome therefore cannot close this gap. Before treating a run as proof,
-    read the consensus artifact and confirm which path it took:
-    `contributing_reviewers` (two names, or one plus `final_severity: blocker` in a
-    qualifying category) alongside `decision: surface`. This is a second source of
-    non-determinism on top of anchor placement: the model must anchor in the removed
-    region **and** the group must reach one of those two paths.
+    **Two seats are the floor, but they are not automatically sufficient — an inline
+    object appears only on specific decision paths, and which ones exist depends on
+    whether critique runs.** A `fyi` decision is the failure mode to watch: with the
+    shipped `fyi_mode: summary_comment` it yields a summary line and **no platform
+    position at all**, and the summary's own location text prefers `new_path`/`new_line`,
+    so it cannot even distinguish sides. A `fyi` outcome cannot close this gap.
 
-    For the record, the `09f4e65` runs do **not** demonstrate this: GitHub took the
-    single-reviewer-blocker path (`contributing_reviewers: ['claude']`,
-    `final_severity: blocker`) and GitLab took the quorum path
-    (`['claude', 'opencode']`, `final_severity: major`). Neither shows posting
-    proceeding without quorum for a non-blocker.
+    - **Critique off** (what this probe prescribes, to keep it cheap) — `decision_for_group`
+      surfaces on exactly two paths: `vote_count >= votes_required` (2 seats emitting a
+      matching finding), or `vote_count == 1` with `final_severity: blocker` in a
+      `severity_policy.single_reviewer_blocker` category (`[security, correctness]`).
+      Anything else is `fyi`.
+    - **Critique on** (the shipped default: `critique.enabled: true`) — a **third** path
+      opens. `_recompute_group_decision` escalates a `fyi` group to `surface` when
+      `critique_support_count > 0` and `critique.allow_advisory_escalation` is true, which
+      is the shipped default; the escalation stays non-blocking. For this probe that is
+      the *most achievable* route, because eligible critics exclude the group's own
+      contributing reviewers — on a two-seat panel the peer seat that did **not** find the
+      deletion-anchored issue is exactly the seat that can support it into an inline post.
+      Critique on also adds a way to **lose** the finding: a group is dropped outright when
+      `critique_noise_count` exceeds half the eligible critics. Choose deliberately —
+      critique on costs critique tokens and risks the drop, critique off needs either two
+      independent matching findings or a qualifying blocker.
+
+    So the probe is non-deterministic on two axes: the model must anchor in the removed
+    region **and** the group must land on a surfacing path. Before treating a run as
+    proof, read the consensus artifact and record which path it took — `decision`,
+    `vote_count` and `contributing_reviewers`, `final_severity`, and
+    `critique_support_count` (plus `critique_noise_count` if the group was dropped).
+    Without `critique_support_count` an escalated advisory is indistinguishable from a
+    quorum surface.
+
+    For the record, the `09f4e65` runs ran with **critique disabled** and so exercised
+    only the first two paths — which is why they cannot be cited for the third: GitHub took
+    the single-reviewer-blocker path (`vote_count: 1`,
+    `contributing_reviewers: ['claude']`, `final_severity: blocker`,
+    `critique_support_count: 0`) and GitLab took the quorum path (`vote_count: 2`,
+    `['claude', 'opencode']`, `final_severity: major`, `critique_support_count: 0`).
+    Neither shows a non-blocker surfacing without quorum.
 
   For either half, **counts alone never establish placement**: `accepted == raw` plus
   "some inline discussion" is equally satisfied by a comment on the wrong file or on the
@@ -213,9 +232,11 @@ the disabled default.
   object's own coordinates — for a deleted-path anchor, GitLab `position.old_path` equal
   to the deleted path with `position.old_line` set to the pre-image line and
   `position.new_line` null, or GitHub `side: "LEFT"` with `line` as the pre-image line —
-  and record the `decision`/`contributing_reviewers`/`final_severity` that produced it,
-  so the next reader can tell a quorum surface from a single-reviewer-blocker surface. See the carried coverage-gap table in the
-  [runbook](RUNBOOK.md).
+  and record the decision inputs that produced it: `decision`, `vote_count`,
+  `contributing_reviewers`, `final_severity`, and `critique_support_count`. Those five
+  distinguish a quorum surface from a single-reviewer-blocker surface from a
+  critique-escalated advisory; fewer than five leaves the route ambiguous. See the carried
+  coverage-gap table in the [runbook](RUNBOOK.md).
 - **`render-body.v3` has no live rendering or migration evidence.** The format
   changed after `v1.0.0`, so no live run has confirmed that prose renders as wrapping
   code spans on either platform without autolink/mention/issue-reference expansion,
