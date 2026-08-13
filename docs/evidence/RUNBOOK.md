@@ -393,6 +393,26 @@ discovered, so the next release starts here instead of rediscovering it.
 | Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
+The behavioral premises the rows above depend on — the panel floor, the surfacing
+decision paths, the mock's anchor selection, and the per-platform diff shape — are
+declared in the comment below and proven against configuration and source by
+`scripts/check_docs.py` on every `make docs-check`. Change any of them and this section
+fails until the prose is updated with it. Add a claim whenever a row asserts new runtime
+behavior, and see the note in the [evidence index](README.md#known-gaps-and-missing-evidence)
+for what this mechanism does and does not protect.
+
+<!-- verified-claims:
+config panel.quorum.votes_required == 2
+config posting.fyi_mode == summary_comment
+config severity_policy.single_reviewer_blocker.categories == [security, correctness]
+config critique.allow_advisory_escalation == true
+const ai_review.config._MINIMUM_PANEL_REVIEWERS == 2
+source ai-review/src/ai_review/critique.py contains int(group["critique_support_count"]) > 0
+source ai-review/src/ai_review/mock_reviewer.py contains if line.kind != "added":
+source ai-review/src/ai_review/mock_reviewer.py contains "side": "new",
+source ai-review/src/ai_review/gitlab_client.py contains chunks.append(f"--- a/{old_path}")
+-->
+
 ## The runs
 
 Two tiers. Copy each record, fill Identity/Preconditions, execute, then complete

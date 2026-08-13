@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import sys
@@ -88,6 +89,17 @@ ENV_RE = re.compile(
     r"XDG_(?:CONFIG|DATA)_HOME|OPENCODE_CONFIG_(?:DIR|CONTENT))\b"
 )
 TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+# Machine-checked documentation premises. See _verified_claim_issues().
+VERIFIED_CLAIMS_RE = re.compile(r"<!--\s*verified-claims:\s*(.*?)-->", re.DOTALL)
+CONFIG_CLAIM_RE = re.compile(r"^config\s+(\S+)\s*==\s*(.+)$")
+CONST_CLAIM_RE = re.compile(r"^const\s+([\w.]+)\.(\w+)\s*==\s*(.+)$")
+SOURCE_CLAIM_RE = re.compile(r"^source\s+(\S+)\s+contains\s+(.+)$")
+MOCK_SCENARIO_VALUE_RE = re.compile(r"AI_REVIEW_MOCK_SCENARIO=([a-z_]+)")
+SCENARIO_TABLE_RE = re.compile(
+    r"^\|\s*Scenario\s*\|.*\n\|[-|\s]+\|\s*\n((?:\|.*\n)+)", re.MULTILINE
+)
+MOCK_REVIEWER_MODULE = "ai_review.mock_reviewer"
+RUNBOOK = ROOT / "docs/evidence/RUNBOOK.md"
 REJECTED_ENV_NAMES = {
     "AI_REVIEW_CURSOR_EFFORT",
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
@@ -395,6 +407,159 @@ def _example_issues() -> list[str]:
     return issues
 
 
+def _claim_literal(raw: str) -> object:
+    """Parse a claim's right-hand side into the type it will be compared against."""
+    text = raw.strip().strip("`")
+    if text in {"true", "false"}:
+        return text == "true"
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    if text.startswith("[") and text.endswith("]"):
+        inner = text[1:-1].strip()
+        if not inner:
+            return []
+        return [item.strip().strip("\"'") for item in inner.split(",")]
+    return text.strip("\"'")
+
+
+def _resolve_config_path(config: object, dotted: str) -> tuple[object, bool]:
+    current = config
+    for part in dotted.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None, False
+        current = current[part]
+    return current, True
+
+
+def _verified_claim_issues(path: Path, text: str, config: object) -> list[str]:
+    """Prove the code/config premises a document declares it depends on.
+
+    Evidence prose repeatedly asserted runtime behavior that no check could
+    contradict: a panel size the configuration rejects, a decision path that was
+    missing a third branch, a mock capability that does not exist. Those claims were
+    wrong when written, not merely stale, so a drift-detector over prose would not
+    have caught them either. Instead a document declares its load-bearing premises in
+    a ``verified-claims`` comment and this proves each one against the real
+    configuration, module constants, or source text.
+
+    Deliberate scope: only *declared* premises are checked. This cannot find a claim
+    nobody declared, and it cannot judge whether an assertion is strong enough to
+    prove what the prose says it proves. What it does guarantee is that the premises
+    behind an annotated passage cannot change silently.
+
+    A malformed or unrecognized claim line is an error rather than a skipped line. A
+    typo must fail loudly; silently ignoring it would leave the passage unprotected
+    while still looking annotated.
+    """
+    issues: list[str] = []
+    relative = path.relative_to(ROOT)
+    # Fenced blocks are stripped first so documentation *of* this syntax is not
+    # evaluated as a live claim.
+    for block in VERIFIED_CLAIMS_RE.findall(_without_fenced_code(text)):
+        for line in block.splitlines():
+            claim = line.strip()
+            if not claim:
+                continue
+
+            config_match = CONFIG_CLAIM_RE.match(claim)
+            if config_match is not None:
+                dotted, expected_raw = config_match.groups()
+                actual, found = _resolve_config_path(config, dotted)
+                if not found:
+                    issues.append(
+                        f"{relative}: verified claim names unknown configuration key: {claim}"
+                    )
+                elif actual != _claim_literal(expected_raw):
+                    issues.append(
+                        f"{relative}: verified claim failed: {claim} (actual: {actual!r})"
+                    )
+                continue
+
+            const_match = CONST_CLAIM_RE.match(claim)
+            if const_match is not None:
+                module_name, attribute, expected_raw = const_match.groups()
+                try:
+                    module = importlib.import_module(module_name)
+                except ImportError as exc:
+                    issues.append(
+                        f"{relative}: verified claim cannot import module: {claim} ({exc})"
+                    )
+                    continue
+                if not hasattr(module, attribute):
+                    issues.append(f"{relative}: verified claim names missing attribute: {claim}")
+                    continue
+                actual = getattr(module, attribute)
+                if actual != _claim_literal(expected_raw):
+                    issues.append(
+                        f"{relative}: verified claim failed: {claim} (actual: {actual!r})"
+                    )
+                continue
+
+            source_match = SOURCE_CLAIM_RE.match(claim)
+            if source_match is not None:
+                target, needle = source_match.groups()
+                source_path = ROOT / target
+                try:
+                    source_text = source_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    issues.append(f"{relative}: verified claim cannot read source: {claim} ({exc})")
+                    continue
+                if needle.strip() not in source_text:
+                    issues.append(
+                        f"{relative}: verified claim failed: {claim} "
+                        f"(substring absent from {target})"
+                    )
+                continue
+
+            issues.append(f"{relative}: unrecognized verified claim: {claim}")
+    return issues
+
+
+def _mock_scenario_issues(texts: dict[Path, str]) -> list[str]:
+    """Keep documented mock scenarios and the implemented set identical.
+
+    A live probe was once prescribed that the deterministic mock cannot drive, so the
+    run would have failed in a way that mimicked the defect it was meant to test.
+    Scenario *existence* is the mechanizable half of that: a document may not name a
+    scenario the mock does not implement, and the runbook's scenario table must cover
+    every scenario it does — so adding one fails until it is documented.
+    """
+    issues: list[str] = []
+    try:
+        mock_reviewer = importlib.import_module(MOCK_REVIEWER_MODULE)
+    except ImportError as exc:
+        return [f"scripts/check_docs.py: cannot import {MOCK_REVIEWER_MODULE}: {exc}"]
+
+    implemented = set(getattr(mock_reviewer, "_SCENARIOS", set()))
+    if not implemented:
+        return [f"{MOCK_REVIEWER_MODULE}: no _SCENARIOS set to check documentation against"]
+
+    for path, text in texts.items():
+        for named in MOCK_SCENARIO_VALUE_RE.findall(text):
+            if named not in implemented:
+                issues.append(
+                    f"{path.relative_to(ROOT)}: AI_REVIEW_MOCK_SCENARIO={named} is not "
+                    f"implemented; {MOCK_REVIEWER_MODULE} offers {sorted(implemented)}"
+                )
+
+    runbook_text = texts.get(RUNBOOK) or RUNBOOK.read_text(encoding="utf-8")
+    table = SCENARIO_TABLE_RE.search(runbook_text)
+    if table is None:
+        return issues + [f"{RUNBOOK.relative_to(ROOT)}: scenario table not found"]
+
+    documented = set(TABLE_KEY_RE.findall(table.group(1)))
+    for missing in sorted(implemented - documented):
+        issues.append(
+            f"{RUNBOOK.relative_to(ROOT)}: scenario table omits implemented scenario `{missing}`"
+        )
+    for unknown in sorted(documented - implemented):
+        issues.append(
+            f"{RUNBOOK.relative_to(ROOT)}: scenario table documents unimplemented "
+            f"scenario `{unknown}`"
+        )
+    return issues
+
+
 def _release_state_issues() -> list[str]:
     """Keep prose from contradicting ``release-inputs.status``.
 
@@ -566,23 +731,27 @@ def _adr_issues() -> list[str]:
 
 def find_issues() -> list[str]:
     issues: list[str] = []
-    seen: set[Path] = set()
     anchor_cache: dict[Path, set[str]] = {}
+    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    # One read per document, shared by every per-file check below.
+    texts: dict[Path, str] = {}
     for path in CURRENT_MARKDOWN:
-        if path in seen:
+        if path in texts:
             continue
-        seen.add(path)
         text = path.read_text(encoding="utf-8")
+        texts[path] = text
         issues.extend(_link_issues(path, text, anchor_cache))
+        issues.extend(_verified_claim_issues(path, text, config))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
 
     issues.extend(_readme_issues(ROOT_README.read_text(encoding="utf-8")))
 
-    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     config_doc = CONFIG_DOC.read_text(encoding="utf-8")
     source_environment_names = _source_environment_names()
     issues.extend(_inventory_issues(config, config_doc, source_environment_names))
+
+    issues.extend(_mock_scenario_issues(texts))
 
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
@@ -600,7 +769,8 @@ def main() -> int:
         return 1
     print(
         "OK: current documentation links, anchors, configuration/environment "
-        "inventory, and GitHub/GitLab examples are consistent"
+        "inventory, declared code/config premises, mock scenarios, and "
+        "GitHub/GitLab examples are consistent"
     )
     return 0
 

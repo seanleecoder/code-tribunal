@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -395,7 +397,7 @@ class DocumentationContractTests(unittest.TestCase):
             self._release_state_issues_for(
                 checker,
                 status="active",
-                readme_body='Example output:\n\n```text\nstatus remains draft\n```\n',
+                readme_body="Example output:\n\n```text\nstatus remains draft\n```\n",
             ),
             [],
         )
@@ -625,6 +627,231 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("missing from the index table", outside_table_issues[0])
         self.assertEqual(table_issues, [])
         self.assertEqual(titled_table_issues, [])
+
+    def _claim_issues(
+        self,
+        checker: object,
+        claims: str,
+        *,
+        config: dict[str, object] | None = None,
+        source_files: dict[str, str] | None = None,
+        doc_body: str = "",
+    ) -> list[str]:
+        """Run ``_verified_claim_issues`` over a synthetic doc in a synthetic tree."""
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            for relative, content in (source_files or {}).items():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            doc = root / "doc.md"
+            doc.write_text(f"{doc_body}<!-- verified-claims:\n{claims}\n-->\n", encoding="utf-8")
+            original_root = checker.ROOT
+            checker.ROOT = root
+            try:
+                return checker._verified_claim_issues(
+                    doc, doc.read_text(encoding="utf-8"), config or {}
+                )
+            finally:
+                checker.ROOT = original_root
+
+    def test_verified_claims_accept_satisfied_premises(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._claim_issues(
+            checker,
+            "config panel.quorum.votes_required == 2\n"
+            "config posting.fyi_mode == summary_comment\n"
+            "config severity_policy.categories == [security, correctness]\n"
+            "config critique.enabled == true\n"
+            "const ai_review.config._MINIMUM_PANEL_REVIEWERS == 2\n"
+            'source src/thing.py contains if line.kind != "added":',
+            config={
+                "panel": {"quorum": {"votes_required": 2}},
+                "posting": {"fyi_mode": "summary_comment"},
+                "severity_policy": {"categories": ["security", "correctness"]},
+                "critique": {"enabled": True},
+            },
+            source_files={"src/thing.py": 'if line.kind != "added":\n    pass\n'},
+        )
+        self.assertEqual(issues, [])
+
+    def test_verified_claim_reports_config_mismatch_with_actual_value(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._claim_issues(
+            checker,
+            "config panel.quorum.votes_required == 2",
+            config={"panel": {"quorum": {"votes_required": 3}}},
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertIn("verified claim failed", issues[0])
+        self.assertIn("actual: 3", issues[0])
+
+    def test_verified_claim_reports_unknown_config_key(self) -> None:
+        checker = _load_docs_checker()
+        issues = self._claim_issues(
+            checker,
+            "config panel.quorum.absent_key == 2",
+            config={"panel": {"quorum": {"votes_required": 2}}},
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertIn("unknown configuration key", issues[0])
+
+    def test_verified_claim_reports_const_problems(self) -> None:
+        checker = _load_docs_checker()
+        mismatch = self._claim_issues(
+            checker, "const ai_review.config._MINIMUM_PANEL_REVIEWERS == 5"
+        )
+        self.assertEqual(len(mismatch), 1)
+        self.assertIn("actual: 2", mismatch[0])
+
+        missing = self._claim_issues(checker, "const ai_review.config._NO_SUCH_CONSTANT == 1")
+        self.assertEqual(len(missing), 1)
+        self.assertIn("missing attribute", missing[0])
+
+        unimportable = self._claim_issues(checker, "const ai_review.not_a_module._X == 1")
+        self.assertEqual(len(unimportable), 1)
+        self.assertIn("cannot import module", unimportable[0])
+
+    def test_verified_claim_reports_source_problems(self) -> None:
+        checker = _load_docs_checker()
+        absent = self._claim_issues(
+            checker,
+            "source src/thing.py contains predicate_that_is_gone",
+            source_files={"src/thing.py": "other_code()\n"},
+        )
+        self.assertEqual(len(absent), 1)
+        self.assertIn("substring absent", absent[0])
+
+        unreadable = self._claim_issues(checker, "source src/missing.py contains anything")
+        self.assertEqual(len(unreadable), 1)
+        self.assertIn("cannot read source", unreadable[0])
+
+    def test_malformed_claim_is_an_error_not_a_silent_skip(self) -> None:
+        """A typo must fail: skipping it would leave the passage unprotected."""
+        checker = _load_docs_checker()
+        for claim in (
+            "confg panel.quorum.votes_required == 2",
+            "config panel.quorum.votes_required",
+            "source src/thing.py includes something",
+            "nonsense",
+        ):
+            with self.subTest(claim=claim):
+                issues = self._claim_issues(checker, claim, config={"panel": {}})
+                self.assertEqual(len(issues), 1)
+                self.assertIn("unrecognized verified claim", issues[0])
+
+    def test_claim_block_inside_fenced_example_is_ignored(self) -> None:
+        """Documenting the syntax must not evaluate the example as a live claim."""
+        checker = _load_docs_checker()
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            doc = root / "doc.md"
+            doc.write_text(
+                "Example:\n\n```\n<!-- verified-claims:\n"
+                "config panel.quorum.votes_required == 999\n-->\n```\n",
+                encoding="utf-8",
+            )
+            original_root = checker.ROOT
+            checker.ROOT = root
+            try:
+                issues = checker._verified_claim_issues(
+                    doc,
+                    doc.read_text(encoding="utf-8"),
+                    {"panel": {"quorum": {"votes_required": 2}}},
+                )
+            finally:
+                checker.ROOT = original_root
+        self.assertEqual(issues, [])
+
+    def _scenario_issues(
+        self, checker: object, *, implemented: set[str], runbook_body: str, extra_doc: str = ""
+    ) -> list[str]:
+        """Run ``_mock_scenario_issues`` against a synthetic mock module and runbook."""
+        module_name = "fake_mock_reviewer_for_docs_contract"
+        fake = types.ModuleType(module_name)
+        fake._SCENARIOS = implemented  # type: ignore[attr-defined]
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            (root / "docs/evidence").mkdir(parents=True)
+            runbook = root / "docs/evidence/RUNBOOK.md"
+            runbook.write_text(runbook_body, encoding="utf-8")
+            texts = {runbook: runbook_body}
+            if extra_doc:
+                other = root / "docs/evidence/other.md"
+                other.write_text(extra_doc, encoding="utf-8")
+                texts[other] = extra_doc
+            original = (checker.ROOT, checker.RUNBOOK, checker.MOCK_REVIEWER_MODULE)
+            sys.modules[module_name] = fake
+            checker.ROOT = root
+            checker.RUNBOOK = runbook
+            checker.MOCK_REVIEWER_MODULE = module_name
+            try:
+                return checker._mock_scenario_issues(texts)
+            finally:
+                (checker.ROOT, checker.RUNBOOK, checker.MOCK_REVIEWER_MODULE) = original
+                sys.modules.pop(module_name, None)
+
+    def test_scenario_table_must_match_implemented_set_in_both_directions(self) -> None:
+        checker = _load_docs_checker()
+        table = "| Scenario | Drives |\n|---|---|\n| `blocking` | create |\n| `none` | resolve |\n"
+
+        self.assertEqual(
+            self._scenario_issues(checker, implemented={"blocking", "none"}, runbook_body=table),
+            [],
+        )
+
+        undocumented = self._scenario_issues(
+            checker, implemented={"blocking", "none", "deleted"}, runbook_body=table
+        )
+        self.assertEqual(len(undocumented), 1)
+        self.assertIn("omits implemented scenario `deleted`", undocumented[0])
+
+        unimplemented = self._scenario_issues(checker, implemented={"blocking"}, runbook_body=table)
+        self.assertEqual(len(unimplemented), 1)
+        self.assertIn("documents unimplemented scenario `none`", unimplemented[0])
+
+    def test_documented_scenario_value_must_be_implemented(self) -> None:
+        checker = _load_docs_checker()
+        table = "| Scenario | Drives |\n|---|---|\n| `blocking` | create |\n"
+        issues = self._scenario_issues(
+            checker,
+            implemented={"blocking"},
+            runbook_body=table,
+            extra_doc="Set `AI_REVIEW_MOCK_SCENARIO=deleting` before the run.\n",
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertIn("AI_REVIEW_MOCK_SCENARIO=deleting is not implemented", issues[0])
+
+    def test_seeded_evidence_claims_catch_the_historical_defects(self) -> None:
+        """The real annotations must fail on the drift they exist to prevent.
+
+        Round 5 of review found the evidence index asserting two inline-surfacing
+        paths when critique escalation is a third; round 4 found it prescribing a
+        single-reviewer panel the configuration rejects. Both premises are now
+        declared, so mutating either must break the documentation build.
+        """
+        checker = _load_docs_checker()
+        evidence_index = checker.EVIDENCE_INDEX
+        text = evidence_index.read_text(encoding="utf-8")
+        config = checker.yaml.safe_load(checker.CONFIG_PATH.read_text(encoding="utf-8"))
+
+        self.assertEqual(checker._verified_claim_issues(evidence_index, text, config), [])
+
+        raised_quorum = json.loads(json.dumps(config))
+        raised_quorum["panel"]["quorum"]["votes_required"] = 3
+        quorum_issues = checker._verified_claim_issues(evidence_index, text, raised_quorum)
+        self.assertTrue(
+            any("panel.quorum.votes_required" in issue for issue in quorum_issues),
+            quorum_issues,
+        )
+
+        escalation_off = json.loads(json.dumps(config))
+        escalation_off["critique"]["allow_advisory_escalation"] = False
+        escalation_issues = checker._verified_claim_issues(evidence_index, text, escalation_off)
+        self.assertTrue(
+            any("allow_advisory_escalation" in issue for issue in escalation_issues),
+            escalation_issues,
+        )
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

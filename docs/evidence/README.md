@@ -237,6 +237,35 @@ the disabled default.
   distinguish a quorum surface from a single-reviewer-blocker surface from a
   critique-escalated advisory; fewer than five leaves the route ambiguous. See the carried
   coverage-gap table in the [runbook](RUNBOOK.md).
+
+<!-- verified-claims:
+config panel.quorum.votes_required == 2
+config posting.fyi_mode == summary_comment
+config severity_policy.single_reviewer_blocker.categories == [security, correctness]
+config critique.enabled == true
+config critique.allow_advisory_escalation == true
+const ai_review.config._MINIMUM_PANEL_REVIEWERS == 2
+source ai-review/src/ai_review/consensus.py contains if len(reviewers) >= votes_required:
+source ai-review/src/ai_review/critique.py contains int(group["critique_support_count"]) > 0
+source ai-review/src/ai_review/critique.py contains int(group["critique_noise_count"]) > len(eligible_critics) / 2
+source ai-review/src/ai_review/critique.py contains if critic not in set(group["contributing_reviewers"])
+source ai-review/src/ai_review/mock_reviewer.py contains if line.kind != "added":
+source ai-review/src/ai_review/mock_reviewer.py contains "side": "new",
+source ai-review/src/ai_review/gitlab_client.py contains chunks.append(f"--- a/{old_path}")
+source ai-review/src/ai_review/summary_render.py contains anchor.get("new_path") or anchor.get("old_path")
+-->
+
+> **The premises above are machine-checked.** The paragraphs in this section assert
+> specific runtime behavior — panel floors, decision paths, mock capabilities, per-platform
+> diff shapes — and every one of those assertions was, at some point, written from
+> narrative rather than from the code. The `verified-claims` comment beside this entry
+> declares those premises, and `scripts/check_docs.py` proves each against
+> `ai-review/config/review.yaml`, module constants, and source text on every
+> `make docs-check`. If you change a threshold, a decision branch, or the mock's anchor
+> selection, this section fails until the prose and the claim are both updated. Add a claim
+> whenever you write a new behavioral assertion here; the checker cannot protect a premise
+> nobody declared, and it cannot tell you an assertion is too weak to prove what you
+> claim.
 - **`render-body.v3` has no live rendering or migration evidence.** The format
   changed after `v1.0.0`, so no live run has confirmed that prose renders as wrapping
   code spans on either platform without autolink/mention/issue-reference expansion,
