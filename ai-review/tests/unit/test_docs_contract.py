@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-_DOCS_CHECK = Path(__file__).resolve().parents[3] / "scripts" / "check_docs.py"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
 
 
 def _load_docs_checker():
@@ -81,7 +83,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v1", "panel": {"enabled": True}}
+        config = {"schema_version": "review_config.v2", "panel": {"enabled": True}}
         config_doc = (
             "| `schema_version` | first |\n"
             "| `schema_version` | duplicate |\n"
@@ -142,7 +144,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_rows_in_the_wrong_reference_section(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v1"}
+        config = {"schema_version": "review_config.v2"}
         config_doc = (
             "| `AI_REVIEW_ACTIVE` | misplaced environment |\n"
             "## Environment variables\n"
@@ -177,14 +179,12 @@ class DocumentationContractTests(unittest.TestCase):
         )
 
         missing = checker._inventory_issues({}, "## Environment variables\n", set())
+        # Derived from the checker's own set rather than a hand-listed copy: a
+        # name added to REJECTED_ENV_NAMES must not silently drop out of this case.
         documented = checker._inventory_issues(
             {},
             "## Environment variables\n"
-            "| `AI_REVIEW_CURSOR_EFFORT` | rejected |\n"
-            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | rejected |\n"
-            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | rejected |\n"
-            "| `GITLAB_READ_TOKEN` | rejected |\n"
-            "| `GITLAB_WRITE_TOKEN` | rejected |\n",
+            + "".join(f"| `{name}` | rejected |\n" for name in sorted(names)),
             set(),
         )
 
@@ -393,6 +393,30 @@ class DocumentationContractTests(unittest.TestCase):
                 "such as 1.0.1-rc.1; build metadata is not supported"
             ],
         )
+
+    def test_every_documented_cli_command_resolves(self) -> None:
+        """Each command in the CLI reference must name something that exists.
+
+        The link checker cannot see these: a command is inline code, not a link
+        destination. Moving pipeline_trust.py out of the package left this table
+        advertising `python -m ai_review.pipeline_trust` and
+        `scripts/verify_pipeline_trust.py`, neither of which existed, while
+        docs-check stayed green — and the security model tells operators to run
+        that auditor against their consumer config.
+        """
+        reference = _REPO_ROOT / "docs/reference/cli-and-exit-codes.md"
+        source_root = _REPO_ROOT / "ai-review/src"
+        commands = re.findall(r"(?m)^\|\s*`([^`]+)`\s*\|", reference.read_text(encoding="utf-8"))
+        self.assertGreater(len(commands), 5, "CLI reference table was not parsed")
+
+        for command in commands:
+            with self.subTest(command=command):
+                parts = command.split()
+                if parts[:2] == ["python", "-m"]:
+                    target = source_root / (parts[2].replace(".", "/") + ".py")
+                else:
+                    target = _REPO_ROOT / parts[0]
+                self.assertTrue(target.is_file(), f"{command!r} names a missing {target}")
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

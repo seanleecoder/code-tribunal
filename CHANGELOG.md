@@ -9,31 +9,41 @@ versioning.
 
 ### Removed
 
-- **Breaking (`review_config.v1`): four configuration keys are gone.** A config
-  that still declares `critique.rounds`, `critique.can_add_quorum_votes`, or
-  anything under `panel.grouping.semantic` is now rejected with an unknown-key
-  error; remove those keys. None of them was a real choice:
-  - `critique.can_add_quorum_votes` was validated to reject any value but
-    `false`, and nothing read it.
-  - `critique.rounds` was a second boolean that had to agree with
-    `critique.enabled` before critique ran. `critique.enabled` is now the only
-    switch.
-  - `panel.grouping.semantic` enabled an opt-in Jaccard similarity comparison
-    over finding titles and bodies. It shipped disabled, sat outside the 1.0
-    compatibility guarantee, and its two environment overrides were rejected by
-    name. Grouping now rests entirely on identity that survives rewording —
-    path, category, side, context hash, fingerprints, and symbol. The golden
-    consensus fixture for the default path is byte-identical.
-  - `state.backend` is derived from `posting.mode` rather than chosen, and
-    `AI_REVIEW_STATE_BACKEND` no longer exists. A config may still restate the
-    matching value, so most consumer configs need no edit; a value that
-    contradicts the mode is now an error. Each mode has exactly one usable
-    backend, and the previous free choice made `gitlab_discussions` +
-    `github_pr_comment` authorable even though it cannot work.
+- **Breaking: the configuration contract is now `review_config.v2`.** Four keys
+  that were never choices are gone. `review_config.v1` is rejected with a message
+  naming this migration, rather than being accepted with a changed shape — a
+  version whose meaning depends on the runtime reading it is not a contract.
+
+  ### Migrating a `review_config.v1` document
+
+  | v1 key | v2 | Why |
+  |---|---|---|
+  | `critique.rounds` | **delete** | A second boolean that had to agree with `critique.enabled` before critique ran. `critique.enabled` is now the only switch. |
+  | `critique.can_add_quorum_votes` | **delete** | Validation rejected any value but `false`, and nothing read it. |
+  | `panel.grouping.semantic.enabled`, `…threshold` | **delete** | An opt-in Jaccard comparison over finding titles and bodies. Shipped disabled, outside the 1.0 guarantee, with both environment overrides rejected by name. |
+  | `state.backend` | **delete** (may be kept if it matches) | Derived from `posting.mode`: `gitlab_discussions` → `gitlab_mr_state_note`, `github_reviews` → `github_pr_comment`. A value contradicting the mode is an error. |
+  | `schema_version: review_config.v1` | `review_config.v2` | |
+
+  A config copied from the shipped `ai-review/config/review.yaml` carries all of
+  the deleted keys, so it needs this edit. One that never set them needs only the
+  `schema_version` line.
+
+  Grouping now rests entirely on identity that survives rewording — path,
+  category, side, context hash, fingerprints, and symbol. The golden consensus
+  fixture for the default path is byte-identical, so no finding, group, or
+  decision changes.
 
   The removals change `effective_config_summary`, and therefore the cross-stage
   effective-config digest. Prepare, review, consensus, post, and gate recompute
   it per run, so no artifact migration is needed.
+
+- **`AI_REVIEW_STATE_BACKEND` is retired and now rejected**, alongside
+  `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
+  `…_SEMANTIC_THRESHOLD`. Setting any of them raises a configuration error naming
+  the replacement. GitLab project and group variables outlive the template
+  revisions that read them, so a stale override has to fail loudly rather than be
+  silently ignored after a repin. The rejections may be dropped after the 1.1
+  migration window.
 
 - The release-inputs artifact no longer declares per-file-set `hashes`. The six
   aggregate SHA-256 groups were compared against hashes recomputed from the same

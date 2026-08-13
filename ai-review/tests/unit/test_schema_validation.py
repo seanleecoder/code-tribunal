@@ -422,7 +422,7 @@ class SchemaValidationTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v1",
+                        "schema_version: review_config.v2",
                         "reviewers:",
                         "  bad:",
                         "    enabled: true",

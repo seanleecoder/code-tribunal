@@ -53,8 +53,14 @@ ENV_RE = re.compile(
     r"XDG_(?:CONFIG|DATA)_HOME|OPENCODE_CONFIG_(?:DIR|CONTENT))\b"
 )
 TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+# Names the runtime rejects. They appear in no source assignment, so the
+# inventory check would call their documentation rows inert without this set —
+# and a rejected variable is precisely the kind an operator needs documented.
 REJECTED_ENV_NAMES = {
     "AI_REVIEW_CURSOR_EFFORT",
+    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
+    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
+    "AI_REVIEW_STATE_BACKEND",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
 }

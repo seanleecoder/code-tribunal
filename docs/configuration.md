@@ -9,7 +9,7 @@ effective configuration.
 ## YAML keys
 
 Defaults below are the shipped defaults. A custom configuration
-must retain `schema_version: review_config.v1`.
+must retain `schema_version: review_config.v2`.
 
 ### Reviewers
 
@@ -19,13 +19,13 @@ All four are peer seats with the same contract; see
 
 | Key | Type/default | Meaning |
 |---|---|---|
-| `schema_version` | string, `review_config.v1` | Configuration contract version; no other value is accepted. |
+| `schema_version` | string, `review_config.v2` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
-| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`timeout_seconds`) | Whole critique process-group timeout. Legacy `review_config.v1` files omit this key and resolve critique to `min(timeout_seconds, 900)` so the 20-minute CI ceiling is respected. |
+| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
@@ -103,12 +103,14 @@ are trusted image configuration; there is no timeout environment-variable
 override. Both resolved stage values are included in the effective-config
 summary and digest, so all pipeline stages must use the same policy.
 
-For a legacy configuration without `critique_timeout_seconds`, the resolved
-critique value is capped at 900 seconds even when `timeout_seconds` is higher.
-The capped value, rather than the raw fallback input, is recorded in the
-effective-config summary and digest. Explicit stage-specific values are used as
-configured; keep them at or below 900 seconds while using the shipped 20-minute
-critique CI ceiling.
+A configuration that omits `critique_timeout_seconds` resolves critique to a flat
+900 seconds; the value does not depend on `timeout_seconds`. Earlier releases
+reinterpreted `timeout_seconds` as the critique budget and capped it at 900, so a
+reviewer with `timeout_seconds: 300` silently got 300 seconds for critique and one
+with `1800` silently got 900 — one field meaning two things. The resolved value,
+not the raw input, is recorded in the effective-config summary and digest.
+Explicit stage-specific values are used as configured; keep them at or below 900
+seconds while using the shipped 20-minute critique CI ceiling.
 
 OpenCode review and critique use a loopback-only `opencode serve` session client.
 The client sends the fixed internal session title `code-tribunal-ai-review` and
@@ -274,6 +276,9 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
+| `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; the state backend follows `posting.mode`. Set `AI_REVIEW_POSTING_MODE` instead. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in `review_config.v2` with semantic grouping itself. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 | `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 

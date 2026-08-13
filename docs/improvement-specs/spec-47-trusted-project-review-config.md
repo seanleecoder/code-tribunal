@@ -125,7 +125,7 @@ template/image-owned; a project file cannot redirect it.
 There are exactly two source outcomes:
 
 1. A proved-absent project file selects the complete in-image baseline.
-2. A present project file must be a complete review_config.v1 document and must pass
+2. A present project file must be a complete review_config.v2 document and must pass
    all structural, policy, and sealed-field validation. It then selects the project
    source.
 

@@ -703,7 +703,7 @@ class EffortEnvTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v1",
+                        "schema_version: review_config.v2",
                         "reviewers:",
                         *reviewer_lines,
                         *_CONFIG_TAIL,
@@ -801,7 +801,7 @@ def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: 
     config_path.write_text(
         "\n".join(
             [
-                "schema_version: review_config.v1",
+                "schema_version: review_config.v2",
                 "reviewers:",
                 f"  {reviewer}:",
                 "    enabled: true",
@@ -1216,7 +1216,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v1",
+                        "schema_version: review_config.v2",
                         "reviewers:",
                         "  disabled_reviewer:",
                         "    enabled: false",
@@ -1283,7 +1283,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v1",
+                        "schema_version: review_config.v2",
                         "reviewers:",
                         "  critic:",
                         "    enabled: true",

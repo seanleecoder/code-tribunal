@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from ai_review.config import (
+    RETIRED_ENV_OVERRIDES,
     ConfigError,
     apply_env_overrides,
     effective_config_digest,
@@ -143,9 +144,13 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertFalse(config["merge_gate"]["enabled"])
 
     def test_posting_mode_override_carries_the_state_backend(self) -> None:
-        """One variable moves the platform. AI_REVIEW_STATE_BACKEND no longer exists:
-        the backend follows posting.mode, so the pair could not disagree even when
-        set in only some CI jobs."""
+        """One variable moves the platform.
+
+        The backend follows posting.mode, so the two can no longer disagree by
+        being scoped to different CI jobs. AI_REVIEW_STATE_BACKEND is not merely
+        unread — it is in RETIRED_ENV_OVERRIDES and raises, which the retired-name
+        case above covers.
+        """
         config = _base_config()
         config["posting"] = {"mode": "gitlab_discussions"}
         config["state"] = {}
@@ -179,6 +184,25 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                     self.assertRaisesRegex(ConfigError, var),
                 ):
                     apply_env_overrides(config)
+
+    def test_retired_overrides_fail_instead_of_being_ignored(self) -> None:
+        """A retired override must not become a no-op.
+
+        GitLab project and group variables are set once and outlive the template
+        revisions that read them, so after a repin a stale override sits in the
+        project settings looking effective. Every name here either selected real
+        behavior or was already rejected by name before v2; ignoring one now
+        would turn a loud error into silence.
+        """
+        for var, guidance in RETIRED_ENV_OVERRIDES.items():
+            with self.subTest(var=var):
+                config = _base_config()
+                with (
+                    mock.patch.dict("os.environ", {var: "anything"}, clear=True),
+                    self.assertRaisesRegex(ConfigError, f"{var} is retired"),
+                ):
+                    apply_env_overrides(config)
+                self.assertTrue(guidance, f"{var} must state what to do instead")
 
 
 class LoadConfigOverrideTests(unittest.TestCase):

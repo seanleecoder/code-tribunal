@@ -1,4 +1,4 @@
-schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
+schema_version: review_config.v2 # Schema version for config compatibility validation (must be review_config.v2)
 
 # Configured LLM reviewer backends. Review process groups use a 1800-second
 # (30-minute) timeout and critique process groups use a 900-second (15-minute)

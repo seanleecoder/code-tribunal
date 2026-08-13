@@ -11,6 +11,10 @@ class ConfigError(ValueError):
     pass
 
 
+# The configuration contract this runtime accepts. v2 is v1 minus four keys that
+# were never choices; see the migration table in CHANGELOG.md.
+CONFIG_SCHEMA_VERSION = "review_config.v2"
+
 TOP_LEVEL_KEYS = {
     "schema_version",
     "reviewers",
@@ -92,6 +96,33 @@ SECURITY_KEYS = {"allow_external_fork_secrets"}
 STATE_BACKEND_BY_POSTING_MODE = {
     "gitlab_discussions": "gitlab_mr_state_note",
     "github_reviews": "github_pr_comment",
+}
+
+# Overrides that used to mean something and no longer do. Set one and the run
+# fails, naming the replacement.
+#
+# Silence would be worse here than anywhere else: GitLab project and group
+# variables are configured once and outlive every template revision that reads
+# them, so after a repin a stale override sits in the project settings looking
+# effective. AI_REVIEW_STATE_BACKEND selected a real backend until this release,
+# and the two semantic names were already rejected by name before it — dropping
+# the rejection would have turned a loud error into a no-op. The same reasoning
+# keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
+# AI_REVIEW_CURSOR_EFFORT rejected in validate_config.
+#
+# Removable after the 1.1 migration window; this is a migration aid, not a
+# permanent contract.
+RETIRED_ENV_OVERRIDES = {
+    "AI_REVIEW_STATE_BACKEND": (
+        "the state backend follows posting.mode; set AI_REVIEW_POSTING_MODE "
+        "instead and unset this variable"
+    ),
+    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
+        "semantic grouping was removed in review_config.v2; unset this variable"
+    ),
+    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": (
+        "semantic grouping was removed in review_config.v2; unset this variable"
+    ),
 }
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
@@ -251,7 +282,13 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
+
+    Retired names in ``RETIRED_ENV_OVERRIDES`` are rejected rather than ignored.
     """
+    for name, guidance in sorted(RETIRED_ENV_OVERRIDES.items()):
+        if os.environ.get(name) is not None:
+            raise ConfigError(f"{name} is retired: {guidance}")
+
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
         per_seat_enabled: list[str] = []
@@ -480,8 +517,21 @@ def validate_config(config: dict[str, Any]) -> None:
     unknown = set(config) - TOP_LEVEL_KEYS
     if unknown:
         raise ConfigError(f"unknown top-level config keys: {sorted(unknown)}")
-    if config.get("schema_version") != "review_config.v1":
-        raise ConfigError("schema_version must be review_config.v1")
+    declared_version = config.get("schema_version")
+    if declared_version == "review_config.v1":
+        # A version string whose accepted shape changes is not a contract. v2
+        # names the shape that dropped critique.rounds,
+        # critique.can_add_quorum_votes and panel.grouping.semantic, so a
+        # document can be checked against the runtime that will read it instead
+        # of being diagnosed one unknown key at a time.
+        raise ConfigError(
+            "schema_version review_config.v1 is retired: delete critique.rounds, "
+            "critique.can_add_quorum_votes and panel.grouping.semantic, drop "
+            "state.backend (it follows posting.mode), then set schema_version to "
+            f"{CONFIG_SCHEMA_VERSION}; see the v1 to v2 table in CHANGELOG.md"
+        )
+    if declared_version != CONFIG_SCHEMA_VERSION:
+        raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     _validate_severity_policy(config)
     _validate_posting(config)
     reviewers = config.get("reviewers")
