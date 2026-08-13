@@ -99,7 +99,7 @@ record belong in the next release's notes, never in the shipped one.
 |---|---|---|
 | `anchors.py`, `render.py`, `post.py`, `mock_reviewer.py` | lifecycle Chain B on **both** platforms — they are independent render surfaces and diverge on added-file diffs | no |
 | `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapters/*` | one real Chain A panel; plus the effort-route check if effort profiles changed | no |
-| `input_bundle.py`, `gitlab_platform.py`, `scripts/verify_pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
+| `input_bundle.py`, `platform/gitlab.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
 | `gate.py`, `consensus.py` | the blocking-gate step of Chain B | yes — `test_gate.py`, `test_consensus_integrity.py` |
 | `github_platform.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
 | any image recipe, or `ai-review/src` at all | image publication verification | **never** — the digests always change |

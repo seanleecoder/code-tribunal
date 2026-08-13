@@ -54,7 +54,7 @@ internal container implementation, not a supported Python package or API.
 - The trusted image pin is **not enforced inside the pipeline**: a consumer CI
   config can substitute the reviewer images. Containment relies on protected
   credentials being withheld from untrusted refs and on running
-  `scripts/verify_pipeline_trust.py` against your consumer config.
+  `scripts/pipeline_trust.py` against your consumer config.
 - The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
   attested image pair, and `v1.0.0` was released. Each row is a **scoped** pass
   with its own recorded limits, and some paths remain regression-covered only.

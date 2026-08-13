@@ -471,7 +471,7 @@ tokens. Exercise the genuinely live-only probes:
    `OPENROUTER_API_KEY`/`GITLAB_TOKEN` are withheld; prepare fails closed and the
    uploaded artifact contains only an empty `inputs/` tree.
 2. From a trusted checkout, audit composition with
-   `PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
+   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
 3. Attempt the override/forgery probes that touch a credential-bearing boundary
    (template/job replacement, trusted image/config override, forged `out/gate/*`).
    Confirm the trusted composition is retained or the pipeline fails closed, and

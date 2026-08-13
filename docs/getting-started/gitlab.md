@@ -28,7 +28,7 @@ and pipeline-variable forwarding, and retain `strategy: mirror`.
 Audit the result from a trusted checkout:
 
 ```bash
-PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+python scripts/pipeline_trust.py \
   path/to/.gitlab-ci.yml \
   --mode child \
   --template-project org/code-tribunal-ci \
