@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,7 +21,6 @@ REQUIRED_RELEASE_SCRIPTS = (
     "check_release_manifest.py",
     "release_common.py",
 )
-V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290afeda41156616fd"
 
 if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
@@ -53,6 +52,7 @@ try:
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         DIGEST_RE,
+        RELEASE_VERSION_RE,
         WORKFLOW_PAIRS,
         ReleaseValidationError,
         canonical_json_bytes,
@@ -283,12 +283,54 @@ class ReleaseToolTests(unittest.TestCase):
             sorted(verification["evidence_waivers"]),
         )
 
-    def test_1_0_0_release_notes_remain_tag_identical(self) -> None:
-        release_notes = (REPO_ROOT / "release/1.0.0.md").read_bytes()
+    def test_released_notes_remain_tag_identical(self) -> None:
+        """Every published notes file must match its tag byte for byte.
 
-        self.assertEqual(
-            hashlib.sha256(release_notes).hexdigest(), V1_0_0_RELEASE_NOTES_SHA256
+        The release process states it: "corrections to a shipped release record
+        belong in the next release's notes, never in the shipped one." This
+        replaces a hardcoded digest for 1.0.0 alone, which left 1.0.1 and 1.0.2
+        unguarded — and 1.0.1 was then edited to remove a link that pointed at a
+        file this branch deleted. "Only a dead link" is the rationalisation the
+        rule exists to refuse; the fix is to stop link-checking frozen notes, not
+        to edit them.
+
+        Scoped to final releases. `release/1.0.0-rc.1.md` already differs from
+        `v1.0.0-rc.1` on `main`, untouched by this branch: a release candidate is
+        superseded by its final release, so its note reads as a working document
+        rather than a shipped record — which is also why the original guard pinned
+        1.0.0 rather than the rc. Whether to pin prereleases too is a maintainer
+        call, not something to force by turning the build red on a pre-existing
+        file.
+
+        A version whose tag is absent is skipped so the suite still runs in a
+        shallow clone.
+        """
+        notes = sorted(
+            path
+            for path in (REPO_ROOT / "release").glob("*.md")
+            if RELEASE_VERSION_RE.fullmatch(path.stem) and "-" not in path.stem
         )
+        self.assertTrue(notes, "no released notes files were found")
+
+        checked = 0
+        for path in notes:
+            tag = f"v{path.stem}"
+            completed = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "show", f"{tag}:release/{path.name}"],
+                capture_output=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                continue
+            checked += 1
+            with self.subTest(release=path.stem):
+                self.assertEqual(
+                    path.read_bytes(),
+                    completed.stdout,
+                    f"release/{path.name} differs from {tag}; a shipped release "
+                    "record is corrected in the next release's notes, not in place",
+                )
+        self.assertTrue(checked, "no release tags were resolvable")
 
     def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
         self,

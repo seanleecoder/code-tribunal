@@ -17,7 +17,11 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 from pipeline_trust import find_trust_issues  # noqa: E402
-from release_common import ReleaseValidationError, validate_release_version  # noqa: E402
+from release_common import (  # noqa: E402
+    RELEASE_VERSION_RE,
+    ReleaseValidationError,
+    validate_release_version,
+)
 
 ROOT = SCRIPTS.parent
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
@@ -31,7 +35,34 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 
-CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
+def _is_released_note(path: Path) -> bool:
+    """A published release note, pinned byte-identical to its tag.
+
+    These are excluded from the checks below. A released note describes the tree
+    as it stood at its tag, so validating its links against *today's* tree asks a
+    frozen document to track a moving one — and the two rules genuinely conflict:
+    deleting a completed specification leaves a dead link in a file the release
+    process forbids editing ("corrections to a shipped release record belong in
+    the next release's notes, never in the shipped one").
+
+    Resolving that in favour of the link checker is what previously produced an
+    edit to release/1.0.1.md. Byte-identity is the stronger guarantee and is
+    enforced by test_release_tools.test_released_notes_remain_tag_identical, so
+    the link check stands down here rather than the freeze.
+
+    Scoped to release/<version>.md. release/TEMPLATE.md and
+    release/history/README.md are current documents and stay checked.
+    """
+    return path.parent == ROOT / "release" and bool(RELEASE_VERSION_RE.fullmatch(path.stem))
+
+
+CURRENT_MARKDOWN = tuple(
+    sorted(
+        path
+        for path in ROOT.rglob("*.md")
+        if ".git" not in path.parts and not _is_released_note(path)
+    )
+)
 
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
