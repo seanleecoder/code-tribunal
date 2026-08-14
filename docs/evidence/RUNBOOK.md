@@ -382,7 +382,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical SPEC-21 checklist, run the required final-image evidence, and pass the hostile permission-denial prompt |
+| Cursor reviewer | the route was outside the 1.0.0 release matrix | [the supplemental record](record-cursor-real-runs.md) is historical supporting evidence bound to older coordinates. Cursor is a supported seat and needs nothing further to enable; a release shipping it on the default roster would want its own gating row, and each `cursor-agent.pin` bump needs the publisher-side permission smoke (Run 6) |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -403,8 +403,7 @@ Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
 evidence; Run 6 is optional and gates nothing.
-The product decision must choose and record the ask-mode/blocking contract; it
-does not make the acceptance row optional.
+The ask-mode/blocking contract is a product decision to record when it is made.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -506,12 +505,16 @@ model; ordinary review success is also not permission-denial evidence.
 
 ### Run 6 — Cursor model-specific evidence (optional)
 
-**Not a gate.** SPEC-21 is closed and Cursor is a supported peer seat, so nothing
-below is required before enabling it. This is the procedure for producing evidence
-bound to one *specific* Cursor model and reviewer image — which is why it pins an
-exact slug where ordinary operation may use `auto`. Run it when a deployment needs
-that, or when a release intends to ship Cursor on the default roster and therefore
-wants a gating row of its own. The Run 5 records cannot serve: they used an older
+**Not an enablement gate.** SPEC-21 is closed and Cursor is a supported peer seat,
+so nothing here is required before a consumer enables it. This is the procedure for
+evidence bound to one *specific* Cursor model and reviewer image — which is why it
+pins an exact slug where ordinary operation may use `auto`.
+
+The publisher runs its permission-smoke half for each `cursor-agent.pin` bump,
+because that smoke is the only check that a newly pinned CLI honours the `Shell(*)`
+deny policy (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)). Run the
+rest when a deployment needs model-specific evidence, or when a release intends to
+ship Cursor on the default roster and wants a gating row of its own. The Run 5 records cannot serve: they used an older
 reviewer image and reported `model: auto`.
 
 1. Freeze `R`, build and attest the final base/reviewer pair, validate

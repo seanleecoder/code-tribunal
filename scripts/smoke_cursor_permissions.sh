@@ -330,9 +330,10 @@ if [ "$read_envelope_status" = "error" ]; then
 fi
 # The pinned CLI's headless ask mode records the Read tool_use in the agent
 # transcript but never executes it, so the response cannot be trusted to echo
-# the fixture nonce (observed: the model fabricates plausible contents; see
-# spec-21). Require proof that the probe drove the file-reading tool path,
-# then classify the outcome: the nonce anywhere (reply or transcript) proves
+# the fixture nonce (observed: the model fabricates plausible contents). That
+# description is the whole explanation; it used to end with "see spec-21", which
+# pointed at a specification this repository no longer carries. Require proof
+# that the probe drove the file-reading tool path, then classify the outcome: the nonce anywhere (reply or transcript) proves
 # the read executed; an explicit denial marker means the policy rejected the
 # sole allowed tool and must fail; only the marker-free "attempted but never
 # executed" case is the accepted ask-mode limitation.
@@ -353,7 +354,7 @@ elif transcript_shows_denial "$read_cursor_home"; then
   dump_cursor_transcripts "$read_cursor_home" read-probe
   exit 1
 else
-  echo "Cursor read probe attempted the Read tool without returning the fixture nonce (known pinned-CLI ask-mode limitation; see spec-21)."
+  echo "Cursor read probe attempted the Read tool without returning the fixture nonce (known pinned-CLI ask-mode limitation: the tool call is recorded but never executed)."
 fi
 
 workspace_before="$(workspace_manifest)"

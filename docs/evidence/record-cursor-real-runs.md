@@ -73,23 +73,19 @@ Observed and now closed as a supporting live-evidence subclaim:
   post, and gate stages on the observed non-blocking paths. These runs do not
   prove that a Cursor-backed blocking finding makes a required check block.
 
-Still open for SPEC-21 Cursor enablement:
+At the time of these runs, the following remained unproven:
 
 - Both artifacts record only `model: auto`; neither identifies the exact Composer
-  model slug. The exact model must still be discovered and pinned before this
-  acceptance gate is closed.
-- The permission smoke accepts an explicit model argument; the enablement run
-  must pass the exact pinned slug rather than the historical `auto` value.
-- Cursor still needs a fresh real-key fixture review/critique against the final
-  image pair, with the exact model in the artifact and the runtime/image/config
-  coordinates recorded.
-- The product contract must explicitly accept prompt-bundle-only ask-mode
-  reviews, or the adapter must move to an execution mode whose reads work and
-  the permission/real-run evidence must be repeated. If Cursor is expected to
-  contribute merge-blocking findings, a blocking fixture and genuinely blocking
-  required-check result are also required.
+  model slug, so these runs evidence no particular model.
+- The permission smoke takes an explicit model argument, so it could not be run
+  from these `auto` coordinates.
+- No real-key fixture review/critique had been run against a final image pair
+  with the exact model recorded in the artifact.
+- The product contract had not recorded whether prompt-bundle-only ask-mode
+  reviews are accepted, and no blocking fixture had demonstrated a Cursor finding
+  driving a required check to block.
 - Neither run included the hostile prompt that requests a sentinel write and a
-  shell command. The real-image permission-denial gate remains open.
+  shell command, so these runs proved nothing about real-image permission denial.
 
 ## Audit
 
