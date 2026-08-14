@@ -55,12 +55,14 @@ try:
         RELEASE_VERSION_RE,
         WORKFLOW_PAIRS,
         ReleaseValidationError,
+        any_tags_resolvable,
         canonical_json_bytes,
         disallowed_release_paths,
         git_is_ancestor,
         image_ref,
         sha256_bytes,
         sync_workflows,
+        tag_exists,
         validate_release_coordinates,
         validate_release_version,
     )
@@ -316,26 +318,36 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertTrue(notes, "no released notes files were found")
 
-        checked = 0
+        if not any_tags_resolvable(REPO_ROOT):
+            self.skipTest("no release tags are available in this checkout")
+
         for path in notes:
             tag = f"v{path.stem}"
-            completed = subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "show", f"{tag}:release/{path.name}"],
-                capture_output=True,
-                check=False,
-            )
-            if completed.returncode != 0:
+            if not tag_exists(tag, REPO_ROOT):
+                # Still being drafted. check_docs.py treats it as a current
+                # document and link-checks it; it is frozen only once tagged.
                 continue
-            checked += 1
             with self.subTest(release=path.stem):
+                completed = subprocess.run(
+                    ["git", "-C", str(REPO_ROOT), "show", f"{tag}:release/{path.name}"],
+                    capture_output=True,
+                    check=False,
+                )
+                # A missing tag and a missing path used to be one `continue`,
+                # which meant a note added *after* its tag was never compared
+                # against anything. The tag exists, so the note must be in it.
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    f"release/{path.name} is absent at {tag}: a note naming a "
+                    "released version must exist in that release",
+                )
                 self.assertEqual(
                     path.read_bytes(),
                     completed.stdout,
                     f"release/{path.name} differs from {tag}; a shipped release "
                     "record is corrected in the next release's notes, not in place",
                 )
-        if not checked:
-            self.skipTest("no release tags are available in this checkout")
 
     def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
         self,
@@ -782,6 +794,57 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
             ):
                 validate_manifest(manifest, release_inputs, root)
+
+    def _synthetic_release_repo(self, root: Path, *, note: str, tag: str | None) -> None:
+        """A git repo containing release/<note>, optionally tagged.
+
+        Synthetic rather than driven off this repository's own tags, so the cases
+        below can express states this repo cannot currently be in — a tagged
+        release whose note is missing, for instance.
+        """
+        (root / "release").mkdir(parents=True, exist_ok=True)
+        (root / "release" / note).write_text("# Note\n", encoding="utf-8")
+        for command in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@example.com"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-qm", "note"],
+        ):
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+        if tag is not None:
+            subprocess.run(["git", "tag", tag], cwd=root, check=True, capture_output=True)
+
+    def test_tag_helpers_separate_missing_tag_from_missing_path(self) -> None:
+        """The distinction the byte guard depends on.
+
+        Collapsing "no tag" and "no file at that tag" into one outcome is what let
+        an untagged note pass every check; these helpers are what keep them apart.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._synthetic_release_repo(root, note="1.0.0.md", tag="v1.0.0")
+
+            self.assertTrue(any_tags_resolvable(root))
+            self.assertTrue(tag_exists("v1.0.0", root))
+            self.assertFalse(tag_exists("v9.9.9", root))
+
+            # The tag resolves but the note is not in it: distinct from no tag.
+            shown = subprocess.run(
+                ["git", "-C", str(root), "show", "v1.0.0:release/9.9.9.md"],
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(shown.returncode, 0)
+
+    def test_a_checkout_without_tags_reports_no_tags(self) -> None:
+        """Tagless is an environment fact, not "this note has no tag"."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._synthetic_release_repo(root, note="1.0.0.md", tag=None)
+
+            self.assertFalse(any_tags_resolvable(root))
+            self.assertFalse(tag_exists("v1.0.0", root))
 
     def test_release_inputs_v1_is_rejected_with_migration_guidance(self) -> None:
         """The version check must win over the exact-key comparison.

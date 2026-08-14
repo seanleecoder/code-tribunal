@@ -20,6 +20,8 @@ from pipeline_trust import find_trust_issues  # noqa: E402
 from release_common import (  # noqa: E402
     RELEASE_VERSION_RE,
     ReleaseValidationError,
+    any_tags_resolvable,
+    tag_exists,
     validate_release_version,
 )
 
@@ -35,25 +37,41 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 
+# Resolved once: a subprocess per release note per run would be wasteful, and the
+# answer cannot change mid-run.
+_TAGS_RESOLVABLE = any_tags_resolvable(ROOT)
+
+
 def _is_released_note(path: Path) -> bool:
-    """A published release note, pinned byte-identical to its tag.
+    """A *published* release note, pinned byte-identical to its tag.
 
-    These are excluded from the checks below. A released note describes the tree
-    as it stood at its tag, so validating its links against *today's* tree asks a
-    frozen document to track a moving one — and the two rules genuinely conflict:
-    deleting a completed specification leaves a dead link in a file the release
-    process forbids editing ("corrections to a shipped release record belong in
-    the next release's notes, never in the shipped one").
+    These are excluded from the checks below, because a released note describes
+    the tree as it stood at its tag: validating its links against today's tree
+    asks a frozen document to track a moving one. The two rules genuinely
+    conflict once any linked file is deleted, and resolving that in favour of the
+    link checker is what previously produced an edit to release/1.0.1.md.
 
-    Resolving that in favour of the link checker is what previously produced an
-    edit to release/1.0.1.md. Byte-identity is the stronger guarantee and is
-    enforced by test_release_tools.test_released_notes_remain_tag_identical, so
-    the link check stands down here rather than the freeze.
+    "Published" means the tag exists — not merely that the filename looks like a
+    version. An earlier version of this matched on the name alone, which excluded
+    release/<version>.md from link checking before v<version> was ever created.
+    That is exactly the window in which a release note is being drafted, so its
+    links went unchecked precisely while they were being written.
+
+    When no tags resolve at all — a `--no-tags` or shallow clone, or no git — every
+    release note is treated as frozen. The alternative would fail docs-check in a
+    fresh shallow clone on links that are correct at their own tag. CI fetches
+    tags, so the merge gate gets the strict behaviour; see
+    test_release_tools.test_released_notes_remain_tag_identical for the byte check
+    that carries the real guarantee.
 
     Scoped to release/<version>.md. release/TEMPLATE.md and
     release/history/README.md are current documents and stay checked.
     """
-    return path.parent == ROOT / "release" and bool(RELEASE_VERSION_RE.fullmatch(path.stem))
+    if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
+        return False
+    if not _TAGS_RESOLVABLE:
+        return True
+    return tag_exists(f"v{path.stem}", ROOT)
 
 
 CURRENT_MARKDOWN = tuple(

@@ -395,6 +395,35 @@ class DocumentationContractTests(unittest.TestCase):
             ],
         )
 
+    def test_only_tagged_release_notes_are_exempt_from_link_checking(self) -> None:
+        """Frozen means "has a tag", not "the filename looks like a version".
+
+        An earlier version matched on the name alone, so release/<version>.md was
+        excluded from link checking before v<version> existed — the whole window in
+        which a release note is actually being drafted. An untagged note with a
+        broken link passed both this checker and the byte guard.
+        """
+        checker = _load_docs_checker()
+        original_root, original_resolvable = checker.ROOT, checker._TAGS_RESOLVABLE
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "release").mkdir()
+            checker.ROOT = root
+            try:
+                checker._TAGS_RESOLVABLE = True
+                # 1.0.1 is tagged in this repository; 9.9.9 never will be.
+                checker.ROOT = original_root
+                self.assertTrue(checker._is_released_note(original_root / "release/1.0.1.md"))
+                self.assertFalse(checker._is_released_note(original_root / "release/9.9.9.md"))
+                self.assertFalse(checker._is_released_note(original_root / "release/TEMPLATE.md"))
+
+                # With no tags resolvable, every note is frozen: a shallow clone
+                # must not start failing on links that are correct at their tag.
+                checker._TAGS_RESOLVABLE = False
+                self.assertTrue(checker._is_released_note(original_root / "release/9.9.9.md"))
+            finally:
+                checker.ROOT, checker._TAGS_RESOLVABLE = original_root, original_resolvable
+
     def test_every_documented_cli_command_resolves(self) -> None:
         """Each command in the CLI reference must name something that exists.
 

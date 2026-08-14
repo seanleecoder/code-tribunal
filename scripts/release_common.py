@@ -140,6 +140,39 @@ def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT)
     raise ReleaseValidationError(completed.stderr.strip() or "git merge-base failed")
 
 
+def tag_exists(tag: str, root: Path = ROOT) -> bool:
+    """Whether `tag` resolves in this checkout.
+
+    Deliberately distinct from "can I read a path at that tag". A release note is
+    frozen because its tag exists; a `git show <tag>:<path>` failure could equally
+    mean the tag is missing *or* that the note was never in it, and collapsing the
+    two is what let an untagged note escape both the link check and the byte check.
+    """
+    completed = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}"],
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
+def any_tags_resolvable(root: Path = ROOT) -> bool:
+    """Whether tag lookups mean anything here at all.
+
+    False in a `--no-tags` or shallow clone, and where git is unavailable. Callers
+    use it to tell "this note has no tag" apart from "this checkout knows about no
+    tags", which are opposite situations: the first is a note still being drafted,
+    the second is an environment that cannot answer the question.
+    """
+    completed = subprocess.run(
+        ["git", "-C", str(root), "tag", "--list"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0 and bool(completed.stdout.strip())
+
+
 def validate_release_version(value: object) -> str:
     if not isinstance(value, str) or not RELEASE_VERSION_RE.fullmatch(value):
         raise ReleaseValidationError(
