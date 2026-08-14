@@ -113,8 +113,11 @@ for why, and `git log` for the files.
   [real-run record](record-cursor-real-runs.md) covers historical coordinates.
   A release that ships Cursor on the default roster would need its own gating row.
   Note the distinction: `auto` is a valid Cursor selector for production use, but
-  evidence proving behavior for a *specific* model needs an explicit slug, which is
-  why `smoke_cursor_permissions.sh` requires one.
+  evidence proving behavior for a *specific* model needs an explicit slug.
+  Separately, nothing verifies that the pinned `cursor-agent` honours the
+  `Shell(*)` and write denies at runtime — only that the policy reaches every
+  invocation; see
+  [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted

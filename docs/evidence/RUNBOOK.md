@@ -382,7 +382,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | the route was outside the 1.0.0 release matrix | [the supplemental record](record-cursor-real-runs.md) is historical supporting evidence bound to older coordinates. Cursor is a supported seat and needs nothing further to enable; a release shipping it on the default roster would want its own gating row, and each `cursor-agent.pin` bump needs the publisher-side permission smoke (Run 6) |
+| Cursor reviewer | the route was outside the 1.0.0 release matrix | [the supplemental record](record-cursor-real-runs.md) is historical supporting evidence bound to older coordinates. Cursor is a supported seat and needs nothing further to enable; a release shipping it on the default roster would want its own gating row, and no check covers the pinned CLI's runtime honouring of the deny policy |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -397,7 +397,7 @@ Actual result / Audit / Verdict.
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run and permission smoke |
+| 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
@@ -501,7 +501,8 @@ successful reviewer. These checks establish real-route wiring and artifact
 validity only.
 
 These runs recorded `model: auto`, so they say nothing about any particular
-model; ordinary review success is also not permission-denial evidence.
+model, and an ordinary review success is not evidence about the deny policy
+either.
 
 ### Run 6 — Cursor model-specific evidence (optional)
 
@@ -510,11 +511,11 @@ so nothing here is required before a consumer enables it. This is the procedure 
 evidence bound to one *specific* Cursor model and reviewer image — which is why it
 pins an exact slug where ordinary operation may use `auto`.
 
-The publisher runs its permission-smoke half for each `cursor-agent.pin` bump,
-because that smoke is the only check that a newly pinned CLI honours the `Shell(*)`
-deny policy (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)). Run the
-rest when a deployment needs model-specific evidence, or when a release intends to
-ship Cursor on the default roster and wants a gating row of its own. The Run 5 records cannot serve: they used an older
+Nothing verifies that a newly pinned `cursor-agent` honours the `Shell(*)` and
+write denies at runtime — the repository proves only that the policy is passed to
+every invocation (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)).
+Run this when a deployment needs model-specific evidence, or when a release intends
+to ship Cursor on the default roster and wants a gating row of its own. The Run 5 records cannot serve: they used an older
 reviewer image and reported `model: auto`.
 
 1. Freeze `R`, build and attest the final base/reviewer pair, validate
@@ -526,14 +527,11 @@ reviewer image and reported `model: auto`.
    explicitly; otherwise change the invocation and repeat the read/permission
    validation. If blocking behavior is required, use a blocking fixture and
    verify the required check genuinely blocks.
-4. Run the parameterized permission smoke with a real `CURSOR_API_KEY` against
-   the exact final reviewer image. A missing key or a `Skipping Cursor
-   permission smoke` notice is not a pass.
-5. Run the fresh real-key fixture review/critique under the chosen contract and
+4. Run the fresh real-key fixture review/critique under the chosen contract and
    record exact model, counts, config digest, runtime/image coordinates,
    provenance, job IDs, and consensus/post/gate outcomes without secrets or model
    text.
-6. Add the sanitized supplemental record only after all required paths are scoped
+5. Add the sanitized supplemental record only after all required paths are scoped
    `Status: passed` against the same `R` and final image pair. Repin the
    configuration and publisher workflow to the same exact model slug. Do not add
    this record to release inputs. Cursor may remain off the default roster as an

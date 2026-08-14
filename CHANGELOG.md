@@ -45,6 +45,18 @@ versioning.
   silently ignored after a repin. The rejections are a migration aid and may be
   dropped in the next major release.
 
+- **The Cursor permission smoke is deleted** — `scripts/smoke_cursor_permissions.sh`
+  and its unit suite, the `cursor-permission-smoke` publisher job, and the base-image
+  `COPY`. The job was never wired into `publish`'s `needs`, and its
+  `CURSOR_SMOKE_MODEL` was hardcoded to `auto`, the one value the script refuses,
+  so it had never executed: 865 lines asserting a guarantee nobody held. Nothing
+  now verifies the pinned CLI's *runtime* interpretation of the `Shell(*)` and
+  write denies; repository tests still prove the policy is passed to every
+  invocation, the CLI stays pinned by `cursor-agent.pin` and version-checked at
+  build, and the exposure is bounded by the review workflow running only for
+  same-repo heads, so the seat never processes fork content. `SUPPLY_CHAIN.md`
+  states this gap plainly instead of describing a gate that did not exist.
+
 - **Breaking: release inputs are now `code_tribunal.release_inputs.v2`.** v2 is
   v1 without the per-file-set `hashes` member. The six aggregate SHA-256 groups
   were compared against hashes recomputed from the same checkout being validated,
@@ -101,10 +113,7 @@ versioning.
   configuration parser and the adapter have always accepted it. Documentation had
   called it a "discovery-only placeholder" that was "not valid Cursor-enablement
   evidence" — an evidence-campaign requirement stated as a product restriction.
-  Pin an exact slug when you want model-stable reproducibility. The permission
-  smoke still refuses `auto`, correctly: its output is evidence about one specific
-  model, which is a property of the evidence rather than of the product, and its
-  messages now say so.
+  Pin an exact slug when you want model-stable reproducibility.
   Released records under `release/` and the historical evidence rows keep their
   wording, which describes what was true at those releases.
 

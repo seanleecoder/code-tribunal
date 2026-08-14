@@ -215,8 +215,8 @@ jobs:
         # stay allowed.
         #
         # Deliberately a step in this job rather than a separate one, and with no
-        # event condition. It needs no secret, so unlike cursor-permission-smoke it
-        # needs no event restriction — and a separate job could only consume the image
+        # event condition. It needs no secret, so it needs no event restriction —
+        # and a separate job could only consume the image
         # artifact, which is not uploaded for pull requests, so the probe would have
         # skipped exactly the runs where a ripgrep.pin or adapter change is under
         # review. Here it gates merge as well as publication, since publish needs
@@ -263,72 +263,6 @@ jobs:
       - name: Report preflight-only run
         if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         run: echo "Built and preflighted images only; publishing is restricted to main."
-
-  cursor-permission-smoke:
-    name: Cursor permission smoke
-    # Cursor-enablement gate (spec-21): this probe must pass before an operator
-    # flips cursor.enabled on in ai-review/config/review.yaml, but it is
-    # deliberately NOT in publish's needs — Cursor is disabled in review.yaml,
-    # so its permission smoke must not block publishing images for the enabled
-    # reviewers. Runs on main pushes and on workflow_dispatch from any branch
-    # so the probe can be iterated without merging to main first.
-    runs-on: ubuntu-latest
-    needs: build-preflight
-    if: github.event_name != 'pull_request'
-    permissions:
-      contents: read
-    env:
-      # Keep this value synchronized with reviewers.cursor.model in
-      # ai-review/config/review.yaml; the unit contract checks that equality.
-      CURSOR_SMOKE_MODEL: "auto"
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Define image tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          base_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-base"
-          reviewer_image="${REGISTRY}/${IMAGE_NAMESPACE}/ai-review-reviewer"
-          image_tag="${IMAGE_VERSION}-${GITHUB_SHA}"
-          {
-            echo "AI_REVIEW_BASE_IMAGE=${base_image}"
-            echo "AI_REVIEW_REVIEWER_IMAGE=${reviewer_image}"
-            echo "AI_REVIEW_IMAGE_TAG=${image_tag}"
-            echo "AI_REVIEW_BASE_TAG=${base_image}:${image_tag}"
-            echo "AI_REVIEW_REVIEWER_TAG=${reviewer_image}:${image_tag}"
-          } >> "$GITHUB_ENV"
-
-      - name: Download preflighted image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ai-review-images
-          path: image-artifacts
-
-      - name: Load preflighted images
-        shell: bash
-        run: |
-          set -euo pipefail
-          gzip -dc image-artifacts/ai-review-images.tar.gz | docker load
-          docker image inspect "$AI_REVIEW_REVIEWER_TAG" >/dev/null
-
-      - name: Verify Cursor denies write and shell tools
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-        shell: bash
-        run: |
-          if [[ -z "$CURSOR_API_KEY" ]]; then
-            echo "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY is not configured. Keep Cursor disabled."
-            echo "- Cursor permission smoke skipped: CURSOR_API_KEY is not configured. Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]; then
-            echo "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL is the discovery-only 'auto' placeholder. Pin an exact Composer model slug in ai-review/config/review.yaml and this workflow before enabling Cursor (SPEC-21 item 1)."
-            echo "- Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only 'auto' placeholder. Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"
 
   publish:
     name: Publish and attest

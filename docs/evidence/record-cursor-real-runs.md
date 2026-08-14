@@ -99,8 +99,10 @@ At the time of these runs, the following remained unproven:
   above. No credential values are reproduced.
 - Sensitive model content is omitted; only counts, status fields, digests, and
   bounded run metadata are recorded.
-- The permission smoke remains a separate trusted-image check; these ordinary
-  review runs cannot substitute for it.
+- A behavioural permission probe existed when this record was written; it was
+  later deleted, having never run. Nothing now checks the pinned CLI's own
+  interpretation of the write/shell denies — see
+  [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
 
 ## Verdict
 
