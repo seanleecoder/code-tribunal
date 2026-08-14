@@ -14,7 +14,6 @@ REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
-INSTALLED_GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
 PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
@@ -50,6 +49,15 @@ def error(message: str) -> None:
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _display(path: Path) -> Path:
+    """Repo-relative path for messages, tolerating a path outside the repository.
+
+    Tests point the module's path constants at temporary files, so an
+    unconditional relative_to() would raise instead of reporting the issue.
+    """
+    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
 
 
 def _read_optional(path: Path) -> str | None:
@@ -431,45 +439,27 @@ def main() -> int:
     # omits repository-only .github workflows. Check every shipped workflow
     # that exists in the current distribution without making the image test
     # depend on files that are not part of that distribution.
+    # The runtime image copies the reusable review workflow but intentionally
+    # omits repository-only .github workflows. Check every shipped workflow
+    # that exists in the current distribution without making the image test
+    # depend on files that are not part of that distribution.
+    #
+    # The installed copy under .github/workflows/ is deliberately absent from
+    # every scan here. It is a byte duplicate of the canonical template, which
+    # `make workflow-parity` proves and repairs; identical bytes carry identical
+    # action pins and containers, so scanning both only asked the same question
+    # twice. It was also the weaker gate: this script runs INSIDE the base image
+    # from /opt/scripts, where .github/ does not exist, so its parity check
+    # silently passed on the one platform that ran it.
     shipped_workflows = {}
-    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW, INSTALLED_GITHUB_REVIEW_WORKFLOW):
+    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text
-    installed_review_workflow = _read_optional(INSTALLED_GITHUB_REVIEW_WORKFLOW)
     canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
-    # This byte comparison is deliberately duplicated rather than delegated to
-    # release_common.sync_workflows, which is the canonical implementation for
-    # repository-only callers. This script runs INSIDE the base image from
-    # /opt/scripts and must import only the standard library: release_common is
-    # not shipped, and a repository-only import would fail at test *collection*
-    # inside the image, where no skipUnless can rescue it.
-    # tests/unit/test_check_supply_chain_pins.py asserts that constraint.
-    #
-    # Compared as bytes, matching that helper. GitHub executes the installed file
-    # verbatim, so a line-ending difference is real drift — and the _read helpers
-    # above return text, where universal newlines would translate \r\n to \n and
-    # report a CRLF copy as identical. The text values are still what the
-    # container-shape scans below consume; only this parity check needs bytes.
-    installed_review_bytes = (
-        INSTALLED_GITHUB_REVIEW_WORKFLOW.read_bytes()
-        if INSTALLED_GITHUB_REVIEW_WORKFLOW.exists()
-        else None
-    )
-    canonical_review_bytes = GITHUB_REVIEW_WORKFLOW.read_bytes()
-    if installed_review_bytes is not None and installed_review_bytes != canonical_review_bytes:
-        error(".github/workflows/ai-review.yml must match the canonical GitHub template")
+    for issue in _github_review_container_issues(canonical_review_workflow):
+        error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
         failures += 1
-    for path, review_workflow in (
-        (GITHUB_REVIEW_WORKFLOW, canonical_review_workflow),
-        (INSTALLED_GITHUB_REVIEW_WORKFLOW, installed_review_workflow),
-    ):
-        if review_workflow is None:
-            continue
-        display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-        for issue in _github_review_container_issues(review_workflow):
-            error(f"{display_path}: {issue}")
-            failures += 1
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
     dev_requirements = _read_optional(DEV_REQUIREMENTS)
@@ -575,24 +565,17 @@ def main() -> int:
                 failures += 1
         shipped_workflows[PUBLISH_WORKFLOW] = workflow
     for path, text in shipped_workflows.items():
-        display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+        display_path = _display(path)
         for issue in _workflow_structure_issues(text):
             error(f"{display_path}: {issue}")
             failures += 1
         for issue in _workflow_action_issues(text):
             error(f"{display_path}: {issue}")
             failures += 1
-    # Includes the INSTALLED workflow, which is the file GitHub actually executes: a
-    # reviewer CLI version variable added only there would otherwise sit outside this
-    # scan and reintroduce mutable CLI selection.
-    combined_ci = "\n".join(
-        [
-            workflow or "",
-            canonical_review_workflow,
-            installed_review_workflow or "",
-            gitlab_review,
-        ]
-    )
+    # The installed copy is covered transitively: it is a byte duplicate of the
+    # canonical template, enforced by `make workflow-parity`, so a reviewer CLI
+    # version variable cannot appear only there.
+    combined_ci = "\n".join([workflow or "", canonical_review_workflow, gitlab_review])
     has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
     if has_repo_cli_vars or has_ci_cli_vars:

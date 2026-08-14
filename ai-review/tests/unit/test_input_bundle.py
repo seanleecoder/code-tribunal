@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest import mock
 
 from ai_review.canonical import sha256_hex
-from ai_review.gitlab_client import MergeRequestVersion
 from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
@@ -30,6 +29,7 @@ from ai_review.input_bundle import (
 )
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
+from ai_review.platform.gitlab import MergeRequestVersion
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -1025,7 +1025,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             self.assertTrue((out / "repo_snapshot" / "README.md").is_file())
 
     def test_github_and_gitlab_prepare_use_shared_snapshot_builder(self) -> None:
-        class GitLabClient:
+        class GitLabReviewPlatform:
             def __init__(self) -> None:
                 self.fetch_version_calls = 0
                 self.version = MergeRequestVersion("b", "s", "h")
@@ -1049,7 +1049,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
         }
         github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
 
-        gitlab_client = GitLabClient()
+        gitlab_client = GitLabReviewPlatform()
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             with (

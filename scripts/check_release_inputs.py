@@ -12,17 +12,15 @@ from typing import Any
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
-    HASH_GROUPS,
     IMAGE_NAME_RE,
     PLACEHOLDER_RE,
     RELEASE_INPUTS,
+    RELEASE_INPUTS_SCHEMA_VERSION,
     ROOT,
     ReleaseValidationError,
     canonical_json_bytes,
-    computed_hashes,
     image_ref,
     load_json,
-    sync_workflows,
     validate_release_version,
 )
 
@@ -248,6 +246,16 @@ def validate_evidence_records(
 def validate_release_inputs(
     data: dict[str, Any], root: Path = ROOT
 ) -> list[tuple[str, str]]:
+    # Version first: the key set below is compared exactly, so a v1 artifact would
+    # otherwise be reported as having a stray `hashes` key rather than as speaking
+    # a retired dialect. v2 is v1 without that member — one identifier covering
+    # both shapes is what leaves schema_version unable to say which parser applies.
+    if data.get("schema_version") == "code_tribunal.release_inputs.v1":
+        raise ReleaseValidationError(
+            "code_tribunal.release_inputs.v1 is retired: drop the `hashes` member "
+            f"and set schema_version to {RELEASE_INPUTS_SCHEMA_VERSION}. Historical "
+            "snapshots keep v1 and are validated from their own tag."
+        )
     _require_keys(
         data,
         {
@@ -256,12 +264,11 @@ def validate_release_inputs(
             "status",
             "runtime_source",
             "images",
-            "hashes",
             "verification",
         },
         "release inputs",
     )
-    if data["schema_version"] != "code_tribunal.release_inputs.v1":
+    if data["schema_version"] != RELEASE_INPUTS_SCHEMA_VERSION:
         raise ReleaseValidationError("unsupported release-input schema_version")
     validate_release_version(data["release_version"])
     if data["status"] not in {"draft", "active"}:
@@ -297,12 +304,14 @@ def validate_release_inputs(
                     f"active release inputs require complete images.{role}"
                 )
 
-    expected_hashes = computed_hashes(root)
-    if data["hashes"] != expected_hashes:
-        raise ReleaseValidationError("checked file-set hashes are stale; run --write-hashes")
-    if set(data["hashes"]) != set(HASH_GROUPS):
-        raise ReleaseValidationError("release input hash groups do not match the checked registry")
-
+    # There is deliberately no per-file-set hash field. Six aggregate SHA-256s over
+    # hand-listed file groups used to live here, compared against hashes recomputed
+    # from the same checkout being validated — so the comparison could only ever
+    # report "someone edited one of these files without re-running --write-hashes",
+    # never a substitution. `runtime_source` is already a cryptographic commitment
+    # to every byte of the tree, and validate_release_coordinates proves the release
+    # commit changed only ALLOWED_RELEASE_PATHS relative to it. The hashes added a
+    # standing maintenance obligation on top of a strictly stronger binding.
     verification = data["verification"]
     if not isinstance(verification, dict):
         raise ReleaseValidationError("verification must be an object")
@@ -333,13 +342,11 @@ def validate_release_inputs(
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
     waivers = validate_evidence_records(data, root)
 
-    # Delegated to the shared helper, which scripts/sync_workflows.py also uses.
-    if drifted := sync_workflows(check=True, root=root):
-        raise ReleaseValidationError(
-            "installed GitHub workflow copies differ from their canonical templates: "
-            + ", ".join(drifted)
-            + " (run `make sync-workflows`)"
-        )
+    # Canonical-template -> installed-copy parity is not checked here. In the
+    # repository `make workflow-parity` gates it and can repair it; for a release
+    # it is checked by check_release_manifest.validate_manifest, which is the
+    # validator that runs standalone from a tagged worktree. Both call the one
+    # implementation in release_common.sync_workflows.
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     if data["status"] == "active":
         assert isinstance(runtime_source, str)
@@ -373,13 +380,9 @@ def validate_release_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?", type=Path, default=RELEASE_INPUTS)
-    parser.add_argument("--write-hashes", action="store_true")
     args = parser.parse_args()
     try:
         data = load_json(args.path)
-        if args.write_hashes:
-            data["hashes"] = computed_hashes(ROOT)
-            args.path.write_bytes(canonical_json_bytes(data))
         waivers = validate_release_inputs(data)
     except ReleaseValidationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

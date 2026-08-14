@@ -1,24 +1,14 @@
 #!/bin/sh
 set -eu
 
-run_mock() {
-  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
-    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
-    exit 2
-  fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
-}
+REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}"
+. "${0%/*}/common.sh"
 
-if [ "${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
-  run_mock
-fi
+mock_if_requested
 
 if ! command -v claude >/dev/null 2>&1; then
-  if [ "${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}" = "1" ]; then
-    echo "claude CLI is required for this AI review job but was not found" >&2
-    exit 127
-  fi
-  run_mock
+  require_real_or_mock \
+    "claude CLI is required for this AI review job but was not found" 127
 fi
 
 if [ "${ANTHROPIC_BASE_URL:-}" = "https://openrouter.ai/api" ]; then
@@ -34,17 +24,8 @@ fi
 
 export ANTHROPIC_MODEL="${AI_REVIEW_MODEL}"
 
-if [ -z "${AI_REVIEW_RENDERED_PROMPT:-}" ] || [ ! -f "$AI_REVIEW_RENDERED_PROMPT" ]; then
-  echo "AI_REVIEW_RENDERED_PROMPT is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
-# Resolve to an absolute path so the stdin redirect still points at the prompt
-# after we cd into the review root below. `--` guards against a path that begins
-# with a hyphen being parsed as an option by cd/dirname/basename.
-PROMPT_FILE="$(cd -- "$(dirname -- "$AI_REVIEW_RENDERED_PROMPT")" && pwd)/$(basename -- "$AI_REVIEW_RENDERED_PROMPT")"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+resolve_prompt_file
+resolve_output_schema
 
 # Ask claude for schema-conforming structured output, mirroring codex's
 # --output-schema. The terminal stream-json result event then carries the
@@ -58,11 +39,7 @@ AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # structured_output is absent the runner falls back to parsing the result text
 # (the prompt still demands final JSON) and says so in the job log, so the
 # worst case equals the pre-json-schema pipeline — visibly, not silently.
-OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
-if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
-  OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
-fi
-
+#
 # The CLI rejects schemas that declare the 2020-12 draft ("--json-schema is
 # not a valid JSON Schema: no schema with key or ref https://json-schema.org/
 # draft/2020-12/schema"), so strip the $schema key when passing the shared
@@ -98,37 +75,20 @@ RUN_DIR="."
 
 if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   # The review stage reads the wider codebase to ground findings, so root the
-  # agent at a clean copy of the pinned MR snapshot with the reviewed files at
-  # the working-tree root — the same way the codex (--cd) and opencode (--dir)
-  # adapters do. Without this, claude ran in the ambient CI build dir, so paths
-  # from the diff (e.g. src/foo.py) never resolved and the "explore the
-  # codebase" prompt sent the agent searching from the wrong root until it hit
-  # the reviewer timeout.
-  REPO_SNAPSHOT_DIR="$AI_REVIEW_INPUT_DIR/repo_snapshot"
-  if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
-    echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-    exit 2
-  fi
-
-  TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
-  mkdir -p "$TMP_DIR"
-  # Absolute so the review root path survives the cd below.
-  TMP_DIR="$(cd "$TMP_DIR" && pwd)"
+  # agent at a clean copy of the pinned MR snapshot. Without this, claude ran in
+  # the ambient CI build dir, so paths from the diff (e.g. src/foo.py) never
+  # resolved and the "explore the codebase" prompt sent the agent searching from
+  # the wrong root until it hit the reviewer timeout.
+  #
+  # --safe-mode already ignores CLAUDE.md; stripping it, AGENTS.md and .claude
+  # from the copy is defense in depth.
+  resolve_tmp_dir
   CLAUDE_REVIEW_ROOT="$TMP_DIR/claude-review-root.$$"
   mkdir -p "$CLAUDE_REVIEW_ROOT"
   # Remove the snapshot copy on exit so repeated local-harness runs don't
   # accumulate review roots (in CI the whole container is ephemeral anyway).
   trap 'rm -rf "$CLAUDE_REVIEW_ROOT"' EXIT
-
-  # Copy into a clean root and strip project-level agent config the MR could use
-  # to steer the reviewer; --safe-mode already ignores CLAUDE.md, but delete it
-  # (and .claude / AGENTS.md) at every level as defense in depth. Match both
-  # regular files and symlinks so a symlinked CLAUDE.md/AGENTS.md -> elsewhere
-  # can't survive the strip and still be followed.
-  cp -R "$REPO_SNAPSHOT_DIR"/. "$CLAUDE_REVIEW_ROOT"/
-  find "$CLAUDE_REVIEW_ROOT" -name CLAUDE.md \( -type f -o -type l \) -delete
-  find "$CLAUDE_REVIEW_ROOT" -name AGENTS.md \( -type f -o -type l \) -delete
-  find "$CLAUDE_REVIEW_ROOT" -name .claude -prune -exec rm -rf {} +
+  prepare_review_root "$CLAUDE_REVIEW_ROOT" CLAUDE.md AGENTS.md .claude/
 
   RUN_DIR="$CLAUDE_REVIEW_ROOT"
   set -- "$@" --add-dir "$CLAUDE_REVIEW_ROOT" --tools "Read,Grep,Glob"

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-_DOCS_CHECK = Path(__file__).resolve().parents[3] / "scripts" / "check_docs.py"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
 
 
 def _load_docs_checker():
@@ -81,7 +84,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v1", "panel": {"enabled": True}}
+        config = {"schema_version": "review_config.v2", "panel": {"enabled": True}}
         config_doc = (
             "| `schema_version` | first |\n"
             "| `schema_version` | duplicate |\n"
@@ -142,7 +145,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_rows_in_the_wrong_reference_section(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v1"}
+        config = {"schema_version": "review_config.v2"}
         config_doc = (
             "| `AI_REVIEW_ACTIVE` | misplaced environment |\n"
             "## Environment variables\n"
@@ -177,14 +180,12 @@ class DocumentationContractTests(unittest.TestCase):
         )
 
         missing = checker._inventory_issues({}, "## Environment variables\n", set())
+        # Derived from the checker's own set rather than a hand-listed copy: a
+        # name added to REJECTED_ENV_NAMES must not silently drop out of this case.
         documented = checker._inventory_issues(
             {},
             "## Environment variables\n"
-            "| `AI_REVIEW_CURSOR_EFFORT` | rejected |\n"
-            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | rejected |\n"
-            "| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | rejected |\n"
-            "| `GITLAB_READ_TOKEN` | rejected |\n"
-            "| `GITLAB_WRITE_TOKEN` | rejected |\n",
+            + "".join(f"| `{name}` | rejected |\n" for name in sorted(names)),
             set(),
         )
 
@@ -206,13 +207,6 @@ class DocumentationContractTests(unittest.TestCase):
         environment_rows = checker._reference_row_counts(documentation[heading.end() :])
         self.assertEqual(environment_rows[marker], 1)
 
-    def test_readme_line_limit_is_enforced(self) -> None:
-        checker = _load_docs_checker()
-        self.assertEqual(checker._readme_issues("line\n" * 220), [])
-        self.assertEqual(
-            checker._readme_issues("line\n" * 221),
-            ["README.md: expected at most 220 lines, found 221"],
-        )
 
     def test_github_install_contract_binds_source_and_destination(self) -> None:
         checker = _load_docs_checker()
@@ -325,80 +319,14 @@ class DocumentationContractTests(unittest.TestCase):
             evidence = root / "docs/evidence/README.md"
             evidence.write_text(evidence_body, encoding="utf-8")
 
-            saved = (
-                checker.ROOT,
-                checker.RELEASE_INPUTS,
-                checker.EVIDENCE_INDEX,
-                checker.RELEASE_STATE_DOCS,
-            )
+            saved = (checker.ROOT, checker.RELEASE_INPUTS, checker.EVIDENCE_INDEX)
             checker.ROOT = root
             checker.RELEASE_INPUTS = root / "release/release-inputs.json"
             checker.EVIDENCE_INDEX = evidence
-            checker.RELEASE_STATE_DOCS = (readme,)
             try:
                 return checker._release_state_issues()
             finally:
-                (
-                    checker.ROOT,
-                    checker.RELEASE_INPUTS,
-                    checker.EVIDENCE_INDEX,
-                    checker.RELEASE_STATE_DOCS,
-                ) = saved
-
-    def test_active_release_rejects_draft_state_claims(self) -> None:
-        checker = _load_docs_checker()
-        issues = self._release_state_issues_for(
-            checker,
-            status="active",
-            readme_body="Release inputs remain `draft` until that matrix passes.\n",
-        )
-        self.assertTrue(issues)
-        self.assertTrue(any("draft/incomplete release state" in issue for issue in issues))
-
-    def test_active_release_rejects_all_new_draft_state_phrasings(self) -> None:
-        checker = _load_docs_checker()
-        for phrase in ("(draft)", "status: draft", "draft notes"):
-            with self.subTest(phrase=phrase):
-                issues = self._release_state_issues_for(
-                    checker,
-                    status="active",
-                    readme_body=f"Release heading {phrase}.\n",
-                )
-                self.assertTrue(issues)
-                self.assertTrue(any("draft/incomplete release state" in issue for issue in issues))
-
-    def test_active_release_accepts_released_prose(self) -> None:
-        checker = _load_docs_checker()
-        self.assertEqual(
-            self._release_state_issues_for(
-                checker,
-                status="active",
-                readme_body="The matrix passed and release inputs are active.\n",
-            ),
-            [],
-        )
-
-    def test_draft_release_tolerates_draft_state_claims(self) -> None:
-        checker = _load_docs_checker()
-        self.assertEqual(
-            self._release_state_issues_for(
-                checker,
-                status="draft",
-                readme_body="The matrix is still being collected.\n",
-            ),
-            [],
-        )
-
-    def test_draft_claim_inside_fenced_code_is_not_flagged(self) -> None:
-        checker = _load_docs_checker()
-        self.assertEqual(
-            self._release_state_issues_for(
-                checker,
-                status="active",
-                readme_body='Example output:\n\n```text\nstatus remains draft\n```\n',
-            ),
-            [],
-        )
+                (checker.ROOT, checker.RELEASE_INPUTS, checker.EVIDENCE_INDEX) = saved
 
     def test_active_release_rejects_pending_evidence_rows(self) -> None:
         checker = _load_docs_checker()
@@ -467,164 +395,78 @@ class DocumentationContractTests(unittest.TestCase):
             ],
         )
 
-    def test_directory_readme_issues_flags_missing_index(self) -> None:
+    def test_only_tagged_release_notes_are_exempt_from_link_checking(self) -> None:
+        """Frozen means "has a tag", not "the filename looks like a version".
+
+        An earlier version matched on the name alone, so release/<version>.md was
+        excluded from link checking before v<version> existed — the whole window in
+        which a release note is actually being drafted. An untagged note with a
+        broken link passed both this checker and the byte guard.
+        """
         checker = _load_docs_checker()
-        original_root = checker.ROOT
-        with tempfile.TemporaryDirectory() as tmp:
-            # The checkout itself sits under a directory named "internal": exemptions
-            # are repo-relative, so this must not disable the check for the whole tree.
-            root = (Path(tmp) / "internal" / "checkout").resolve()
-            docs = root / "docs"
-            sub = docs / "unindexed"
-            sub.mkdir(parents=True)
-            (sub / "guide.md").write_text("# Guide\n", encoding="utf-8")
-
-            exempt = docs / "internal" / "scratch"
-            exempt.mkdir(parents=True)
-            (exempt / "notes.md").write_text("# Notes\n", encoding="utf-8")
-
-            # Only docs/internal/ is exempt; a public directory that happens to be
-            # named "internal" deeper in the tree still needs its own index.
-            public_internal = docs / "reference" / "internal"
-            public_internal.mkdir(parents=True)
-            (public_internal / "detail.md").write_text("# Detail\n", encoding="utf-8")
-            (docs / "reference" / "README.md").write_text("# Reference\n", encoding="utf-8")
-
-            # docs/ itself is exempt even with top-level markdown; root README.md
-            # coverage is enforced by _root_doc_index_issues() instead.
-            (docs / "operations.md").write_text("# Operations\n", encoding="utf-8")
-
-            checker.ROOT = root
-            try:
-                issues = checker._directory_readme_issues()
-            finally:
-                checker.ROOT = original_root
-
-        self.assertEqual(len(issues), 2)
-        self.assertIn(
-            "docs/reference/internal: docs directory contains markdown files "
-            "but no README.md index",
-            issues[0],
-        )
-        self.assertIn(
-            "docs/unindexed: docs directory contains markdown files but no README.md index",
-            issues[1],
-        )
-
-    def test_root_doc_index_issues_requires_readme_link(self) -> None:
-        checker = _load_docs_checker()
-        original_root = checker.ROOT
-        original_readme = checker.ROOT_README
+        original_root, original_resolvable = checker.ROOT, checker._TAGS_RESOLVABLE
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            docs = root / "docs"
-            docs.mkdir(parents=True)
-            (docs / "linked.md").write_text("# Linked\n", encoding="utf-8")
-            (docs / "anchored.md").write_text("# Anchored\n", encoding="utf-8")
-            (docs / "titled.md").write_text("# Titled\n", encoding="utf-8")
-            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
-            readme = root / "README.md"
-            # An anchor or a link title still indexes the file.
-            readme.write_text(
-                "# Root\n\n"
-                "- [Linked](docs/linked.md)\n"
-                "- [Anchored](docs/anchored.md#failure-behavior)\n"
-                '- [Titled](docs/titled.md "Titled guide")\n',
-                encoding="utf-8",
-            )
-
+            (root / "release").mkdir()
             checker.ROOT = root
-            checker.ROOT_README = readme
             try:
-                issues = checker._root_doc_index_issues()
-            finally:
+                checker._TAGS_RESOLVABLE = True
+                # 1.0.1 is tagged in this repository; 9.9.9 never will be.
                 checker.ROOT = original_root
-                checker.ROOT_README = original_readme
+                self.assertTrue(checker._is_released_note(original_root / "release/1.0.1.md"))
+                self.assertFalse(checker._is_released_note(original_root / "release/9.9.9.md"))
+                self.assertFalse(checker._is_released_note(original_root / "release/TEMPLATE.md"))
 
-        self.assertEqual(len(issues), 1)
-        self.assertIn("'unlinked.md' is not linked from the root index", issues[0])
-
-    def test_docs_index_checks_hand_off_when_exemption_is_dropped(self) -> None:
-        """Dropping docs/ from the exemption must move the burden, not double it."""
-        checker = _load_docs_checker()
-        original_root = checker.ROOT
-        original_readme = checker.ROOT_README
-        original_excluded = checker.EXCLUDED_README_PATHS
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            docs = root / "docs"
-            docs.mkdir(parents=True)
-            (docs / "unlinked.md").write_text("# Unlinked\n", encoding="utf-8")
-            readme = root / "README.md"
-            readme.write_text("# Root\n", encoding="utf-8")
-
-            checker.ROOT = root
-            checker.ROOT_README = readme
-            try:
-                # While docs/ is exempt, root README.md must index it.
-                exempt_root_issues = checker._root_doc_index_issues()
-                exempt_directory_issues = checker._directory_readme_issues()
-                # Once it is not, the root index stands down and docs/ needs its own README.
-                checker.EXCLUDED_README_PATHS = set()
-                dropped_root_issues = checker._root_doc_index_issues()
-                dropped_directory_issues = checker._directory_readme_issues()
+                # With no tags resolvable, every note is frozen: a shallow clone
+                # must not start failing on links that are correct at their tag.
+                checker._TAGS_RESOLVABLE = False
+                self.assertTrue(checker._is_released_note(original_root / "release/9.9.9.md"))
             finally:
-                checker.ROOT = original_root
-                checker.ROOT_README = original_readme
-                checker.EXCLUDED_README_PATHS = original_excluded
+                checker.ROOT, checker._TAGS_RESOLVABLE = original_root, original_resolvable
 
-        self.assertEqual(len(exempt_root_issues), 1)
-        self.assertEqual(exempt_directory_issues, [])
-        self.assertEqual(dropped_root_issues, [])
-        self.assertEqual(len(dropped_directory_issues), 1)
-        self.assertIn("docs: docs directory contains markdown files", dropped_directory_issues[0])
+    def test_every_documented_cli_command_resolves(self) -> None:
+        """Each command in the CLI reference must name something that exists.
 
-    def test_adr_issues_requires_table_row_link(self) -> None:
-        checker = _load_docs_checker()
-        original_root = checker.ROOT
-        original_index = checker.DECISIONS_INDEX
-        original_dir = checker.DECISIONS_DIR
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            decisions = root / "docs/decisions"
-            decisions.mkdir(parents=True)
-            (decisions / "0001-test.md").write_text("# ADR 1\n", encoding="utf-8")
-            readme = decisions / "README.md"
-            readme.write_text(
-                "# Decisions\n\nMentioning 0001-test.md in plain text\n", encoding="utf-8"
-            )
+        The link checker cannot see these: a command is inline code, not a link
+        destination. Moving pipeline_trust.py out of the package left this table
+        advertising `python -m ai_review.pipeline_trust` and
+        `scripts/verify_pipeline_trust.py`, neither of which existed, while
+        docs-check stayed green — and the security model tells operators to run
+        that auditor against their consumer config.
+        """
+        reference = _REPO_ROOT / "docs/reference/cli-and-exit-codes.md"
+        source_root = _REPO_ROOT / "ai-review/src"
+        commands = re.findall(r"(?m)^\|\s*`([^`]+)`\s*\|", reference.read_text(encoding="utf-8"))
+        self.assertGreater(len(commands), 5, "CLI reference table was not parsed")
 
-            checker.ROOT = root
-            checker.DECISIONS_INDEX = readme
-            checker.DECISIONS_DIR = decisions
-            try:
-                prose_issues = checker._adr_issues()
-                readme.write_text("# Decisions\n\n- [ADR 1](0001-test.md)\n", encoding="utf-8")
-                outside_table_issues = checker._adr_issues()
-                readme.write_text(
-                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
-                    "| [ADR-0001](0001-test.md) | Test |\n",
-                    encoding="utf-8",
+        for command in commands:
+            with self.subTest(command=command):
+                parts = command.split()
+                if parts[:2] == ["python", "-m"]:
+                    target = source_root / (parts[2].replace(".", "/") + ".py")
+                    self.assertTrue(target.is_file(), f"{command!r} names a missing {target}")
+                    continue
+
+                bare = parts[0] != "python"
+                target = _REPO_ROOT / (parts[0] if bare else parts[1])
+                self.assertTrue(target.is_file(), f"{command!r} names a missing {target}")
+                if not bare:
+                    continue
+                # A bare path is only a command if the shell can actually run it.
+                # Most repository-only checkers are non-executable by design (see
+                # scripts/sync_workflows.py) and must be documented with an explicit
+                # `python` prefix; existence alone let the reference publish
+                # `scripts/pipeline_trust.py …`, which has neither the bit nor a
+                # shebang, as the way to audit a consumer's GitLab composition.
+                self.assertTrue(
+                    os.access(target, os.X_OK),
+                    f"{command!r} runs a bare path that is not executable; "
+                    f"document it as `python {parts[0]} …` or chmod +x",
                 )
-                table_issues = checker._adr_issues()
-                # A titled table-row link indexes the record just as well.
-                readme.write_text(
-                    "# Decisions\n\n| ADR | Title |\n|---|---|\n"
-                    '| [ADR-0001](0001-test.md "Test record") | Test |\n',
-                    encoding="utf-8",
+                self.assertTrue(
+                    target.read_bytes().startswith(b"#!"),
+                    f"{command!r} runs a bare path with no shebang",
                 )
-                titled_table_issues = checker._adr_issues()
-            finally:
-                checker.ROOT = original_root
-                checker.DECISIONS_INDEX = original_index
-                checker.DECISIONS_DIR = original_dir
-
-        self.assertEqual(len(prose_issues), 1)
-        self.assertIn("0001-test.md", prose_issues[0])
-        self.assertEqual(len(outside_table_issues), 1)
-        self.assertIn("missing from the index table", outside_table_issues[0])
-        self.assertEqual(table_issues, [])
-        self.assertEqual(titled_table_issues, [])
 
     def test_current_documentation_tree_passes_full_contract(self) -> None:
         checker = _load_docs_checker()

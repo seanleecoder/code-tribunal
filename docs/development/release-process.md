@@ -25,14 +25,17 @@ The active release version also determines the required notes file:
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
 3. Build base and reviewer images from exactly `R`; record the immutable image
    subjects, digests, publication run, attestations, and anonymous pulls.
-4. Update both GitHub workflow copies, the three GitLab pin variables, and
+4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
-   completes; refresh and validate the checked file-set hashes:
+   completes, then validate:
 
    ```bash
-   python scripts/check_release_inputs.py --write-hashes
    make quality
    ```
+
+   `make quality` runs `workflow-parity`, which regenerates nothing but reports
+   an installed workflow copy that has drifted from its canonical template; use
+   `make sync-workflows` to repair it.
 
 5. Run the GitHub and GitLab live evidence matrix. Each cited record under
    `docs/evidence/` must either declare exact `Status: passed` with
@@ -96,7 +99,7 @@ record belong in the next release's notes, never in the shipped one.
 |---|---|---|
 | `anchors.py`, `render.py`, `post.py`, `mock_reviewer.py` | lifecycle Chain B on **both** platforms — they are independent render surfaces and diverge on added-file diffs | no |
 | `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapters/*` | one real Chain A panel; plus the effort-route check if effort profiles changed | no |
-| `input_bundle.py`, `gitlab_platform.py`, `scripts/verify_pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
+| `input_bundle.py`, `platform/gitlab.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
 | `gate.py`, `consensus.py` | the blocking-gate step of Chain B | yes — `test_gate.py`, `test_consensus_integrity.py` |
 | `github_platform.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
 | any image recipe, or `ai-review/src` at all | image publication verification | **never** — the digests always change |
@@ -154,11 +157,11 @@ That is an account-level action and is not automated here.
 
 ## Validating a historical manifest
 
-An external manifest is bound to the release-inputs artifact and checked-file
-hashes from its own release. Do not validate a downloaded historical manifest
-from a newer branch, where `release/release-inputs.json` may already describe a
-new draft release. Create a worktree at the manifest's tag and run the validator
-there:
+An external manifest is bound to the release-inputs artifact from its own release
+by a SHA-256 over that artifact's bytes. Do not validate a downloaded historical
+manifest from a newer branch, where `release/release-inputs.json` may already
+describe a new draft release. Create a worktree at the manifest's tag and run the
+validator there:
 
 ```bash
 git worktree add /tmp/code-tribunal-v1.0.0 v1.0.0

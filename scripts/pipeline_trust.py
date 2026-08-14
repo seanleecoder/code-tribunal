@@ -250,3 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{args.template_project}@{args.template_sha}"
     )
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

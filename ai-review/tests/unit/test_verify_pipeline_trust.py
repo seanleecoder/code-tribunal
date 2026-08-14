@@ -1,10 +1,48 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
+import unittest
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
-from ai_review.pipeline_trust import RESERVED_DIRECT_JOB_NAMES, find_trust_issues
+
+_PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_trust.py"
+
+# The runtime image mounts ai-review/tests and runs `unittest discover` over it,
+# but copies only the handful of scripts it actually executes — the auditor is
+# not one of them, by the same reasoning that moved it out of the ai_review
+# package. So this module must skip there rather than fail to import, matching
+# test_release_tools.py and test_docs_contract.py. Nothing is lost: the cases
+# below are plain functions, which `unittest discover` never collected anyway;
+# pytest runs all of them under `make quality`, where scripts/ is present.
+if not _PIPELINE_TRUST.is_file():
+    raise unittest.SkipTest("repository-only trust auditor is absent from the runtime image")
+
+
+def _load_pipeline_trust():
+    """Load the repository-only trust auditor from scripts/.
+
+    It lives outside ``ai_review`` because nothing in the pipeline imports it: it
+    audits a *consumer's* .gitlab-ci.yml, and shipping it in the runtime image
+    only added surface. Loaded by path so this test does not depend on scripts/
+    being on sys.path.
+    """
+    if "pipeline_trust" in sys.modules:
+        return sys.modules["pipeline_trust"]
+    spec = importlib.util.spec_from_file_location("pipeline_trust", _PIPELINE_TRUST)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"cannot load trust auditor from {_PIPELINE_TRUST}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pipeline_trust"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_pipeline_trust = _load_pipeline_trust()
+RESERVED_DIRECT_JOB_NAMES = _pipeline_trust.RESERVED_DIRECT_JOB_NAMES
+find_trust_issues = _pipeline_trust.find_trust_issues
 
 TRUSTED_PROJECT = "org/code-tribunal-ci"
 TRUSTED_SHA = "a" * 40

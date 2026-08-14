@@ -21,7 +21,7 @@ from .grouping import DuplicateLink, _duplicate_link_key
 
 def _critique_enabled(config: dict[str, Any]) -> bool:
     critique = config.get("critique", {})
-    return critique.get("enabled") is True and int(critique.get("rounds", 0)) == 1
+    return critique.get("enabled") is True
 
 
 def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, str]:

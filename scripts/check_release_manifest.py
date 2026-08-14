@@ -19,6 +19,7 @@ from release_common import (
     image_ref,
     load_json,
     sha256_bytes,
+    sync_workflows,
     validate_release_coordinates,
 )
 
@@ -45,6 +46,22 @@ def validate_manifest(
         raise ReleaseValidationError("unsupported manifest schema version")
     inputs = load_json(release_inputs)
     validate_release_inputs(inputs, root)
+
+    # ALLOWED_RELEASE_PATHS allowlists the canonical GitHub template and its
+    # installed copy independently, so the coordinate check below cannot tell a
+    # legitimate repin from a release that changed only the installed file. GitHub
+    # executes that file verbatim, so certifying a manifest without comparing them
+    # would certify bytes the canonical pin validation never read.
+    #
+    # `make workflow-parity` covers the repository, but this validator runs
+    # standalone from a tagged worktree where nothing else has. One implementation,
+    # two callers — which is not the duplication that consolidating this check
+    # removed.
+    if drifted := sync_workflows(check=True, root=root):
+        raise ReleaseValidationError(
+            "installed workflow copies differ from their canonical templates: "
+            + ", ".join(drifted)
+        )
     if manifest["release_version"] != inputs["release_version"]:
         raise ReleaseValidationError(
             "manifest release_version must match release inputs; for a historical "

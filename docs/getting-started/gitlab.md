@@ -28,7 +28,7 @@ and pipeline-variable forwarding, and retain `strategy: mirror`.
 Audit the result from a trusted checkout:
 
 ```bash
-PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py \
+python scripts/pipeline_trust.py \
   path/to/.gitlab-ci.yml \
   --mode child \
   --template-project org/code-tribunal-ci \
@@ -46,7 +46,7 @@ In **Settings → CI/CD → Variables**, configure:
 |---|---:|---:|---:|---|
 | `OPENROUTER_API_KEY` | yes | yes | yes | Reviewer provider calls |
 | `GITLAB_TOKEN` | yes | yes | yes | Prepare, discussions, state, and commands |
-| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Experimental Cursor substitute; do not enable until SPEC-21 passes |
+| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Peer reviewer seat; required only when Cursor is on the roster |
 
 Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
 Configure runtime overrides as protected project/group variables so every stage
@@ -66,12 +66,15 @@ For an enforcing gate, prefer a trusted config with
 transient state-load error starts from empty recoverable state rather than
 failing prepare.
 
-### Cursor (experimental)
+### Cursor
 
-Cursor is disabled by default and cannot be enabled until the required
-[SPEC-21 enablement queue](../evidence/README.md#cursor-enablement-queue-spec-21)
-passes. Enabling it is a deliberate second egress destination to Cursor's
-backend.
+Cursor is a supported peer reviewer seat, off in the shipped default roster.
+Enabling it is a deliberate second egress destination: the Cursor CLI cannot route
+through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
+Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS`, supply
+`CURSOR_API_KEY`. The shipped `auto` model is a valid Cursor selector; set
+`AI_REVIEW_CURSOR_MODEL` to an exact slug when you want model-stable
+reproducibility.
 
 ## Require the gate
 

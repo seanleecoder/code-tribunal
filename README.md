@@ -38,11 +38,10 @@ internal container implementation, not a supported Python package or API.
   required check. GitLab requires **Pipelines must succeed**.
 - Cursor is a peer reviewer seat that is off in the shipped default roster
   because it has a separate credential and its own egress path. Supplemental real
-  runs close the historical real-route and
-  artifact-validity subclaim, but Cursor remains disabled until the required
-  SPEC-21 enablement gate passes: the exact Composer model, final-image real-key
-  run, and hostile permission smoke. This does not block the 1.0.1 tag while
-  Cursor remains disabled.
+  runs and the SPEC-21 acceptance evidence close its enablement: the seat is a
+  supported peer reviewer. It stays **off in the shipped default roster** so that
+  second egress path is always an explicit choice; select it by naming it in
+  `AI_REVIEW_REVIEWERS` and supplying `CURSOR_API_KEY`.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the
@@ -54,7 +53,7 @@ internal container implementation, not a supported Python package or API.
 - The trusted image pin is **not enforced inside the pipeline**: a consumer CI
   config can substitute the reviewer images. Containment relies on protected
   credentials being withheld from untrusted refs and on running
-  `scripts/verify_pipeline_trust.py` against your consumer config.
+  `scripts/pipeline_trust.py` against your consumer config.
 - The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
   attested image pair, and `v1.0.0` was released. Each row is a **scoped** pass
   with its own recorded limits, and some paths remain regression-covered only.

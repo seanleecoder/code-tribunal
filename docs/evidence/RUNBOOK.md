@@ -382,7 +382,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | experimental route was outside the 1.0.0 release matrix | use [the supplemental record](record-cursor-real-runs.md) as historical supporting evidence; before enabling Cursor, complete the canonical [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), run the required final-image evidence, and pass the hostile permission-denial prompt |
+| Cursor reviewer | the route was outside the 1.0.0 release matrix | [the supplemental record](record-cursor-real-runs.md) is historical supporting evidence bound to older coordinates. Cursor is a supported seat and needs nothing further to enable; a release shipping it on the default roster would want its own gating row, and no check covers the pinned CLI's runtime honouring of the deny policy |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -395,16 +395,15 @@ Actual result / Audit / Verdict.
 | 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + [SPEC-34](../history/specs/spec-34-github-revision-bound-input.md) | regression-covered (optional live) | none |
+| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor enablement acceptance | [SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist) plus a new supplemental record | enablement-only (required before enabling Cursor) | final-image real run and permission smoke |
+| 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run |
 
 Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
-evidence; Run 6 is a required Cursor-enablement gate, not a release-gating row.
-The product decision must choose and record the ask-mode/blocking contract; it
-does not make the acceptance row optional.
+evidence; Run 6 is optional and gates nothing.
+The ask-mode/blocking contract is a product decision to record when it is made.
 
 ### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
 
@@ -471,7 +470,7 @@ tokens. Exercise the genuinely live-only probes:
    `OPENROUTER_API_KEY`/`GITLAB_TOKEN` are withheld; prepare fails closed and the
    uploaded artifact contains only an empty `inputs/` tree.
 2. From a trusted checkout, audit composition with
-   `PYTHONPATH=ai-review/src python scripts/verify_pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
+   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
 3. Attempt the override/forgery probes that touch a credential-bearing boundary
    (template/job replacement, trusted image/config override, forged `out/gate/*`).
    Confirm the trusted composition is retained or the pipeline fails closed, and
@@ -501,19 +500,23 @@ raw findings, `usable_for_resolution: true`, and the panel lists Cursor as a
 successful reviewer. These checks establish real-route wiring and artifact
 validity only.
 
-The remaining enablement sequence is intentionally separate: identify and pin
-the exact Composer model slug (the recorded runs only say `model: auto`), then
-complete Run 6 below. Keep Cursor disabled until the enablement evidence passes;
-ordinary review success is not permission-denial evidence.
+These runs recorded `model: auto`, so they say nothing about any particular
+model, and an ordinary review success is not evidence about the deny policy
+either.
 
-### Run 6 — Cursor enablement acceptance (required before enablement)
+### Run 6 — Cursor model-specific evidence (optional)
 
-Use the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
-for the normative acceptance criteria. Run this only after the reviewer image
-and runtime source proposed for enablement are frozen. It does not block the
-1.0.1 tag while Cursor remains disabled. The historical GitLab/GitHub runs in
-Run 5 cannot be reused as the enablement pass because they used an older reviewer
-image and reported `model: auto`.
+**Not an enablement gate.** SPEC-21 is closed and Cursor is a supported peer seat,
+so nothing here is required before a consumer enables it. This is the procedure for
+evidence bound to one *specific* Cursor model and reviewer image — which is why it
+pins an exact slug where ordinary operation may use `auto`.
+
+Nothing verifies that a newly pinned `cursor-agent` honours the `Shell(*)` and
+write denies at runtime — the repository proves only that the policy is passed to
+every invocation (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)).
+Run this when a deployment needs model-specific evidence, or when a release intends
+to ship Cursor on the default roster and wants a gating row of its own. The Run 5 records cannot serve: they used an older
+reviewer image and reported `model: auto`.
 
 1. Freeze `R`, build and attest the final base/reviewer pair, validate
    `cursor-agent.pin`, and record immutable digests/provenance.
@@ -524,14 +527,11 @@ image and reported `model: auto`.
    explicitly; otherwise change the invocation and repeat the read/permission
    validation. If blocking behavior is required, use a blocking fixture and
    verify the required check genuinely blocks.
-4. Run the parameterized permission smoke with a real `CURSOR_API_KEY` against
-   the exact final reviewer image. A missing key or a `Skipping Cursor
-   permission smoke` notice is not a pass.
-5. Run the fresh real-key fixture review/critique under the chosen contract and
+4. Run the fresh real-key fixture review/critique under the chosen contract and
    record exact model, counts, config digest, runtime/image coordinates,
    provenance, job IDs, and consensus/post/gate outcomes without secrets or model
    text.
-6. Add the sanitized supplemental record only after all required paths are scoped
+5. Add the sanitized supplemental record only after all required paths are scoped
    `Status: passed` against the same `R` and final image pair. Repin the
    configuration and publisher workflow to the same exact model slug. Do not add
    this record to release inputs. Cursor may remain off the default roster as an
@@ -556,7 +556,7 @@ image and reported `model: auto`.
 3. **Retarget the release inputs to the pair under test (release-blocking).**
    Update `runtime_source`, both image digests, the canonical template pins, the
    recorded publication and CI run IDs, and the evidence references together, then
-   re-run `check_release_inputs.py --write-hashes` and `make quality`. This is an
+   re-run `make quality`. This is an
    operator/CI action because it needs the published digests. (1.0.0: publication
    run `30125524008`, CI run `30125523924`, base `sha256:f2a433ac…`, reviewer
    `sha256:2fd84c43…`. Remember the **three** GitLab pin variables and **both**

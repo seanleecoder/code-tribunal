@@ -1,72 +1,4 @@
 {
-  "hashes": {
-    "canonical_templates": {
-      "files": [
-        ".github/workflows/ai-review.yml",
-        "ai-review/ci/review.github-actions.yml",
-        "ai-review/ci/review.gitlab-ci.yml"
-      ],
-      "sha256": "e97ac568aac147d56a08e385cbc395f087c8e8226b288623089c716bda5d2e81"
-    },
-    "configuration": {
-      "files": [
-        "ai-review/config/review.yaml"
-      ],
-      "sha256": "d4e2556d6219dea7f95e4bc1b6ac2fa67c3e0f736cd3e586536ee12359aef677"
-    },
-    "dependency_locks": {
-      "files": [
-        "ai-review/images/package-lock.json",
-        "ai-review/images/python-constraints.txt",
-        "requirements-dev.txt"
-      ],
-      "sha256": "331a498533d2c884993f13f264f2c82702eb26bb34a69150c63224154ab9ed3d"
-    },
-    "documentation_entry_points": {
-      "files": [
-        "README.md",
-        "SECURITY.md",
-        "docs/configuration.md",
-        "docs/getting-started/github.md",
-        "docs/getting-started/gitlab.md",
-        "docs/operations.md"
-      ],
-      "sha256": "7a7088cc66b5e37283124028fee5cec122066e449330335fd629daed8d35a823"
-    },
-    "image_recipes": {
-      "files": [
-        "ai-review/images/base.Dockerfile",
-        "ai-review/images/cursor-agent.pin",
-        "ai-review/images/package.json",
-        "ai-review/images/reviewer.Dockerfile",
-        "ai-review/images/ripgrep.pin",
-        "ai-review/tests/fixtures/diffs/simple.diff",
-        "ai-review/tests/fixtures/golden/default_transitive_split_consensus.json",
-        "ai-review/tests/fixtures/golden/render_body_hostile.json",
-        "ai-review/tests/fixtures/golden/semantic_consensus.json",
-        "ai-review/tests/fixtures/grouping/corpus.json",
-        "ai-review/tests/fixtures/opencode/review-malformed-outer.ndjson",
-        "ai-review/tests/fixtures/opencode/review-prefix.ndjson",
-        "ai-review/tests/fixtures/opencode/review-reasoning-only.ndjson",
-        "ai-review/tests/fixtures/repos/simple/src/foo.py"
-      ],
-      "sha256": "f3766fde0a70782900926e82bb8811294e6e11e5f8a5c48a80a742f3f50c7148"
-    },
-    "schemas": {
-      "files": [
-        "ai-review/schemas/adapter_status.schema.json",
-        "ai-review/schemas/consensus.schema.json",
-        "ai-review/schemas/critique_batch.schema.json",
-        "ai-review/schemas/finding_batch.schema.json",
-        "ai-review/schemas/gate_result.schema.json",
-        "ai-review/schemas/post_result.schema.json",
-        "ai-review/schemas/raw_finding_batch.schema.json",
-        "ai-review/schemas/state.schema.json",
-        "ai-review/schemas/state_aliases.schema.json"
-      ],
-      "sha256": "5f7e9d43c0e368c7e0c3f870ee2995d424d43245b453b337d4fd21944e005f63"
-    }
-  },
   "images": {
     "base": {
       "digest": "sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4",
@@ -79,7 +11,7 @@
   },
   "release_version": "1.0.2",
   "runtime_source": "54dffa130be5c921602f264a2123fda4b1895f13",
-  "schema_version": "code_tribunal.release_inputs.v1",
+  "schema_version": "code_tribunal.release_inputs.v2",
   "status": "active",
   "verification": {
     "ci_run_id": "31369496045",

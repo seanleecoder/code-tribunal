@@ -6,9 +6,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
-from ai_review.gitlab_client import (
+from ai_review.platform.gitlab import (
     GitLabApiError,
-    GitLabClient,
+    GitLabReviewPlatform,
     MergeRequestVersion,
     build_position,
     root_note_id_from_discussion,
@@ -110,8 +110,8 @@ class GitLabClientTests(unittest.TestCase):
 
     def test_fetch_latest_version_uses_highest_id(self) -> None:
         session = FakeSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        version = client.fetch_latest_mr_version("group/project", 1)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        version = client.fetch_version("group/project", 1)
         self.assertEqual(version, MergeRequestVersion("base", "start", "head"))
         method, url, kwargs = session.calls[0]
         self.assertEqual(method, "GET")
@@ -120,19 +120,19 @@ class GitLabClientTests(unittest.TestCase):
 
     def test_fetch_current_mr_head_sha(self) -> None:
         session = FakeSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        self.assertEqual(client.fetch_current_mr_head_sha("group/project", 1), "head")
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        self.assertEqual(client.fetch_current_head_sha("group/project", 1), "head")
 
     def test_root_note_id_from_discussion(self) -> None:
         self.assertEqual(root_note_id_from_discussion({"notes": [{"id": 123}]}), 123)
 
     def test_gitlab_state_and_resolution_methods(self) -> None:
         session = FakeSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        client.list_mr_notes("group/project", 1)
-        client.resolve_discussion("group/project", 1, "discussion", False)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        client.list_state_notes("group/project", 1)
+        client.resolve_thread("group/project", 1, "discussion", False)
         client.current_user()
-        client.project_member_access_level("group/project", 99)
+        client.member_access_level("group/project", 99)
         methods = [call[0] for call in session.calls]
         self.assertIn("GET", methods)
         self.assertIn("PUT", methods)
@@ -158,8 +158,8 @@ class GitLabClientTests(unittest.TestCase):
                 return self.pages[page]
 
         session = PagedSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        discussions = client.list_mr_discussions("group/project", 1)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        discussions = client.list_threads("group/project", 1)
         self.assertEqual([d["id"] for d in discussions], ["d1", "d2", "summary-note"])
         self.assertEqual(session.requested_pages, [1, 2])
 
@@ -175,8 +175,8 @@ class GitLabClientTests(unittest.TestCase):
                 return FakeResponse([{"id": "only"}])
 
         session = ShortPageSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        self.assertEqual(len(client.list_mr_discussions("group/project", 1)), 1)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        self.assertEqual(len(client.list_threads("group/project", 1)), 1)
         self.assertEqual(session.count, 1)
 
     def test_pagination_cap_warns_on_truncation(self) -> None:
@@ -194,10 +194,10 @@ class GitLabClientTests(unittest.TestCase):
         import io
 
         session = RunawaySession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            items = client.list_mr_discussions("group/project", 1)
+            items = client.list_threads("group/project", 1)
         self.assertEqual(session.count, 100)
         self.assertEqual(len(items), 100)
         self.assertIn("pagination cap reached", stderr.getvalue())
@@ -209,11 +209,11 @@ class GitLabClientTests(unittest.TestCase):
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
                 return FakeResponse([])
 
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4", "token", session=ListResponseSession()
         )
         with self.assertRaisesRegex(GitLabApiError, "response was not an object"):
-            client.create_mr_note("group/project", 1, "body")
+            client.create_state_note("group/project", 1, "body")
 
     def test_paginated_methods_reject_non_object_items(self) -> None:
         # Pagination returns lists, but each discussion/note entry must be an object
@@ -222,11 +222,11 @@ class GitLabClientTests(unittest.TestCase):
             def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
                 return FakeResponse(["not-an-object"], headers={"X-Next-Page": ""})
 
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4", "token", session=ScalarItemSession()
         )
         with self.assertRaisesRegex(GitLabApiError, "returned a non-object item"):
-            client.list_mr_discussions("group/project", 1)
+            client.list_threads("group/project", 1)
 
     def test_fetch_mr_diff_degrades_on_empty_response(self) -> None:
         # Empty /diffs pages must degrade to an empty unified diff.
@@ -236,10 +236,10 @@ class GitLabClientTests(unittest.TestCase):
                 response.text = "[]"
                 return response
 
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4", "token", session=EmptyDiffsSession()
         )
-        self.assertEqual(client.fetch_mr_diff("group/project", 1), "\n")
+        self.assertEqual(client.fetch_diff("group/project", 1), "\n")
 
     def test_fetch_mr_diff_follows_pagination(self) -> None:
         class PagedDiffSession:
@@ -277,8 +277,8 @@ class GitLabClientTests(unittest.TestCase):
                 )
 
         session = PagedDiffSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
-        diff = client.fetch_mr_diff("group/project", 1)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
+        diff = client.fetch_diff("group/project", 1)
         self.assertEqual(session.requested_pages, [1, 2])
         self.assertEqual(len(session.requested_urls), 2)
         self.assertTrue(all(url.endswith("/diffs") for url in session.requested_urls))
@@ -310,10 +310,10 @@ class GitLabClientTests(unittest.TestCase):
         session = DiffFallbackSession(
             primary, {"overflow": False, "changes": [recovered]}
         )
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            diff = client.fetch_mr_diff("group/project", 1)
+            diff = client.fetch_diff("group/project", 1)
 
         self.assertIn("diff --git a/small.py b/small.py", diff)
         self.assertIn("diff --git a/big.py b/big.py", diff)
@@ -339,7 +339,7 @@ class GitLabClientTests(unittest.TestCase):
             "diff": "@@ -1 +1 @@\n-old\n+new\n",
             "too_large": False,
         }
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -347,7 +347,7 @@ class GitLabClientTests(unittest.TestCase):
             ),
         )
         with contextlib.redirect_stderr(io.StringIO()):
-            diff = client.fetch_mr_diff("group/project", 1)
+            diff = client.fetch_diff("group/project", 1)
 
         self.assertIn("@@ -1 +1 @@\n-old\n+new\n", diff)
 
@@ -367,7 +367,7 @@ class GitLabClientTests(unittest.TestCase):
             "collapsed": False,
             "too_large": False,
         }
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -375,7 +375,7 @@ class GitLabClientTests(unittest.TestCase):
             ),
         )
         with contextlib.redirect_stderr(io.StringIO()):
-            diff = client.fetch_mr_diff("group/project", 1)
+            diff = client.fetch_diff("group/project", 1)
 
         self.assertIn("diff --git a/binary.dat b/binary.dat", diff)
 
@@ -388,13 +388,13 @@ class GitLabClientTests(unittest.TestCase):
                 "collapsed": True,
             }
         ]
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(primary, []),
         )
         with self.assertRaisesRegex(GitLabApiError, "non-object response"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_without_explicit_non_overflow_signal(self) -> None:
         primary = [
@@ -407,13 +407,13 @@ class GitLabClientTests(unittest.TestCase):
         ]
         for raw_payload in ({}, {"overflow": None}, {"overflow": True}):
             with self.subTest(raw_payload=raw_payload):
-                client = GitLabClient(
+                client = GitLabReviewPlatform(
                     "https://gitlab.example.com/api/v4",
                     "token",
                     session=DiffFallbackSession(primary, raw_payload),
                 )
                 with self.assertRaisesRegex(GitLabApiError, "non-overflowing response"):
-                    client.fetch_mr_diff("group/project", 1)
+                    client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_when_raw_changes_are_malformed(self) -> None:
         primary = [
@@ -426,7 +426,7 @@ class GitLabClientTests(unittest.TestCase):
         ]
         for changes in ({}, ["not-an-object"]):
             with self.subTest(changes=changes):
-                client = GitLabClient(
+                client = GitLabReviewPlatform(
                     "https://gitlab.example.com/api/v4",
                     "token",
                     session=DiffFallbackSession(
@@ -434,7 +434,7 @@ class GitLabClientTests(unittest.TestCase):
                     ),
                 )
                 with self.assertRaisesRegex(GitLabApiError, "malformed changes"):
-                    client.fetch_mr_diff("group/project", 1)
+                    client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_when_primary_identity_is_duplicated(self) -> None:
         duplicate = {
@@ -444,10 +444,10 @@ class GitLabClientTests(unittest.TestCase):
             "collapsed": True,
         }
         session = DiffFallbackSession([duplicate, dict(duplicate)], {})
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
 
         with self.assertRaisesRegex(GitLabApiError, "primary diff response returned duplicate"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
         self.assertEqual(len(session.calls), 1)
 
     def test_fetch_mr_diff_fails_when_primary_paths_are_malformed(self) -> None:
@@ -460,10 +460,10 @@ class GitLabClientTests(unittest.TestCase):
             }
         ]
         session = DiffFallbackSession(primary, {})
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
 
         with self.assertRaisesRegex(GitLabApiError, "did not include text old/new paths"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
         self.assertEqual(len(session.calls), 1)
 
     def test_fetch_mr_diff_fails_without_misattributing_malformed_raw_paths(self) -> None:
@@ -476,7 +476,7 @@ class GitLabClientTests(unittest.TestCase):
             }
         ]
         malformed = {"old_path": None, "new_path": "untrusted.py", "diff": ""}
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -485,7 +485,7 @@ class GitLabClientTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(GitLabApiError, "raw-diff fallback returned malformed") as cm:
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
         self.assertNotIn("big.py", str(cm.exception))
 
     def test_fetch_mr_diff_fails_when_raw_change_is_missing(self) -> None:
@@ -497,13 +497,13 @@ class GitLabClientTests(unittest.TestCase):
                 "collapsed": True,
             }
         ]
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(primary, {"overflow": False, "changes": []}),
         )
         with self.assertRaisesRegex(GitLabApiError, "no matching change"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_when_raw_change_is_ambiguous(self) -> None:
         primary = [
@@ -519,7 +519,7 @@ class GitLabClientTests(unittest.TestCase):
             "new_path": "big.py",
             "diff": "@@ -1 +1 @@\n-old\n+new\n",
         }
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -528,7 +528,7 @@ class GitLabClientTests(unittest.TestCase):
             ),
         )
         with self.assertRaisesRegex(GitLabApiError, "multiple matching changes"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_when_raw_change_remains_incomplete(self) -> None:
         change = {
@@ -537,7 +537,7 @@ class GitLabClientTests(unittest.TestCase):
             "diff": "",
             "too_large": True,
         }
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -545,7 +545,7 @@ class GitLabClientTests(unittest.TestCase):
             ),
         )
         with self.assertRaisesRegex(GitLabApiError, "remained incomplete"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
 
     def test_fetch_mr_diff_fails_when_raw_diff_is_not_text(self) -> None:
         primary = [
@@ -561,7 +561,7 @@ class GitLabClientTests(unittest.TestCase):
             "new_path": "big.py",
             "diff": None,
         }
-        client = GitLabClient(
+        client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
             session=DiffFallbackSession(
@@ -569,7 +569,7 @@ class GitLabClientTests(unittest.TestCase):
             ),
         )
         with self.assertRaisesRegex(GitLabApiError, "did not return text diff content"):
-            client.fetch_mr_diff("group/project", 1)
+            client.fetch_diff("group/project", 1)
 
     def test_send_retries_idempotent_verbs_on_502(self) -> None:
         class FlakySession:
@@ -583,7 +583,7 @@ class GitLabClientTests(unittest.TestCase):
                 return FakeResponse({"id": 1}, status_code=200)
 
         session = FlakySession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         with mock.patch("ai_review.http_retry.sleep"):
             parsed = client._request("GET", "/projects/1")
         self.assertEqual(parsed, {"id": 1})
@@ -599,7 +599,7 @@ class GitLabClientTests(unittest.TestCase):
                 return FakeResponse({"error": "bad gateway"}, status_code=502)
 
         session = Always502Session()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         with (
             mock.patch("ai_review.http_retry.sleep"),
             self.assertRaisesRegex(GitLabApiError, "502"),
@@ -617,7 +617,7 @@ class GitLabClientTests(unittest.TestCase):
                 raise ConnectionError("network down")
 
         session = BoomSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         with (
             mock.patch("ai_review.http_retry.sleep"),
             self.assertRaisesRegex(GitLabApiError, "connection error"),
@@ -646,7 +646,7 @@ class GitLabClientTests(unittest.TestCase):
                 raise proxy_error("proxy down")
 
         session = ProxyBoomSession()
-        client = GitLabClient("https://gitlab.example.com/api/v4", "token", session=session)
+        client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         with (
             mock.patch("ai_review.http_retry.sleep"),
             self.assertRaisesRegex(GitLabApiError, "connection error"),

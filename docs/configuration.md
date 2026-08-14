@@ -9,7 +9,7 @@ effective configuration.
 ## YAML keys
 
 Defaults below are the shipped defaults. A custom configuration
-must retain `schema_version: review_config.v1`.
+must retain `schema_version: review_config.v2`.
 
 ### Reviewers
 
@@ -19,13 +19,13 @@ All four are peer seats with the same contract; see
 
 | Key | Type/default | Meaning |
 |---|---|---|
-| `schema_version` | string, `review_config.v1` | Configuration contract version; no other value is accepted. |
+| `schema_version` | string, `review_config.v2` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
-| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`timeout_seconds`) | Whole critique process-group timeout. Legacy `review_config.v1` files omit this key and resolve critique to `min(timeout_seconds, 900)` so the 20-minute CI ceiling is respected. |
+| `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
 | `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
@@ -103,12 +103,14 @@ are trusted image configuration; there is no timeout environment-variable
 override. Both resolved stage values are included in the effective-config
 summary and digest, so all pipeline stages must use the same policy.
 
-For a legacy configuration without `critique_timeout_seconds`, the resolved
-critique value is capped at 900 seconds even when `timeout_seconds` is higher.
-The capped value, rather than the raw fallback input, is recorded in the
-effective-config summary and digest. Explicit stage-specific values are used as
-configured; keep them at or below 900 seconds while using the shipped 20-minute
-critique CI ceiling.
+A configuration that omits `critique_timeout_seconds` resolves critique to a flat
+900 seconds; the value does not depend on `timeout_seconds`. Earlier releases
+reinterpreted `timeout_seconds` as the critique budget and capped it at 900, so a
+reviewer with `timeout_seconds: 300` silently got 300 seconds for critique and one
+with `1800` silently got 900 — one field meaning two things. The resolved value,
+not the raw input, is recorded in the effective-config summary and digest.
+Explicit stage-specific values are used as configured; keep them at or below 900
+seconds while using the shipped 20-minute critique CI ceiling.
 
 OpenCode review and critique use a loopback-only `opencode serve` session client.
 The client sends the fixed internal session title `code-tribunal-ai-review` and
@@ -166,25 +168,19 @@ template.
 | `severity_policy.single_reviewer_blocker.categories` | list, `[security, correctness]` | Categories eligible for the single-reviewer blocker policy. |
 | `severity_policy.quorum_blocker.block_merge` | boolean, `true` | Permit quorum-backed blocker groups to set `block_merge`. |
 
-Semantic grouping keys remain in the shipped YAML with `enabled: false` but are
-**outside the 1.0 compatibility guarantee** (experimental). Do not enable them in
-production. Environment overrides
-`AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
-`AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` are rejected.
-
-| Experimental YAML key | Type/default | Meaning |
-|---|---|---|
-| `panel.grouping.semantic.enabled` | boolean, `false` | Opt-in deterministic title/body similarity grouping; unsupported for 1.0. |
-| `panel.grouping.semantic.threshold` | number, `0.5` | Jaccard threshold from 0.0 through 1.0 when experimental grouping is enabled. |
+Grouping carries no text-similarity setting. An opt-in Jaccard comparison over
+titles and bodies shipped disabled and outside the 1.0 compatibility guarantee;
+it has been removed. Findings are grouped on identity that survives rewording —
+path, category, side, context hash, fingerprints, and symbol — so two reviewers
+describing one bug in different words group when they anchor to the same code,
+not when they happen to choose similar phrasing.
 
 ### Critique
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `critique.enabled` | boolean, `true` | Run blind peer assessment. |
-| `critique.rounds` | integer, `1` | Must be 0 or 1 in v1. One round can affect consensus. |
 | `critique.blind_reviewer_identity` | boolean, `true` | Replace reviewer identities with stable anonymous labels. |
-| `critique.can_add_quorum_votes` | boolean, `false` | Must remain false in v1. Critiques are not reviewer votes. |
 | `critique.allow_advisory_escalation` | boolean, `true` | Surface peer-supported advisory evidence without making it blocking. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
 
@@ -201,7 +197,6 @@ production. Environment overrides
 | `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
 | `merge_gate.enabled` | boolean, `true` | Enforce finding-based blocking. Operational post/state failures still fail. |
-| `state.backend` | enum, `gitlab_mr_state_note` | GitLab default; GitHub requires `github_pr_comment`. |
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
 | `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
@@ -237,7 +232,7 @@ artifacts.
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
-| `AI_REVIEW_CURSOR_MODEL` | `auto` | Exact Cursor model slug; Cursor effort is encoded in the model variant. `auto` is discovery-only and is not valid Cursor-enablement evidence. |
+| `AI_REVIEW_CURSOR_MODEL` | `auto` | Cursor model selector; effort is encoded in the model variant. `auto` is a valid Cursor CLI value and is fine in production — it delegates model choice to Cursor. Pin an exact slug when you need model-stable reproducibility, which is also what an evidence campaign proving behavior for one model requires. |
 | `AI_REVIEW_CLAUDE_ENABLED` | YAML `enabled` (`true`) | Exact lowercase `true` or `false`; empty means no override. Rejected alongside `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_CODEX_ENABLED` | YAML `enabled` (`true`) | Same. |
 | `AI_REVIEW_OPENCODE_ENABLED` | YAML `enabled` (`true`) | Same. |
@@ -248,7 +243,6 @@ artifacts.
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; disables finding blocking only. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
-| `AI_REVIEW_STATE_BACKEND` | YAML | `gitlab_mr_state_note` or `github_pr_comment`; must match posting mode. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
 
@@ -282,8 +276,9 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Semantic grouping is experimental YAML-only and outside the 1.0 compatibility guarantee. |
+| `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; the state backend follows `posting.mode`. Set `AI_REVIEW_POSTING_MODE` instead. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in `review_config.v2` with semantic grouping itself. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 | `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 

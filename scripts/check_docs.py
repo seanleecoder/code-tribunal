@@ -7,18 +7,23 @@ import json
 import re
 import sys
 from collections import Counter
-from itertools import chain
 from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
-from ai_review.pipeline_trust import find_trust_issues
 
 SCRIPTS = Path(__file__).resolve().parent
 # Support importlib/module loading when scripts/ is not already on sys.path.
 sys.path.insert(0, str(SCRIPTS))
 
-from release_common import ReleaseValidationError, validate_release_version  # noqa: E402
+from pipeline_trust import find_trust_issues  # noqa: E402
+from release_common import (  # noqa: E402
+    RELEASE_VERSION_RE,
+    ReleaseValidationError,
+    any_tags_resolvable,
+    tag_exists,
+    validate_release_version,
+)
 
 ROOT = SCRIPTS.parent
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
@@ -31,42 +36,51 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
-# Docs that describe the *current* release state. A historical RC note or the
-# changelog may legitimately say "draft"; these may not, once inputs are active.
-RELEASE_STATE_DOCS = (
-    ROOT_README,
-    ROOT / "docs/SECURITY_MODEL.md",
-)
-# Exemptions from the "every docs directory needs a README.md index" rule. Both are
-# repo-relative: an absolute match would exempt the whole tree whenever the checkout
-# itself sits under a directory of the same name, and would also exempt unrelated
-# public paths such as docs/reference/internal/.
-# docs/ needs no index of its own because root README.md links every top-level
-# docs/*.md file; _root_doc_index_issues() enforces that premise rather than asserting it.
-# The two checks hand off: drop docs/ from this set when root README.md outgrows its line
-# budget, and _root_doc_index_issues() stands down while _directory_readme_issues() starts
-# requiring docs/README.md instead. Exactly one of them indexes docs/ at any time.
-EXCLUDED_README_PATHS = {Path("docs")}
-# docs/internal/ is an internal workspace and needs no public index, subtrees included.
-EXCLUDED_README_TREES = {Path("docs/internal")}
-DECISIONS_INDEX = ROOT / "docs/decisions/README.md"
-DECISIONS_DIR = ROOT / "docs/decisions"
-# A tripwire for the exact wording that survived the 1.0.0 release, not a general
-# proof that prose cannot contradict release state. A re-introduced draft claim worded
-# differently will pass; treat a green run as "these known phrasings are gone", and add
-# a pattern whenever a new one is found in review.
-DRAFT_CLAIM_PATTERNS = (
-    r"remains?\s+`?draft`?",
-    r"still being collected",
-    r"is not yet complete",
-    r"until that matrix passes",
-    r"\(\s*draft\s*\)",
-    r"\bstatus\s*:\s*draft\b",
-    r"\bdraft\s+notes\b",
-)
-DRAFT_CLAIM_RE = re.compile("|".join(DRAFT_CLAIM_PATTERNS), re.IGNORECASE)
 
-CURRENT_MARKDOWN = tuple(sorted(path for path in ROOT.rglob("*.md") if ".git" not in path.parts))
+# Resolved once: a subprocess per release note per run would be wasteful, and the
+# answer cannot change mid-run.
+_TAGS_RESOLVABLE = any_tags_resolvable(ROOT)
+
+
+def _is_released_note(path: Path) -> bool:
+    """A *published* release note, pinned byte-identical to its tag.
+
+    These are excluded from the checks below, because a released note describes
+    the tree as it stood at its tag: validating its links against today's tree
+    asks a frozen document to track a moving one. The two rules genuinely
+    conflict once any linked file is deleted, and resolving that in favour of the
+    link checker is what previously produced an edit to release/1.0.1.md.
+
+    "Published" means the tag exists — not merely that the filename looks like a
+    version. An earlier version of this matched on the name alone, which excluded
+    release/<version>.md from link checking before v<version> was ever created.
+    That is exactly the window in which a release note is being drafted, so its
+    links went unchecked precisely while they were being written.
+
+    When no tags resolve at all — a `--no-tags` or shallow clone, or no git — every
+    release note is treated as frozen. The alternative would fail docs-check in a
+    fresh shallow clone on links that are correct at their own tag. CI fetches
+    tags, so the merge gate gets the strict behaviour; see
+    test_release_tools.test_released_notes_remain_tag_identical for the byte check
+    that carries the real guarantee.
+
+    Scoped to release/<version>.md. release/TEMPLATE.md and
+    release/history/README.md are current documents and stay checked.
+    """
+    if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
+        return False
+    if not _TAGS_RESOLVABLE:
+        return True
+    return tag_exists(f"v{path.stem}", ROOT)
+
+
+CURRENT_MARKDOWN = tuple(
+    sorted(
+        path
+        for path in ROOT.rglob("*.md")
+        if ".git" not in path.parts and not _is_released_note(path)
+    )
+)
 
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
@@ -88,10 +102,14 @@ ENV_RE = re.compile(
     r"XDG_(?:CONFIG|DATA)_HOME|OPENCODE_CONFIG_(?:DIR|CONTENT))\b"
 )
 TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+# Names the runtime rejects. They appear in no source assignment, so the
+# inventory check would call their documentation rows inert without this set —
+# and a rejected variable is precisely the kind an operator needs documented.
 REJECTED_ENV_NAMES = {
     "AI_REVIEW_CURSOR_EFFORT",
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
+    "AI_REVIEW_STATE_BACKEND",
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
 }
@@ -250,10 +268,18 @@ def _config_leaf_paths(value: object, prefix: str = "") -> set[str]:
 
 
 def _source_environment_names() -> set[str]:
+    """Environment names the current sources actually mention.
+
+    Build artifacts are skipped: a stale ai_review.egg-info/PKG-INFO embeds an old
+    copy of the README and would keep demanding a documentation row for a variable
+    the sources no longer set, failing docs-check on gitignored output nobody edited.
+    """
     names: set[str] = set()
     for root in SOURCE_ENV_PATHS:
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix in {".pyc", ".json"}:
+                continue
+            if any(part.endswith(".egg-info") or part == "__pycache__" for part in path.parts):
                 continue
             try:
                 names.update(ENV_RE.findall(path.read_text(encoding="utf-8")))
@@ -342,13 +368,6 @@ def _inventory_issues(
     return issues
 
 
-def _readme_issues(text: str) -> list[str]:
-    lines = len(text.splitlines())
-    if lines > 220:
-        return [f"README.md: expected at most 220 lines, found {lines}"]
-    return []
-
-
 def _github_install_issues(text: str) -> list[str]:
     issues: list[str] = []
     targets = _markdown_link_targets(text)
@@ -404,10 +423,14 @@ def _release_state_issues() -> list[str]:
     them: once inputs are ``active``, a doc that still describes an unreleased,
     draft state is a documentation failure rather than a stale sentence.
 
-    Scope limit, deliberately: ``DRAFT_CLAIM_PATTERNS`` is a phrase blocklist. It
-    catches common draft/incomplete claims, and the positive ``runtime_source``
-    assertion below is the only structural check here. It does not and cannot verify
-    that all prose agrees with the release state.
+    Structural checks only. A phrase blocklist used to live here too, matching
+    wordings such as "remains draft" and "still being collected" across README.md
+    and SECURITY_MODEL.md. Its own docstring conceded that "a re-introduced draft
+    claim worded differently will pass", which is the trouble with blocklisting
+    prose: it catches the sentences someone already thought of, while a green run
+    reads as a guarantee it cannot make. What remains are three claims a machine
+    can settle — the release notes for the active version exist, they name the
+    active runtime source, and no evidence row is still Pending.
     """
     issues: list[str] = []
     try:
@@ -426,28 +449,11 @@ def _release_state_issues() -> list[str]:
     else:
         release_notes = ROOT / "release" / f"{release_version}.md"
 
-    state_docs = list(RELEASE_STATE_DOCS)
-    if release_notes is not None and release_notes not in state_docs:
-        state_docs.append(release_notes)
-
-    for path in state_docs:
-        if not path.exists():
-            if release_notes is not None and path == release_notes:
-                issues.append(
-                    f"{path.relative_to(ROOT)}: active release inputs require the "
-                    "corresponding release notes file"
-                )
-            else:
-                issues.append(
-                    f"{path.relative_to(ROOT)}: expected release-state document is missing"
-                )
-            continue
-        body = _without_fenced_code(path.read_text(encoding="utf-8"))
-        for match in DRAFT_CLAIM_RE.finditer(body):
-            issues.append(
-                f"{path.relative_to(ROOT)}: release inputs are active but the text still "
-                f"claims a draft/incomplete release state ({match.group(0)!r})"
-            )
+    if release_notes is not None and not release_notes.exists():
+        issues.append(
+            f"{release_notes.relative_to(ROOT)}: active release inputs require the "
+            "corresponding release notes file"
+        )
 
     if EVIDENCE_INDEX.exists():
         index = _without_fenced_code(EVIDENCE_INDEX.read_text(encoding="utf-8"))
@@ -472,96 +478,21 @@ def _release_state_issues() -> list[str]:
     return issues
 
 
-def _readme_exempt(relative: Path) -> bool:
-    return relative in EXCLUDED_README_PATHS or any(
-        relative == tree or tree in relative.parents for tree in EXCLUDED_README_TREES
-    )
-
-
-def _needs_readme(directory: Path) -> bool:
-    return (
-        directory.is_dir()
-        and not _readme_exempt(directory.relative_to(ROOT))
-        and any(directory.glob("*.md"))
-        and not (directory / "README.md").exists()
-    )
-
-
-def _directory_readme_issues() -> list[str]:
-    """Require a README.md index in every docs/ directory that holds markdown.
-
-    Deliberately scoped to docs/ — the reader-facing tree. Markdown elsewhere is not
-    documentation in the same sense; for example ai-review/prompts/*.md are runtime
-    reviewer prompt assets rendered by prompt_render, release/*.md are release artifacts
-    parsed by check_release_inputs, and ai-review/docs/acceptance/ is historical material
-    indexed from docs/history/README.md. Widen the scope here if that stops being true.
-    """
-    issues: list[str] = []
-    docs_root = ROOT / "docs"
-    for directory in sorted(chain([docs_root], docs_root.rglob("*"))):
-        if _needs_readme(directory):
-            issues.append(
-                f"{directory.relative_to(ROOT)}: docs directory contains markdown "
-                "files but no README.md index"
-            )
-    return issues
-
-
-def _linked_paths(source: Path, text: str) -> set[Path]:
-    """Repository paths `text` links to, ignoring anchors, titles, and URL escapes.
-
-    Uses the same destination parsing as _link_issues() so that any spelling a link
-    checker accepts — `](x.md#anchor)`, `](x.md "Title")`, `](<x.md>)` — counts here too.
-    Inline links only, matching _link_issues(): the repository defines no reference-style
-    links today, and one introduced in an index would read here as an unlinked file.
-    """
-    linked: set[Path] = set()
-    for raw_target in _markdown_link_targets(text):
-        if re.match(r"^(?:https?|mailto):", raw_target):
-            continue
-        target_text, _ = _target_parts(raw_target)
-        if target_text:
-            linked.add((source.parent / target_text).resolve())
-    return linked
-
-
-def _root_doc_index_issues() -> list[str]:
-    """docs/ is exempt from the README.md rule only while root README.md indexes it.
-
-    Stands down once docs/ leaves EXCLUDED_README_PATHS, because from then on
-    _directory_readme_issues() requires docs/README.md to do the indexing.
-    """
-    if Path("docs") not in EXCLUDED_README_PATHS:
-        return []
-    linked = _linked_paths(ROOT_README, ROOT_README.read_text(encoding="utf-8"))
-    return [
-        f"README.md: top-level {path.name!r} is not linked from the root index"
-        for path in sorted((ROOT / "docs").glob("*.md"))
-        if path.resolve() not in linked
-    ]
-
-
-def _adr_issues() -> list[str]:
-    issues: list[str] = []
-    # If docs/decisions/README.md is missing, _directory_readme_issues() flags it.
-    if not DECISIONS_INDEX.exists():
-        return issues
-    index_text = DECISIONS_INDEX.read_text(encoding="utf-8")
-    # Only table rows count, so the message below stays true: a bare prose mention
-    # or a link outside the table does not index a decision record.
-    table_rows = "\n".join(
-        line for line in index_text.splitlines() if line.lstrip().startswith("|")
-    )
-    indexed = _linked_paths(DECISIONS_INDEX, table_rows)
-    for path in sorted(DECISIONS_DIR.glob("*.md")):
-        if path.name == "README.md":
-            continue
-        if path.resolve() not in indexed:
-            issues.append(
-                f"docs/decisions/README.md: decision record {path.name!r} is "
-                "missing from the index table"
-            )
-    return issues
+# Three documentation-shape rules used to live here.
+#
+# "every docs/ directory holding markdown needs a README.md index" and "every
+# top-level docs/*.md must be linked from the root README" were a *pair*: each
+# stood down while the other applied, handing off when README.md outgrew a
+# 220-line budget that a third rule enforced. Three checks plus a nine-line
+# comment explaining their interaction, to assert that documentation is indexed —
+# which a reader notices immediately and a checker cannot judge well.
+#
+# The third required every file in docs/decisions/ to appear in a table row of
+# that directory's README, for a directory holding two decision records.
+#
+# What is checked instead is drift a reader cannot see: links that do not
+# resolve, headings that do not exist, config keys documented but inert or live
+# but undocumented, and the declared premises above.
 
 
 def find_issues() -> list[str]:
@@ -577,8 +508,6 @@ def find_issues() -> list[str]:
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
 
-    issues.extend(_readme_issues(ROOT_README.read_text(encoding="utf-8")))
-
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     config_doc = CONFIG_DOC.read_text(encoding="utf-8")
     source_environment_names = _source_environment_names()
@@ -586,9 +515,6 @@ def find_issues() -> list[str]:
 
     issues.extend(_example_issues())
     issues.extend(_release_state_issues())
-    issues.extend(_directory_readme_issues())
-    issues.extend(_root_doc_index_issues())
-    issues.extend(_adr_issues())
     return issues
 
 

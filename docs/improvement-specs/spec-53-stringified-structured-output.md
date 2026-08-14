@@ -9,7 +9,7 @@
   coverage (a dropped finding, or a whole reviewer or critic seat recorded as
   `schema_error`), never malformed output accepted into the panel.
 - **Effort:** S.
-- **Depends on:** [SPEC-50](spec-50-opencode-structured-reviewer-output.md), which
+- **Depends on:** SPEC-50, which
   established the OpenCode structured-output transport, the rule that the client is the
   sole normalizer emitting the reviewer batch onto the shared `findings`/`critiques`
   root, and the single shared answer-text extractor.

@@ -12,16 +12,13 @@ from .test_consensus_state_matching import _batch, _config, _finding, _manifest
 def _critique_config(
     *,
     enabled: bool = True,
-    rounds: int = 1,
     allow_advisory_escalation: bool = False,
     allow_severity_downgrade: bool = False,
 ) -> dict:
     config = copy.deepcopy(_config())
     config["critique"] = {
         "enabled": enabled,
-        "rounds": rounds,
         "blind_reviewer_identity": True,
-        "can_add_quorum_votes": False,
         "allow_advisory_escalation": allow_advisory_escalation,
         "allow_severity_downgrade": allow_severity_downgrade,
     }
@@ -354,10 +351,16 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(consensus["groups"][0]["critique_summary"]["agree"], 0)
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_rounds_zero_ignores_critique_batches_exactly(self) -> None:
+    def test_disabled_critique_ignores_critique_batches_exactly(self) -> None:
+        """Critique off means the batches change nothing, not merely less.
+
+        This used to be reached with `enabled: true, rounds: 0` — the second of two
+        knobs that had to agree before critique ran. `critique.enabled` is now the
+        only switch.
+        """
         source_id = "1" * 64
         batches = [_batch("claude", _finding("claude", source_id, "major"))]
-        config = _critique_config(enabled=True, rounds=0, allow_advisory_escalation=True)
+        config = _critique_config(enabled=False, allow_advisory_escalation=True)
         critiques = [_critique_batch("codex", [_critique("codex", source_id, "noise")])]
 
         without_critiques = build_consensus(_manifest(), batches, config)

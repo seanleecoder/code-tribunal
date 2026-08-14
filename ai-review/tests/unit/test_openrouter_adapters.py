@@ -185,11 +185,29 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "cursor")
 
-    def test_shell_adapters_embed_runner_mock_allow_refusal_string(self) -> None:
-        for script_name in ("claude.sh", "codex.sh", "opencode.sh", "cursor.sh"):
-            with self.subTest(script=script_name):
-                text = (_ADAPTERS / script_name).read_text(encoding="utf-8")
-                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, text)
+    def test_every_adapter_reaches_the_shared_mock_allow_refusal(self) -> None:
+        """One copy of the refusal, and every seat provably sources it.
+
+        The four adapters each carried their own run_mock(). Asserting the string
+        appeared in all four could not stop a fifth seat from omitting it; asserting
+        that each one sources common.sh, which holds the only copy, can.
+        """
+        self.assertIn(
+            _SHELL_MOCK_ALLOW_REFUSAL,
+            (_ADAPTERS / "common.sh").read_text(encoding="utf-8"),
+        )
+        for script in sorted(_ADAPTERS.glob("*.sh")):
+            if script.name in {"common.sh", "run_reviewer.sh"}:
+                continue
+            with self.subTest(script=script.name):
+                text = script.read_text(encoding="utf-8")
+                self.assertIn('. "${0%/*}/common.sh"', text)
+                self.assertIn("mock_if_requested", text)
+                self.assertNotIn(
+                    _SHELL_MOCK_ALLOW_REFUSAL,
+                    text,
+                    "the refusal must have exactly one home, in common.sh",
+                )
 
     def test_opencode_adapter_forwards_fixed_trusted_path(self) -> None:
         """The adapter must not forward the ambient PATH to opencode.
@@ -377,6 +395,12 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
         )
         patched = root / "opencode-sandboxed.sh"
         patched.write_text(script, encoding="utf-8")
+        # The adapter sources its scaffolding from its own directory, so the
+        # sandboxed copy needs it too. Copied unpatched: nothing in it references
+        # the two absolute prefixes this helper rewrites.
+        (root / "common.sh").write_text(
+            (_ADAPTERS / "common.sh").read_text(encoding="utf-8"), encoding="utf-8"
+        )
 
         inputs = root / "inputs"
         (inputs / "repo_snapshot").mkdir(parents=True, exist_ok=True)

@@ -43,7 +43,7 @@ image pin is not enforced inside the pipeline.** A consumer `.gitlab-ci.yml` tha
 declares the image variables in its own top-level `variables:` and enables
 variable forwarding can run the stages on an arbitrary image, and no stage
 verifies what it is running. Containment came from credential withholding and
-from `scripts/verify_pipeline_trust.py`, which rejects such a composition but
+from `scripts/pipeline_trust.py`, which rejects such a composition but
 runs out-of-band. Run that auditor against your consumer configuration, and do
 not read “digest-pinned templates” as a runtime guarantee against a hostile
 consumer config.

@@ -15,6 +15,12 @@ jobs:
       PYTHONPATH: ai-review/src
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Release notes are pinned byte-identical to their tags, and
+          # test_released_notes_remain_tag_identical compares against
+          # `git show v<version>:...`. Without tags that check can only skip.
+          fetch-tags: true
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'

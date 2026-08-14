@@ -9,10 +9,17 @@ RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 .PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain \
-	release-inputs docs-check sync-workflows \
+	release-inputs docs-check sync-workflows workflow-parity \
 	update-golden review-local consensus-local validate-local
 
-quality: docs-check lint test-strict typecheck supply-chain release-inputs compile
+quality: docs-check lint test-strict typecheck supply-chain release-inputs workflow-parity compile
+
+# The single gate on canonical-template -> installed-copy parity. Previously the
+# same byte comparison ran in check_supply_chain_pins.py, in
+# check_release_inputs.py, and in test_ci_template.py, none of which could
+# repair the drift they reported.
+workflow-parity:
+	$(MAKE) --no-print-directory CHECK=1 sync-workflows
 
 docs-check:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py

@@ -24,7 +24,7 @@ with the rationale recorded in [`release/1.0.2.md`](../../release/1.0.2.md).
 | OpenCode `max` effort | release-gating | **Waived** — the operator reports prior acceptance in real runs on a real project, but those runs are not a public exact-image binding. The final runtime delta is post-provider structured-item normalization, so a duplicate rerun was skipped under an explicit residual-risk waiver. [record](record-model-effort-routes.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | **Waived** — trust-boundary code is unchanged and remains covered by `test_verify_pipeline_trust.py` plus fork-secret withholding cases in `test_input_bundle.py`; the historical live pass stays supporting evidence only. [record](record-gitlab-hostile-mr.md) |
 | GitHub revision failures (SPEC-34) | regression-covered | **Waived** — revision-race behavior is unchanged and the three boundaries plus oversized-diff 406 path remain covered by `test_input_bundle.py` and `test_github_platform.py`. [record](record-github-revision-failures.md) |
-| Cursor reviewer | enablement-gating, not release-gating | **Not enabled.** The publication job retained the `auto`-model skip annotation; Cursor stays disabled pending the SPEC-21 closure checklist. |
+| Cursor reviewer | not release-gating | **Not exercised.** Cursor was off in the default roster for this campaign and the publication job retained the `auto`-model skip annotation, so 1.0.2 carries no Cursor evidence. |
 
 The first candidate campaign (`f21418f…`, demo PR #12, run `31367545101`,
 attempts 1 and 2) is retained as a superseded failed validation. It exposed a
@@ -36,8 +36,7 @@ was used for release evidence.
 
 1. Runtime source, publication, public resolution, revision labels, and
    attestations: complete.
-2. Canonical GitHub and GitLab consumers repinned together; release hashes
-   refreshed: complete.
+2. Canonical GitHub and GitLab consumers repinned together: complete.
 3. Real default-model panel with fail-closed required gate: complete.
 4. Waived rows stamped and registered with identical reasons: complete.
 5. Downloaded live artifacts scanned with pattern/entropy detectors: complete;
@@ -92,19 +91,10 @@ Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but explicitly did not prove a genuinely blocking required
 check or all current-image lifecycle paths. Previous GitLab runs proved a real
 consumer flow but not the hostile-MR deployment boundary. See
-[legacy acceptance](../history/README.md#legacy-milestone-acceptance).
-
-## Cursor enablement queue (SPEC-21)
-
-These are not 1.0.0 results. SPEC-21 completion is required before enabling
-Cursor, not before shipping 1.0.1. Complete the canonical [SPEC-21 closure
-checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist)
-against one frozen runtime source `R` and final reviewer digest before changing
-the disabled default.
-
-| Suite | Current state | Closure evidence |
-|---|---|---|
-| Cursor reviewer enablement (SPEC-21) | **Required before enablement and pending** — historical GitLab and GitHub runs close real-route execution and artifact validity only | Complete the [canonical SPEC-21 checklist](../improvement-specs/spec-21-cursor-cli-reviewer.md#cursor-enablement-closure-checklist), then create a sanitized, explicitly bound supplemental enablement record. |
+Those pre-1.0
+acceptance records were deleted rather than archived; see
+[documentation history](../history/README.md#completed-specifications-and-pre-10-acceptance-records)
+for why, and `git log` for the files.
 
 ### Known gaps and missing evidence
 
@@ -116,17 +106,18 @@ the disabled default.
   `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
-- **Cursor reviewer is not yet accepted for enablement.** It is an
-  experimental opt-in peer seat — selected like any other through
-  `AI_REVIEW_REVIEWERS`, not a substitute for one particular reviewer — with a
-  separate credential and egress path.
-  The supplemental [real-run record](record-cursor-real-runs.md) proves real
-  execution and valid artifacts at historical coordinates only. The exact
-  Composer model pin, the ask-mode product decision, a fresh final-image
-  real-key fixture run, and the hostile write/shell denial smoke are still
-  required. Do not add Cursor to release inputs, enable it, or advertise it as
-  acceptance-complete until those required checks pass. The literal `auto`
-  model is discovery-only and is never valid enablement evidence.
+- **Cursor has no release-gating evidence row.** The seat is supported and
+  selected like any other through `AI_REVIEW_REVIEWERS`, but it carries a separate
+  credential and egress path and is off in the shipped default roster, so no
+  release campaign has exercised it. The supplemental
+  [real-run record](record-cursor-real-runs.md) covers historical coordinates.
+  A release that ships Cursor on the default roster would need its own gating row.
+  Note the distinction: `auto` is a valid Cursor selector for production use, but
+  evidence proving behavior for a *specific* model needs an explicit slug.
+  Separately, nothing verifies that the pinned `cursor-agent` honours the
+  `Shell(*)` and write denies at runtime — only that the policy reaches every
+  invocation; see
+  [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
 - **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
   1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
   defect, so no live run has ever exercised a finding on a newly added or deleted
@@ -151,7 +142,7 @@ the disabled default.
   sense — protected credentials withheld from an unprotected-ref MR in the
   hardened child topology — and not as a product-wide property. Network egress is
   still unenforced at the container/runner boundary, forks are untested on GitLab,
-  and Cursor remains disabled pending the SPEC-21 queue above. The
+  and Cursor is off in the shipped default roster with no gating row. The
   regression-covered rows do not block the release.
 
 ## Consumer projects

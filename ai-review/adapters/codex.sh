@@ -2,18 +2,9 @@
 set -eu
 
 REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CODEX:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
+. "${0%/*}/common.sh"
 
-run_mock() {
-  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
-    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
-    exit 2
-  fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
-}
-
-if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
-  run_mock
-fi
+mock_if_requested
 
 if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
   echo "OPENROUTER_BASE_URL must be unset or exactly https://openrouter.ai/api/v1" >&2
@@ -22,47 +13,23 @@ fi
 
 # Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_CODEX_MODEL
 # override) and is not pinned here; the OpenRouter endpoint above remains fixed.
-if [ -z "${AI_REVIEW_MODEL:-}" ]; then
-  echo "AI_REVIEW_MODEL is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
+require_model
 
 if ! command -v codex >/dev/null 2>&1; then
-  if [ "$REQUIRE_REAL" = "1" ]; then
-    echo "codex CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
-    exit 127
-  fi
-  run_mock
+  require_real_or_mock \
+    "codex CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" 127
 fi
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-  if [ "$REQUIRE_REAL" = "1" ]; then
-    echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
-    exit 2
-  fi
-  run_mock
+  require_real_or_mock \
+    "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set"
 fi
 
-if [ -z "${AI_REVIEW_RENDERED_PROMPT:-}" ] || [ ! -f "$AI_REVIEW_RENDERED_PROMPT" ]; then
-  echo "AI_REVIEW_RENDERED_PROMPT is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AI_REVIEW_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+resolve_prompt_file
+resolve_tmp_dir
+resolve_output_schema
 
 BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
-TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
-REPO_SNAPSHOT_DIR="$AI_REVIEW_INPUT_DIR/repo_snapshot"
-OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
-if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
-  OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
-fi
-
-mkdir -p "$TMP_DIR"
-# Absolute paths so codex's own working root (--cd, below) never changes where
-# we read/write these files.
-TMP_DIR="$(cd "$TMP_DIR" && pwd)"
 RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
 CODEX_HOME_DIR="$TMP_DIR/codex-home"
 CODEX_REVIEW_ROOT="$TMP_DIR/codex-review-root.$$"
@@ -71,26 +38,14 @@ mkdir -p "$CODEX_HOME_DIR" "$CODEX_REVIEW_ROOT"
 if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   # Explore the pinned MR snapshot, not the ambient CI checkout (which may be
   # absent under GIT_STRATEGY: none, or point at a different ref than the reviewed
-  # diff). Copy into a clean root and drop codex-specific config the MR could use
-  # to steer the reviewer; CODEX_HOME is already redirected, but project-level
-  # AGENTS.md and .codex are read from the working tree.
-  if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
-    echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-    exit 2
-  fi
-  cp -R "$REPO_SNAPSHOT_DIR"/. "$CODEX_REVIEW_ROOT"/
-  # AGENTS.md is resolved hierarchically, so strip it at every level, not just the
-  # root, or a nested copy could still steer the reviewer. Match symlinks too, or a
-  # symlinked AGENTS.md -> elsewhere would survive and still be followed.
-  find "$CODEX_REVIEW_ROOT" -name AGENTS.md \( -type f -o -type l \) -delete
-  find "$CODEX_REVIEW_ROOT" -name .codex -prune -exec rm -rf {} +
-else
-  # critique reasons only over the pooled findings in the prompt
-  # (critique.md: "grounded only in the finding data, rules, and manifest"), so
-  # leave the working root empty. codex still runs --sandbox read-only but has
-  # nothing to explore — the same net effect as claude's tools-off critique.
-  :
+  # diff). CODEX_HOME is already redirected; AGENTS.md and .codex are read from
+  # the working tree, so they are stripped from the copy.
+  prepare_review_root "$CODEX_REVIEW_ROOT" AGENTS.md .codex/
 fi
+# critique reasons only over the pooled findings in the prompt (critique.md:
+# "grounded only in the finding data, rules, and manifest"), so the working root
+# stays empty. codex still runs --sandbox read-only but has nothing to explore —
+# the same net effect as claude's tools-off critique.
 
 # Pass every supported reviewer effort value through to Codex unchanged as
 # model_reasoning_effort. The closed config enum and this case guard keep the
@@ -123,6 +78,6 @@ env -i \
   TMPDIR="${TMPDIR:-/tmp}" \
   OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   CODEX_HOME="$CODEX_HOME_DIR" \
-  "$@" < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
+  "$@" < "$PROMPT_FILE" >/dev/null
 
 cat "$RAW_OUT"

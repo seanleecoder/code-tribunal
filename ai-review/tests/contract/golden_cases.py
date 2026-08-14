@@ -3,7 +3,7 @@ from __future__ import annotations
 from ai_review.consensus import build_consensus
 
 
-def _config(*, semantic_enabled: bool) -> dict:
+def _config() -> dict:
     return {
         "reviewers": {
             "opencode": {"enabled": True},
@@ -13,7 +13,6 @@ def _config(*, semantic_enabled: bool) -> dict:
         "panel": {
             "min_successful_reviewers_for_blocking": 2,
             "quorum": {"mode": "absolute", "votes_required": 2},
-            "grouping": {"semantic": {"enabled": semantic_enabled, "threshold": 0.2}},
         },
         "severity_policy": {
             "single_reviewer_blocker": {
@@ -105,32 +104,6 @@ def _batch(reviewer: str, finding: dict) -> dict:
     }
 
 
-def semantic_consensus() -> dict:
-    first = _finding(
-        "claude",
-        "1" * 64,
-        title="Missing None guard before config lookup",
-        body="The config lookup raises KeyError when required values are absent.",
-        context_hash="1" * 64,
-        title_fingerprint="a" * 64,
-        evidence_fingerprint="b" * 64,
-    )
-    second = _finding(
-        "codex",
-        "2" * 64,
-        title="Config lookup lacks guard for absent values",
-        body="Required values that are absent make the config lookup raise KeyError.",
-        context_hash="2" * 64,
-        title_fingerprint="c" * 64,
-        evidence_fingerprint="d" * 64,
-    )
-    return build_consensus(
-        _manifest(),
-        [_batch("claude", first), _batch("codex", second)],
-        _config(semantic_enabled=True),
-    )
-
-
 def default_transitive_split_consensus() -> dict:
     hub = _finding(
         "claude",
@@ -165,11 +138,10 @@ def default_transitive_split_consensus() -> dict:
     return build_consensus(
         _manifest(),
         [_batch("claude", hub), _batch("codex", left), _batch("opencode", right)],
-        _config(semantic_enabled=False),
+        _config(),
     )
 
 
 GOLDEN_CASES = {
-    "semantic_consensus.json": semantic_consensus,
     "default_transitive_split_consensus.json": default_transitive_split_consensus,
 }

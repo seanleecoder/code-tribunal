@@ -75,7 +75,7 @@ tag must point at a commit that satisfies it.
      items as of 1.0.0/1.0.1: no in-pipeline trusted-image enforcement; network
      egress unenforced at the container/runner boundary; "credential isolated"
      claimable only in the recorded hardened-child/unprotected-ref sense; GitLab
-     forks untested; Cursor disabled pending the SPEC-21 enablement queue. -->
+     forks untested; Cursor off in the default roster with no gating row. -->
 
 ## Operator sign-off items
 

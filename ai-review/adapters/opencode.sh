@@ -2,20 +2,9 @@
 set -eu
 
 REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENCODE:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
+. "${0%/*}/common.sh"
 
-run_mock() {
-  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
-    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
-    exit 2
-  fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
-}
-
-if [ "$REQUIRE_REAL" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
-  run_mock
-fi
-
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+mock_if_requested
 
 # Resolve a pinned CLI for forwarding into the fixed environment below, trusted
 # location first. /usr/local/bin is where the image installs the pinned CLIs, so it
@@ -54,10 +43,7 @@ fi
 
 # Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_OPENCODE_MODEL
 # override) and is not pinned here; the OpenRouter endpoint above remains fixed.
-if [ -z "${AI_REVIEW_MODEL:-}" ]; then
-  echo "AI_REVIEW_MODEL is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
+require_model
 
 # The availability gate IS the resolution: the pinned binary is looked up first and
 # the result is what gets forwarded, so the gate can never reject a binary that
@@ -67,33 +53,21 @@ fi
 # to be reachable from it.
 OPENCODE_BIN="$(resolve_trusted opencode /usr/local/lib/node_modules/opencode-ai || true)"
 if [ -z "$OPENCODE_BIN" ]; then
-  if [ "$REQUIRE_REAL" = "1" ]; then
-    echo "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
-    exit 127
-  fi
-  run_mock
+  require_real_or_mock \
+    "opencode CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" 127
 fi
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-  if [ "$REQUIRE_REAL" = "1" ]; then
-    echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
-    exit 2
-  fi
-  run_mock
+  require_real_or_mock \
+    "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set"
 fi
 
-if [ -z "${AI_REVIEW_RENDERED_PROMPT:-}" ] || [ ! -f "$AI_REVIEW_RENDERED_PROMPT" ]; then
-  echo "AI_REVIEW_RENDERED_PROMPT is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-  exit 2
-fi
-
-TMP_DIR="${AI_REVIEW_OUTPUT_DIR:-out}/.tmp"
-mkdir -p "$TMP_DIR"
-# Absolute paths so the review root never resolves twice: the client uses it both
-# as the server process cwd and as the directory it asks the server to work in, so
-# a relative root would be joined onto itself.
-TMP_DIR="$(cd "$TMP_DIR" && pwd)"
-REPO_SNAPSHOT_DIR="$AI_REVIEW_INPUT_DIR/repo_snapshot"
+resolve_prompt_file
+# resolve_tmp_dir gives an absolute TMP_DIR, which matters more here than
+# elsewhere: the client uses the review root both as the server process cwd and
+# as the directory it asks the server to work in, so a relative root would be
+# joined onto itself.
+resolve_tmp_dir
 OPENCODE_REVIEW_ROOT="$TMP_DIR/opencode-review-root.$$"
 OPENCODE_HOME_DIR="$TMP_DIR/opencode-home"
 OPENCODE_CONFIG_HOME="$TMP_DIR/opencode-config-home"
@@ -112,17 +86,9 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   # Explore a clean copy of the pinned MR snapshot. Strip project-level config the
   # MR could use to steer the reviewer: opencode's own config files, its .opencode
   # dirs, and AGENTS.md (opencode reads AGENTS.md as agent instructions, so it
-  # must be removed too — matching the codex/claude adapters). Match symlinks as
-  # well as regular files, at every level.
-  if [ ! -d "$REPO_SNAPSHOT_DIR" ]; then
-    echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
-    exit 2
-  fi
-  cp -R "$REPO_SNAPSHOT_DIR"/. "$OPENCODE_REVIEW_ROOT"/
-  find "$OPENCODE_REVIEW_ROOT" \
-    \( -name opencode.json -o -name opencode.jsonc -o -name tui.json -o -name AGENTS.md \) \
-    \( -type f -o -type l \) -delete
-  find "$OPENCODE_REVIEW_ROOT" -name .opencode -prune -exec rm -rf {} +
+  # must be removed too — matching the codex/claude adapters).
+  prepare_review_root "$OPENCODE_REVIEW_ROOT" \
+    opencode.json opencode.jsonc tui.json AGENTS.md .opencode/
 else
   # critique reasons only over the pooled findings in the prompt
   # (critique.md: "grounded only in the finding data, rules, and manifest"), so
@@ -269,7 +235,7 @@ else
     exit 127
   fi
 fi
-PYTHONPATH_VALUE="${PYTHONPATH:-$SCRIPT_DIR/../src}"
+PYTHONPATH_VALUE="${PYTHONPATH:-$AI_REVIEW_ROOT_DIR/src}"
 # Fixed trusted PATH, not the runner's ambient one: /usr/local/bin must win so
 # OpenCode's which("rg") resolves the pinned image rg and never falls through to
 # a download or to some earlier rg on the ambient PATH. This is the exact PATH the

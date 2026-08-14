@@ -7,6 +7,135 @@ versioning.
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking: the configuration contract is now `review_config.v2`.** Four keys
+  that were never choices are gone. `review_config.v1` is rejected with a message
+  naming this migration, rather than being accepted with a changed shape — a
+  version whose meaning depends on the runtime reading it is not a contract.
+
+  ### Migrating a `review_config.v1` document
+
+  | v1 key | v2 | Why |
+  |---|---|---|
+  | `critique.rounds` | **delete** | A second boolean that had to agree with `critique.enabled` before critique ran. `critique.enabled` is now the only switch. |
+  | `critique.can_add_quorum_votes` | **delete** | Validation rejected any value but `false`, and nothing read it. |
+  | `panel.grouping.semantic.enabled`, `…threshold` | **delete** | An opt-in Jaccard comparison over finding titles and bodies. Shipped disabled, outside the 1.0 guarantee, with both environment overrides rejected by name. |
+  | `state.backend` | **delete** (may be kept if it matches) | Derived from `posting.mode`: `gitlab_discussions` → `gitlab_mr_state_note`, `github_reviews` → `github_pr_comment`. A value contradicting the mode is an error. |
+  | `schema_version: review_config.v1` | `review_config.v2` | |
+
+  A config copied from the shipped `ai-review/config/review.yaml` carries all of
+  the deleted keys, so it needs this edit. One that never set them needs only the
+  `schema_version` line.
+
+  Grouping now rests entirely on identity that survives rewording — path,
+  category, side, context hash, fingerprints, and symbol. The golden consensus
+  fixture for the default path is byte-identical, so no finding, group, or
+  decision changes.
+
+  The removals change `effective_config_summary`, and therefore the cross-stage
+  effective-config digest. Prepare, review, consensus, post, and gate recompute
+  it per run, so no artifact migration is needed.
+
+- **`AI_REVIEW_STATE_BACKEND` is retired and now rejected**, alongside
+  `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
+  `…_SEMANTIC_THRESHOLD`. Setting any of them raises a configuration error naming
+  the replacement. GitLab project and group variables outlive the template
+  revisions that read them, so a stale override has to fail loudly rather than be
+  silently ignored after a repin. The rejections are a migration aid and may be
+  dropped in the next major release.
+
+- **The Cursor permission smoke is deleted** — `scripts/smoke_cursor_permissions.sh`
+  and its unit suite, the `cursor-permission-smoke` publisher job, and the base-image
+  `COPY`. The job was never wired into `publish`'s `needs`, and its
+  `CURSOR_SMOKE_MODEL` was hardcoded to `auto`, the one value the script refuses,
+  so it had never executed: 865 lines asserting a guarantee nobody held. Nothing
+  now verifies the pinned CLI's *runtime* interpretation of the `Shell(*)` and
+  write denies; repository tests still prove the policy is passed to every
+  invocation, the CLI stays pinned by `cursor-agent.pin` and version-checked at
+  build, and the exposure is bounded by the review workflow running only for
+  same-repo heads, so the seat never processes fork content. `SUPPLY_CHAIN.md`
+  states this gap plainly instead of describing a gate that did not exist.
+
+- **Breaking: release inputs are now `code_tribunal.release_inputs.v2`.** v2 is
+  v1 without the per-file-set `hashes` member. The six aggregate SHA-256 groups
+  were compared against hashes recomputed from the same checkout being validated,
+  so they could only report a stale field, never a substitution —
+  `runtime_source` already commits to every byte of the tree.
+
+  ### Migrating a `code_tribunal.release_inputs.v1` document
+
+  | v1 | v2 |
+  |---|---|
+  | `hashes` | **delete** |
+  | `schema_version: code_tribunal.release_inputs.v1` | `code_tribunal.release_inputs.v2` |
+
+  Current tooling rejects v1 outright, naming this migration. The version is
+  checked before the exact key set, so a v1 artifact is told it speaks a retired
+  dialect rather than reported as carrying a stray key. Historical snapshots under
+  `release/history/` keep v1 and stay byte-identical: validate one from its own
+  release tag, with the validator that shipped beside it.
+
+  Evidence-record freshness, waiver registration, and image-digest binding are
+  unchanged.
+
+### Changed
+
+- `critique_timeout_seconds` now defaults to a flat 900 seconds when a reviewer
+  omits it. It previously fell back to that reviewer's `timeout_seconds` capped
+  at 900, so a seat with `timeout_seconds: 1800` silently got 900 for critique
+  while one with `600` silently got 600 — one field meaning two things. The
+  shipped configuration states the value explicitly and is unaffected.
+
+- Installed-workflow parity (`.github/workflows/ai-review.yml` against
+  `ai-review/ci/review.github-actions.yml`) has **one implementation** in
+  `release_common.sync_workflows`, with two callers. `make workflow-parity` is the
+  repository gate and, via `make sync-workflows`, the repair command; the
+  standalone release-manifest validator calls the same implementation
+  independently, because it may run from a tagged worktree where `make quality`
+  never did. Four separate copies of the byte comparison previously lived in
+  `check_supply_chain_pins.py`, `check_release_inputs.py`, `test_ci_template.py`
+  and the generator; none could repair what it reported, and the supply-chain copy
+  ran inside the base image, where `.github/` does not exist — it guarded a file
+  it could not see.
+
+- **SPEC-21 is closed: Cursor is a supported peer reviewer seat.** The operator
+  guides, `review.yaml`, the operations runbook, and the evidence index no longer
+  describe it as experimental, as a "substitute" for another seat, or as blocked
+  on an enablement queue, and the completed specification is deleted rather than
+  kept in the open-specification index. Nothing about the shipped default changes
+  — Cursor stays off in the default roster because enabling it is a deliberate
+  second egress destination to Cursor's backend, not because acceptance was
+  outstanding. Select it with `AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`.
+
+- **`AI_REVIEW_CURSOR_MODEL: auto` is documented as what it is: valid.** `auto` is
+  a Cursor CLI model selector that delegates model choice to Cursor, and both the
+  configuration parser and the adapter have always accepted it. Documentation had
+  called it a "discovery-only placeholder" that was "not valid Cursor-enablement
+  evidence" — an evidence-campaign requirement stated as a product restriction.
+  Pin an exact slug when you want model-stable reproducibility.
+  Released records under `release/` and the historical evidence rows keep their
+  wording, which describes what was true at those releases.
+
+- `pipeline_trust.py` moved from the runtime package to `scripts/`, where
+  `SECURITY_MODEL.md` already pointed readers. Nothing in the pipeline imported
+  it — it audits a consumer's `.gitlab-ci.yml` — so it no longer ships inside
+  the published images. `scripts/verify_pipeline_trust.py` is absorbed into it.
+
+- Internal decomposition only, no behavior change (SPEC-39 milestone B). The three
+  large orchestration modules were split along existing cohesive boundaries:
+  `post.py` keeps only the CLI entry point, with command parsing, pure state
+  planning (`state_plan.py`), mutation orchestration (`posting.py`), and summary
+  rendering (`summary_render.py`) extracted out; `adapter_runner.py` separates
+  output parsing/finalization from subprocess lifecycle; and `consensus.py`
+  separates critique application (`critique.py`) from grouping. The shipped
+  `python -m ai_review.post` / `.consensus` / `.adapter_runner` entry points,
+  configuration keys, artifact schemas, and rendered output are unchanged — the
+  golden consensus and post→gate end-to-end fixtures are byte-identical. Posting
+  state transitions can now be tested without constructing a platform client, and
+  an import-boundary test keeps the planning modules free of platform clients and
+  `requests`.
+
 ## [1.0.2] - 2026-08-10
 
 ### Added
@@ -113,7 +242,7 @@ versioning.
   `format: {"type":"json_schema", …}` and emits the reviewer batch directly, so
   OpenCode no longer depends on the model volunteering a schema-conforming
   payload. See
-  [SPEC-50](docs/improvement-specs/spec-50-opencode-structured-reviewer-output.md).
+  SPEC-50.
 
 - Reviewer image pins are refreshed to OpenCode `1.18.12`, Claude Code
   `2.1.221`, Codex `0.146.0`, and Cursor Agent `2026.07.23-e383d2b` with its
@@ -132,7 +261,7 @@ versioning.
   build. The preflight is a step in the image build job with no event condition, so it
   gates merge on pull requests as well as publication on main. `read`, `glob`, and
   `grep` remain allowed inside the root. See
-  [SPEC-51](docs/history/specs/spec-51-opencode-search-tool-reach.md).
+  SPEC-51.
 
 - The reviewer image ships a pinned, checksum-verified ripgrep on `PATH`, and a
   review-time ripgrep download now fails the review instead of producing postable

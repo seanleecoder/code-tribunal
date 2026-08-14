@@ -16,7 +16,6 @@ class ReleaseValidationError(ValueError):
     """Raised when release metadata violates its checked contract."""
 
 
-FIXTURE_DIR = "ai-review/tests/fixtures"
 
 # Canonical template -> installed copy. GitHub only executes workflows that are
 # real files under .github/workflows, so the installed copy must stay a byte
@@ -42,10 +41,11 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     mirror problem, translating \n to os.linesep. Reading and writing bytes is
     what makes the byte-duplicate contract above literally true.
 
-    This is the canonical implementation for repository-only callers.
-    scripts/check_supply_chain_pins.py deliberately keeps its own copy of the
-    comparison because it runs inside the base image and must import only the
-    standard library; that copy is byte-exact too, so all gates agree.
+    This is the only implementation of the comparison. Copies previously lived in
+    check_supply_chain_pins.py, check_release_inputs.py, and test_ci_template.py;
+    none of them could repair the drift they reported, and the one in
+    check_supply_chain_pins.py ran inside the base image, where .github/ does not
+    exist and it therefore always passed. `make workflow-parity` is the single gate.
     """
     changed: list[str] = []
     for canonical_rel, installed_rel in WORKFLOW_PAIRS:
@@ -64,79 +64,9 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     return tuple(changed)
 
 
-def _tracked_files(relative_dir: str, root: Path = ROOT) -> tuple[str, ...]:
-    """Enumerate git-tracked files under a directory, in sorted order.
-
-    The declared file list is written into release/release-inputs.json and re-derived
-    during manifest validation, so it must resolve identically everywhere. There is
-    deliberately no fallback: a filtered filesystem walk returns worktree files while
-    this returns index entries, and the two disagree — an unstaged fixture is shipped
-    by `docker build` but absent from the index, and a fixture deleted from the
-    worktree but still in the index would be hashed and fail. Two derivations of one
-    binding is worse than a clear error, so an unavailable git fails loudly.
-
-    Validating a historical manifest therefore requires a git checkout, which is what
-    the release process already prescribes (`git worktree add <tmp> <tag>`), not an
-    extracted tarball.
-    """
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "--", relative_dir],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise ReleaseValidationError(
-            f"cannot enumerate {relative_dir}: git is unavailable ({exc}). "
-            "Validate release inputs from a git checkout, not an extracted archive."
-        ) from exc
-    if completed.returncode != 0:
-        raise ReleaseValidationError(
-            f"cannot enumerate {relative_dir}: git ls-files failed "
-            f"({completed.stderr.strip() or completed.returncode}). "
-            "Validate release inputs from a git checkout, not an extracted archive."
-        )
-    names = [name for name in completed.stdout.split("\0") if name]
-    if not names:
-        raise ReleaseValidationError(
-            f"cannot enumerate {relative_dir}: git reports no tracked files there"
-        )
-    return tuple(sorted(names))
-
-
-HASH_GROUPS = {
-    "dependency_locks": (
-        "ai-review/images/package-lock.json",
-        "ai-review/images/python-constraints.txt",
-        "requirements-dev.txt",
-    ),
-    # Fixture files are appended per-root by hash_groups(); see FIXTURE_DIR.
-    "image_recipes": (
-        "ai-review/images/base.Dockerfile",
-        "ai-review/images/cursor-agent.pin",
-        "ai-review/images/package.json",
-        "ai-review/images/reviewer.Dockerfile",
-        "ai-review/images/ripgrep.pin",
-    ),
-    "configuration": ("ai-review/config/review.yaml",),
-    "schemas": tuple(
-        str(path.relative_to(ROOT)) for path in sorted((ROOT / "ai-review/schemas").glob("*.json"))
-    ),
-    "canonical_templates": (
-        ".github/workflows/ai-review.yml",
-        "ai-review/ci/review.github-actions.yml",
-        "ai-review/ci/review.gitlab-ci.yml",
-    ),
-    "documentation_entry_points": (
-        "README.md",
-        "SECURITY.md",
-        "docs/configuration.md",
-        "docs/getting-started/github.md",
-        "docs/getting-started/gitlab.md",
-        "docs/operations.md",
-    ),
-}
+# The release-input contract this tooling accepts. v2 is v1 without the per-file-set
+# `hashes` member; historical snapshots keep v1 and their own validator.
+RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
 
 ALLOWED_RELEASE_PATHS = (
     ".github/workflows/ai-review.yml",
@@ -144,7 +74,6 @@ ALLOWED_RELEASE_PATHS = (
     "ai-review/ci/review.gitlab-ci.yml",
     "CHANGELOG.md",
     "docs/evidence/",
-    "docs/history/specs/",
     "docs/improvement-specs/",
     "release/",
 )
@@ -167,55 +96,6 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
-
-
-def aggregate_hash(root: Path, paths: tuple[str, ...] | list[str]) -> str:
-    """Hash sorted path names and bytes with unambiguous length framing."""
-    digest = hashlib.sha256()
-    for relative in sorted(paths):
-        path = root / relative
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            raise ReleaseValidationError(f"cannot hash checked file {relative}: {exc}") from exc
-        encoded_path = relative.encode()
-        digest.update(len(encoded_path).to_bytes(8, "big"))
-        digest.update(encoded_path)
-        digest.update(len(data).to_bytes(8, "big"))
-        digest.update(data)
-    return digest.hexdigest()
-
-
-def hash_groups(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
-    """Resolve the checked file sets for one checkout.
-
-    Fixture files are enumerated here rather than baked into HASH_GROUPS at import
-    time, for two reasons. They must be derived from the root actually being
-    validated, not from whichever checkout happened to import this module — an
-    alternate-tree or historical validation would otherwise hash one tree against
-    another's file list. And the git requirement must apply only to release-hash
-    computation: HASH_GROUPS is imported by general-purpose tooling such as
-    check_docs.py, which should not fail at import in a non-git tree.
-
-    Fixtures ship in the runtime image (base.Dockerfile copies
-    ai-review/tests/fixtures), so a fixture-only change moves the published image
-    digest and must therefore move a declared image-recipe hash too.
-    """
-    groups = dict(HASH_GROUPS)
-    groups["image_recipes"] = groups["image_recipes"] + _tracked_files(
-        FIXTURE_DIR, root
-    )
-    return groups
-
-
-def computed_hashes(root: Path = ROOT) -> dict[str, dict[str, Any]]:
-    return {
-        name: {
-            "files": list(paths),
-            "sha256": aggregate_hash(root, list(paths)),
-        }
-        for name, paths in hash_groups(root).items()
-    }
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -258,6 +138,39 @@ def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT)
     if completed.returncode == 1:
         return False
     raise ReleaseValidationError(completed.stderr.strip() or "git merge-base failed")
+
+
+def tag_exists(tag: str, root: Path = ROOT) -> bool:
+    """Whether `tag` resolves in this checkout.
+
+    Deliberately distinct from "can I read a path at that tag". A release note is
+    frozen because its tag exists; a `git show <tag>:<path>` failure could equally
+    mean the tag is missing *or* that the note was never in it, and collapsing the
+    two is what let an untagged note escape both the link check and the byte check.
+    """
+    completed = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}"],
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
+def any_tags_resolvable(root: Path = ROOT) -> bool:
+    """Whether tag lookups mean anything here at all.
+
+    False in a `--no-tags` or shallow clone, and where git is unavailable. Callers
+    use it to tell "this note has no tag" apart from "this checkout knows about no
+    tags", which are opposite situations: the first is a note still being drafted,
+    the second is an environment that cannot answer the question.
+    """
+    completed = subprocess.run(
+        ["git", "-C", str(root), "tag", "--list"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0 and bool(completed.stdout.strip())
 
 
 def validate_release_version(value: object) -> str:

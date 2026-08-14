@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import re
@@ -22,7 +21,6 @@ REQUIRED_RELEASE_SCRIPTS = (
     "check_release_manifest.py",
     "release_common.py",
 )
-V1_0_0_RELEASE_NOTES_SHA256 = "88312f33e1cd86a89d44b92f44d960347ce6d03958f63e290afeda41156616fd"
 
 if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
@@ -54,17 +52,17 @@ try:
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         DIGEST_RE,
+        RELEASE_VERSION_RE,
         WORKFLOW_PAIRS,
         ReleaseValidationError,
-        aggregate_hash,
+        any_tags_resolvable,
         canonical_json_bytes,
-        computed_hashes,
         disallowed_release_paths,
         git_is_ancestor,
-        hash_groups,
         image_ref,
         sha256_bytes,
         sync_workflows,
+        tag_exists,
         validate_release_coordinates,
         validate_release_version,
     )
@@ -73,31 +71,22 @@ finally:
 
 
 class ReleaseToolTests(unittest.TestCase):
-    def _tree(self, destination: Path) -> None:
-        """Build a minimal checkout of every hashed file, as a real git repository.
+    # Every file validate_release_inputs() reads. It used to be derived from
+    # hash_groups(), which additionally forced the synthetic tree to be a real git
+    # checkout so `git ls-files` could enumerate fixtures for the image-recipe hash.
+    # With the hash groups gone, the templates it actually parses are the whole list.
+    VALIDATED_FILES = (
+        ".github/workflows/ai-review.yml",
+        "ai-review/ci/review.github-actions.yml",
+        "ai-review/ci/review.gitlab-ci.yml",
+    )
 
-        Fixture enumeration uses `git ls-files` against the root being validated, so
-        the synthetic tree must be a git checkout rather than a bare directory. That
-        mirrors the real requirement: release hashes are only derivable from a
-        checkout, which is what the release process already prescribes.
-        """
-        paths = {item for group in hash_groups(REPO_ROOT).values() for item in group}
-        paths.update(
-            {
-                ".github/workflows/ai-review.yml",
-                "ai-review/ci/review.github-actions.yml",
-                "ai-review/ci/review.gitlab-ci.yml",
-            }
-        )
-        for relative in paths:
+    def _tree(self, destination: Path) -> None:
+        """Build a minimal checkout of every file release validation reads."""
+        for relative in self.VALIDATED_FILES:
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO_ROOT / relative, target)
-        for command in (
-            ["git", "init", "-q"],
-            ["git", "add", "-A"],
-        ):
-            subprocess.run(command, cwd=destination, check=True, capture_output=True)
 
     @property
     def draft_release_tag(self) -> str:
@@ -111,7 +100,6 @@ class ReleaseToolTests(unittest.TestCase):
         data = json.loads(
             (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
         )
-        data["hashes"] = computed_hashes(root)
         return data
 
     def _write_matching_evidence(
@@ -297,12 +285,69 @@ class ReleaseToolTests(unittest.TestCase):
             sorted(verification["evidence_waivers"]),
         )
 
-    def test_1_0_0_release_notes_remain_tag_identical(self) -> None:
-        release_notes = (REPO_ROOT / "release/1.0.0.md").read_bytes()
+    def test_released_notes_remain_tag_identical(self) -> None:
+        """Every published notes file must match its tag byte for byte.
 
-        self.assertEqual(
-            hashlib.sha256(release_notes).hexdigest(), V1_0_0_RELEASE_NOTES_SHA256
+        The release process states it: "corrections to a shipped release record
+        belong in the next release's notes, never in the shipped one." This
+        replaces a hardcoded digest for 1.0.0 alone, which left 1.0.1 and 1.0.2
+        unguarded — and 1.0.1 was then edited to remove a link that pointed at a
+        file this branch deleted. "Only a dead link" is the rationalisation the
+        rule exists to refuse; the fix is to stop link-checking frozen notes, not
+        to edit them.
+
+        Scoped to final releases. `release/1.0.0-rc.1.md` already differs from
+        `v1.0.0-rc.1` on `main`, untouched by this branch: a release candidate is
+        superseded by its final release, so its note reads as a working document
+        rather than a shipped record — which is also why the original guard pinned
+        1.0.0 rather than the rc. Whether to pin prereleases too is a maintainer
+        call, not something to force by turning the build red on a pre-existing
+        file.
+
+        Skips when no release tag is resolvable, which is what a checkout without
+        tags looks like. That is deliberately a skip and not a silent pass: an
+        earlier version asserted at least one tag resolved, which turned CI's
+        tagless checkout into a failure rather than letting the environment be an
+        environment. `.github/workflows/ci.yml` fetches tags so this runs for real
+        there.
+        """
+        notes = sorted(
+            path
+            for path in (REPO_ROOT / "release").glob("*.md")
+            if RELEASE_VERSION_RE.fullmatch(path.stem) and "-" not in path.stem
         )
+        self.assertTrue(notes, "no released notes files were found")
+
+        if not any_tags_resolvable(REPO_ROOT):
+            self.skipTest("no release tags are available in this checkout")
+
+        for path in notes:
+            tag = f"v{path.stem}"
+            if not tag_exists(tag, REPO_ROOT):
+                # Still being drafted. check_docs.py treats it as a current
+                # document and link-checks it; it is frozen only once tagged.
+                continue
+            with self.subTest(release=path.stem):
+                completed = subprocess.run(
+                    ["git", "-C", str(REPO_ROOT), "show", f"{tag}:release/{path.name}"],
+                    capture_output=True,
+                    check=False,
+                )
+                # A missing tag and a missing path used to be one `continue`,
+                # which meant a note added *after* its tag was never compared
+                # against anything. The tag exists, so the note must be in it.
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    f"release/{path.name} is absent at {tag}: a note naming a "
+                    "released version must exist in that release",
+                )
+                self.assertEqual(
+                    path.read_bytes(),
+                    completed.stdout,
+                    f"release/{path.name} differs from {tag}; a shipped release "
+                    "record is corrected in the next release's notes, not in place",
+                )
 
     def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
         self,
@@ -589,7 +634,15 @@ class ReleaseToolTests(unittest.TestCase):
             stderr.getvalue(),
         )
 
-    def test_mismatched_github_pin_is_rejected(self) -> None:
+    def test_single_divergent_github_job_pin_is_rejected(self) -> None:
+        """One job container pinned off the released digest fails validation.
+
+        This case previously asserted the installed/canonical parity message,
+        because mutating the canonical template also desynchronized the installed
+        copy. Parity is now the business of `make workflow-parity` alone, so what
+        remains — and what actually concerns release inputs — is that the
+        template's pins match the digests being released.
+        """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._tree(root)
@@ -603,8 +656,9 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            data["hashes"] = computed_hashes(root)
-            with self.assertRaisesRegex(ReleaseValidationError, "workflow copies differ"):
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "GitHub template pins do not match release inputs"
+            ):
                 validate_release_inputs(data, root)
 
     def test_consistently_mismatched_github_pins_are_rejected(self) -> None:
@@ -624,7 +678,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "GitHub template pins"):
                 validate_release_inputs(data, root)
 
@@ -647,7 +700,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "role registry"):
                 validate_release_inputs(data, root)
 
@@ -665,7 +717,6 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            data["hashes"] = computed_hashes(root)
             with self.assertRaisesRegex(ReleaseValidationError, "GitLab template pins"):
                 validate_release_inputs(data, root)
 
@@ -695,21 +746,11 @@ class ReleaseToolTests(unittest.TestCase):
                     with self.assertRaisesRegex(ReleaseValidationError, message):
                         validate_release_inputs(data, root)
 
-    def test_config_schema_and_lock_drift_are_rejected(self) -> None:
-        for relative in (
-            "ai-review/config/review.yaml",
-            "ai-review/schemas/state.schema.json",
-            "ai-review/images/package-lock.json",
-            "ai-review/images/base.Dockerfile",
-        ):
-            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                self._tree(root)
-                data = self._draft(root)
-                path = root / relative
-                path.write_bytes(path.read_bytes() + b"\n")
-                with self.assertRaisesRegex(ReleaseValidationError, "hashes are stale"):
-                    validate_release_inputs(data, root)
+    # Config/schema/lockfile drift was previously caught by comparing a declared
+    # per-file-set hash against one recomputed from the same checkout — which only
+    # ever proved the field had been regenerated since the last edit. `runtime_source`
+    # is the commitment to those bytes, and validate_release_coordinates() (covered
+    # below) is what proves the release commit did not move them.
 
     def test_placeholder_is_rejected_even_in_draft(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -719,23 +760,6 @@ class ReleaseToolTests(unittest.TestCase):
             data["verification"]["ci_run_id"] = "TBD"
             with self.assertRaisesRegex(ReleaseValidationError, "placeholder"):
                 validate_release_inputs(data, root)
-
-    def test_aggregate_hash_is_order_independent_and_content_sensitive(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "a").write_text("first", encoding="utf-8")
-            (root / "b").write_text("second", encoding="utf-8")
-            original = aggregate_hash(root, ["b", "a"])
-            self.assertEqual(original, aggregate_hash(root, ["a", "b"]))
-            (root / "a").write_text("changed", encoding="utf-8")
-            self.assertNotEqual(original, aggregate_hash(root, ["a", "b"]))
-
-    def test_aggregate_hash_reports_missing_checked_file_cleanly(self) -> None:
-        with (
-            tempfile.TemporaryDirectory() as temporary,
-            self.assertRaisesRegex(ReleaseValidationError, "cannot hash checked file missing"),
-        ):
-            aggregate_hash(Path(temporary), ["missing"])
 
     def test_release_path_allowlist_is_path_scoped(self) -> None:
         paths = [
@@ -768,6 +792,108 @@ class ReleaseToolTests(unittest.TestCase):
                 mock.patch(
                     "check_release_manifest.git_changed_paths", return_value=changed_paths
                 ),
+            ):
+                validate_manifest(manifest, release_inputs, root)
+
+    def _synthetic_release_repo(self, root: Path, *, note: str, tag: str | None) -> None:
+        """A git repo containing release/<note>, optionally tagged.
+
+        Synthetic rather than driven off this repository's own tags, so the cases
+        below can express states this repo cannot currently be in — a tagged
+        release whose note is missing, for instance.
+        """
+        (root / "release").mkdir(parents=True, exist_ok=True)
+        (root / "release" / note).write_text("# Note\n", encoding="utf-8")
+        for command in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@example.com"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-qm", "note"],
+        ):
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+        if tag is not None:
+            subprocess.run(["git", "tag", tag], cwd=root, check=True, capture_output=True)
+
+    def test_tag_helpers_separate_missing_tag_from_missing_path(self) -> None:
+        """The distinction the byte guard depends on.
+
+        Collapsing "no tag" and "no file at that tag" into one outcome is what let
+        an untagged note pass every check; these helpers are what keep them apart.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._synthetic_release_repo(root, note="1.0.0.md", tag="v1.0.0")
+
+            self.assertTrue(any_tags_resolvable(root))
+            self.assertTrue(tag_exists("v1.0.0", root))
+            self.assertFalse(tag_exists("v9.9.9", root))
+
+            # The tag resolves but the note is not in it: distinct from no tag.
+            shown = subprocess.run(
+                ["git", "-C", str(root), "show", "v1.0.0:release/9.9.9.md"],
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(shown.returncode, 0)
+
+    def test_a_checkout_without_tags_reports_no_tags(self) -> None:
+        """Tagless is an environment fact, not "this note has no tag"."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._synthetic_release_repo(root, note="1.0.0.md", tag=None)
+
+            self.assertFalse(any_tags_resolvable(root))
+            self.assertFalse(tag_exists("v1.0.0", root))
+
+    def test_release_inputs_v1_is_rejected_with_migration_guidance(self) -> None:
+        """The version check must win over the exact-key comparison.
+
+        A v1 artifact carries `hashes`, which v2's key set does not allow. Checking
+        keys first would report a stray member and say nothing about the contract
+        the document actually speaks, so the ordering in validate_release_inputs is
+        deliberate — and this asserts it rather than leaving it to be undone by a
+        later tidy-up.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._draft(root)
+            data["schema_version"] = "code_tribunal.release_inputs.v1"
+            data["hashes"] = {"configuration": {"files": [], "sha256": "0" * 64}}
+
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                r"release_inputs\.v1 is retired.*`hashes`.*release_inputs\.v2",
+            ):
+                validate_release_inputs(data, root)
+
+    def test_manifest_validator_rejects_an_installed_workflow_only_release(self) -> None:
+        """A release may not ship an installed workflow that differs from canonical.
+
+        ALLOWED_RELEASE_PATHS allowlists the canonical template and its installed
+        copy independently, so a release commit touching only
+        .github/workflows/ai-review.yml clears the coordinate check. GitHub
+        executes that file verbatim, so without a parity check here the manifest
+        would certify a release running bytes the canonical pin validation never
+        examined — a different image, action, or permission set.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            manifest, _inputs, release_inputs, changed_paths = self._build_valid_manifest(root)
+
+            installed = root / ".github/workflows/ai-review.yml"
+            installed.write_text(
+                installed.read_text(encoding="utf-8") + "\n# smuggled\n", encoding="utf-8"
+            )
+
+            with (
+                mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
+                mock.patch(
+                    "check_release_manifest.git_changed_paths", return_value=changed_paths
+                ),
+                self.assertRaisesRegex(ReleaseValidationError, "canonical"),
             ):
                 validate_manifest(manifest, release_inputs, root)
 
@@ -890,7 +1016,6 @@ class ReleaseToolTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            inputs["hashes"] = computed_hashes(root)
             release_inputs.write_bytes(canonical_json_bytes(inputs))
             manifest["release_inputs_sha256"] = sha256_bytes(release_inputs.read_bytes())
             with self.assertRaisesRegex(ReleaseValidationError, "must be active"):

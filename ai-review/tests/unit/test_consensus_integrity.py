@@ -27,7 +27,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
         path.write_text(
             "\n".join(
                 [
-                    "schema_version: review_config.v1",
+                    "schema_version: review_config.v2",
                     "reviewers:",
                     "  claude:",
                     "    enabled: true",
@@ -55,9 +55,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "    block_merge: true",
                     "critique:",
                     f"  enabled: {'true' if critique_enabled else 'false'}",
-                    f"  rounds: {'1' if critique_enabled else '0'}",
                     "  blind_reviewer_identity: true",
-                    "  can_add_quorum_votes: false",
                     "  allow_advisory_escalation: false",
                     "  allow_severity_downgrade: false",
                     "posting:",

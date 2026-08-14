@@ -1,4 +1,4 @@
-schema_version: review_config.v1 # Schema version for config compatibility validation (must be review_config.v1)
+schema_version: review_config.v2 # Schema version for config compatibility validation (must be review_config.v2)
 
 # Configured LLM reviewer backends. Review process groups use a 1800-second
 # (30-minute) timeout and critique process groups use a 900-second (15-minute)
@@ -57,9 +57,9 @@ reviewers:
   # because selecting it has a consequence the other three do not: Cursor CLI
   # cannot route through OpenRouter/BYOK/custom-base-URL, so enabling it sends
   # review prompts, diffs, and any repo snapshot content it reads to Cursor's
-  # backend as a deliberate second egress destination. SPEC-21 acceptance is
-  # required before enabling it, but it does not block shipping 1.0.1. Select it
-  # by naming it in AI_REVIEW_REVIEWERS (e.g. claude,codex,cursor) and provide a
+  # backend as a deliberate second egress destination. The seat is supported;
+  # off by default is about that egress path, not about maturity. Select it by
+  # naming it in AI_REVIEW_REVIEWERS (e.g. claude,codex,cursor) and provide a
   # CURSOR_API_KEY secret. Do not use OPENROUTER_API_KEY for this reviewer.
   cursor:
     enabled: false # Peer seat, off by default (second egress destination). Select via AI_REVIEW_REVIEWERS or AI_REVIEW_CURSOR_ENABLED
@@ -67,7 +67,7 @@ reviewers:
     # Cursor has no separate effort option: reasoning depth is part of the
     # model variant. Use an exact slug reported by `cursor-agent --list-models`;
     # AI_REVIEW_CURSOR_EFFORT is unsupported and rejected.
-    model: auto # Discovery-only placeholder; enabling Cursor requires an exact Composer slug. Override: AI_REVIEW_CURSOR_MODEL
+    model: auto # Valid Cursor selector: delegates model choice to Cursor. Pin an exact slug for model-stable reproducibility or model-specific evidence. Override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50
@@ -81,10 +81,6 @@ panel:
   min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
   quorum:
     votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
-  grouping:
-    semantic:
-      enabled: false # Experimental YAML-only similarity grouping; outside the 1.0 compatibility guarantee. Env overrides are rejected.
-      threshold: 0.5 # Jaccard threshold over normalized word and 3-word shingles
 
 # Severity rules governing MR merge blocking and consensus requirements
 severity_policy:
@@ -96,15 +92,13 @@ severity_policy:
 # Optional multi-agent cross-examination phase (critique)
 critique:
   enabled: true # Override: AI_REVIEW_CRITIQUE_ENABLED (strict true/false; same var gates the CI critique jobs, default "true" in the CI template — single source of truth)
-  rounds: 1 # Current critique round count (must be 1 for critique to affect consensus)
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
-  can_add_quorum_votes: false # Must be false in v1 schema
   allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
   allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
 posting:
-  mode: gitlab_discussions # Integration backend target for discussions; set github_reviews with state.backend=github_pr_comment for GitHub Actions
+  mode: gitlab_discussions # Integration backend target for discussions; set github_reviews for GitHub Actions. Also selects state.backend.
   v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
   inline_multiline: true # Support multiline diff range comments
   fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
@@ -117,7 +111,9 @@ merge_gate:
 
 # Persistent state management across pipeline runs
 state:
-  backend: gitlab_mr_state_note # Storage backend (hidden note on GitLab MR); use github_pr_comment with posting.mode=github_reviews
+  # No `backend` key: it is derived from posting.mode (gitlab_discussions ->
+  # gitlab_mr_state_note, github_reviews -> github_pr_comment). A config may still
+  # restate the matching value, but a contradicting one is rejected.
   recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
   checksum_required: true # Require SHA256 integrity check on state note content
   fail_closed_on_load_error: false # If true, prepare fails instead of starting with empty state when persisted state cannot be loaded. Enforcing installs should set true (see getting-started).

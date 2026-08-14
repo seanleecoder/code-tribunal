@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import posixpath
@@ -25,9 +24,6 @@ _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewe
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
 _CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
-_CURSOR_PERMISSION_SMOKE = (
-    Path(__file__).resolve().parents[3] / "scripts" / "smoke_cursor_permissions.sh"
-)
 _OPENCODE_SEARCH_SMOKE_SH = (
     Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.sh"
 )
@@ -567,7 +563,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         )
         self.assertIsNotNone(base_preflight_match)
         base_preflight_step = base_preflight_match.group(0)
-        cursor_smoke = _workflow_job(text, "cursor-permission-smoke")
         publish = _workflow_job(text, "publish")
 
         self.assertIn("pull_request:", text)
@@ -697,108 +692,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden_secret, text)
 
-        # The Cursor permission smoke is the Cursor-enablement gate. It runs as
-        # its own job so a Cursor-only failure cannot block publishing images
-        # for the enabled reviewers, and it stays dispatchable from branches so
-        # the probe can be iterated without merging to main.
-        for smoke_marker in (
-            "Verify Cursor denies write and shell tools",
-            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" "$CURSOR_SMOKE_MODEL"',
-            "CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}",
-            "CURSOR_SMOKE_MODEL:",
-            'if [[ -z "$CURSOR_API_KEY" ]]',
-            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
-            (
-                "Cursor permission smoke skipped: CURSOR_API_KEY is not configured. "
-                "Keep Cursor disabled."
-            ),
-            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]',
-            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
-            (
-                "Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only "
-                "'auto' placeholder. Keep Cursor disabled."
-            ),
-            "discovery-only 'auto' placeholder",
-            "Pin an exact Composer model slug",
-            "Keep Cursor disabled",
-        ):
-            self.assertIn(smoke_marker, cursor_smoke)
-            self.assertNotIn(smoke_marker, build_preflight)
-            self.assertNotIn(smoke_marker, publish)
-        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
-        configured_cursor_model = config["reviewers"]["cursor"]["model"]
-        smoke_model = re.search(r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke)
-        self.assertIsNotNone(smoke_model, "Cursor smoke model must be an explicit workflow value")
-        self.assertEqual(smoke_model.group(1), configured_cursor_model)
-        def required_index(marker: str, label: str, start: int = 0) -> int:
-            index = cursor_smoke.find(marker, start)
-            if index < 0:
-                self.fail(f"Cursor permission smoke is missing {label}: {marker!r}")
-            return index
-
-        missing_key_skip = required_index(
-            'if [[ -z "$CURSOR_API_KEY" ]]', "the CURSOR_API_KEY guard"
-        )
-        missing_key_annotation = required_index(
-            "::notice::Skipping Cursor permission smoke because CURSOR_API_KEY",
-            "the CURSOR_API_KEY notice",
-            missing_key_skip,
-        )
-        missing_key_summary = required_index(
-            'echo "- Cursor permission smoke skipped: CURSOR_API_KEY is not configured. '
-            'Keep Cursor disabled." >> "$GITHUB_STEP_SUMMARY"',
-            "the CURSOR_API_KEY step summary",
-            missing_key_skip,
-        )
-        missing_key_exit = required_index(
-            "exit 0", "the CURSOR_API_KEY successful exit", missing_key_skip
-        )
-        self.assertLess(missing_key_skip, missing_key_annotation)
-        self.assertLess(missing_key_annotation, missing_key_summary)
-        self.assertLess(missing_key_summary, missing_key_exit)
-        auto_skip = required_index(
-            'if [[ "$CURSOR_SMOKE_MODEL" == "auto" ]]', "the auto-model guard"
-        )
-        auto_annotation = required_index(
-            "::warning::Skipping Cursor permission smoke because CURSOR_SMOKE_MODEL",
-            "the auto-model warning",
-            auto_skip,
-        )
-        auto_summary = required_index(
-            'echo "- Cursor permission smoke skipped: CURSOR_SMOKE_MODEL is the discovery-only '
-            "'auto' placeholder. Keep Cursor disabled.\" >> \"$GITHUB_STEP_SUMMARY\"",
-            "the auto-model step summary",
-            auto_skip,
-        )
-        auto_exit = required_index(
-            "exit 0", "the auto-model successful exit", auto_skip
-        )
-        smoke_invocation = required_index(
-            'scripts/smoke_cursor_permissions.sh "$AI_REVIEW_REVIEWER_TAG" '
-            '"$CURSOR_SMOKE_MODEL"',
-            "the Cursor smoke invocation",
-        )
-        self.assertLess(auto_skip, auto_annotation)
-        self.assertLess(auto_annotation, auto_summary)
-        self.assertLess(auto_summary, auto_exit)
-        self.assertLess(auto_skip, smoke_invocation)
-        self.assertIn("exit 0", cursor_smoke[auto_skip:smoke_invocation])
-        self.assertIn("needs: build-preflight", cursor_smoke)
-        self.assertIn("if: github.event_name != 'pull_request'", cursor_smoke)
-        self.assertNotIn("github.ref == 'refs/heads/main'", cursor_smoke)
-        self.assertRegex(
-            cursor_smoke,
-            r"uses: actions/download-artifact@[0-9a-f]{40} # v8\.0\.1",
-        )
-        # Publish must not wait on the Cursor smoke, because Cursor is disabled in
-        # review.yaml. The OpenCode search probe needs no entry here: it is a step in
-        # build-preflight, so this need already covers it.
+        # Publish waits on build-preflight, which is where the OpenCode search
+        # probe runs as a step — so that need already covers it.
         publish_needs = re.search(r"(?m)^    needs: (.+)$", publish)
         self.assertIsNotNone(publish_needs)
         assert publish_needs is not None
-        needs = publish_needs.group(1)
-        self.assertNotIn("cursor-permission-smoke", needs)
-        self.assertEqual(needs, "build-preflight")
+        self.assertEqual(publish_needs.group(1), "build-preflight")
 
     def test_opencode_search_smoke_gates_merge_and_publication(self) -> None:
         """The OpenCode search probe must run on pull requests, not only on main.
@@ -850,42 +749,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertRegex(wrapper, r"(?m)^  --mount \"type=bind,src=\$smoke_dir,dst=/smoke\" \\$")
         self.assertIn('mkdir -p "$smoke_dir/home"', wrapper)
 
-    def test_cursor_auto_discovery_placeholder_is_cross_file_contract(self) -> None:
-        if skip_reason := _cursor_publish_workflow_skip_reason():
-            self.skipTest(skip_reason)
-
-        placeholder = "auto"
-        config = yaml.safe_load(_REVIEW_CONFIG.read_text(encoding="utf-8"))
-        workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-        cursor_smoke = _workflow_job(workflow, "cursor-permission-smoke")
-        smoke_script = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
-
-        self.assertEqual(config["reviewers"]["cursor"]["model"], placeholder)
-
-        publisher_model = re.search(
-            r'(?m)^      CURSOR_SMOKE_MODEL: "([^"]+)"$', cursor_smoke
-        )
-        self.assertIsNotNone(publisher_model)
-        assert publisher_model is not None
-        self.assertEqual(publisher_model.group(1), placeholder)
-
-        publisher_guard = re.search(
-            r'(?s)if \[\[ "\$CURSOR_SMOKE_MODEL" == "([^"]+)" \]\]; then.*?exit 0\n'
-            r"          fi",
-            cursor_smoke,
-        )
-        self.assertIsNotNone(publisher_guard)
-        assert publisher_guard is not None
-        self.assertEqual(publisher_guard.group(1), placeholder)
-
-        smoke_rejection = re.search(
-            r'(?s)if \[ -z "\$cursor_model" \] \|\| \[ "\$cursor_model" = "([^"]+)" \]; '
-            r"then.*?exit 2\nfi",
-            smoke_script,
-        )
-        self.assertIsNotNone(smoke_rejection)
-        assert smoke_rejection is not None
-        self.assertEqual(smoke_rejection.group(1), placeholder)
 
     def test_packaged_runtime_marker_rejects_checkout_publish_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -922,43 +785,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("COPY README.md /opt/README.md", text)
         self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
 
-    def test_base_image_copies_cursor_permission_smoke_script(self) -> None:
-        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "COPY scripts/smoke_cursor_permissions.sh /opt/scripts/smoke_cursor_permissions.sh",
-            text,
-        )
-
-    def test_cursor_permission_smoke_checks_multiple_write_boundaries(self) -> None:
-        text = _CURSOR_PERMISSION_SMOKE.read_text(encoding="utf-8")
-
-        self.assertIn("--sandbox disabled", text)
-        self.assertEqual(text.count("--mode ask"), 1)
-        self.assertIn("run_cursor_probe()", text)
-        self.assertNotIn("cursor-agent sandbox disable", text)
-        self.assertIn('"Write(/**)"', text)
-        self.assertIn('"Shell(*)"', text)
-        self.assertNotIn('"Shell(**)"', text)
-        self.assertIn('read_nonce="cursor-read-', text)
-        self.assertIn("/dev/urandom", text)
-        self.assertIn("read probe execution failure", text)
-        self.assertIn("hostile probe execution failure", text)
-        self.assertIn('workspace_before_read="$(workspace_manifest)"', text)
-        self.assertIn('workspace_after_read="$(workspace_manifest)"', text)
-        self.assertIn("read-probe security failure", text)
-        self.assertIn("read-cursor-home", text)
-        self.assertIn("hostile-cursor-home", text)
-        self.assertIn('"$read_cursor_home/cursor-home-sentinel"', text)
-        self.assertIn('"$read_probe_tmp/cursor-tmp-sentinel"', text)
-        self.assertIn("hostile-probe security failure: workspace content changed", text)
-        self.assertIn('workspace_before="$(workspace_manifest)"', text)
-        self.assertIn('workspace_after="$(workspace_manifest)"', text)
-        self.assertIn("/workspace/fixture.txt", text)
-        self.assertIn("/cursor-home/cursor-home-sentinel", text)
-        self.assertIn("/permission-tmp/cursor-tmp-sentinel", text)
-        self.assertIn("security failure", text)
-        self.assertIn("execution failure", text)
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
@@ -1098,50 +925,32 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("--critiques-dir out/critiques", text)
 
     def test_codex_critique_uses_critique_schema(self) -> None:
-        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
+        """The stage selects the schema, and codex passes what the stage selected.
 
-        self.assertIn("raw_finding_batch.schema.json", text)
-        self.assertIn("critique_batch.schema.json", text)
+        Selection moved into the shared adapter scaffolding when the four seats
+        stopped each carrying their own copy, so the pairing is asserted across the
+        two files rather than within one.
+        """
+        common = (_CODEX_ADAPTER.parent / "common.sh").read_text(encoding="utf-8")
+        self.assertIn("raw_finding_batch.schema.json", common)
+        self.assertIn("critique_batch.schema.json", common)
+
+        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
+        self.assertIn("resolve_output_schema", text)
         self.assertIn('"$OUTPUT_SCHEMA"', text)
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):
-    def test_installed_workflow_matches_canonical_template(self) -> None:
-        root = Path(__file__).resolve().parents[3]
-        installed = root / ".github" / "workflows" / "ai-review.yml"
-        canonical = root / "ai-review" / "ci" / "review.github-actions.yml"
-        if not installed.exists():
-            self.skipTest("installed workflow is not included in the runtime image")
-
-        self.assertEqual(
-            installed.read_text(encoding="utf-8"),
-            canonical.read_text(encoding="utf-8"),
-        )
-
-        # Delegated to the shared helper, but only through a function-local load
-        # placed *after* the skip above. This file is mounted and discovered
-        # inside the base image like every other test, so a module-level
-        # release_common import would fail at collection there. The skip is
-        # guaranteed to fire in the image: _REPO_ROOT resolves to /opt, and
-        # /opt/.github/workflows/ai-review.yml does not exist.
-        #
-        # scripts/ is not an importable package and pyproject.toml puts only
-        # ai-review/src on pythonpath, so a plain `import release_common` fails
-        # even in the repository. This follows test_docs_contract.py's
-        # spec_from_file_location pattern. Deliberately NOT
-        # test_release_tools.py's sys.path insertion: that is safe only because
-        # the module raises SkipTest at module level, which here would skip this
-        # file's other ~40 cases in the image and lose real coverage.
-        release_common_path = root / "scripts" / "release_common.py"
-        if not release_common_path.is_file():
-            self.skipTest("repository-only release tooling is absent from the runtime image")
-        spec = importlib.util.spec_from_file_location("release_common", release_common_path)
-        if spec is None or spec.loader is None:
-            raise AssertionError(f"cannot load release helpers from {release_common_path}")
-        release_common = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(release_common)
-
-        self.assertEqual(release_common.sync_workflows(check=True, root=root), ())
+    # Canonical-template -> installed-copy parity used to be asserted here, in
+    # check_supply_chain_pins.py, and in check_release_inputs.py. It now lives
+    # only in `make workflow-parity`, which is also the one that can repair the
+    # drift. Asserting it from a test that runs inside the base image needed two
+    # skips and a function-local importlib load to survive an environment where
+    # neither .github/ nor scripts/release_common.py exists — cost with no
+    # coverage, since the skip was guaranteed to fire there.
+    #
+    # Everything below asserts the canonical template's own shape, which parity
+    # then propagates to the installed copy.
 
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -1167,7 +976,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         critique = _workflow_job(text, "critique")
 
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
-        self.assertIn("AI_REVIEW_STATE_BACKEND: github_pr_comment", text)
+        # The state backend is derived from posting.mode; the template must not
+        # restate it, or the two could be scoped to different jobs.
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
         self.assertRegex(review, r"(?m)^    timeout-minutes: 40$")
         self.assertRegex(critique, r"(?m)^    timeout-minutes: 20$")
@@ -1246,6 +1057,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
 
     def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
@@ -1266,7 +1078,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED",
             "AI_REVIEW_MERGE_GATE_ENABLED",
             "AI_REVIEW_POSTING_MODE",
-            "AI_REVIEW_STATE_BACKEND",
         ]
         self.assertIn("effective_config_sha256", text)
         self.assertIn("Environment-consistency contract", text)
@@ -1275,6 +1086,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                 self.assertIn(name, text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
+        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         # Critique enablement remains an explicit top-level variable shared by
         # job rules and apply_env_overrides.
         self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")

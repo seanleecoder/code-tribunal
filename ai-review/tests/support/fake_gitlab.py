@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ai_review.gitlab_client import (
+from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
     current_user_id,
@@ -42,25 +42,25 @@ class FakeGitLabClient:
         self._next_discussion_id = 1
         self._next_note_id = 100
 
-    def fetch_latest_mr_version(
+    def fetch_version(
         self, project_id_or_path: str | int, merge_request_iid: str | int
     ) -> MergeRequestVersion:
         return MergeRequestVersion(self.base_sha, self.start_sha, self.head_sha)
 
-    def fetch_mr_diff(self, project_id_or_path: str | int, merge_request_iid: str | int) -> str:
+    def fetch_diff(self, project_id_or_path: str | int, merge_request_iid: str | int) -> str:
         return self.diff_text
 
-    def fetch_current_mr_head_sha(
+    def fetch_current_head_sha(
         self, project_id_or_path: str | int, merge_request_iid: str | int
     ) -> str:
         return self.head_sha
 
-    def list_mr_discussions(
+    def list_threads(
         self, project_id_or_path: str | int, merge_request_iid: str | int
     ) -> list[dict[str, Any]]:
         return copy.deepcopy(self.discussions)
 
-    def create_discussion(
+    def create_inline_comment(
         self,
         project_id_or_path: str | int,
         merge_request_iid: str | int,
@@ -81,7 +81,7 @@ class FakeGitLabClient:
         self.created_discussion_bodies.append(body)
         return copy.deepcopy(discussion)
 
-    def update_discussion_note(
+    def update_comment(
         self,
         project_id_or_path: str | int,
         merge_request_iid: str | int,
@@ -101,7 +101,7 @@ class FakeGitLabClient:
                     return copy.deepcopy(note)
         raise AssertionError(f"unknown discussion note: {discussion_id}/{note_id}")
 
-    def resolve_discussion(
+    def resolve_thread(
         self,
         project_id_or_path: str | int,
         merge_request_iid: str | int,
@@ -117,12 +117,12 @@ class FakeGitLabClient:
                 return copy.deepcopy(discussion)
         raise AssertionError(f"unknown discussion: {discussion_id}")
 
-    def list_mr_notes(
+    def list_state_notes(
         self, project_id_or_path: str | int, merge_request_iid: str | int
     ) -> list[dict[str, Any]]:
         return copy.deepcopy(self.mr_notes)
 
-    def create_mr_note(
+    def create_state_note(
         self, project_id_or_path: str | int, merge_request_iid: str | int, body: str
     ) -> dict[str, Any]:
         note = self._note(self._allocate_note_id(), body)
@@ -137,7 +137,7 @@ class FakeGitLabClient:
         self.created_note_bodies.append(body)
         return copy.deepcopy(note)
 
-    def update_mr_note(
+    def update_state_note(
         self,
         project_id_or_path: str | int,
         merge_request_iid: str | int,
@@ -155,7 +155,7 @@ class FakeGitLabClient:
     def current_user(self) -> dict[str, Any]:
         return {"id": self.bot_user_id, "username": self.bot_username}
 
-    def project_member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int:
+    def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int:
         return self.access_level
 
     def build_position(
@@ -181,69 +181,10 @@ class FakeGitLabClient:
     def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
         return root_note_id_from_discussion(response)
 
-    def fetch_version(
-        self, project_id_or_path: str | int, change_id: str | int
-    ) -> MergeRequestVersion:
-        return self.fetch_latest_mr_version(project_id_or_path, change_id)
-
-    def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
-        return self.fetch_mr_diff(project_id_or_path, change_id)
-
-    def fetch_current_head_sha(self, project_id_or_path: str | int, change_id: str | int) -> str:
-        return self.fetch_current_mr_head_sha(project_id_or_path, change_id)
-
-    def list_threads(
-        self, project_id_or_path: str | int, change_id: str | int
-    ) -> list[dict[str, Any]]:
-        return self.list_mr_discussions(project_id_or_path, change_id)
-
-    def create_inline_comment(
-        self,
-        project_id_or_path: str | int,
-        change_id: str | int,
-        body: str,
-        position: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self.create_discussion(project_id_or_path, change_id, body, position)
-
-    def update_comment(
-        self,
-        project_id_or_path: str | int,
-        change_id: str | int,
-        thread_id: str,
-        comment_id: int,
-        body: str,
-    ) -> dict[str, Any]:
-        return self.update_discussion_note(
-            project_id_or_path, change_id, thread_id, comment_id, body
-        )
-
-    def resolve_thread(
-        self,
-        project_id_or_path: str | int,
-        change_id: str | int,
-        thread_id: str,
-        resolved: bool = True,
-    ) -> dict[str, Any]:
-        return self.resolve_discussion(project_id_or_path, change_id, thread_id, resolved)
-
-    def list_state_notes(
-        self, project_id_or_path: str | int, change_id: str | int
-    ) -> list[dict[str, Any]]:
-        return self.list_mr_notes(project_id_or_path, change_id)
-
-    def create_state_note(
-        self, project_id_or_path: str | int, change_id: str | int, body: str
-    ) -> dict[str, Any]:
-        return self.create_mr_note(project_id_or_path, change_id, body)
-
-    def update_state_note(
-        self, project_id_or_path: str | int, change_id: str | int, note_id: int, body: str
-    ) -> dict[str, Any]:
-        return self.update_mr_note(project_id_or_path, change_id, note_id, body)
-
-    def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int:
-        return self.project_member_access_level(project_id_or_path, user_id)
+    # Every operation used to be defined twice here: once under GitLab's own
+    # method names and once under the port's, each pair delegating one way. That
+    # mirrored the production split between gitlab_client.py and its renaming
+    # subclass. With one name per operation upstream, one definition suffices.
 
     def discussion_count(self) -> int:
         return sum(

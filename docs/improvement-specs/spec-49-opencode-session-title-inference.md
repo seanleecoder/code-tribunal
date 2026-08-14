@@ -1,13 +1,13 @@
 # SPEC-49 — Suppress OpenCode session-title inference
 
-- **Status:** Superseded by [SPEC-50](spec-50-opencode-structured-reviewer-output.md).
+- **Status:** Superseded by SPEC-50.
   The fixed, data-free session title below remains in force; SPEC-50 replaces only the
   `opencode --pure run --title` mechanism, because the session is now created through
   the server API. Everything recorded here is preserved unedited as the forensic record
   of the title-inference incident.
 - **Classification:** S / operational-policy correctness.
 - **Depends on:** the existing OpenCode adapter contract in
-  [SPEC-19](../history/specs/spec-19-opencode-reviewer-optimization.md).
+  SPEC-19.
 - **Owner split:** the coding agent owns the source, unit tests, documentation, and
   image-build guard below. Image publication, immutable digest repinning, and a real
   no-extra-model smoke require a separately approved rollout.

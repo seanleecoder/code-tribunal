@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Generate the installed GitHub workflow copies from their canonical templates.
 
-The parity between each canonical template and its installed copy was already
-gated three times over — by check_supply_chain_pins.py (via `make supply-chain`,
-therefore `make quality` and CI), by check_release_inputs.py (via
-`make release-inputs`), and by GitHubActionsTemplateTests in
-ai-review/tests/unit/test_ci_template.py. What was missing was a *generation*
-command. This is it.
+This is both the generator and the only gate. Parity was previously checked three
+further times — by check_supply_chain_pins.py, by check_release_inputs.py, and by
+GitHubActionsTemplateTests in ai-review/tests/unit/test_ci_template.py — none of
+which could repair what they reported, and one of which ran inside an image with
+no .github/ directory to compare against. Those copies are gone.
 
+    make workflow-parity          # the gate, wired into `make quality`
     make sync-workflows           # write installed copies
     make CHECK=1 sync-workflows   # report drift, write nothing
 

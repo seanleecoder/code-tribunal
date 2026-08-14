@@ -1,4 +1,4 @@
-"""Finding grouping: overlap, similarity, and union-find components.
+"""Finding grouping: overlap, fingerprint identity, and union-find components.
 
 Needs neither render nor memory, so pulling it out of consensus is a
 real coupling reduction rather than motion. The grouping range references nothing
@@ -11,7 +11,6 @@ import cycle consensus_errors exists to break.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .anchors import anchor_path_key
@@ -37,41 +36,12 @@ def _ranges_overlap(a: dict[str, Any], b: dict[str, Any], *, tolerance: int = 3)
     )
 
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
-
-
-def _normalized_issue_tokens(finding: dict[str, Any]) -> set[str]:
-    text = f"{finding.get('title', '')} {finding.get('body', '')}".lower()
-    words = _WORD_RE.findall(text)
-    if len(words) < 3:
-        return set(words)
-    shingles = {" ".join(words[index : index + 3]) for index in range(len(words) - 2)}
-    return set(words) | shingles
-
-
-# Text similarity is only an opt-in consensus grouping signal. Persisted state
-# recovery remains governed by ai_review.memory.STATE_MATCHING_STRATEGY.
-
-
-def _issue_text_similarity(a: dict[str, Any], b: dict[str, Any]) -> float:
-    a_tokens = _normalized_issue_tokens(a)
-    b_tokens = _normalized_issue_tokens(b)
-    if not a_tokens or not b_tokens:
-        return 0.0
-    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
-
-
-def _semantic_grouping_enabled(grouping_config: dict[str, Any] | None) -> bool:
-    semantic = (grouping_config or {}).get("semantic", {})
-    return isinstance(semantic, dict) and semantic.get("enabled") is True
-
-
-def _semantic_threshold(grouping_config: dict[str, Any] | None) -> float:
-    semantic = (grouping_config or {}).get("semantic", {})
-    if not isinstance(semantic, dict):
-        return 0.5
-    return float(semantic.get("threshold", 0.5))
-
+# Grouping is deliberately free of text-similarity signals. An opt-in Jaccard
+# comparison over word and 3-word shingles used to live here, disabled by default
+# and outside the 1.0 compatibility guarantee; grouping now rests entirely on
+# identity that survives rewording — anchors, context hashes, fingerprints, and
+# symbols — matching ai_review.memory.STATE_MATCHING_STRATEGY, which always
+# refused text similarity as a state-recovery signal.
 
 DuplicateLink = tuple[str, str]
 
@@ -85,7 +55,6 @@ def same_issue(
     a: dict[str, Any],
     b: dict[str, Any],
     duplicate_links: set[DuplicateLink] | None = None,
-    grouping_config: dict[str, Any] | None = None,
 ) -> bool:
     if a["source_finding_id"] == b["source_finding_id"]:
         return True
@@ -114,19 +83,15 @@ def same_issue(
     )
     if not same_path_category_range:
         return False
-    if (
+    return (
         a["fingerprints"]["title_fingerprint"] == b["fingerprints"]["title_fingerprint"]
         or a["fingerprints"]["evidence_fingerprint"] == b["fingerprints"]["evidence_fingerprint"]
-        or (
+        or bool(
             a_anchor.get("symbol")
             and b_anchor.get("symbol")
             and a_anchor.get("symbol") == b_anchor.get("symbol")
         )
-    ):
-        return True
-    return _semantic_grouping_enabled(grouping_config) and _issue_text_similarity(
-        a, b
-    ) >= _semantic_threshold(grouping_config)
+    )
 
 
 class UnionFind:
@@ -196,14 +161,11 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
 def _split_transitive_component(
     component: list[dict[str, Any]],
     duplicate_links: set[DuplicateLink] | None,
-    grouping_config: dict[str, Any] | None,
 ) -> list[list[dict[str, Any]]]:
     groups: list[list[dict[str, Any]]] = []
     for finding in sorted(component, key=lambda item: item["source_finding_id"]):
         for group in groups:
-            if all(
-                same_issue(member, finding, duplicate_links, grouping_config) for member in group
-            ):
+            if all(same_issue(member, finding, duplicate_links) for member in group):
                 group.append(finding)
                 break
         else:
@@ -214,13 +176,12 @@ def _split_transitive_component(
 def group_findings(
     findings: list[dict[str, Any]],
     duplicate_links: set[DuplicateLink] | None = None,
-    grouping_config: dict[str, Any] | None = None,
 ) -> list[list[dict[str, Any]]]:
     ordered = sorted(findings, key=lambda item: item["source_finding_id"])
     uf = UnionFind(len(ordered))
     for left_index, left in enumerate(ordered):
         for right_index in range(left_index + 1, len(ordered)):
-            if same_issue(left, ordered[right_index], duplicate_links, grouping_config):
+            if same_issue(left, ordered[right_index], duplicate_links):
                 uf.union(left_index, right_index)
     components: dict[int, list[dict[str, Any]]] = {}
     for index, finding in enumerate(ordered):
@@ -233,7 +194,5 @@ def group_findings(
                 (finding["category"], anchor_path_key(finding["anchor"])), []
             ).append(finding)
         for bucket in sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"]):
-            split_components.extend(
-                _split_transitive_component(bucket, duplicate_links, grouping_config)
-            )
+            split_components.extend(_split_transitive_component(bucket, duplicate_links))
     return sorted(split_components, key=lambda group: group[0]["source_finding_id"])
