@@ -5,6 +5,7 @@ import io
 import json
 import os
 import stat
+import sys
 import tempfile
 import time
 import unittest
@@ -27,34 +28,12 @@ from ai_review.schema import (
     write_canonical_json,
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import CONFIG_TAIL, config_tail, panel_filler  # noqa: E402
+
 _OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
 
-_CONFIG_TAIL = [
-    "panel:",
-    "  min_successful_reviewers_for_blocking: 1",
-    "  min_successful_reviewers_for_resolution: 1",
-    "  quorum:",
-    "    votes_required: 1",
-    "severity_policy:",
-    "  single_reviewer_blocker:",
-    "    categories: [correctness]",
-    "  quorum_blocker:",
-    "    block_merge: true",
-    "critique:",
-    "  enabled: false",
-    "  blind_reviewer_identity: true",
-    "  allow_advisory_escalation: false",
-    "posting:",
-    "  mode: gitlab_discussions",
-    "merge_gate:",
-    "  enabled: true",
-    "state:",
-    "  backend: gitlab_mr_state_note",
-    "limits:",
-    "  max_prompt_bytes: 500000",
-    "security:",
-    "  allow_external_fork_secrets: false",
-]
+_CONFIG_TAIL = CONFIG_TAIL
 
 
 class AdapterEndpointValidationTests(unittest.TestCase):
@@ -703,9 +682,10 @@ class EffortEnvTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v2",
+                        "schema_version: review_config.v3",
                         "reviewers:",
                         *reviewer_lines,
+                        *panel_filler(1),
                         *_CONFIG_TAIL,
                     ]
                 ),
@@ -801,7 +781,7 @@ def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: 
     config_path.write_text(
         "\n".join(
             [
-                "schema_version: review_config.v2",
+                "schema_version: review_config.v3",
                 "reviewers:",
                 f"  {reviewer}:",
                 "    enabled: true",
@@ -810,6 +790,7 @@ def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: 
                 f"    timeout_seconds: {timeout_seconds}",
                 "    max_findings: 50",
                 f"    credential_variable: {reviewer.upper()}_KEY",
+                *panel_filler(1),
                 *_CONFIG_TAIL,
             ]
         ),
@@ -1216,7 +1197,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v2",
+                        "schema_version: review_config.v3",
                         "reviewers:",
                         "  disabled_reviewer:",
                         "    enabled: false",
@@ -1225,8 +1206,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         "    credential_variable: DISABLED_KEY",
-                        # validate_config requires >=1 enabled reviewer; this one is
-                        # never invoked by the test but keeps the config valid.
+                        # validate_config requires a full panel of enabled
+                        # reviewers; these are never invoked by the test but keep
+                        # the document valid.
                         "  other_reviewer:",
                         "    enabled: true",
                         "    adapter: adapters/other_reviewer.sh",
@@ -1234,6 +1216,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         "    credential_variable: OTHER_KEY",
+                        *panel_filler(1),
                         *_CONFIG_TAIL,
                     ]
                 ),
@@ -1283,7 +1266,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v2",
+                        "schema_version: review_config.v3",
                         "reviewers:",
                         "  critic:",
                         "    enabled: true",
@@ -1292,13 +1275,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         "    credential_variable: CRITIC_KEY",
-                        *_CONFIG_TAIL[:10],
-                        "critique:",
-                        "  enabled: true",
-                        "  blind_reviewer_identity: true",
-                        "  allow_advisory_escalation: false",
-                        "  allow_severity_downgrade: false",
-                        *_CONFIG_TAIL[16:],
+                        *panel_filler(1),
+                        *config_tail(critique_enabled=True),
                     ]
                 ),
                 encoding="utf-8",

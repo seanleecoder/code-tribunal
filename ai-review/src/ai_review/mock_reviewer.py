@@ -10,9 +10,15 @@ from typing import Any
 from .anchors import parse_unified_diff, resolve_side_paths
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
-# They let live-evidence lifecycle runs exercise posting/state/gate behavior with
+# They let live-evidence lifecycle runs exercise posting and state behavior with
 # a chosen, reproducible finding set and zero token cost, instead of depending on
-# a weak real model to happen to emit a usable finding. The mock only runs when
+# a weak real model to happen to emit a usable finding.
+#
+# What a scenario surfaces depends on the panel, not on its severity: a finding
+# surfaces when two reviewer identities support it independently. Every seat
+# running the mock emits the identical finding, so a multi-seat lifecycle run
+# groups them and surfaces; `make consensus-local` runs one seat and lands on
+# `fyi`. The mock only runs when
 # AI_REVIEW_LOCAL_MOCK=1 and the reviewer's require-real flag is unset (see the
 # adapter shell scripts); the emitted batch is finalized by the normal adapter
 # pipeline, so anchors are re-resolved against the real diff exactly like a real
@@ -20,21 +26,19 @@ from .anchors import parse_unified_diff, resolve_side_paths
 #
 # - default:      historical behavior — one major/correctness finding when the
 #                 diff adds an unguarded `records[0]`/`data[0]` index, else none.
-# - blocking:     one blocker/correctness finding on the first added line. At the
-#                 shipped two-vote quorum this surfaces and blocks the merge gate.
+# - blocking:     one blocker/correctness finding on the first added line. On a
+#                 multi-seat panel it surfaces; `blocker` is an impact label and
+#                 blocks nothing.
 # - blocking_alt: identical identity to `blocking` (same title, category, and
 #                 anchor) but a different finding body. Finding identity excludes
 #                 the body (see anchors.compute_source_finding_id), so re-running a
 #                 lifecycle with `blocking_alt` updates the existing discussion in
 #                 place (changed body_hash) rather than opening a new one — this is
 #                 the deterministic changed-body lifecycle probe.
-# - advisory:     one non-blocking (minor/maintainability) finding on the first
-#                 added line. At quorum it surfaces inline without blocking the
-#                 gate. (It does not reach the below-quorum FYI path: the mock
-#                 emits identical findings across seats, which always group to
-#                 quorum, and config validation rejects a votes_required/enabled-
-#                 seat mismatch rather than allowing a below-quorum single seat.
-#                 The FYI/summary path is regression-covered.)
+# - advisory:     one minor/maintainability finding on the first added line.
+#                 Identical in disposition to `blocking` — severity changes no
+#                 decision — and kept because it exercises the low-severity
+#                 rendering path.
 # - none:         no findings — drives absence-based resolution / withdrawal, not
 #                 an unchanged rerun (an unchanged rerun re-emits the same finding).
 _SCENARIOS = {"default", "blocking", "blocking_alt", "advisory", "none"}
@@ -129,8 +133,8 @@ def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
 _BLOCKING_TITLE = "Deterministic mock blocking finding"
 _BLOCKING_BODY = (
     "Deterministic mock blocker for live-evidence lifecycle validation. "
-    "The added line is reported as a blocking correctness defect so the "
-    "merge gate can be exercised reproducibly."
+    "The added line is reported as a high-impact correctness defect so the "
+    "posting and state lifecycle can be exercised reproducibly."
 )
 _BLOCKING_ALT_BODY = (
     "Deterministic mock blocker for live-evidence lifecycle validation "
@@ -159,9 +163,9 @@ def _advisory_finding(candidate: dict[str, Any]) -> dict[str, Any]:
         "category": "maintainability",
         "title": "Deterministic mock advisory finding",
         "body": (
-            "Deterministic mock advisory (non-blocking) finding for live-evidence "
-            "lifecycle validation. At quorum it surfaces inline without blocking "
-            "the merge gate."
+            "Deterministic mock low-impact finding for live-evidence lifecycle "
+            "validation. It surfaces inline whenever two seats support it, "
+            "exactly like the blocker scenario."
         ),
         "evidence": ["Deterministic mock finding anchored to an added line."],
         "suggestion": None,

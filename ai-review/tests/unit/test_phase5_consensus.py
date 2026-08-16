@@ -12,14 +12,12 @@ from .test_consensus_state_matching import _batch, _config, _finding, _manifest
 def _critique_config(
     *,
     enabled: bool = True,
-    allow_advisory_escalation: bool = False,
     allow_severity_downgrade: bool = False,
 ) -> dict:
     config = copy.deepcopy(_config())
     config["critique"] = {
         "enabled": enabled,
         "blind_reviewer_identity": True,
-        "allow_advisory_escalation": allow_advisory_escalation,
         "allow_severity_downgrade": allow_severity_downgrade,
     }
     return config
@@ -127,9 +125,10 @@ class Phase5ConsensusTests(unittest.TestCase):
 
         self.assertEqual(len(consensus["groups"]), 1)
         group = consensus["groups"][0]
-        self.assertEqual(group["vote_count"], 2)
+        self.assertEqual(group["contributing_reviewers"], ["claude", "codex"])
         self.assertEqual(group["critique_summary"]["duplicate"], 1)
-        self.assertEqual(group["critique_support_count"], 0)
+        self.assertEqual(group["agreeing_critics"], [])
+        self.assertEqual(group["support_count"], 2)
         self.assertEqual(group["source_finding_ids"], ["1" * 64, "2" * 64])
         validate_instance(consensus, "consensus.schema.json")
 
@@ -218,12 +217,12 @@ class Phase5ConsensusTests(unittest.TestCase):
 
         group = consensus["groups"][0]
         self.assertEqual(group["decision"], "drop")
-        self.assertEqual(group["vote_count"], 1)
-        self.assertEqual(group["critique_noise_count"], 2)
+        self.assertEqual(group["support_count"], 1)
+        self.assertEqual(group["critique_summary"]["noise"], 2)
         self.assertEqual(consensus["summary"]["drop_count"], 1)
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_agree_support_does_not_increase_vote_count(self) -> None:
+    def test_agreeing_critic_is_a_supporter_but_not_a_contributor(self) -> None:
         source_id = "1" * 64
         consensus = build_consensus(
             _manifest(),
@@ -233,50 +232,11 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         group = consensus["groups"][0]
-        self.assertEqual(group["vote_count"], 1)
-        self.assertEqual(group["critique_support_count"], 1)
-        self.assertEqual(group["decision"], "fyi")
-        validate_instance(consensus, "consensus.schema.json")
-
-    def test_advisory_escalation_surfaces_supported_fyi_nonblocking(self) -> None:
-        source_id = "1" * 64
-        batches = [_batch("claude", _finding("claude", source_id, "major"))]
-        critiques = [_critique_batch("codex", [_critique("codex", source_id, "agree")])]
-
-        disabled_consensus = build_consensus(
-            _manifest(),
-            batches,
-            _critique_config(allow_advisory_escalation=False),
-            critique_batches=critiques,
-        )
-        escalated_consensus = build_consensus(
-            _manifest(),
-            batches,
-            _critique_config(allow_advisory_escalation=True),
-            critique_batches=critiques,
-        )
-
-        self.assertEqual(disabled_consensus["groups"][0]["decision"], "fyi")
-        escalated = escalated_consensus["groups"][0]
-        self.assertEqual(escalated["decision"], "surface")
-        self.assertFalse(escalated["block_merge"])
-        validate_instance(escalated_consensus, "consensus.schema.json")
-
-    def test_missing_advisory_escalation_flag_uses_enabled_default(self) -> None:
-        source_id = "1" * 64
-        config = _critique_config()
-        config["critique"].pop("allow_advisory_escalation")
-
-        consensus = build_consensus(
-            _manifest(),
-            [_batch("claude", _finding("claude", source_id, "major"))],
-            config,
-            critique_batches=[_critique_batch("codex", [_critique("codex", source_id, "agree")])],
-        )
-
-        group = consensus["groups"][0]
+        self.assertEqual(group["contributing_reviewers"], ["claude"])
+        self.assertEqual(group["agreeing_critics"], ["codex"])
+        self.assertEqual(group["support_count"], 2)
         self.assertEqual(group["decision"], "surface")
-        self.assertFalse(group["block_merge"])
+        validate_instance(consensus, "consensus.schema.json")
 
     def test_failed_and_self_critiques_are_ignored(self) -> None:
         source_id = "1" * 64
@@ -293,7 +253,8 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         group = consensus["groups"][0]
-        self.assertEqual(group["critique_support_count"], 0)
+        self.assertEqual(group["agreeing_critics"], [])
+        self.assertEqual(group["support_count"], 1)
         self.assertEqual(
             group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0}
         )
@@ -323,8 +284,8 @@ class Phase5ConsensusTests(unittest.TestCase):
         group = consensus["groups"][0]
         self.assertEqual(failed["adapter_status"], "model_error")
         self.assertEqual(failed["critiques"], [])
-        self.assertEqual(group["critique_noise_count"], 1)
-        self.assertEqual(group["critique_support_count"], 0)
+        self.assertEqual(group["critique_summary"]["noise"], 1)
+        self.assertEqual(group["agreeing_critics"], [])
         self.assertEqual(
             group["critique_summary"], {"agree": 0, "dispute": 0, "noise": 1, "duplicate": 0}
         )
@@ -347,7 +308,7 @@ class Phase5ConsensusTests(unittest.TestCase):
             critique_batches=[spoofed],
         )
 
-        self.assertEqual(consensus["groups"][0]["critique_support_count"], 0)
+        self.assertEqual(consensus["groups"][0]["agreeing_critics"], [])
         self.assertEqual(consensus["groups"][0]["critique_summary"]["agree"], 0)
         validate_instance(consensus, "consensus.schema.json")
 
@@ -360,7 +321,7 @@ class Phase5ConsensusTests(unittest.TestCase):
         """
         source_id = "1" * 64
         batches = [_batch("claude", _finding("claude", source_id, "major"))]
-        config = _critique_config(enabled=False, allow_advisory_escalation=True)
+        config = _critique_config(enabled=False)
         critiques = [_critique_batch("codex", [_critique("codex", source_id, "noise")])]
 
         without_critiques = build_consensus(_manifest(), batches, config)
@@ -499,10 +460,10 @@ class Phase5ConsensusTests(unittest.TestCase):
 
         self.assertEqual(disabled["groups"][0]["final_severity"], "blocker")
         self.assertEqual(enabled["groups"][0]["final_severity"], "blocker")
-        self.assertTrue(enabled["groups"][0]["block_merge"])
+        self.assertEqual(enabled["groups"][0]["decision"], "surface")
         validate_instance(enabled, "consensus.schema.json")
 
-    def test_downgraded_single_reviewer_blocker_becomes_fyi(self) -> None:
+    def test_lone_blocker_with_a_disputing_critic_stays_fyi(self) -> None:
         source_id = "1" * 64
         consensus = build_consensus(
             _manifest(),
@@ -517,13 +478,15 @@ class Phase5ConsensusTests(unittest.TestCase):
         )
 
         group = consensus["groups"][0]
+        # A dispute neither downgrades past the blocker boundary nor subtracts a
+        # vote; the group is FYI because only one identity supports it.
         self.assertEqual(group["final_severity"], "blocker")
-        self.assertEqual(group["decision"], "surface")
-        self.assertFalse(group["block_merge"])
-        self.assertTrue(group["human_ack_recommended"])
+        self.assertEqual(group["support_count"], 1)
+        self.assertEqual(group["decision"], "fyi")
+        self.assertEqual(len(group["critique_disputes"]), 1)
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_downgraded_quorum_blocker_recomputes_nonblocking_surface(self) -> None:
+    def test_two_supported_blocker_surfaces_with_dissent_retained(self) -> None:
         source_id = "1" * 64
         consensus = build_consensus(
             _manifest(),
@@ -543,7 +506,8 @@ class Phase5ConsensusTests(unittest.TestCase):
         group = consensus["groups"][0]
         self.assertEqual(group["final_severity"], "blocker")
         self.assertEqual(group["decision"], "surface")
-        self.assertTrue(group["block_merge"])
+        self.assertEqual(group["support_count"], 2)
+        self.assertEqual([item["critic"] for item in group["critique_disputes"]], ["opencode"])
         validate_instance(consensus, "consensus.schema.json")
 
     def test_multiple_disputers_only_downgrade_major_once(self) -> None:
@@ -567,7 +531,7 @@ class Phase5ConsensusTests(unittest.TestCase):
         self.assertEqual(consensus["groups"][0]["final_severity"], "minor")
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_multiple_disputers_cannot_unblock_quorum_blocker(self) -> None:
+    def test_multiple_disputers_cannot_cross_the_blocker_boundary(self) -> None:
         source_id = "1" * 64
         consensus = build_consensus(
             _manifest(),
@@ -590,8 +554,8 @@ class Phase5ConsensusTests(unittest.TestCase):
 
         group = consensus["groups"][0]
         self.assertEqual(group["final_severity"], "blocker")
-        self.assertTrue(group["block_merge"])
-        self.assertTrue(consensus["summary"]["block_merge"])
+        self.assertEqual(group["decision"], "surface")
+        self.assertEqual(len(group["critique_disputes"]), 2)
         validate_instance(consensus, "consensus.schema.json")
 
 

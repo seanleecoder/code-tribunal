@@ -31,28 +31,28 @@ AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 
 
 class PostGateEndToEndTests(unittest.TestCase):
-    def test_blocking_consensus_posts_inline_and_blocks_gate(self) -> None:
+    def test_supported_blocker_posts_inline_without_blocking(self) -> None:
         client, consensus, post_result, gate_result, exit_code = self._run_e2e(
             self._blocking_batches()
         )
 
         self.assertEqual(consensus["summary"]["surface_count"], 1)
-        self.assertIs(consensus["summary"]["block_merge"], True)
+        self.assertEqual(consensus["groups"][0]["final_severity"], "blocker")
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 1)
         self.assertEqual(post_result["summary_comment"]["action"], "none")
         self.assertEqual(client.discussion_count(), 1)
         self.assertEqual(len(client.summary_notes()), 0)
-        self.assertEqual(exit_code, 7)
-        self.assertEqual(gate_result["status"], "failed_blocking_findings")
-        self.assertIs(gate_result["block_merge"], True)
+        # A blocker is an impact label. Publication succeeded, so the job passes.
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(gate_result["status"], "passed")
+        self.assertIs(gate_result["block_merge"], False)
 
     def test_fyi_only_consensus_posts_summary_and_passes_gate(self) -> None:
         client, consensus, post_result, gate_result, exit_code = self._run_e2e(self._fyi_batches())
 
         self.assertEqual(consensus["summary"]["surface_count"], 0)
         self.assertEqual(consensus["summary"]["fyi_count"], 1)
-        self.assertIs(consensus["summary"]["block_merge"], False)
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 0)
         self.assertEqual(client.discussion_count(), 0)
@@ -62,7 +62,7 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(gate_result["status"], "passed")
         self.assertIs(gate_result["block_merge"], False)
 
-    def test_github_reviews_posts_inline_and_blocks_gate(self) -> None:
+    def test_github_reviews_posts_inline_and_passes_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
@@ -81,8 +81,8 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(post_result["created_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
         self.assertEqual(client.state_comment_count(), 1)
-        self.assertEqual(exit_code, 7)
-        self.assertEqual(gate_result["status"], "failed_blocking_findings")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(gate_result["status"], "passed")
 
     def test_github_fyi_summary_updates_on_rerun_and_passes_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -195,8 +195,8 @@ class PostGateEndToEndTests(unittest.TestCase):
         self.assertEqual(client.discussion_count(), 1)
         self.assertEqual(len(client.summary_notes()), 0)
         self.assertEqual(len(client.state_notes()), 1)
-        self.assertEqual(exit_code, 7)
-        self.assertEqual(second_gate["status"], "failed_blocking_findings")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(second_gate["status"], "passed")
 
     def _run_e2e(
         self, batches: list[dict[str, Any]]
@@ -492,8 +492,8 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
         for result in (p_create, p_unchanged, p_body):
             validate_instance(result, "post_result.schema.json")
-        self.assertIs(c_create["summary"]["block_merge"], True)
-        self.assertIs(c_body["summary"]["block_merge"], True)
+        self.assertEqual(c_create["summary"]["surface_count"], 1)
+        self.assertEqual(c_body["summary"]["surface_count"], 1)
         # create
         self.assertEqual(p_create["created_discussions"], 1)
         # unchanged rerun: idempotent, no new discussion

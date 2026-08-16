@@ -7,7 +7,111 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: findings are informational and surface on independent support.**
+  A grouped finding surfaces when at least two unique reviewer identities support
+  it across direct review and critique. Severity, including `blocker`, is an
+  impact label and changes no decision in either direction.
+
+  The reducer used to decide the same policy in four places: a pre-critique
+  quorum function, a post-critique recompute with an advisory-escalation path,
+  the ambiguous state-match override, and the majority-noise drop. There is now
+  one pure function in `ai_review/consensus_policy.py`, and one call site that
+  assigns `decision`. Its branches are ordered by precedence: an ambiguous
+  cross-run state match stays `fyi` whatever the support, majority independent
+  noise then drops the group, and only after both does the two-support threshold
+  apply.
+
+  Against the shipped v2 defaults most decisions are unchanged — two direct
+  reviewers already surfaced, and one reviewer plus one agreeing critic already
+  surfaced through advisory escalation. Four things do change:
+
+  - **A lone `blocker` in `security` or `correctness` no longer surfaces.** It
+    was surfaced with `human_ack_recommended`; it is now `fyi`. This is the only
+    change that reduces what maintainers see, and it is deliberate.
+  - **A thin panel can now surface.** A panel below the old blocking minimum was
+    forced to `fyi`; one successful review seat plus one independent agreeing
+    critic now reaches two supporters and surfaces.
+  - **Mixed verdicts from one critic collapse semantically.** Where grouping
+    combines findings a critic critiqued separately, the surviving verdict used
+    to be chosen by an incidental sort key under which `agree` beat `noise`. The
+    strongest objection now wins, by the precedence
+    `noise > dispute > duplicate > agree`. A critic still contributes at most one
+    verdict, one support vote, and one severity request per group.
+  - **`panel_status` loses `advisory_only`**, which described a panel below the
+    blocking minimum. Status now reports execution health only and never alters
+    the threshold. Absence-based cross-run resolution is unaffected: it has
+    always been decided by `panel.min_successful_reviewers_for_resolution`
+    against the resolution-eligible seats, never by panel status.
+
+  Dissent is unchanged and remains first-class: an effective `dispute` keeps its
+  critic, rationale, and optional adjusted severity, is rendered with the
+  finding, and subtracts no support even when the group surfaces.
+
+- **`render-body.v3` becomes `render-body.v4`.** The thread footer no longer
+  reports direct votes, critique support, blocking, or human acknowledgement; it
+  reports the supporting reviewers, any agreeing critics, the independent support
+  count, and states that the review does not decide whether the change may merge.
+  The version string is a body-hash input, so **expect every pre-existing thread
+  to be updated once** on the first v4 run instead of reported
+  `skipped_unchanged`. That churn is cosmetic: finding identity lives in
+  `issue_id` and the alias chain, and the persisted state schema carries none of
+  the removed fields, so no state migration is required.
+
+- **The gate no longer reads consensus.** `consensus.v2` has no merge-blocking
+  field, so `failed_blocking_findings` is unreachable and `gate_result.v1` keeps
+  the value only until the gate itself is removed. The job still fails closed on
+  post/state operational failure and on a cross-run `post_result` binding
+  mismatch.
+
 ### Removed
+
+- **Breaking: the artifact contract is now `consensus.v2`.** Groups gain
+  `support_count` and `agreeing_critics`, and lose `vote_count`,
+  `critique_support_count`, `critique_noise_count` (available as
+  `critique_summary.noise`), `block_merge`, and `human_ack_recommended`. The
+  summary keeps only `surface_count`, `fyi_count`, and `drop_count`, losing
+  `block_merge` and `panel_convergence` — the latter was computed from direct
+  quorum and has no clear meaning once direct and critique support are
+  deliberately combined, and nothing in the runtime ever read it. Of the removed
+  fields only `summary.block_merge` had a behavioral consumer; the rest were read
+  by the thread footer or by the reducer itself. The removed fields are not
+  reintroduced as optional compatibility fields.
+
+- **Breaking: the configuration contract is now `review_config.v3`**, and every
+  configuration must leave at least **three** reviewer seats enabled.
+  `review_config.v2` is rejected with a message naming this migration.
+
+  ### Migrating a `review_config.v2` document
+
+  | v2 key | v3 | Why |
+  |---|---|---|
+  | `severity_policy` (whole object) | **delete** | Severity no longer affects any decision. `blocker` remains the highest impact label. |
+  | `panel.min_successful_reviewers_for_blocking` | **delete** | There is no blocking verdict to gate. |
+  | `panel.quorum` | **delete** | The support threshold is a product invariant, not an operator setting. Lowering it would make consensus a passthrough of one model's output. |
+  | `critique.allow_advisory_escalation` | **delete** | An agreeing independent critic is simply a second supporter; there is no separate escalation path to enable. |
+  | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
+  | `schema_version: review_config.v2` | `review_config.v3` | |
+
+  The shipped `ai-review/config/review.yaml` already enables exactly three seats
+  (claude, codex, opencode; cursor off by default), so the floor does not change
+  the shipped default. It **does** reject two-seat deployments that were valid
+  under v2.
+
+  `critique.blind_reviewer_identity` and `critique.allow_severity_downgrade` are
+  now type-checked as booleans, like `critique.enabled`. They were read through
+  `bool()`, so the string `"false"` silently enabled them.
+
+  The removals change `effective_config_summary`, and therefore the cross-stage
+  effective-config digest. Every stage recomputes it per run, so no artifact
+  migration is needed.
+
+  `AI_REVIEW_STATE_BACKEND`, `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`, and
+  `…_SEMANTIC_THRESHOLD` stay rejected by name. The v1 note below called them
+  droppable at the next major release; v3 is that release, and the decision taken
+  is to keep them. Silently ignoring a stale GitLab project variable is the exact
+  failure these entries exist to prevent.
 
 - **Breaking: the configuration contract is now `review_config.v2`.** Four keys
   that were never choices are gone. `review_config.v1` is rejected with a message

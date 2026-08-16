@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,9 @@ from ai_review.prompt_render import build_pooled_findings, render_critique_promp
 from ai_review.schema import load_json_file, write_canonical_json
 
 from .test_consensus_state_matching import _batch, _config, _finding, _manifest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import config_tail, panel_filler  # noqa: E402
 
 
 def _full_config() -> dict:
@@ -90,7 +94,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v2",
+                        "schema_version: review_config.v3",
                         "reviewers:",
                         "  claude:",
                         "    enabled: true",
@@ -99,27 +103,8 @@ class CritiquePromptRenderTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         "    credential_variable: CLAUDE_KEY",
-                        "panel:",
-                        "  min_successful_reviewers_for_blocking: 1",
-                        "  min_successful_reviewers_for_resolution: 1",
-                        "  quorum:",
-                        "    votes_required: 1",
-                        "severity_policy:",
-                        "  single_reviewer_blocker:",
-                        "    categories: [correctness]",
-                        "  quorum_blocker:",
-                        "    block_merge: true",
-                        "critique:",
-                        "  enabled: true",
-                        "  blind_reviewer_identity: true",
-                        "  allow_advisory_escalation: false",
-                        "  allow_severity_downgrade: false",
-                        "posting:",
-                        "  mode: gitlab_discussions",
-                        "merge_gate:",
-                        "  enabled: true",
-                        "state:",
-                        "  backend: gitlab_mr_state_note",
+                        *panel_filler(1),
+                        *config_tail(critique_enabled=True),
                     ]
                 ),
                 encoding="utf-8",

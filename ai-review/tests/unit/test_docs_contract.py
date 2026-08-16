@@ -84,7 +84,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v2", "panel": {"enabled": True}}
+        config = {"schema_version": "review_config.v3", "panel": {"enabled": True}}
         config_doc = (
             "| `schema_version` | first |\n"
             "| `schema_version` | duplicate |\n"
@@ -145,7 +145,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_inventory_reports_rows_in_the_wrong_reference_section(self) -> None:
         checker = _load_docs_checker()
-        config = {"schema_version": "review_config.v2"}
+        config = {"schema_version": "review_config.v3"}
         config_doc = (
             "| `AI_REVIEW_ACTIVE` | misplaced environment |\n"
             "## Environment variables\n"

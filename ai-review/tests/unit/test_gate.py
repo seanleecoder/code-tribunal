@@ -13,12 +13,14 @@ class GateTests(unittest.TestCase):
     def _config(self, enabled: bool = True) -> dict[str, object]:
         return {"merge_gate": {"enabled": enabled}}
 
-    def _consensus(self, block_merge: bool) -> dict[str, object]:
-        return {"run_id": "run", "summary": {"block_merge": block_merge}}
+    def _consensus(self) -> dict[str, object]:
+        # Findings no longer reach the gate: consensus.v2 has no merge-blocking
+        # field. Only the run binding is still read.
+        return {"run_id": "run", "summary": {"surface_count": 1, "fyi_count": 0, "drop_count": 0}}
 
     def _valid_consensus_document(self) -> dict[str, object]:
         return {
-            "schema_version": "consensus.v1",
+            "schema_version": "consensus.v2",
             "run_id": "run",
             "project_id": "project",
             "merge_request_iid": "1",
@@ -29,13 +31,7 @@ class GateTests(unittest.TestCase):
             "failed_reviewers": [],
             "panel_status": "full",
             "groups": [],
-            "summary": {
-                "surface_count": 0,
-                "fyi_count": 0,
-                "drop_count": 0,
-                "block_merge": False,
-                "panel_convergence": 0.0,
-            },
+            "summary": {"surface_count": 0, "fyi_count": 0, "drop_count": 0},
         }
 
     def _valid_post_result_document(self) -> dict[str, object]:
@@ -83,20 +79,23 @@ class GateTests(unittest.TestCase):
                     ]
                 )
 
-    def test_gate_fails_for_blocking_consensus(self) -> None:
+    def test_gate_passes_a_successful_publication(self) -> None:
+        # Surfaced findings are informational: they cannot fail the gate.
         result, exit_code = evaluate_gate(
             self._config(),
-            self._consensus(True),
+            self._consensus(),
             {"status": "success", "run_id": "run"},
         )
-        self.assertEqual(exit_code, 7)
-        self.assertEqual(result["status"], "failed_blocking_findings")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["block_merge"])
+        self.assertEqual(result["reason"], "review_published")
         validate_instance(result, "gate_result.schema.json")
 
     def test_gate_passes_stale_head(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(),
-            self._consensus(True),
+            self._consensus(),
             {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
@@ -108,7 +107,7 @@ class GateTests(unittest.TestCase):
         # not let the gate ignore the current run's blocking consensus.
         result, exit_code = evaluate_gate(
             self._config(),
-            self._consensus(True),
+            self._consensus(),
             {"status": "stale_head", "run_id": "some-other-run"},
         )
         self.assertEqual(exit_code, 7)
@@ -122,7 +121,7 @@ class GateTests(unittest.TestCase):
         # matching the operational-failure precedence.
         result, exit_code = evaluate_gate(
             self._config(False),
-            self._consensus(False),
+            self._consensus(),
             {"status": "success", "run_id": "mismatched"},
         )
         self.assertEqual(exit_code, 7)
@@ -138,7 +137,7 @@ class GateTests(unittest.TestCase):
             with self.subTest(post_result=post_result):
                 result, exit_code = evaluate_gate(
                     self._config(),
-                    self._consensus(True),
+                    self._consensus(),
                     post_result,
                 )
                 self.assertEqual(exit_code, 7)
@@ -152,7 +151,7 @@ class GateTests(unittest.TestCase):
         # legitimately bound artifact).
         result, exit_code = evaluate_gate(
             self._config(),
-            self._consensus(False),
+            self._consensus(),
             {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
@@ -161,7 +160,7 @@ class GateTests(unittest.TestCase):
     def test_gate_passes_when_disabled(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(False),
-            self._consensus(True),
+            self._consensus(),
             {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
@@ -172,7 +171,7 @@ class GateTests(unittest.TestCase):
             with self.subTest(status=status):
                 result, exit_code = evaluate_gate(
                     self._config(),
-                    self._consensus(False),
+                    self._consensus(),
                     {"status": status, "run_id": "run"},
                 )
                 self.assertEqual(exit_code, 7)
@@ -184,27 +183,27 @@ class GateTests(unittest.TestCase):
             with self.subTest(status=status):
                 result, exit_code = evaluate_gate(
                     self._config(False),
-                    self._consensus(False),
+                    self._consensus(),
                     {"status": status, "run_id": "run"},
                 )
                 self.assertEqual(exit_code, 7)
                 self.assertEqual(result["status"], "failed_post_result")
                 self.assertTrue(result["block_merge"])
 
-    def test_advisory_mode_ignores_only_blocking_findings(self) -> None:
+    def test_disabled_gate_reports_skipped(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(False),
-            self._consensus(True),
+            self._consensus(),
             {"status": "success", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(result["status"], "skipped_disabled")
         self.assertFalse(result["block_merge"])
 
-    def test_stale_head_precedes_finding_gate_when_enabled(self) -> None:
+    def test_stale_head_is_a_successful_noop_when_enabled(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(True),
-            self._consensus(True),
+            self._consensus(),
             {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)
@@ -213,7 +212,7 @@ class GateTests(unittest.TestCase):
     def test_stale_head_precedes_advisory_mode(self) -> None:
         result, exit_code = evaluate_gate(
             self._config(False),
-            self._consensus(True),
+            self._consensus(),
             {"status": "stale_head", "run_id": "run"},
         )
         self.assertEqual(exit_code, 0)

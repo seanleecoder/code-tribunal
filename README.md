@@ -5,9 +5,10 @@
 
 Code Tribunal is a multi-model code-review pipeline for GitLab merge requests
 and GitHub pull requests. Independent reviewers propose structured findings;
-deterministic code groups them, applies quorum and severity policy, maintains
-finding identity across revisions, posts review threads, and evaluates a merge
-gate.
+deterministic code groups them, surfaces the ones two reviewers support
+independently, maintains finding identity across revisions, and posts review
+threads. Findings are informational: severity is an impact label, and the
+pipeline reports whether review publication succeeded.
 
 > **LLMs propose. Deterministic code decides.**
 
@@ -22,20 +23,24 @@ internal container implementation, not a supported Python package or API.
 - GitHub pull-request workflows for same-repository branches. External-fork
   reviews are skipped because provider secrets are deliberately withheld.
 - Claude, Codex, OpenCode, and Cursor reviewers through the shipped adapters.
-  All four are peer seats; `AI_REVIEW_REVIEWERS` selects which two to four of
-  them form the panel, and the rest sit out.
+  All four are peer seats; `AI_REVIEW_REVIEWERS` selects which three or four of
+  them form the panel, and the rest sit out. Fewer than three enabled seats is
+  rejected.
 - Deterministic consensus, persistent finding state, inline and summary
-  posting, human disposition commands, and advisory or enforcing gates.
+  posting, and human disposition commands.
 
 ## Important limitations
 
 - Repositories containing symlinks are rejected during snapshot preparation.
 - Container/runner network egress is not enforced. Adapter endpoint validation
   reduces exposure but does not constrain a compromised reviewer CLI.
-- Model output is untrusted and may be wrong. Quorum reduces single-model error;
-  it does not make findings authoritative.
-- A GitHub gate blocks merging only when the gate job is configured as a
-  required check. GitLab requires **Pipelines must succeed**.
+- Model output is untrusted and may be wrong. Requiring two independent
+  supporters reduces single-model error; it does not make findings
+  authoritative. A posted thread means the concern is worth attention, not that
+  a change is required.
+- Code Tribunal does not decide whether a change may merge. A repository may
+  independently require conversation resolution or successful CI; that is
+  repository policy, not review policy.
 - Cursor is a peer reviewer seat that is off in the shipped default roster
   because it has a separate credential and its own egress path. Supplemental real
   runs and the SPEC-21 acceptance evidence close its enablement: the seat is a
@@ -84,7 +89,9 @@ make consensus-local LOCAL_OUT=/tmp/code-tribunal-demo
 
 The command builds a contained input bundle from fixtures, runs a mock reviewer,
 computes consensus, and validates the result against the shipped schema. Output
-is written below the selected `LOCAL_OUT` directory.
+is written below the selected `LOCAL_OUT` directory. It runs a single reviewer
+seat, so its findings have nothing to corroborate them and land as `fyi`; that is
+the policy working, not a failure.
 
 For contributor setup and all quality checks, see
 [development setup](docs/development/setup.md).
@@ -111,12 +118,11 @@ One logical DAG performs six operations:
    revision metadata into an input bundle.
 2. `review` runs enabled reviewers independently and validates their findings.
 3. `critique` optionally asks reviewers to assess anonymized peer findings.
-4. `consensus` validates cross-stage integrity, groups findings, applies quorum,
-   and decides which findings may block.
+4. `consensus` validates cross-stage integrity, groups findings, and surfaces
+   each group two reviewer identities support independently.
 5. `post` reconciles prior state and upserts GitLab discussions or GitHub review
    comments.
-6. `gate` fails on operational posting/state loss and, when enabled, unresolved
-   blocking findings.
+6. `gate` fails on operational posting/state loss.
 
 See [architecture](docs/development/architecture.md),
 [consensus](docs/reference/consensus.md), and

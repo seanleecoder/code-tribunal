@@ -15,6 +15,11 @@ def evaluate_gate(
 ) -> tuple[GateResult, int]:
     """Evaluate merge-gate status with fail-closed operational precedence.
 
+    Findings no longer participate. ``consensus.v2`` carries no merge-blocking
+    field: review output is informational and Code Tribunal does not decide
+    whether a change may merge. What is left here is publication health, and
+    SPEC-55 deletes the gate outright — this is the interim shape, not a design.
+
     Precedence:
     0. One-run binding (defense-in-depth): the ``post_result`` must carry the same
        ``run_id`` as the ``consensus``; a missing, empty, or mismatched value fails
@@ -28,9 +33,8 @@ def evaluate_gate(
        ``state_overflow``) always fail closed with exit ``7``, even when
        ``merge_gate.enabled`` is false.
     2. ``stale_head`` is a successful noop (exit ``0``).
-    3. When finding-based merge gating is disabled, ignore only
-       ``summary.block_merge`` and return ``skipped_disabled`` (exit ``0``).
-    4. Otherwise enforce consensus ``block_merge``.
+    3. ``merge_gate.enabled: false`` reports ``skipped_disabled`` (exit ``0``).
+    4. Otherwise publication succeeded (exit ``0``).
     """
     post_run_id = post_result.get("run_id")
     if not post_run_id or post_run_id != consensus["run_id"]:
@@ -73,22 +77,12 @@ def evaluate_gate(
         }
         return disabled_result, 0
 
-    if consensus["summary"]["block_merge"] is True:
-        blocking_result: GateResult = {
-            "schema_version": "gate_result.v1",
-            "run_id": consensus["run_id"],
-            "status": "failed_blocking_findings",
-            "block_merge": True,
-            "reason": "blocking_consensus",
-        }
-        return blocking_result, 7
-
     passed_result: GateResult = {
         "schema_version": "gate_result.v1",
         "run_id": consensus["run_id"],
         "status": "passed",
         "block_merge": False,
-        "reason": "no_blocking_consensus",
+        "reason": "review_published",
     }
     return passed_result, 0
 

@@ -42,6 +42,10 @@ _GOLDEN_CONSENSUS = (
 )
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import CONFIG_TAIL, panel_filler  # noqa: E402
+
+
 class SchemaValidationTests(unittest.TestCase):
     def test_renderer_exempt_enums_are_closed_in_consensus_schema(self) -> None:
         consensus_schema = load_json_file(
@@ -57,6 +61,41 @@ class SchemaValidationTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertIsInstance(consensus_group[field].get("enum"), list)
         self.assertEqual(consensus_group["category"]["enum"], finding_group["category"]["enum"])
+
+    def test_consensus_v1_and_removed_fields_are_rejected(self) -> None:
+        """v2 is a version, not a suggestion: v1 documents and v1-only fields fail."""
+        fixture = load_json_file(_GOLDEN_CONSENSUS)
+
+        stale_version = copy.deepcopy(fixture)
+        stale_version["schema_version"] = "consensus.v1"
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(stale_version, "consensus.schema.json")
+
+        removed = [
+            ("group block_merge", "groups", {"block_merge": False}),
+            ("group human_ack_recommended", "groups", {"human_ack_recommended": False}),
+            ("group vote_count", "groups", {"vote_count": 2}),
+            ("group critique_support_count", "groups", {"critique_support_count": 0}),
+            ("group critique_noise_count", "groups", {"critique_noise_count": 0}),
+            ("summary block_merge", "summary", {"block_merge": False}),
+            ("summary panel_convergence", "summary", {"panel_convergence": 1.0}),
+        ]
+        for label, section, replacement in removed:
+            with self.subTest(label=label):
+                consensus = copy.deepcopy(fixture)
+                if section == "groups":
+                    consensus["groups"][0].update(replacement)
+                else:
+                    consensus["summary"].update(replacement)
+                with self.assertRaises(SchemaValidationError):
+                    validate_instance(consensus, "consensus.schema.json")
+
+    def test_advisory_only_panel_status_is_rejected(self) -> None:
+        fixture = load_json_file(_GOLDEN_CONSENSUS)
+        fixture["panel_status"] = "advisory_only"
+
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(fixture, "consensus.schema.json")
 
     def test_consensus_group_category_outside_enum_is_rejected(self) -> None:
         fixture = load_json_file(_GOLDEN_CONSENSUS)
@@ -422,7 +461,7 @@ class SchemaValidationTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v2",
+                        "schema_version: review_config.v3",
                         "reviewers:",
                         "  bad:",
                         "    enabled: true",
@@ -431,30 +470,8 @@ class SchemaValidationTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         "    credential_variable: BAD_KEY",
-                        "panel:",
-                        "  min_successful_reviewers_for_blocking: 1",
-                        "  min_successful_reviewers_for_resolution: 1",
-                        "  quorum:",
-                        "    votes_required: 1",
-                        "severity_policy:",
-                        "  single_reviewer_blocker:",
-                        "    categories: [correctness]",
-                        "  quorum_blocker:",
-                        "    block_merge: true",
-                        "critique:",
-                        "  enabled: false",
-                        "  blind_reviewer_identity: true",
-                        "  allow_advisory_escalation: false",
-                        "posting:",
-                        "  mode: gitlab_discussions",
-                        "merge_gate:",
-                        "  enabled: true",
-                        "state:",
-                        "  backend: gitlab_mr_state_note",
-                        "limits:",
-                        "  max_prompt_bytes: 500000",
-                        "security:",
-                        "  allow_external_fork_secrets: false",
+                        *panel_filler(1),
+                        *CONFIG_TAIL,
                     ]
                 ),
                 encoding="utf-8",

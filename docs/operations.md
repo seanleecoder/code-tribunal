@@ -15,8 +15,9 @@ state migration.
    `state.overflow_behavior: fail_closed` with the explicit
    `state.fail_closed_on_load_error` choice. For enforcing installs prefer
    `state.fail_closed_on_load_error: true`.
-4. Configure one protected `GITLAB_TOKEN`. Verify panel blocking, resolution,
-   and quorum thresholds against the enabled reviewer count. Do not set
+4. Configure one protected `GITLAB_TOKEN`. Verify the resolution threshold
+   against the enabled reviewer count, and that at least three seats are
+   enabled. Do not set
    `AI_REVIEW_LOCAL_MOCK` or `AI_REVIEW_ALLOW_LOCAL_MOCK` on the consumer
    project.
 5. Update the complete canonical workflow or the protected GitLab template SHA;

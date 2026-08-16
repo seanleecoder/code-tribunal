@@ -9,7 +9,7 @@ effective configuration.
 ## YAML keys
 
 Defaults below are the shipped defaults. A custom configuration
-must retain `schema_version: review_config.v2`.
+must retain `schema_version: review_config.v3`.
 
 ### Reviewers
 
@@ -19,7 +19,7 @@ All four are peer seats with the same contract; see
 
 | Key | Type/default | Meaning |
 |---|---|---|
-| `schema_version` | string, `review_config.v2` | Configuration contract version; no other value is accepted. |
+| `schema_version` | string, `review_config.v3` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
 | `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
@@ -88,12 +88,19 @@ Confirm the image pins before relying on the roster — mandatory on GitLab, whe
 nothing will tell you. The per-seat `AI_REVIEW_<REVIEWER>_ENABLED` flags work on
 every supported runtime.
 
-The blocking, resolution, and quorum thresholds are authored against the
-configured reviewer count and take effect clamped to the enabled count, so
-changing the roster never requires editing them in lock-step. With the shipped
-values (`2`/`2`/`2`) the clamp is a no-op at every supported panel size. A
-threshold exceeding the *configured* count is still rejected as an authoring
-error.
+Every configuration must leave at least **three** reviewer seats enabled, on
+every path: the shipped YAML, `AI_REVIEW_REVIEWERS`, and the per-seat
+`AI_REVIEW_<REVIEWER>_ENABLED` flags after all overrides are applied. A finding
+surfaces only when two reviewer identities support it independently, so a
+one-seat panel could never surface anything and a two-seat panel could not after
+losing a seat. Two-seat deployments were valid before `review_config.v3` and are
+now rejected.
+
+The resolution threshold is authored against the configured reviewer count and
+takes effect clamped to the enabled count, so changing the roster never requires
+editing it in lock-step. With the shipped value (`2`) the clamp is a no-op at
+every supported panel size. A threshold exceeding the *configured* count is
+still rejected as an authoring error.
 
 The runner keeps a five-second reserve for process handling, so the shipped
 values give each reviewer an effective adapter limit of about 1795 seconds for
@@ -158,15 +165,16 @@ destination, not because it ranks below the other seats. If the consumer is stil
 setting the enablement variable cannot create jobs that are absent from that
 template.
 
-### Panel and severity
+### Panel
 
 | Key | Type/default | Meaning |
 |---|---|---|
-| `panel.min_successful_reviewers_for_blocking` | integer, `2` | Operational seats required before findings may block. Bounded by the configured reviewer count; clamped to the enabled count. |
-| `panel.min_successful_reviewers_for_resolution` | integer, `2` | Trustworthy empty-or-valid seats required for absence-based resolution. Same bound and clamp. |
-| `panel.quorum.votes_required` | integer, `2` | Agreeing reviewer votes required for quorum; minimum is two, since a one-seat panel is rejected. Same bound and clamp. |
-| `severity_policy.single_reviewer_blocker.categories` | list, `[security, correctness]` | Categories eligible for the single-reviewer blocker policy. |
-| `severity_policy.quorum_blocker.block_merge` | boolean, `true` | Permit quorum-backed blocker groups to set `block_merge`. |
+| `panel.min_successful_reviewers_for_resolution` | integer, `2` | Trustworthy empty-or-valid seats required for absence-based resolution. Bounded by the configured reviewer count; clamped to the enabled count. |
+
+Surfacing is not configurable. A grouped finding surfaces when at least two
+unique reviewer identities support it independently across direct review and
+critique; severity, including `blocker`, is an impact label that changes no
+decision. There is no `severity_policy` object and no quorum setting.
 
 Grouping carries no text-similarity setting. An opt-in Jaccard comparison over
 titles and bodies shipped disabled and outside the 1.0 compatibility guarantee;
@@ -181,7 +189,6 @@ not when they happen to choose similar phrasing.
 |---|---|---|
 | `critique.enabled` | boolean, `true` | Run blind peer assessment. |
 | `critique.blind_reviewer_identity` | boolean, `true` | Replace reviewer identities with stable anonymous labels. |
-| `critique.allow_advisory_escalation` | boolean, `true` | Surface peer-supported advisory evidence without making it blocking. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
 
 `critique.max_rounds` is not an active compatibility alias and is rejected.
@@ -196,7 +203,7 @@ not when they happen to choose similar phrasing.
 | `posting.fallback_to_summary_comment` | boolean, `true` | Put unanchorable findings in a summary. |
 | `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
-| `merge_gate.enabled` | boolean, `true` | Enforce finding-based blocking. Operational post/state failures still fail. |
+| `merge_gate.enabled` | boolean, `true` | Report the publication job's status. Findings never block; operational post/state failures still fail. |
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
 | `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
@@ -241,7 +248,7 @@ artifacts.
 | `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
 | `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
-| `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; disables finding blocking only. |
+| `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; reports the publication job as skipped when `false`. Operational post/state failures still fail. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |

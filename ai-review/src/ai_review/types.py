@@ -23,7 +23,7 @@ type ReviewerId = str
 type RunId = str
 type ProjectId = str
 type MergeRequestIid = str
-type PanelStatus = Literal["full", "degraded", "advisory_only", "failed"]
+type PanelStatus = Literal["full", "degraded", "failed"]
 type IssueIdSource = Literal["matched_state", "new_signature", "ambiguous_unassigned"]
 type StateMatchStatus = Literal["matched", "new", "ambiguous"]
 type MatchPrecedence = Literal[
@@ -235,15 +235,12 @@ class FindingGroup(TypedDict):
     issue_id_source: IssueIdSource
     decision: Decision
     final_severity: Severity
-    block_merge: bool
-    human_ack_recommended: bool
     category: Category
     title: str
     body: str
     body_hash: str
-    vote_count: int
-    critique_support_count: int
-    critique_noise_count: int
+    support_count: int
+    agreeing_critics: list[ReviewerId]
     contributing_reviewers: list[ReviewerId]
     source_finding_ids: list[str]
     candidate_issue_signature_hashes: list[str]
@@ -261,12 +258,10 @@ class ConsensusSummary(TypedDict):
     surface_count: int
     fyi_count: int
     drop_count: int
-    block_merge: bool
-    panel_convergence: float
 
 
 class Consensus(TypedDict):
-    schema_version: Literal["consensus.v1"]
+    schema_version: Literal["consensus.v2"]
     run_id: RunId
     project_id: ProjectId
     merge_request_iid: MergeRequestIid

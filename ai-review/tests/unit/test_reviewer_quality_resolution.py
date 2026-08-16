@@ -150,7 +150,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
 
     def test_resolution_quorum_ignores_legacy_successful_reviewers_field(self) -> None:
         legacy: Consensus = {
-            "schema_version": "consensus.v1",
+            "schema_version": "consensus.v2",
             "run_id": "run",
             "project_id": "1",
             "merge_request_iid": "2",
@@ -161,13 +161,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             "failed_reviewers": [],
             "panel_status": "full",
             "groups": [],
-            "summary": {
-                "surface_count": 0,
-                "fyi_count": 0,
-                "drop_count": 0,
-                "block_merge": False,
-                "panel_convergence": 0.0,
-            },
+            "summary": {"surface_count": 0, "fyi_count": 0, "drop_count": 0},
         }
         # Explicit empty eligibility must not resolve via successful_reviewers.
         self.assertFalse(

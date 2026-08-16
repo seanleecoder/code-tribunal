@@ -18,7 +18,7 @@
     "summary"
   ],
   "properties": {
-    "schema_version": { "const": "consensus.v1" },
+    "schema_version": { "const": "consensus.v2" },
     "run_id": { "type": "string", "minLength": 1 },
     "project_id": { "type": "string" },
     "merge_request_iid": { "type": "string" },
@@ -41,7 +41,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "panel_status": { "enum": ["full", "degraded", "advisory_only", "failed"] },
+    "panel_status": { "enum": ["full", "degraded", "failed"] },
     "groups": {
       "type": "array",
       "items": { "$ref": "#/$defs/group" }
@@ -52,16 +52,12 @@
       "required": [
         "surface_count",
         "fyi_count",
-        "drop_count",
-        "block_merge",
-        "panel_convergence"
+        "drop_count"
       ],
       "properties": {
         "surface_count": { "type": "integer", "minimum": 0 },
         "fyi_count": { "type": "integer", "minimum": 0 },
-        "drop_count": { "type": "integer", "minimum": 0 },
-        "block_merge": { "type": "boolean" },
-        "panel_convergence": { "type": "number", "minimum": 0, "maximum": 1 }
+        "drop_count": { "type": "integer", "minimum": 0 }
       }
     }
   },
@@ -84,8 +80,7 @@
           "then": {
             "properties": {
               "issue_id": { "type": "null" },
-              "decision": { "const": "fyi" },
-              "block_merge": { "const": false }
+              "decision": { "const": "fyi" }
             }
           },
           "else": {
@@ -100,15 +95,12 @@
         "issue_id_source",
         "decision",
         "final_severity",
-        "block_merge",
-        "human_ack_recommended",
         "category",
         "title",
         "body",
         "body_hash",
-        "vote_count",
-        "critique_support_count",
-        "critique_noise_count",
+        "support_count",
+        "agreeing_critics",
         "contributing_reviewers",
         "source_finding_ids",
         "candidate_issue_signature_hashes",
@@ -128,8 +120,6 @@
         },
         "decision": { "enum": ["surface", "fyi", "drop"] },
         "final_severity": { "enum": ["info", "minor", "major", "blocker"] },
-        "block_merge": { "type": "boolean" },
-        "human_ack_recommended": { "type": "boolean" },
         "category": {
           "enum": [
             "security",
@@ -177,9 +167,16 @@
           }
         },
         "body_hash": { "$ref": "#/$defs/sha256" },
-        "vote_count": { "type": "integer", "minimum": 0 },
-        "critique_support_count": { "type": "integer", "minimum": 0 },
-        "critique_noise_count": { "type": "integer", "minimum": 0 },
+        "support_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unique reviewer identities supporting this group across direct review and critique; two or more surfaces it."
+        },
+        "agreeing_critics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Sorted unique critics whose effective verdict is agree and who did not contribute a direct finding to this group."
+        },
         "contributing_reviewers": {
           "type": "array",
           "items": { "type": "string" }

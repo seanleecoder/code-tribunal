@@ -10,19 +10,9 @@ def _config() -> dict:
             "claude": {"enabled": True},
             "codex": {"enabled": True},
         },
-        "panel": {
-            "min_successful_reviewers_for_blocking": 2,
-            "quorum": {"mode": "absolute", "votes_required": 2},
-        },
-        "severity_policy": {
-            "single_reviewer_blocker": {
-                "categories": ["security", "correctness"],
-                "post": True,
-                "block_merge": False,
-                "human_ack_recommended": True,
-            },
-            "quorum_blocker": {"post": True, "block_merge": True},
-        },
+        # The reducer reads nothing else from config on this path. Surfacing is
+        # decided by independent support, which is not configurable.
+        "panel": {"min_successful_reviewers_for_resolution": 2},
     }
 
 

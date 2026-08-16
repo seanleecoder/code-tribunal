@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -20,6 +21,9 @@ from ai_review.schema import empty_critique_batch, empty_finding_batch, write_ca
 from .test_consensus_cli import _manifest_for_config
 from .test_consensus_state_matching import _batch, _finding
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import config_tail, panel_filler  # noqa: E402
+
 
 class ConsensusIntegrityTests(unittest.TestCase):
     def _mini_config(self, root: Path, *, critique_enabled: bool = False) -> Path:
@@ -27,7 +31,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
         path.write_text(
             "\n".join(
                 [
-                    "schema_version: review_config.v2",
+                    "schema_version: review_config.v3",
                     "reviewers:",
                     "  claude:",
                     "    enabled: true",
@@ -43,27 +47,8 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "    timeout_seconds: 30",
                     "    max_findings: 50",
                     "    credential_variable: CODEX_KEY",
-                    "panel:",
-                    "  min_successful_reviewers_for_blocking: 1",
-                    "  min_successful_reviewers_for_resolution: 1",
-                    "  quorum:",
-                    "    votes_required: 1",
-                    "severity_policy:",
-                    "  single_reviewer_blocker:",
-                    "    categories: [correctness]",
-                    "  quorum_blocker:",
-                    "    block_merge: true",
-                    "critique:",
-                    f"  enabled: {'true' if critique_enabled else 'false'}",
-                    "  blind_reviewer_identity: true",
-                    "  allow_advisory_escalation: false",
-                    "  allow_severity_downgrade: false",
-                    "posting:",
-                    "  mode: gitlab_discussions",
-                    "merge_gate:",
-                    "  enabled: true",
-                    "state:",
-                    "  backend: gitlab_mr_state_note",
+                    *panel_filler(1),
+                    *config_tail(critique_enabled=critique_enabled),
                 ]
             ),
             encoding="utf-8",

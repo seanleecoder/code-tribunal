@@ -9,7 +9,13 @@ from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-RENDER_BODY_VERSION = "render-body.v3"
+# v4 drops the merge-blocking and human-acknowledgement footer lines and reports
+# independent support instead. The version string is a body-hash input, so a
+# deliberate format change stays distinguishable from drift — at the cost of one
+# run in which every pre-existing thread is updated rather than skipped as
+# unchanged. Thread identity lives in issue_id and the alias chain, so that churn
+# is cosmetic.
+RENDER_BODY_VERSION = "render-body.v4"
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
@@ -636,19 +642,26 @@ def render_body(
         if suggestion_fragment is not None:
             variable_fragments.append(suggestion_fragment)
 
+    # Every value below is read without a default. A defaulted read of a field
+    # the reducer no longer writes renders a plausible wrong number instead of
+    # failing, which is the one way this change ships silently broken.
     reviewer_span = literal_span(", ".join(reviewers), required=True)
-    consensus_footer = "\n".join(
+    agreeing_critics = sorted(str(critic) for critic in group["agreeing_critics"])
+    footer_lines = [
+        "Consensus:",
+        f"- Reviewers: {reviewer_span}",
+    ]
+    if agreeing_critics:
+        footer_lines.append(f"- Agreeing critics: {literal_span(', '.join(agreeing_critics))}")
+    footer_lines.extend(
         [
-            "Consensus:",
-            f"- Reviewers: {reviewer_span}",
-            f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-            f"- Critique support: {group.get('critique_support_count', 0)}",
+            f"- Independent support: {group['support_count']}",
+            f"- Successful review seats: {successful_reviewer_count}",
             f"- Decision: {group['decision']}",
-            f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-            "- Human acknowledgment: "
-            + ("recommended" if group.get("human_ack_recommended") else "not required"),
+            "- This review is informational; it does not decide whether the change may merge.",
         ]
     )
+    consensus_footer = "\n".join(footer_lines)
     placeholder_marker = _inline_marker(
         group["issue_id"],
         run_id,

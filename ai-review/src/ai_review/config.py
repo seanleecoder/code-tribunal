@@ -11,15 +11,27 @@ class ConfigError(ValueError):
     pass
 
 
-# The configuration contract this runtime accepts. v2 is v1 minus four keys that
-# were never choices; see the migration table in CHANGELOG.md.
-CONFIG_SCHEMA_VERSION = "review_config.v2"
+# The configuration contract this runtime accepts. v3 is v2 minus the keys that
+# only existed to tune merge behavior, which the product no longer has; see the
+# migration table in CHANGELOG.md.
+CONFIG_SCHEMA_VERSION = "review_config.v3"
+
+# Every key removed between v2 and v3, in the order the migration message names
+# them. SPEC-54 opens the list; each later spec in the v3 series appends its own
+# entries here, and a test asserts the rejection message names every one — so an
+# appended removal without an appended message line fails rather than leaving an
+# operator to discover the deletion one unknown-key error at a time.
+V3_REMOVED_CONFIG_KEYS = (
+    "severity_policy",
+    "panel.min_successful_reviewers_for_blocking",
+    "panel.quorum",
+    "critique.allow_advisory_escalation",
+)
 
 TOP_LEVEL_KEYS = {
     "schema_version",
     "reviewers",
     "panel",
-    "severity_policy",
     "critique",
     "posting",
     "merge_gate",
@@ -43,19 +55,13 @@ REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_se
 # reinterpreted `timeout_seconds` as the critique budget and then capped it here,
 # which made one field silently mean two different things.
 DEFAULT_CRITIQUE_TIMEOUT_SECONDS = 900
-PANEL_KEYS = {
-    "min_successful_reviewers_for_blocking",
-    "min_successful_reviewers_for_resolution",
-    "quorum",
-}
-PANEL_QUORUM_KEYS = {"votes_required"}
-SEVERITY_POLICY_KEYS = {"single_reviewer_blocker", "quorum_blocker"}
-SINGLE_REVIEWER_BLOCKER_KEYS = {"categories"}
-QUORUM_BLOCKER_KEYS = {"block_merge"}
+# Absence-based cross-run thread resolution is the only thing panel size still
+# governs. Surfacing is decided by independent support, which is a product
+# invariant rather than an operator setting.
+PANEL_KEYS = {"min_successful_reviewers_for_resolution"}
 CRITIQUE_KEYS = {
     "enabled",
     "blind_reviewer_identity",
-    "allow_advisory_escalation",
     "allow_severity_downgrade",
 }
 POSTING_KEYS = {
@@ -110,9 +116,13 @@ STATE_BACKEND_BY_POSTING_MODE = {
 # keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
 # AI_REVIEW_CURSOR_EFFORT rejected in validate_config.
 #
-# Removable in the next major release; this is a migration aid, not a permanent
-# contract. Naming a minor version would have been incoherent — the change that
-# retired these is itself breaking, so the next release cannot be a minor one.
+# review_config.v3 is the "next major release" the previous note deferred this
+# to, and the decision taken there is to KEEP all three. The reasoning above is
+# what settles it: these names are set as GitLab project and group variables that
+# outlive every template revision, so dropping the rejection converts a loud
+# error into a silent no-op for exactly the operators who still have them set.
+# The entries cost one dict lookup per run. Revisit only when the variables can
+# no longer plausibly be set — not on the next version bump.
 RETIRED_ENV_OVERRIDES = {
     "AI_REVIEW_STATE_BACKEND": (
         "the state backend follows posting.mode; set AI_REVIEW_POSTING_MODE "
@@ -131,16 +141,23 @@ RETIRED_ENV_OVERRIDES = {
 # carry quoting/injection payloads.
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
-# Smallest panel that can still corroborate a finding. Every reviewer is a peer
-# and any of them may be left out of the roster, but a one-seat "panel" would make
-# deterministic consensus a passthrough of a single model's output.
+# Smallest panel a v3 deployment may run, on every path: the shipped YAML,
+# AI_REVIEW_REVIEWERS, and per-seat ENABLED overrides after all overrides are
+# applied. Three, not two, for two reasons.
 #
-# This is a floor on *threshold clamping*, not a blanket rule: a config authored
-# with a single reviewer and matching thresholds of 1 stays valid (minimal and
-# single-seat deployments are supported). What it forbids is silently relaxing a
-# corroboration threshold below two because an operator switched seats off — that
-# case still fails loudly, as it does today.
-_MINIMUM_PANEL_REVIEWERS = 2
+# Every critique seat comes from the same enabled roster and self-critique cannot
+# corroborate a direct finding, so a one-seat panel can never reach two
+# independent supporters and would surface nothing by construction. A two-seat
+# panel can reach two, but with zero fault tolerance: one failed or silently
+# degraded seat makes it unreachable for every finding, and the run then reports
+# an empty review indistinguishable from a clean one. Silent seat loss is not
+# hypothetical — SPEC-41 records an open defect where a reviewer that omits
+# `confidence` loses every finding. Three keeps a two-support path reachable
+# after one seat is lost.
+#
+# The shipped configuration already enables exactly three seats, so this is not a
+# default change. It does reject two-seat deployments that were valid under v2.
+_MINIMUM_PANEL_REVIEWERS = 3
 
 
 def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) -> None:
@@ -218,8 +235,9 @@ def apply_reviewer_roster(
     selected: list[str] = [name for name in names if name]
     if not selected:
         raise ConfigError(
-            "AI_REVIEW_REVIEWERS is set but names no reviewers; list at least two "
-            f"of {sorted(reviewers)} or unset the variable to use the config defaults"
+            "AI_REVIEW_REVIEWERS is set but names no reviewers; list at least "
+            f"{_MINIMUM_PANEL_REVIEWERS} of {sorted(reviewers)} or unset the "
+            "variable to use the config defaults"
         )
 
     duplicates = sorted({name for name in selected if selected.count(name) > 1})
@@ -233,12 +251,14 @@ def apply_reviewer_roster(
             f"configured reviewers are {sorted(reviewers)}"
         )
 
-    if len(selected) < _MINIMUM_PANEL_REVIEWERS <= len(reviewers):
+    # No "unless the document configures fewer" escape hatch: that exemption is
+    # what let a one-name roster through silently under v2.
+    if len(selected) < _MINIMUM_PANEL_REVIEWERS:
         raise ConfigError(
             f"AI_REVIEW_REVIEWERS must name at least {_MINIMUM_PANEL_REVIEWERS} "
-            f"reviewers to form a panel, got {selected}; a single reviewer has "
-            "nothing to corroborate against, so consensus would pass one model's "
-            "output straight through"
+            f"reviewers to form a panel, got {selected}; a finding surfaces only "
+            "when two reviewer identities support it independently, and a smaller "
+            "panel cannot reach that after losing a seat"
         )
 
     roster = set(selected)
@@ -339,8 +359,8 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     Recorded in the prepare manifest and re-derived by consensus as a
     misconfiguration detector for cross-job ``AI_REVIEW_*`` / policy drift — not
     a tamper-proofing mechanism (artifact writers already choose the digest they
-    stamp). Includes reviewer models/toggles and decision-critical panel,
-    severity, and critique policy fields.
+    stamp). Includes reviewer models/toggles and the remaining decision-critical
+    panel and critique policy fields.
     """
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
@@ -348,11 +368,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     posting = config.get("posting", {}) if isinstance(config, dict) else {}
     state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
-    quorum = panel.get("quorum", {}) if isinstance(panel, dict) else {}
-    severity = config.get("severity_policy", {}) if isinstance(config, dict) else {}
-    single = severity.get("single_reviewer_blocker", {}) if isinstance(severity, dict) else {}
-    quorum_blocker = severity.get("quorum_blocker", {}) if isinstance(severity, dict) else {}
-    categories = single.get("categories", []) if isinstance(single, dict) else []
     return {
         "reviewers": {
             name: {
@@ -376,23 +391,12 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         },
         "critique_enabled": bool(critique.get("enabled")),
         "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
-        "critique_allow_advisory_escalation": bool(critique.get("allow_advisory_escalation")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
         "merge_gate_enabled": bool(merge_gate.get("enabled")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
         "state_backend": state.get("backend") if isinstance(state, dict) else None,
-        "panel_min_successful_reviewers_for_blocking": int(
-            panel.get("min_successful_reviewers_for_blocking", 0) or 0
-        ),
         "panel_min_successful_reviewers_for_resolution": int(
             panel.get("min_successful_reviewers_for_resolution", 0) or 0
-        ),
-        "panel_quorum_votes_required": int(quorum.get("votes_required", 0) or 0),
-        "severity_single_reviewer_blocker_categories": sorted(
-            str(item) for item in categories
-        ),
-        "severity_quorum_blocker_block_merge": bool(
-            isinstance(quorum_blocker, dict) and quorum_blocker.get("block_merge") is True
         ),
     }
 
@@ -437,30 +441,6 @@ def load_config(path: str | Path) -> dict[str, Any]:
     apply_env_overrides(config)
     validate_config(config)
     return config
-
-
-def _validate_severity_policy(config: dict[str, Any]) -> None:
-    policy = config.get("severity_policy")
-    if not isinstance(policy, dict):
-        raise ConfigError("severity_policy must be a mapping")
-    _reject_unknown_keys(policy, SEVERITY_POLICY_KEYS, "severity_policy")
-    single = policy.get("single_reviewer_blocker")
-    if not isinstance(single, dict):
-        raise ConfigError("severity_policy.single_reviewer_blocker must be a mapping")
-    _reject_unknown_keys(
-        single, SINGLE_REVIEWER_BLOCKER_KEYS, "severity_policy.single_reviewer_blocker"
-    )
-    categories = single.get("categories")
-    if not isinstance(categories, list) or not all(isinstance(item, str) for item in categories):
-        raise ConfigError(
-            "severity_policy.single_reviewer_blocker.categories must be a list of strings"
-        )
-    quorum = policy.get("quorum_blocker")
-    if not isinstance(quorum, dict):
-        raise ConfigError("severity_policy.quorum_blocker must be a mapping")
-    _reject_unknown_keys(quorum, QUORUM_BLOCKER_KEYS, "severity_policy.quorum_blocker")
-    if not isinstance(quorum.get("block_merge"), bool):
-        raise ConfigError("severity_policy.quorum_blocker.block_merge must be a boolean")
 
 
 def enabled_reviewers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -519,21 +499,23 @@ def validate_config(config: dict[str, Any]) -> None:
     if unknown:
         raise ConfigError(f"unknown top-level config keys: {sorted(unknown)}")
     declared_version = config.get("schema_version")
-    if declared_version == "review_config.v1":
-        # A version string whose accepted shape changes is not a contract. v2
-        # names the shape that dropped critique.rounds,
-        # critique.can_add_quorum_votes and panel.grouping.semantic, so a
+    if declared_version == "review_config.v2":
+        # A version string whose accepted shape changes is not a contract. v3
+        # names the shape without the keys that only tuned merge behavior, so a
         # document can be checked against the runtime that will read it instead
-        # of being diagnosed one unknown key at a time.
+        # of being diagnosed one unknown key at a time. There is no v2-and-v3
+        # acceptance window: a migration message is preferable to a permanent
+        # compatibility adapter.
         raise ConfigError(
-            "schema_version review_config.v1 is retired: delete critique.rounds, "
-            "critique.can_add_quorum_votes and panel.grouping.semantic, drop "
-            "state.backend (it follows posting.mode), then set schema_version to "
-            f"{CONFIG_SCHEMA_VERSION}; see the v1 to v2 table in CHANGELOG.md"
+            "schema_version review_config.v2 is retired: delete "
+            + ", ".join(V3_REMOVED_CONFIG_KEYS)
+            + f", ensure at least {_MINIMUM_PANEL_REVIEWERS} reviewer seats are "
+            f"enabled, then set schema_version to {CONFIG_SCHEMA_VERSION}; "
+            "findings are informational in v3 and severity no longer affects any "
+            "decision. See the v2 to v3 table in CHANGELOG.md"
         )
     if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
-    _validate_severity_policy(config)
     _validate_posting(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict) or not reviewers:
@@ -573,31 +555,36 @@ def validate_config(config: dict[str, Any]) -> None:
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
     critique.setdefault("enabled", False)
     critique.setdefault("blind_reviewer_identity", True)
-    critique.setdefault("allow_advisory_escalation", True)
     critique.setdefault("allow_severity_downgrade", False)
-    if not isinstance(critique.get("enabled"), bool):
-        raise ConfigError("critique.enabled must be a boolean")
+    # All three, not just `enabled`: the other two were read with bool() and
+    # accepted any truthy value, so the string "false" silently enabled them.
+    for flag in sorted(CRITIQUE_KEYS):
+        if not isinstance(critique.get(flag), bool):
+            raise ConfigError(f"critique.{flag} must be a boolean")
     merge_gate = config.setdefault("merge_gate", {})
     if not isinstance(merge_gate, dict):
         raise ConfigError("merge_gate must be a mapping")
     _reject_unknown_keys(merge_gate, MERGE_GATE_KEYS, "merge_gate")
-    # Panel thresholds are authored against the *configured* seat count and take
-    # effect against the *enabled* count. The two bounds answer different
-    # questions: a threshold above the configured count is an authoring mistake
-    # that can never be satisfied at any roster, while a threshold above the
-    # enabled count is an operator selecting a smaller panel — clamped down so
-    # changing the roster never requires hand-editing thresholds in lock-step.
+    # The resolution threshold is authored against the *configured* seat count
+    # and takes effect against the *enabled* count. The two bounds answer
+    # different questions: a threshold above the configured count is an authoring
+    # mistake that can never be satisfied at any roster, while a threshold above
+    # the enabled count is an operator selecting a smaller panel — clamped down so
+    # changing the roster never requires hand-editing it in lock-step.
     #
-    # Clamping stops at _MINIMUM_PANEL_REVIEWERS: shrinking a panel must never
-    # quietly drop a corroboration requirement to one voter. The post-clamp fit
-    # check below is what turns that into a loud failure, so reducing the shipped
-    # config to a single seat still errors instead of silently self-approving.
+    # The enabled floor is checked here rather than in apply_reviewer_roster
+    # because it must hold after *every* override path, including per-seat
+    # AI_REVIEW_<NAME>_ENABLED flags and a YAML document authored by hand.
     configured_count = len(reviewers)
     enabled_count = len(enabled_reviewers(config))
-    if enabled_count < 1:
-        raise ConfigError("at least one reviewer must be enabled")
-    clamp_floor = min(_MINIMUM_PANEL_REVIEWERS, configured_count)
-    clamp_to = max(enabled_count, clamp_floor)
+    if enabled_count < _MINIMUM_PANEL_REVIEWERS:
+        raise ConfigError(
+            f"at least {_MINIMUM_PANEL_REVIEWERS} reviewers must be enabled, got "
+            f"{enabled_count}; a finding surfaces only when two reviewer "
+            "identities support it independently across review and critique, and "
+            "a smaller panel cannot reach that after losing a seat"
+        )
+    clamp_to = max(enabled_count, _MINIMUM_PANEL_REVIEWERS)
     panel = config.get("panel", {})
     if not isinstance(panel, dict):
         raise ConfigError("panel must be a mapping")
@@ -616,24 +603,10 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         return effective
 
-    panel["min_successful_reviewers_for_blocking"] = _resolve_threshold(
-        panel.get("min_successful_reviewers_for_blocking"),
-        1,
-        "panel.min_successful_reviewers_for_blocking",
-    )
     panel["min_successful_reviewers_for_resolution"] = _resolve_threshold(
         panel.get("min_successful_reviewers_for_resolution"),
         1,
         "panel.min_successful_reviewers_for_resolution",
-    )
-    quorum = panel.get("quorum", {})
-    if not isinstance(quorum, dict):
-        raise ConfigError("panel.quorum must be a mapping")
-    _reject_unknown_keys(quorum, PANEL_QUORUM_KEYS, "panel.quorum")
-    quorum["votes_required"] = _resolve_threshold(
-        quorum.get("votes_required"),
-        _MINIMUM_PANEL_REVIEWERS if enabled_count > 1 else 1,
-        "panel.quorum.votes_required",
     )
     limits = config.get("limits", {})
     if not isinstance(limits, dict):

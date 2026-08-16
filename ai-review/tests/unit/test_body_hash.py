@@ -22,13 +22,11 @@ class BodyHashTests(unittest.TestCase):
             "issue_id": "a" * 64,
             "decision": "surface",
             "final_severity": "major",
-            "block_merge": False,
-            "human_ack_recommended": False,
             "category": "correctness",
             "title": "Validate empty records",
             "body": "The code indexes records before checking emptiness.",
-            "vote_count": 2,
-            "critique_support_count": 0,
+            "support_count": 2,
+            "agreeing_critics": [],
             "contributing_reviewers": ["codex", "claude"],
             "source_finding_ids": ["b" * 64, "c" * 64],
             "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
@@ -117,17 +115,17 @@ class BodyHashTests(unittest.TestCase):
                     "",
                     "Consensus:",
                     "- Reviewers: `claude, codex`",
-                    "- Direct votes: 2/3",
-                    "- Critique support: 0",
+                    "- Independent support: 2",
+                    "- Successful review seats: 3",
                     "- Decision: surface",
-                    "- Blocking: no",
-                    "- Human acknowledgment: not required",
+                    "- This review is informational; it does not decide whether the "
+                    "change may merge.",
                 ]
             ),
         )
         self.assertEqual(
             body_hash,
-            "12f72479accfdeb245a1ff686692e115b6c656abaf9be0e7bec10769b515c1c7",
+            "82780679537e7eefcba05b3852c58918a5d116216b797c0db49d428929e7bfe5",
         )
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
@@ -172,10 +170,9 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("- `claude`:\n  `records[0] executes before the guard`", body)
         self.assertIn("- `codex`:\n  `the empty check occurs on the next line`", body)
 
-    def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
+    def test_renders_dissent_with_optional_severity_for_blocker_group(self) -> None:
         group = self._group()
         group["final_severity"] = "blocker"
-        group["block_merge"] = True
         group["critique_disputes"] = [
             {
                 "critic": "codex",
@@ -201,7 +198,7 @@ class BodyHashTests(unittest.TestCase):
             "- `opencode` disputes:\n  `This path is unreachable.`",
             body,
         )
-        self.assertIn("- Blocking: yes", body)
+        self.assertIn("- Independent support: 2", body)
 
     def test_omits_dissent_that_sanitizes_to_empty(self) -> None:
         group = self._group()
@@ -280,7 +277,7 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("…[truncated: platform comment size limit]", first)
         self.assertIn("Consensus:", first)
         self.assertIn("- Decision: surface", first)
-        self.assertIn("- Blocking: no", first)
+        self.assertIn("- Independent support: 2", first)
         self.assertIsNotNone(parse_marker(first))
         self.assertTrue(first.endswith("-->"))
         self.assertEqual(first, second)

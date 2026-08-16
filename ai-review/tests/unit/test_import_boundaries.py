@@ -68,7 +68,7 @@ class ImportBoundaryTests(unittest.TestCase):
                 return real_import(name, globals, locals, fromlist, level)
             builtins.__import__ = blocked_import
             import ai_review.consensus
-            print(ai_review.consensus.panel_status(['claude'], ['claude'], 1))
+            print(ai_review.consensus.panel_status(['claude'], ['claude']))
             """
         )
         env = dict(os.environ)

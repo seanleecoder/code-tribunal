@@ -162,15 +162,14 @@ class PanelDegradationTests(unittest.TestCase):
             self.assertEqual(consensus["failed_reviewers"], [])
             self.assertEqual(len(consensus["groups"]), 1)
             group = consensus["groups"][0]
-            self.assertEqual(group["vote_count"], 3)
+            self.assertEqual(group["contributing_reviewers"], ["claude", "codex", "opencode"])
+            self.assertEqual(group["support_count"], 3)
             self.assertEqual(group["decision"], "surface")
-            self.assertTrue(group["block_merge"])
-            self.assertTrue(consensus["summary"]["block_merge"])
 
     def test_full_panel_on_a_roster_that_excludes_claude(self) -> None:
         # Same end-to-end path as the default panel, but with a roster where the
-        # excluded seat is claude rather than cursor. Nothing about consensus,
-        # quorum, or blocking may depend on *which* seats were selected.
+        # excluded seat is claude rather than cursor. Nothing about grouping or
+        # independent support may depend on *which* seats were selected.
         roster = "codex,opencode,cursor"
         seats = ("codex", "cursor", "opencode")
         with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
@@ -250,12 +249,10 @@ class PanelDegradationTests(unittest.TestCase):
         self.assertEqual(consensus["failed_reviewers"], [])
         self.assertEqual(len(consensus["groups"]), 1)
         group = consensus["groups"][0]
-        self.assertEqual(group["vote_count"], 3)
+        self.assertEqual(group["support_count"], 3)
         self.assertEqual(group["decision"], "surface")
-        self.assertTrue(group["block_merge"])
-        self.assertTrue(consensus["summary"]["block_merge"])
 
-    def test_degraded_panel_two_of_three_still_blocks(self) -> None:
+    def test_degraded_panel_two_of_three_still_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -274,11 +271,10 @@ class PanelDegradationTests(unittest.TestCase):
             self.assertEqual(consensus["failed_reviewers"], ["opencode"])
             self.assertEqual(len(consensus["groups"]), 1)
             group = consensus["groups"][0]
-            self.assertEqual(group["vote_count"], 2)
+            self.assertEqual(group["support_count"], 2)
             self.assertEqual(group["decision"], "surface")
-            self.assertTrue(group["block_merge"])
 
-    def test_advisory_only_single_success_never_blocks(self) -> None:
+    def test_single_success_is_degraded_and_surfaces_nothing_alone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -292,12 +288,16 @@ class PanelDegradationTests(unittest.TestCase):
             code, consensus = self._run_consensus(root, batches)
 
             self.assertEqual(code, 0)
-            self.assertEqual(consensus["panel_status"], "advisory_only")
+            # No advisory_only status: panel health no longer changes the policy.
+            # One seat's findings simply have nothing to corroborate them, and a
+            # critique seat could still supply the second support.
+            self.assertEqual(consensus["panel_status"], "degraded")
             self.assertEqual(consensus["successful_reviewers"], ["claude"])
             self.assertEqual(consensus["failed_reviewers"], ["codex", "opencode"])
             for group in consensus["groups"]:
-                self.assertFalse(group["block_merge"])
-            self.assertFalse(consensus["summary"]["block_merge"])
+                self.assertEqual(group["support_count"], 1)
+                self.assertEqual(group["decision"], "fyi")
+            self.assertEqual(consensus["summary"]["surface_count"], 0)
 
     def test_zero_successful_fails_before_post(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
