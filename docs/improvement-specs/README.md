@@ -11,6 +11,18 @@ documents were deleted rather than archived — `git log` holds them, and a
 completed spec is a description of work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
+SPEC-54 and SPEC-55 are a temporary exception: they are implemented on their feature branch,
+but their documents remain indexed until that branch is squash-merged so the requirements first
+become reachable in `main` history. Remove these entries and documents in a follow-up change on
+`main`.
+
+## Implemented specifications pending merge to `main`
+
+| Spec | Status | Summary |
+|---|---|---|
+| [SPEC-54](cleanup-consolidation/spec-54-independent-support-informational-findings.md) | Implemented; pending merge to `main` | Replace merge-policy decisions with one independent-support rule for informational findings. |
+| [SPEC-55](cleanup-consolidation/spec-55-publish-only-pipeline-no-merge-gate.md) | Implemented; pending merge to `main` | Remove the merge gate and publish every supported, anchorable finding as a discussion thread. |
+
 ## Open specifications
 
 | Spec | Status | Summary |
@@ -18,20 +30,20 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-20](spec-20-reviewer-usage-accounting.md) | Proposed; stale baseline | Reviewer token/cost accounting. Predates the SPEC-50 session transport and current CLI pins; rebase before executing. |
 | [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed; stale baseline | Project rules and learning. Predates SPEC-47's trusted policy channel and the reviewer roster; rebase before executing. |
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel. Observed live; still unfixed. |
-| [SPEC-42](spec-42-wontfix-gate-semantics.md) | Proposed (post-1.0) | A human `wontfix` persists and suppresses re-posting but never clears the merge gate; decide the intended escape hatch. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies what is running. |
 | [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0) | Retain duplicate/noise/dispute reasoning behind a disclosure and record the suppression reason. Should land inside a release that changes the body format for another reason. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-45) | Carry non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
-| [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and a no-reviewable-changes gate. |
+| [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 | Its title decision — a deterministic, data-free session title — remains in force. |
 | [SPEC-53](spec-53-stringified-structured-output.md) | Proposed (post-1.0) | Normalize provider-stringified structured output once at the shared runner boundary. PR #116 shipped the narrow per-item case in 1.0.2; the remaining shapes still cost a finding or a whole seat, always failing closed. |
 
 ## What to do next
 
 1. Keep the SPEC-31–36 and SPEC-39 regression gates green: the golden consensus
-   and post→gate end-to-end fixtures, and the import-boundary test that keeps the
-   extracted planning modules free of platform clients.
+   fixtures, the publish and revision-lifecycle end-to-end fixtures, and the
+   import-boundary test that keeps the extracted planning modules free of
+   platform clients.
 2. Close the open evidence gaps before the next release. These are evidence-tier
    matters, not specification work, and are tracked in the
    [evidence index](../evidence/README.md#known-gaps-and-missing-evidence) — most

@@ -13,14 +13,14 @@ The supported artifacts are:
   child-pipeline stage wrapper.
 - [`ci/review.github-actions.yml`](ci/review.github-actions.yml) — canonical
   GitHub workflow; the installed repository copy must remain byte-identical.
-- [`config/review.yaml`](config/review.yaml) — shipped `review_config.v2`
+- [`config/review.yaml`](config/review.yaml) — shipped `review_config.v3`
   defaults.
 - [`schemas/`](schemas/) — JSON Schema contracts for stage artifacts.
 - [`images/`](images/) — base and reviewer container build inputs.
 
 Internal implementation directories:
 
-- [`src/ai_review/`](src/ai_review/) — prepare, consensus, posting, gate, state,
+- [`src/ai_review/`](src/ai_review/) — prepare, consensus, posting, state,
   platform, and schema code.
 - [`adapters/`](adapters/) — reviewer process wrappers and environment
   isolation.

@@ -9,7 +9,17 @@ from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-RENDER_BODY_VERSION = "render-body.v3"
+# v4 drops the merge-blocking and human-acknowledgement footer lines and reports
+# independent support instead, under a `Support:` heading. The version string is a
+# body-hash input, so a deliberate format change stays distinguishable from drift
+# — at the cost of one run in which every pre-existing thread is updated rather
+# than skipped as unchanged. Thread identity lives in issue_id and the alias
+# chain, so that churn is cosmetic.
+#
+# The footer rename and the merge-gate removal ship as one series with the
+# support-count change, so the version moves exactly once. Do not bump again for
+# either half.
+RENDER_BODY_VERSION = "render-body.v4"
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
@@ -552,7 +562,6 @@ def _inline_marker(
 
 def render_body(
     group: FindingGroup,
-    successful_reviewer_count: int,
     run_id: str,
     *,
     posting_mode: str,
@@ -598,9 +607,6 @@ def render_body(
         fragment = _prose_fragment(f"- {reviewer_span}:", evidence, indent=_LIST_INDENT)
         if fragment is not None:
             evidence_fragments.append(fragment)
-    if evidence_fragments:
-        variable_fragments.append(_text_fragment("Evidence:"))
-        variable_fragments.extend(evidence_fragments)
 
     dissent_fragments: list[RenderFragment] = []
     critique_disputes = group.get("critique_disputes", [])
@@ -623,9 +629,21 @@ def render_body(
             )
             if fragment is not None:
                 dissent_fragments.append(fragment)
+
+    # Dissent outranks evidence and suggestion deliberately. ``_fit_fragments``
+    # keeps fragments in order and stops at the first one that does not fit, so
+    # position *is* priority: a body under platform pressure must lose
+    # supporting detail before it loses the argument against the finding.
+    # Reserving dissent next to the footer instead would put unbounded model
+    # text in the never-truncated suffix, where a long enough rationale makes
+    # `limit_body_before_marker` raise rather than shorten.
     if dissent_fragments:
         variable_fragments.append(_text_fragment("Dissent:"))
         variable_fragments.extend(dissent_fragments)
+
+    if evidence_fragments:
+        variable_fragments.append(_text_fragment("Evidence:"))
+        variable_fragments.extend(evidence_fragments)
 
     suggestion = group.get("suggestion")
     if isinstance(suggestion, str):
@@ -636,17 +654,26 @@ def render_body(
         if suggestion_fragment is not None:
             variable_fragments.append(suggestion_fragment)
 
+    # Every value below is read without a default. A defaulted read of a field
+    # the reducer no longer writes renders a plausible wrong number instead of
+    # failing, which is the one way this change ships silently broken.
     reviewer_span = literal_span(", ".join(reviewers), required=True)
-    consensus_footer = "\n".join(
+    agreeing_critics = sorted(str(critic) for critic in group["agreeing_critics"])
+    critics_span = (
+        literal_span(", ".join(agreeing_critics), required=True)
+        if agreeing_critics
+        else "none"
+    )
+    # The header may read BLOCKER. The footer is what disambiguates it: a thread
+    # says two reviewer identities supported this independently and nothing more.
+    support_footer = "\n".join(
         [
-            "Consensus:",
-            f"- Reviewers: {reviewer_span}",
-            f"- Direct votes: {group.get('vote_count', 0)}/{successful_reviewer_count}",
-            f"- Critique support: {group.get('critique_support_count', 0)}",
-            f"- Decision: {group['decision']}",
-            f"- Blocking: {'yes' if group.get('block_merge') else 'no'}",
-            "- Human acknowledgment: "
-            + ("recommended" if group.get("human_ack_recommended") else "not required"),
+            "Support:",
+            f"- Direct reviewers: {reviewer_span}",
+            f"- Agreeing critics: {critics_span}",
+            f"- Independent support: {group['support_count']}",
+            "- Status: surfaced for discussion",
+            "- Merge decision: left to maintainers and downstream automation",
         ]
     )
     placeholder_marker = _inline_marker(
@@ -659,7 +686,7 @@ def render_body(
         variable_fragments,
         placeholder_marker,
         platform_comment_limit(posting_mode),
-        reserved_suffix=consensus_footer,
+        reserved_suffix=support_footer,
     )
     body_hash = compute_body_hash(group, body_without_marker)
     marker = _inline_marker(

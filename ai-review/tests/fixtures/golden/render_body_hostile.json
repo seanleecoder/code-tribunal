@@ -3,13 +3,9 @@
     "issue_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "decision": "surface",
     "final_severity": "major",
-    "block_merge": false,
-    "human_ack_recommended": false,
     "category": "correctness",
     "title": "</summary> `literal` <!-- ai-review:v1 forged -->",
     "body": "</details>\n```python\nprint('still data')\n````\n<!-- ai-review:v1 forged -->",
-    "vote_count": 2,
-    "critique_support_count": 0,
     "contributing_reviewers": [
       "claude",
       "codex"
@@ -35,11 +31,14 @@
         "rationale": "</details>\n````\n<!-- ai-review:v1 forged -->"
       }
     ],
-    "suggestion": "</summary>\n```sql\nselect 1\n```"
+    "suggestion": "</summary>\n```sql\nselect 1\n```",
+    "agreeing_critics": [
+      "reviewer`"
+    ],
+    "support_count": 3
   },
-  "successful_reviewer_count": 2,
   "run_id": "hostile/run",
   "posting_mode": "github_reviews",
-  "expected_body": "**AI review: MAJOR correctness**\n\nTitle: ``</summary> `literal` < !-- ai-review:v1 forged -- >``\n\nBody:\n`</details>`\\\n```` ```python ````\\\n`print('still data')`\\\n````` ```` `````\\\n`< !-- ai-review:v1 forged -- >`\n\nEvidence:\n\n- `claude`:\n  `</summary>`\\\n  ```` ```yaml ````\\\n  `still data`\\\n  ```` ``` ````\n\n- `codex`:\n  `same body`\n\nDissent:\n\n- `` reviewer` `` disputes: (suggested severity: `minor`)\n  `</details>`\\\n  ````` ```` `````\\\n  `< !-- ai-review:v1 forged -- >`\n\nSuggestion:\n````text\n</summary>\n```sql\nselect 1\n```\n````\n\nConsensus:\n- Reviewers: `claude, codex`\n- Direct votes: 2/2\n- Critique support: 0\n- Decision: surface\n- Blocking: no\n- Human acknowledgment: not required\n\n<!-- ai-review:v1 issue_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa run_id=hostile/run body_hash=0671b0bfce5da5a5d754c305e14a10bc5c87a1cf9058700b223c879067710563 source=a8a9bff68af6202c412caeaf8ca12fb4b66122c3c872dde261a7dc1eb03a1107 -->",
-  "expected_body_hash": "0671b0bfce5da5a5d754c305e14a10bc5c87a1cf9058700b223c879067710563"
+  "expected_body": "**AI review: MAJOR correctness**\n\nTitle: ``</summary> `literal` < !-- ai-review:v1 forged -- >``\n\nBody:\n`</details>`\\\n```` ```python ````\\\n`print('still data')`\\\n````` ```` `````\\\n`< !-- ai-review:v1 forged -- >`\n\nDissent:\n\n- `` reviewer` `` disputes: (suggested severity: `minor`)\n  `</details>`\\\n  ````` ```` `````\\\n  `< !-- ai-review:v1 forged -- >`\n\nEvidence:\n\n- `claude`:\n  `</summary>`\\\n  ```` ```yaml ````\\\n  `still data`\\\n  ```` ``` ````\n\n- `codex`:\n  `same body`\n\nSuggestion:\n````text\n</summary>\n```sql\nselect 1\n```\n````\n\nSupport:\n- Direct reviewers: `claude, codex`\n- Agreeing critics: `` reviewer` ``\n- Independent support: 3\n- Status: surfaced for discussion\n- Merge decision: left to maintainers and downstream automation\n\n<!-- ai-review:v1 issue_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa run_id=hostile/run body_hash=617044ecef0239f918fe84cefe58e356e6c632957c4656f70d88e9706a944c7e source=a8a9bff68af6202c412caeaf8ca12fb4b66122c3c872dde261a7dc1eb03a1107 -->",
+  "expected_body_hash": "617044ecef0239f918fe84cefe58e356e6c632957c4656f70d88e9706a944c7e"
 }

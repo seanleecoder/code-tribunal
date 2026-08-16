@@ -22,22 +22,20 @@ class BodyHashTests(unittest.TestCase):
             "issue_id": "a" * 64,
             "decision": "surface",
             "final_severity": "major",
-            "block_merge": False,
-            "human_ack_recommended": False,
             "category": "correctness",
             "title": "Validate empty records",
             "body": "The code indexes records before checking emptiness.",
-            "vote_count": 2,
-            "critique_support_count": 0,
+            "support_count": 2,
+            "agreeing_critics": [],
             "contributing_reviewers": ["codex", "claude"],
             "source_finding_ids": ["b" * 64, "c" * 64],
             "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
         }
 
     def test_body_hash_is_stable_for_same_group(self) -> None:
-        first, first_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
+        first, first_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
         second, second_hash = render_body(
-            self._group(), 3, "run", posting_mode="gitlab_discussions"
+            self._group(), "run", posting_mode="gitlab_discussions"
         )
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
@@ -48,10 +46,10 @@ class BodyHashTests(unittest.TestCase):
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
 
         first, first_hash = render_body(
-            first_group, 3, "run", posting_mode="gitlab_discussions"
+            first_group, "run", posting_mode="gitlab_discussions"
         )
         second, second_hash = render_body(
-            second_group, 3, "run", posting_mode="gitlab_discussions"
+            second_group, "run", posting_mode="gitlab_discussions"
         )
 
         self.assertEqual(
@@ -76,7 +74,7 @@ class BodyHashTests(unittest.TestCase):
         )
 
     def test_v2_and_v3_markers_remain_parseable(self) -> None:
-        body, _body_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
         self.assertIsNotNone(parse_marker(body))
         old_marker = (
             "<!-- ai-review:v1 issue_id="
@@ -96,13 +94,13 @@ class BodyHashTests(unittest.TestCase):
         group = self._group()
         group["title"] = ""
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Title: (empty)", body)
         self.assertNotIn("Title: ``", body)
 
     def test_rendered_markdown_snapshot_is_unchanged_by_render_extraction(self) -> None:
-        body, body_hash = render_body(self._group(), 3, "run", posting_mode="gitlab_discussions")
+        body, body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
         body_without_marker = body.rsplit("\n\n<!-- ai-review:v1", 1)[0]
         self.assertEqual(
             body_without_marker,
@@ -115,19 +113,18 @@ class BodyHashTests(unittest.TestCase):
                     "Body:",
                     "`The code indexes records before checking emptiness.`",
                     "",
-                    "Consensus:",
-                    "- Reviewers: `claude, codex`",
-                    "- Direct votes: 2/3",
-                    "- Critique support: 0",
-                    "- Decision: surface",
-                    "- Blocking: no",
-                    "- Human acknowledgment: not required",
+                    "Support:",
+                    "- Direct reviewers: `claude, codex`",
+                    "- Agreeing critics: none",
+                    "- Independent support: 2",
+                    "- Status: surfaced for discussion",
+                    "- Merge decision: left to maintainers and downstream automation",
                 ]
             ),
         )
         self.assertEqual(
             body_hash,
-            "12f72479accfdeb245a1ff686692e115b6c656abaf9be0e7bec10769b515c1c7",
+            "3499f3002412134ca1601885f35d1161b8c32ad59444164e0c50f841a09f986d",
         )
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
@@ -137,7 +134,7 @@ class BodyHashTests(unittest.TestCase):
             "codex": "records[0] executes before the guard",
         }
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
             "Evidence:\n\n- `codex`:\n  `records[0] executes before the guard`",
@@ -152,7 +149,7 @@ class BodyHashTests(unittest.TestCase):
             "codex": "records[0] executes before the guard",
         }
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn(
             "Evidence:\n\n- `claude, codex`:\n  `records[0] executes before the guard`",
@@ -167,15 +164,84 @@ class BodyHashTests(unittest.TestCase):
             "codex": "the empty check occurs on the next line",
         }
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("- `claude`:\n  `records[0] executes before the guard`", body)
         self.assertIn("- `codex`:\n  `the empty check occurs on the next line`", body)
 
-    def test_renders_dissent_with_optional_severity_for_blocking_group(self) -> None:
+    def test_surfaced_group_renders_both_support_and_dissent(self) -> None:
+        """Consensus that erases the argument against a finding is not consensus.
+
+        Two supporters and a dissenting critic must both appear: the support
+        block *and* the minority dissent, with the critic's identity, rationale,
+        and any adjusted severity.
+        """
+        group = self._group()
+        group["support_count"] = 2
+        group["agreeing_critics"] = ["opencode"]
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "The caller already checks emptiness.",
+                "adjusted_severity": "minor",
+            }
+        ]
+
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
+
+        self.assertIn("Support:", body)
+        self.assertIn("- Direct reviewers: `claude, codex`", body)
+        self.assertIn("- Agreeing critics: `opencode`", body)
+        self.assertIn("- Independent support: 2", body)
+        self.assertIn("- Status: surfaced for discussion", body)
+        self.assertIn(
+            "- Merge decision: left to maintainers and downstream automation", body
+        )
+        self.assertIn("Dissent:", body)
+        self.assertIn(
+            "- `cursor` disputes: (suggested severity: `minor`)\n"
+            "  `The caller already checks emptiness.`",
+            body,
+        )
+
+    def test_dissent_survives_a_body_that_exceeds_the_platform_limit(self) -> None:
+        """Under truncation a body must lose supporting detail, not the dissent.
+
+        `_fit_fragments` keeps fragments in order and stops at the first that
+        does not fit, so fragment position *is* priority. Dissent used to sit
+        after evidence, and the footer — which is reserved and never truncated —
+        would survive while the argument against the finding was dropped.
+        """
+        group = self._group()
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "The guard is already applied by the caller.",
+                "adjusted_severity": "minor",
+            }
+        ]
+        # Oversized supporting detail, not an oversized body: the fragments that
+        # must lose the contest are evidence and suggestion.
+        group["evidence_by_reviewer"] = {
+            "claude": "evidence " * 12_000,
+            "codex": "other evidence " * 12_000,
+        }
+        group["suggestion"] = "x" * 60_000
+
+        body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
+
+        self.assertGreater(len(body), 60_000)
+        self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
+        self.assertIn("…[truncated: platform comment size limit]", body)
+        self.assertIn("Dissent:", body)
+        self.assertIn("`The guard is already applied by the caller.`", body)
+        self.assertIn("Support:", body)
+        # Ordering is the mechanism, so pin it: dissent precedes evidence.
+        self.assertLess(body.index("Dissent:"), body.index("Evidence:"))
+
+    def test_renders_dissent_with_optional_severity_for_blocker_group(self) -> None:
         group = self._group()
         group["final_severity"] = "blocker"
-        group["block_merge"] = True
         group["critique_disputes"] = [
             {
                 "critic": "codex",
@@ -189,7 +255,7 @@ class BodyHashTests(unittest.TestCase):
             },
         ]
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Dissent:", body)
         self.assertIn(
@@ -201,7 +267,7 @@ class BodyHashTests(unittest.TestCase):
             "- `opencode` disputes:\n  `This path is unreachable.`",
             body,
         )
-        self.assertIn("- Blocking: yes", body)
+        self.assertIn("- Independent support: 2", body)
 
     def test_omits_dissent_that_sanitizes_to_empty(self) -> None:
         group = self._group()
@@ -209,7 +275,7 @@ class BodyHashTests(unittest.TestCase):
             {"critic": "codex", "rationale": "   ", "adjusted_severity": None}
         ]
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertNotIn("Dissent:", body)
         self.assertNotIn("codex disputes:", body)
@@ -220,9 +286,9 @@ class BodyHashTests(unittest.TestCase):
         invalid = self._group()
         invalid["suggestion"] = "```python\nif not records:\n    return"
 
-        valid_body, _valid_hash = render_body(valid, 3, "run", posting_mode="gitlab_discussions")
+        valid_body, _valid_hash = render_body(valid, "run", posting_mode="gitlab_discussions")
         invalid_body, _invalid_hash = render_body(
-            invalid, 3, "run", posting_mode="gitlab_discussions"
+            invalid, "run", posting_mode="gitlab_discussions"
         )
 
         self.assertIn("Suggestion:\n````text\n```python", valid_body)
@@ -247,7 +313,6 @@ class BodyHashTests(unittest.TestCase):
 
         body, _body_hash = render_body(
             group,
-            3,
             "run",
             posting_mode="github_reviews",
         )
@@ -264,13 +329,11 @@ class BodyHashTests(unittest.TestCase):
 
         first, first_hash = render_body(
             group,
-            3,
             "run",
             posting_mode="github_reviews",
         )
         second, second_hash = render_body(
             group,
-            3,
             "run",
             posting_mode="github_reviews",
         )
@@ -278,9 +341,9 @@ class BodyHashTests(unittest.TestCase):
         self.assertLessEqual(len(first), 65_536)
         self.assertGreater(len(first), 65_000)
         self.assertIn("…[truncated: platform comment size limit]", first)
-        self.assertIn("Consensus:", first)
-        self.assertIn("- Decision: surface", first)
-        self.assertIn("- Blocking: no", first)
+        self.assertIn("Support:", first)
+        self.assertIn("- Status: surfaced for discussion", first)
+        self.assertIn("- Independent support: 2", first)
         self.assertIsNotNone(parse_marker(first))
         self.assertTrue(first.endswith("-->"))
         self.assertEqual(first, second)
@@ -293,10 +356,10 @@ class BodyHashTests(unittest.TestCase):
         for posting_mode in ("gitlab_discussions", "github_reviews"):
             with self.subTest(posting_mode=posting_mode):
                 first, first_hash = render_body(
-                    group, 3, "run", posting_mode=posting_mode
+                    group, "run", posting_mode=posting_mode
                 )
                 second, second_hash = render_body(
-                    group, 3, "run", posting_mode=posting_mode
+                    group, "run", posting_mode=posting_mode
                 )
 
                 limit = platform_comment_limit(posting_mode)
@@ -308,7 +371,7 @@ class BodyHashTests(unittest.TestCase):
                 self.assertEqual(first, second)
                 self.assertEqual(first_hash, second_hash)
                 self.assertIn("…[truncated: platform comment size limit]", first)
-                self.assertIn("\nConsensus:", first)
+                self.assertIn("\nSupport:", first)
                 self.assertIsNotNone(parse_marker(first))
                 # The body is prose now, so truncation ends at a re-encoded
                 # span and the notice needs its own paragraph.
@@ -320,7 +383,7 @@ class BodyHashTests(unittest.TestCase):
 
         with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 500}):
             body, _body_hash = render_body(
-                group, 3, "run", posting_mode="github_reviews"
+                group, "run", posting_mode="github_reviews"
             )
 
         self.assertNotIn("Title:", body)
@@ -337,15 +400,14 @@ class BodyHashTests(unittest.TestCase):
 
         body, _body_hash = render_body(
             group,
-            3,
             "run",
             posting_mode="github_reviews",
         )
 
         self.assertLessEqual(len(body), 65_536)
         self.assertIn("\n````\n…[truncated: platform comment size limit]", body)
-        self.assertLess(body.index("…[truncated"), body.index("Consensus:"))
-        self.assertLess(body.index("Consensus:"), body.index("<!-- ai-review:v1"))
+        self.assertLess(body.index("…[truncated"), body.index("Support:"))
+        self.assertLess(body.index("Support:"), body.index("<!-- ai-review:v1"))
 
     def test_prose_body_round_trips_through_the_review_note_parser(self) -> None:
         cases = [
@@ -365,7 +427,7 @@ class BodyHashTests(unittest.TestCase):
                 group = self._group()
                 group["body"] = body
                 rendered, _body_hash = render_body(
-                    group, 3, "run", posting_mode="gitlab_discussions"
+                    group, "run", posting_mode="gitlab_discussions"
                 )
                 parsed = parse_review_note(rendered)
                 self.assertIsNotNone(parsed)
@@ -393,7 +455,7 @@ class BodyHashTests(unittest.TestCase):
         group["body"] = "prose that should wrap"
         group["suggestion"] = "if not records:\n    return"
 
-        body, _body_hash = render_body(group, 3, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Body:\n`prose that should wrap`", body)
         self.assertIn("Suggestion:\n```text\nif not records:\n    return\n```", body)
@@ -405,7 +467,7 @@ class BodyHashTests(unittest.TestCase):
         group["body"] = "y" * 70_000
 
         with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 900}):
-            body, _body_hash = render_body(group, 3, "run", posting_mode="github_reviews")
+            body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
         self.assertLessEqual(len(body), 900)
         self.assertGreater(body.count("y"), 300)
@@ -432,7 +494,7 @@ class BodyHashTests(unittest.TestCase):
                 group["body"] = body
 
                 rendered, _body_hash = render_body(
-                    group, 3, "run", posting_mode="github_reviews"
+                    group, "run", posting_mode="github_reviews"
                 )
 
                 self.assertLessEqual(len(rendered), 65_536)

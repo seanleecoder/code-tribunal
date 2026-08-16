@@ -9,7 +9,7 @@ pre-v3 threads that the body-refresh check depends on.
 
 | Platform | Project | Role |
 |---|---|---|
-| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, required-check ruleset |
+| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, branch ruleset |
 | GitLab | <https://gitlab.com/seanleecoder/code-tribunal-demo> (project id `84667714`) | consumer: `.gitlab-ci.yml`, protected/masked variables, runner |
 | GitLab | `seanleecoder/code-tribunal-ci-template` (project id `84667707`) | protected template project holding `ai-review/ci/` |
 
@@ -30,13 +30,28 @@ repo's canonical template.
 - **Secrets:** `OPENROUTER_API_KEY`, `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
 - **Ruleset** "Require AI Review gate" (id `19420757`), active, targeting
   `~DEFAULT_BRANCH`, with `gate` as a **required status check**
-  (`strict_required_status_checks_policy: false`). This is what makes the blocking
-  step a genuine merge block rather than a self-reported one. Because a required
-  check also blocks direct pushes to `main`, adopting a workflow change has to go
-  through a PR — run that PR in mock mode so it costs nothing.
+  (`strict_required_status_checks_policy: false`).
+
+  > **Must be changed before the next repin.** The `gate` job no longer exists,
+  > so this ruleset now waits on a check that will never report and every PR in
+  > the consumer stays unmergeable. Either delete the ruleset or replace the
+  > required check with `post`. Do this **before or together with** copying the
+  > new workflow, not after. Requiring `post` reports publication, not findings,
+  > and does not cover a run whose `prepare` never started — it is not a
+  > replacement for the deleted gate, and no live step verifies blocking any
+  > more.
+
+  Because a required check also blocks direct pushes to `main`, adopting a
+  workflow change has to go through a PR — run that PR in mock mode so it costs
+  nothing.
 - **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
-  `AI_REVIEW_MERGE_GATE_ENABLED=true`, `AI_REVIEW_OPENCODE_ENABLED=true`,
-  `AI_REVIEW_CURSOR_ENABLED=false`, `AI_REVIEW_MANUAL=false`.
+  `AI_REVIEW_OPENCODE_ENABLED=true`, `AI_REVIEW_CURSOR_ENABLED=false`,
+  `AI_REVIEW_MANUAL=false`.
+
+  > **Delete `AI_REVIEW_MERGE_GATE_ENABLED` from this consumer.** It is a retired
+  > override: a run against a current image fails at config load while the
+  > variable is set. It is rejected rather than ignored precisely so a stale
+  > repository variable cannot sit there looking effective.
 - **The mock-variable mapping is already in the workflow.** The one-time edit the
   runbook describes has been made: the review and critique steps read
   `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
@@ -51,8 +66,8 @@ repo's canonical template.
   somehow still reached the mock adapter fails closed instead of quietly producing
   fake "real" evidence. **Delete them again after every Chain B campaign.**
 
-**What changes per release:** the six container digest pins in the workflow (jobs
-`prepare`, `review`, `critique`, `consensus`, `post`, `gate`). As of this writing they
+**What changes per release:** the five container digest pins in the workflow (jobs
+`prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of this writing they
 are still the 1.0.0 pair, `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e` with base
 `sha256:f2a433ac…` and reviewer `sha256:2fd84c43…`. Copy the workflow from the new `R`
 rather than hand-editing pins: an older copy can carry env keys that a newer `R`
@@ -91,10 +106,11 @@ Public, project id `84667714`. Verified present:
 
 - A runner.
 - `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
-  masked**. The four behavioral toggles — `AI_REVIEW_CRITIQUE_ENABLED=true`,
-  `AI_REVIEW_MERGE_GATE_ENABLED=true`, `AI_REVIEW_OPENCODE_ENABLED=true`,
-  `AI_REVIEW_CURSOR_ENABLED=false` — are deliberately *unprotected*, so they apply on
-  any ref including the hostile probe.
+  masked**. The behavioral toggles — `AI_REVIEW_CRITIQUE_ENABLED=true`,
+  `AI_REVIEW_OPENCODE_ENABLED=true`, `AI_REVIEW_CURSOR_ENABLED=false` — are
+  deliberately *unprotected*, so they apply on any ref including the hostile probe.
+  **Delete the project's `AI_REVIEW_MERGE_GATE_ENABLED` variable**: it is retired
+  and a current image fails at config load while it is set.
 - `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge
   (`detailed_merge_status: ci_must_pass`). `merge_method = merge`.
 - **Mock variables absent.** `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_ALLOW_LOCAL_MOCK`,
@@ -144,8 +160,7 @@ and reach the child where forwarding is disabled, whereas manual variables are
 dropped by any push-triggered pipeline and would silently run real. Flip
 `AI_REVIEW_MOCK_SCENARIO` by editing the project variable in place and re-triggering
 with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
-*retry*, which only re-runs failed jobs and so re-runs the gate instead of
-re-driving prepare→post. Project variables are sticky and project-wide: delete them
+*retry*, which only re-runs failed jobs and so does not re-drive prepare→post. Project variables are sticky and project-wide: delete them
 before any Chain A run and after every Chain B campaign.
 
 Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, updated
@@ -155,17 +170,22 @@ Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, up
 
 1. Confirm the mock variables are absent on **both** consumers. Both are currently
    clean; verify anyway, because a leftover toggle turns a real run into a fake one.
-2. Copy the workflow / CI template from the new `R`; repin the six GitHub container
+2. Copy the workflow / CI template from the new `R`; repin the five GitHub container
    digests and the three GitLab pin variables (`AI_REVIEW_BASE_IMAGE`,
    `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the new pair.
-3. Land the GitHub adoption change as a PR — the required check blocks direct pushes
-   to `main` — and run that PR in mock mode so it costs nothing.
+   Remove `AI_REVIEW_MERGE_GATE_ENABLED` from both consumers in the same pass; it
+   is retired and now fails the run.
+3. Land the GitHub adoption change as a PR — if a required check is configured it
+   blocks direct pushes to `main` — and run that PR in mock mode so it costs
+   nothing.
 4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then
    point **both** consumer includes at that new SHA. Two different SHAs, or a stale
    template pin, means the evidence exercised the wrong images.
-5. Confirm the GitHub ruleset still lists `gate` as required and GitLab
-   `only_allow_merge_if_pipeline_succeeds` is still true. Enforcement being off
-   silently turns the blocking step into a self-report.
+5. Confirm the GitHub ruleset no longer requires `gate` (see above — a leftover
+   entry makes every PR unmergeable) and that GitLab
+   `only_allow_merge_if_pipeline_succeeds` is still true. On GitLab that setting
+   is what makes a *publication* failure withhold the merge; it says nothing
+   about findings.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
 7. Run Chain A first, then Chain B; delete the mock variables afterwards and confirm
    they are gone.

@@ -374,7 +374,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertEqual(base_bootstrap.group(1), trusted_sha.group(1))
             self.assertEqual(reviewer_bootstrap.group(1), trusted_sha.group(1))
 
-        self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 4)
+        # prepare, consensus, post — the gate job is deleted.
+        self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 3)
         self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 2)
 
     def test_prepare_job_supports_manual_trigger_variable(self) -> None:
@@ -404,7 +405,11 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
         child_text = _CHILD_CI_TEMPLATE.read_text(encoding="utf-8")
 
-        self.assertEqual(text.count("stage: ai_review"), 6)
+        # prepare, review, critique, consensus, post — the gate job is gone and
+        # must not come back.
+        self.assertEqual(text.count("stage: ai_review"), 5)
+        self.assertNotIn("ai_review_gate:", text)
+        self.assertNotIn("python -m ai_review.gate", text)
         self.assertRegex(child_text, r"(?m)^stages:\n  - ai_review$")
         self.assertNotRegex(child_text, r"(?m)^include:")
         for retired_stage in ("prepare", "review", "critique", "consensus", "post", "gate"):
@@ -966,8 +971,12 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
         self.assertIn("python -m ai_review.consensus", text)
         self.assertIn("python -m ai_review.post", text)
-        self.assertIn("python -m ai_review.gate", text)
-        self.assertNotIn('echo "Run prepare/reviewer/consensus/post/gate stages here."', text)
+        # Inverted rather than deleted: `post` is the terminal product job and
+        # Code Tribunal makes no merge decision, so a reintroduced gate job must
+        # fail the build instead of quietly reappearing.
+        self.assertNotIn("python -m ai_review.gate", text)
+        self.assertNotIn("\n  gate:\n", text)
+        self.assertNotIn('echo "Run prepare/reviewer/consensus/post stages here."', text)
 
     def test_github_actions_template_selects_github_runtime(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
@@ -982,11 +991,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
         self.assertRegex(review, r"(?m)^    timeout-minutes: 40$")
         self.assertRegex(critique, r"(?m)^    timeout-minutes: 20$")
-        self.assertIn(
-            "AI_REVIEW_MERGE_GATE_ENABLED: "
-            "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}",
-            text,
-        )
+        # Retired: the variable raises at config load, so a template that still
+        # mapped it would fail every run.
+        self.assertNotIn("AI_REVIEW_MERGE_GATE_ENABLED", text)
         self.assertNotIn("AI_REVIEW_BASE_IMAGE:", text)
         self.assertNotIn("AI_REVIEW_REVIEWER_IMAGE:", text)
         self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
@@ -1046,9 +1053,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CRITIQUE_ENABLED": (
                 "${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"
             ),
-            "AI_REVIEW_MERGE_GATE_ENABLED": (
-                "${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}"
-            ),
         }
 
         for name, expression in expected_mappings.items():
@@ -1058,6 +1062,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
         self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
+        self.assertNotIn("AI_REVIEW_MERGE_GATE_ENABLED", text)
 
     def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
@@ -1076,7 +1081,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CODEX_EFFORT",
             "AI_REVIEW_OPENCODE_EFFORT",
             "AI_REVIEW_CRITIQUE_ENABLED",
-            "AI_REVIEW_MERGE_GATE_ENABLED",
             "AI_REVIEW_POSTING_MODE",
         ]
         self.assertIn("effective_config_sha256", text)
@@ -1281,8 +1285,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         text = template.read_text(encoding="utf-8")
 
         self.assertNotIn("container: ${{ env.", text)
-        self.assertEqual(text.count("container: ghcr.io/"), 6)
-        self.assertEqual(text.count("@sha256:"), 6)
+        # base: prepare, consensus, post. reviewer: review, critique.
+        self.assertEqual(text.count("container: ghcr.io/"), 5)
+        self.assertEqual(text.count("@sha256:"), 5)
 
     def test_github_actions_template_runs_full_critique_panel(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"

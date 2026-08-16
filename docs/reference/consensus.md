@@ -1,8 +1,8 @@
 # Deterministic consensus
 
 Consensus consumes schema-valid, run-bound reviewer evidence and produces one
-deterministic `consensus.v1` artifact. Models do not decide whether a merge is
-blocked.
+deterministic `consensus.v2` artifact. Its output is informational: nothing in
+it decides whether a change may merge.
 
 ## Inputs and eligibility
 
@@ -13,25 +13,54 @@ duplicate, disabled, malformed, or identity-spoofed evidence. A syntactically
 successful batch whose findings were all dropped is not an operational panel
 seat and cannot resolve an older finding.
 
-## Grouping and voting
+## Grouping and independent support
 
-Findings are normalized by path, category, anchor context, and rendered body.
-Exact grouping is deterministic. Optional semantic grouping uses a deterministic
-Jaccard threshold and is disabled by default pending corpus calibration.
+Findings are grouped on identity that survives rewording — path, category,
+anchor side, context hash, fingerprints, and symbol. Grouping carries no
+text-similarity signal, and exact grouping is deterministic.
 
-Quorum policy then determines surfaced, FYI, and blocking groups. Critique may
-add supporting or dissenting evidence but cannot add quorum votes in v1.
-Critique severity downgrades are disabled by default and never cross the blocker
-boundary.
+A group's supporters are the unique reviewer identities that back it
+independently: its direct contributing reviewers, plus critics whose effective
+verdict is `agree` and who contributed no direct finding to the group. One
+reviewer contributes at most one support vote however many findings or critiques
+it emitted, and no reviewer can corroborate itself by critiquing its own group.
+
+The decision follows one ordered rule, and severity changes none of it:
+
+| Condition | Decision |
+|---|---|
+| The cross-run state match is ambiguous | `fyi` |
+| A majority of eligible independent critics call it noise | `drop` |
+| Two or more unique identities support it | `surface` |
+| Otherwise | `fyi` |
+
+The order is precedence, not preference. An ambiguous state match stays `fyi`
+whatever the support, because no historical thread can be safely chosen to
+mutate; majority noise then drops the group before the support threshold is ever
+consulted.
+
+A `dispute` is displayed with the group but subtracts no support: surfacing must
+never erase dissent. A `duplicate` link affects grouping only. Where one critic
+holds several critiques against one final group they collapse to a single
+effective verdict by the precedence `noise > dispute > duplicate > agree`, so a
+critic that voiced any stronger objection is never counted as an unqualified
+supporter. Critique severity downgrades are disabled by default and never cross
+the blocker boundary.
 
 ## Panel degradation
 
-| Panel status | Meaning | Blocking | Absence-based resolution |
-|---|---|---:|---:|
-| `full` | All enabled operational seats succeeded | yes | yes |
-| `degraded` | At least the configured blocking/resolution minimum succeeded | yes, if quorum is met | yes, if resolution minimum is met |
-| `advisory_only` | Some evidence exists but blocking minimum is not met | no | no |
-| `failed` | No usable operational seat | consensus exits 3 | no |
+Panel status reports execution health only. It does not change the support
+threshold in either direction: a degraded panel still surfaces a two-supported
+finding, and a full panel does not promote a finding only one identity supports.
+Absence-based resolution is governed solely by
+`panel.min_successful_reviewers_for_resolution` against the resolution-eligible
+seats, never by panel status.
+
+| Panel status | Meaning |
+|---|---|
+| `full` | Every enabled review seat produced a usable batch |
+| `degraded` | At least one, but not all, enabled seats produced a usable batch |
+| `failed` | No usable operational seat; consensus exits 3 |
 
 Output is stable across input-file ordering. Golden contract cases and unit
 tests pin that behavior directly: the shuffled-batch case in

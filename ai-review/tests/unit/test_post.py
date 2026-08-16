@@ -12,6 +12,7 @@ import ai_review.post as post_module
 import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
+from ai_review.config import CONFIG_SCHEMA_VERSION, ConfigError, validate_config
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
@@ -110,6 +111,102 @@ class PostTests(PostCase):
                     factory.assert_not_called()
                 self.assertFalse(output_path.exists())
 
+    def test_cli_exit_code_reports_publication_not_findings(self) -> None:
+        """`post` is terminal, so its exit status is the pipeline's whole report.
+
+        Publication health decides it. A finding of any severity exits 0, and a
+        `stale_head` no-op is a success — a newer revision superseded the run, so
+        performing no mutation is the correct outcome.
+        """
+        for status, expected in (
+            ("success", 0),
+            ("stale_head", 0),
+            ("failed", 1),
+            ("partial_failed", 1),
+            ("state_overflow", 1),
+        ):
+            with self.subTest(status=status):
+                self.assertEqual(post_module.exit_code_for_status(status), expected)
+
+    def test_cli_exit_code_is_nonzero_for_an_unrecognized_status(self) -> None:
+        """The mapping is an allowlist, not an exhaustive match over today's enum.
+
+        A status added later without revisiting this module must fail loudly
+        rather than be reported as a successful publication.
+        """
+        for status in ("skipped_no_reviewable_changes", "", None, 0):
+            with self.subTest(status=status):
+                self.assertNotEqual(post_module.exit_code_for_status(status), 0)
+
+    def test_cli_returns_nonzero_and_still_writes_the_artifact_on_failure(self) -> None:
+        # The artifact must survive an operational failure: it is the only
+        # diagnostic left now that nothing downstream reads it.
+        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+        fixture_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "golden"
+            / "default_transitive_split_consensus.json"
+        )
+        consensus = load_json_file(fixture_path)
+
+        for status, expected_exit in (("success", 0), ("partial_failed", 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                inputs = root / "inputs"
+                inputs.mkdir()
+                write_canonical_json(
+                    inputs / "manifest.json",
+                    {
+                        "run_id": consensus["run_id"],
+                        "project_id": consensus["project_id"],
+                        "merge_request_iid": consensus["merge_request_iid"],
+                        "head_sha": consensus["head_sha"],
+                    },
+                )
+                consensus_path = root / "consensus.json"
+                write_canonical_json(consensus_path, consensus)
+                output_path = root / "post-result.json"
+
+                def _post(
+                    *_args: object, _status: str = status, **_kwargs: object
+                ) -> dict[str, object]:
+                    return {
+                        "schema_version": "post_result.v1",
+                        "run_id": consensus["run_id"],
+                        "status": _status,
+                        "head_sha": consensus["head_sha"],
+                        "current_head_sha": consensus["head_sha"],
+                        "created_discussions": 0,
+                        "updated_discussions": 0,
+                        "resolved_discussions": 0,
+                        "skipped_unchanged": 0,
+                        "stale_unverified": 0,
+                        "posted_discussions": [],
+                        "warnings": [],
+                    }
+
+                with (
+                    patch("ai_review.post.create_runtime_platform"),
+                    patch("ai_review.post.post_consensus", _post),
+                ):
+                    exit_code = post_module.cli(
+                        [
+                            "--config",
+                            str(config_path),
+                            "--inputs",
+                            str(inputs),
+                            "--consensus",
+                            str(consensus_path),
+                            "--out",
+                            str(output_path),
+                            "--dry-run",
+                        ]
+                    )
+
+                self.assertEqual(exit_code, expected_exit)
+                self.assertEqual(load_json_file(output_path)["status"], status)
+
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
             post_consensus(
@@ -141,7 +238,6 @@ class PostTests(PostCase):
             [surface, unsupported, multiline, fyi],
             inline_sides={"new"},
             inline_multiline=False,
-            max_surface=25,
         )
 
         self.assertEqual(
@@ -160,33 +256,31 @@ class PostTests(PostCase):
             ],
         )
 
-    def test_classify_post_groups_applies_surface_cap_by_severity(self) -> None:
+    def test_classify_post_groups_never_diverts_on_count(self) -> None:
+        """No surfaced-thread cap exists, at any severity or volume.
+
+        Every anchorable surface group becomes a thread. The only route to the
+        summary is an anchor that cannot carry one; a configured count is not a
+        reason to reclassify a finding two reviewers supported independently.
+        The volume bound is each reviewer's upstream ``max_findings``.
+        """
         base = self._consensus()["groups"][0]
-        minor = copy.deepcopy(base)
-        minor["issue_id"] = "1" * 64
-        minor["final_severity"] = "minor"
-        blocker = copy.deepcopy(base)
-        blocker["issue_id"] = "2" * 64
-        blocker["final_severity"] = "blocker"
+        groups = []
+        for index in range(40):
+            group = copy.deepcopy(base)
+            group["issue_id"] = f"{index:064d}"
+            group["final_severity"] = "minor" if index % 2 else "blocker"
+            groups.append(group)
 
         classification = _classify_post_groups(
-            [minor, blocker],
+            groups,
             inline_sides={"new"},
             inline_multiline=False,
-            max_surface=1,
         )
 
-        self.assertEqual(
-            [group["issue_id"] for group in classification.inline_candidates], ["2" * 64]
-        )
-        self.assertEqual(
-            [group["issue_id"] for group in classification.summary_fallback_groups], ["1" * 64]
-        )
-        self.assertEqual(classification.fyi_groups, [])
-        self.assertEqual(
-            classification.warnings,
-            ["surface fallback to summary: max_posted_surface_findings (1) reached"],
-        )
+        self.assertEqual(len(classification.inline_candidates), 40)
+        self.assertEqual(classification.summary_fallback_groups, [])
+        self.assertEqual(classification.warnings, [])
 
     def test_classify_post_groups_preserves_fail_closed_malformed_group(self) -> None:
         with self.assertRaises(AttributeError):
@@ -194,7 +288,6 @@ class PostTests(PostCase):
                 [object()],  # type: ignore[list-item]
                 inline_sides={"new"},
                 inline_multiline=False,
-                max_surface=25,
             )
 
     def test_render_body_redacts_model_authored_secrets(self) -> None:
@@ -213,7 +306,7 @@ class PostTests(PostCase):
             }
         ]
 
-        body, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("[REDACTED]", body)
         self.assertNotIn("glpat-1234567890abcdef1234", body)
@@ -314,7 +407,7 @@ class PostTests(PostCase):
         client = FakePostClient("head")
         consensus = self._consensus()
         group = consensus["groups"][0]
-        _body, body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        _body, body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         client.discussions = [
             {
                 "id": "discussion",
@@ -351,7 +444,7 @@ class PostTests(PostCase):
         old_consensus = self._consensus()
         old_group = old_consensus["groups"][0]
         old_body, old_hash = render_body(
-            old_group, 1, "run", posting_mode="gitlab_discussions"
+            old_group, "run", posting_mode="gitlab_discussions"
         )
         client.discussions = [
             {
@@ -643,6 +736,44 @@ class PostTests(PostCase):
         self.assertEqual(second_result["posted_discussions"][0]["issue_id"], "a" * 64)
         validate_instance(second_result, "post_result.schema.json")
 
+    def test_summary_fallback_cannot_be_switched_off(self) -> None:
+        """A surfaced finding that could not be anchored still reaches the reader.
+
+        `posting.fallback_to_summary_comment: false` used to pass an empty
+        fallback list to the summary renderer, so a group diverted for an
+        unanchorable anchor vanished from threads *and* summary alike, surviving
+        only in persisted state and a warning. The key is deleted: fallback is
+        unconditional, and the config parser now rejects the key outright rather
+        than accepting a setting that discards product output.
+        """
+        client = FakePostClient("head")
+        consensus = self._consensus()
+        consensus["groups"][0]["representative_anchor"]["side"] = "old"
+
+        config = self._config()
+        config["posting"]["fallback_to_summary_comment"] = False
+        with self.assertRaisesRegex(ConfigError, "fallback_to_summary_comment"):
+            validate_config(
+                {
+                    "schema_version": CONFIG_SCHEMA_VERSION,
+                    "reviewers": {},
+                    "posting": dict(config["posting"]),
+                }
+            )
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            config,
+            self._manifest("head"),
+            consensus,
+        )
+
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["summary_comment"]["action"], "created")
+        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
+        self.assertEqual(len(client.mr_notes), 1)
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_unsupported_side_falls_back_to_summary_and_is_idempotent(self) -> None:
         # Bug #2: a side=old surface finding must be posted to the MR summary comment,
         # not silently dropped; a re-run with identical content must be a no-op.
@@ -723,8 +854,9 @@ class PostTests(PostCase):
         self.assertEqual(len(client.mr_notes), 0)
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_surface_cap_redirects_overflow_to_summary(self) -> None:
-        # Bug #11: only max_posted_surface_findings post inline; the rest go to summary.
+    def test_post_creates_a_thread_for_every_anchorable_surface_group(self) -> None:
+        # There is no surfaced-thread cap: a run with more surface findings than
+        # the old default of 25 posts all of them and diverts none to the summary.
         client = FakePostClient("head")
         consensus = self._consensus()
         base = consensus["groups"][0]
@@ -735,14 +867,16 @@ class PostTests(PostCase):
             consensus["groups"].append(group)
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(limits={"max_posted_surface_findings": 25}),
+            self._config(),
             self._manifest("head"),
             consensus,
         )
-        self.assertEqual(result["created_discussions"], 25)
-        self.assertEqual(client.created, 25)
-        self.assertEqual(result["summary_comment"]["surface_findings"], 5)
-        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(result["created_discussions"], 30)
+        self.assertEqual(client.created, 30)
+        self.assertEqual(result["summary_comment"]["surface_findings"], 0)
+        self.assertEqual(result["summary_comment"]["action"], "none")
+        self.assertEqual(client.mr_notes, [])
+        self.assertEqual(result["warnings"], [])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_fyi_cap_truncates_with_more_line(self) -> None:
@@ -1296,7 +1430,6 @@ class PostTests(PostCase):
         anchor = self._anchor_with_context(2, old_diff)
         _body, body_hash = render_body(
             group,
-            len(consensus["successful_reviewers"]),
             consensus["run_id"],
             posting_mode="gitlab_discussions",
         )

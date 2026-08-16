@@ -7,7 +7,9 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from ai_review.config import (
+    CONFIG_SCHEMA_VERSION,
     RETIRED_ENV_OVERRIDES,
+    V3_REMOVED_CONFIG_KEYS,
     ConfigError,
     apply_env_overrides,
     effective_config_digest,
@@ -29,7 +31,6 @@ def _base_config() -> dict:
             "cursor": {"model": "auto", "enabled": False},
         },
         "critique": {"enabled": True},
-        "merge_gate": {"enabled": True},
     }
 
 
@@ -86,8 +87,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                 "opencode": (True, "google/gemini-3.5-flash-lite"),
             },
         )
-        self.assertEqual(config["panel"]["quorum"]["votes_required"], 2)
-        self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 2)
+        self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 2)
 
     def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
@@ -132,16 +132,15 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             apply_env_overrides(config)
         self.assertNotIn("effort", config["reviewers"]["claude"])
 
-    def test_critique_and_merge_gate_overrides(self) -> None:
+    def test_critique_override(self) -> None:
         config = _base_config()
         with mock.patch.dict(
             "os.environ",
-            {"AI_REVIEW_CRITIQUE_ENABLED": "false", "AI_REVIEW_MERGE_GATE_ENABLED": "false"},
+            {"AI_REVIEW_CRITIQUE_ENABLED": "false"},
             clear=True,
         ):
             apply_env_overrides(config)
         self.assertFalse(config["critique"]["enabled"])
-        self.assertFalse(config["merge_gate"]["enabled"])
 
     def test_posting_mode_override_carries_the_state_backend(self) -> None:
         """One variable moves the platform.
@@ -172,7 +171,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         # AND non-canonical casing/whitespace must raise, never silently no-op.
         for var, value in (
             ("AI_REVIEW_CRITIQUE_ENABLED", "1"),
-            ("AI_REVIEW_MERGE_GATE_ENABLED", "flase"),
+            ("AI_REVIEW_CRITIQUE_ENABLED", "flase"),
             ("AI_REVIEW_CODEX_ENABLED", "yes"),
             ("AI_REVIEW_CRITIQUE_ENABLED", "TRUE"),
             ("AI_REVIEW_CRITIQUE_ENABLED", " true "),
@@ -204,6 +203,50 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                     apply_env_overrides(config)
                 self.assertTrue(guidance, f"{var} must state what to do instead")
 
+    def test_merge_gate_override_fails_with_migration_guidance(self) -> None:
+        """The merge gate is gone; its override must say so, not go quiet.
+
+        The guidance has to name the branch-protection consequence, because that
+        is the half of the migration a config error cannot perform: an operator
+        who only unsets the variable and leaves a required `gate` check in place
+        has an unmergeable repository, not a fixed one.
+        """
+        guidance = RETIRED_ENV_OVERRIDES["AI_REVIEW_MERGE_GATE_ENABLED"]
+        self.assertIn("review_config.v3", guidance)
+        self.assertIn("gate job", guidance)
+
+        with (
+            mock.patch.dict(
+                "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "true"}, clear=True
+            ),
+            self.assertRaisesRegex(
+                ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
+            ),
+        ):
+            apply_env_overrides(_base_config())
+
+    def test_retired_override_is_reported_before_the_v3_migration_message(self) -> None:
+        """Overrides are applied before validation, so the env error wins.
+
+        A `review_config.v2` document that also sets the retired variable reports
+        the env-var error, not the v2→v3 migration. Pinning the order keeps a
+        later reader from "fixing" a test that is asserting the real sequence.
+        """
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "review.yaml"
+            path.write_text(
+                "schema_version: review_config.v2\nreviewers: {}\n", encoding="utf-8"
+            )
+            with (
+                mock.patch.dict(
+                    "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "false"}, clear=True
+                ),
+                self.assertRaisesRegex(
+                    ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
+                ),
+            ):
+                load_config(path)
+
 
 class LoadConfigOverrideTests(unittest.TestCase):
     def test_load_config_applies_model_override(self) -> None:
@@ -211,11 +254,22 @@ class LoadConfigOverrideTests(unittest.TestCase):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/some-new-model")
 
-    def test_disabling_one_reviewer_still_validates(self) -> None:
-        # Two reviewers remain, min_successful_reviewers_for_blocking is 2 -> valid.
-        with mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}):
+    def test_disabling_one_reviewer_needs_another_seat_enabled(self) -> None:
+        # Three enabled seats is the floor on every path, including per-seat
+        # ENABLED flags: switching one of the shipped three off leaves two.
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}),
+            self.assertRaisesRegex(ConfigError, "at least 3 reviewers must be enabled"),
+        ):
+            load_config(_REPO_CONFIG)
+
+        with mock.patch.dict(
+            "os.environ",
+            {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CURSOR_ENABLED": "true"},
+        ):
             config = load_config(_REPO_CONFIG)
         self.assertFalse(config["reviewers"]["opencode"]["enabled"])
+        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
 
     def test_roster_selects_an_arbitrary_panel_without_claude(self) -> None:
         # The point of the roster: no seat is structurally fixed. Claude sitting out
@@ -243,10 +297,10 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertTrue(enabled["opencode"]["enabled"])
         self.assertTrue(enabled["cursor"]["enabled"])
 
-    def test_roster_of_four_and_of_two_both_validate(self) -> None:
+    def test_roster_of_four_and_of_three_both_validate(self) -> None:
         for roster, expected in (
             ("claude,codex,opencode,cursor", 4),
-            ("claude,cursor", 2),
+            ("claude,opencode,cursor", 3),
         ):
             with self.subTest(roster=roster):
                 with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
@@ -289,12 +343,17 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             load_config(_REPO_CONFIG)
 
-    def test_roster_rejects_single_seat_panel(self) -> None:
-        with (
-            mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "claude"}),
-            self.assertRaisesRegex(ConfigError, "at least 2 reviewers"),
-        ):
-            load_config(_REPO_CONFIG)
+    def test_roster_rejects_panels_below_the_v3_floor(self) -> None:
+        # One seat could never reach two independent supporters. Two could, but
+        # not after losing a seat, and a two-seat roster was valid under v2 —
+        # so it is the case that has to fail loudly rather than silently.
+        for roster in ("claude", "claude,codex"):
+            with (
+                self.subTest(roster=roster),
+                mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}),
+                self.assertRaisesRegex(ConfigError, "at least 3 reviewers"),
+            ):
+                load_config(_REPO_CONFIG)
 
     def test_roster_and_per_seat_enabled_flag_conflict_is_rejected(self) -> None:
         # Either precedence would surprise an operator who set both, so refuse.
@@ -378,10 +437,10 @@ class LoadConfigOverrideTests(unittest.TestCase):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["reviewers"]["claude"]["effort"], "medium")
 
-    def test_repo_config_enables_nonblocking_advisory_escalation(self) -> None:
+    def test_repo_config_keeps_severity_downgrade_opt_in(self) -> None:
         config = load_config(_REPO_CONFIG)
 
-        self.assertTrue(config["critique"]["allow_advisory_escalation"])
+        self.assertTrue(config["critique"]["enabled"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
 
     def test_legacy_reviewer_config_critique_fallback_is_capped_in_summary(self) -> None:
@@ -432,12 +491,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
         stale_keys = (
             ("  claude:\n", "    cli_version: pinned-by-image\n", "reviewers.claude"),
             ("panel:\n", "  expected_reviewers: 3\n", "panel"),
-            ("  quorum:\n", "    mode: absolute\n", "panel.quorum"),
-            (
-                "  single_reviewer_blocker:\n",
-                "    human_ack_recommended: true\n",
-                "severity_policy.single_reviewer_blocker",
-            ),
             ("posting:\n", "  marker_version: ai-review:v1\n", "posting"),
             ("posting:\n", "  update_existing_threads: true\n", "posting"),
             (
@@ -445,7 +498,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 "  post_lock_resource_group: ai-review-mr-lock\n",
                 "posting",
             ),
-            ("merge_gate:\n", "  mechanism: ci_job_failure\n", "merge_gate"),
             ("state:\n", "  marker_version: ai-review-state:v1\n", "state"),
             (
                 "  retention:\n",
@@ -506,13 +558,15 @@ class LoadConfigOverrideTests(unittest.TestCase):
             ):
                 load_config(config_path)
 
-    def test_missing_advisory_escalation_uses_enabled_default(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        config["critique"].pop("allow_advisory_escalation")
-
-        validate_config(config)
-
-        self.assertTrue(config["critique"]["allow_advisory_escalation"])
+    def test_critique_flags_reject_non_boolean_values(self) -> None:
+        # All three, not just `enabled`: the other two used to be read through
+        # bool(), so the string "false" silently enabled them.
+        for flag in ("enabled", "blind_reviewer_identity", "allow_severity_downgrade"):
+            with self.subTest(flag=flag):
+                config = load_config(_REPO_CONFIG)
+                config["critique"][flag] = "false"
+                with self.assertRaisesRegex(ConfigError, f"critique.{flag} must be a boolean"):
+                    validate_config(config)
 
     def test_effort_override_applies_and_validates(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "xhigh"}):
@@ -550,20 +604,13 @@ class LoadConfigOverrideTests(unittest.TestCase):
             ):
                 load_config(_REPO_CONFIG)
 
-    def test_missing_severity_policy_fails_loudly(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        config.pop("severity_policy")
-        with self.assertRaisesRegex(ConfigError, "severity_policy"):
-            validate_config(config)
-
     def test_disabling_too_many_reviewers_fails_loudly(self) -> None:
-        # Only claude enabled (1) but min_successful_reviewers_for_blocking is 2.
         with (
             mock.patch.dict(
                 "os.environ",
                 {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CODEX_ENABLED": "false"},
             ),
-            self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_blocking"),
+            self.assertRaisesRegex(ConfigError, "at least 3 reviewers must be enabled"),
         ):
             load_config(_REPO_CONFIG)
 
@@ -581,34 +628,21 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 ):
                     validate_config(mutated)
 
-    def test_votes_required_must_fit_configured_panel(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        for value in (1, 5, True, "2"):
-            with self.subTest(value=value):
-                mutated = deepcopy(config)
-                mutated["panel"]["quorum"]["votes_required"] = value
-                with self.assertRaisesRegex(ConfigError, "votes_required"):
-                    validate_config(mutated)
-
-    def test_thresholds_clamp_to_the_enabled_panel(self) -> None:
+    def test_resolution_threshold_clamps_to_the_enabled_panel(self) -> None:
         # An authored threshold above the enabled count is an operator running a
         # smaller panel, not a misconfiguration: clamp so a roster change never
-        # requires editing thresholds in lock-step.
+        # requires editing it in lock-step.
         config = load_config(_REPO_CONFIG)
-        config["panel"]["min_successful_reviewers_for_blocking"] = 4
         config["panel"]["min_successful_reviewers_for_resolution"] = 4
-        config["panel"]["quorum"]["votes_required"] = 4
         validate_config(config)
 
-        self.assertEqual(config["panel"]["min_successful_reviewers_for_blocking"], 3)
         self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 3)
-        self.assertEqual(config["panel"]["quorum"]["votes_required"], 3)
 
-    def test_shipped_thresholds_are_unchanged_at_every_supported_panel_size(self) -> None:
-        # The clamp must be a no-op for the shipped 2/2/2 values, so enabling or
-        # disabling a seat cannot quietly change the decision policy.
+    def test_shipped_threshold_is_unchanged_at_every_supported_panel_size(self) -> None:
+        # The clamp must be a no-op for the shipped value, so enabling or
+        # disabling a seat cannot quietly change resolution policy.
         for roster in (
-            "claude,codex",
+            "claude,codex,opencode",
             "codex,opencode,cursor",
             "claude,codex,opencode,cursor",
         ):
@@ -616,9 +650,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
                     config = load_config(_REPO_CONFIG)
                 panel = config["panel"]
-                self.assertEqual(panel["min_successful_reviewers_for_blocking"], 2)
                 self.assertEqual(panel["min_successful_reviewers_for_resolution"], 2)
-                self.assertEqual(panel["quorum"]["votes_required"], 2)
 
     def test_state_load_error_policy_defaults_false(self) -> None:
         config = load_config(_REPO_CONFIG)
@@ -636,11 +668,80 @@ class LoadConfigOverrideTests(unittest.TestCase):
         summary = effective_config_summary(config)
         self.assertEqual(summary["posting_mode"], "gitlab_discussions")
         self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
-        self.assertEqual(summary["panel_min_successful_reviewers_for_blocking"], 2)
-        self.assertEqual(summary["panel_quorum_votes_required"], 2)
-        self.assertIn("security", summary["severity_single_reviewer_blocker_categories"])
-        self.assertTrue(summary["severity_quorum_blocker_block_merge"])
-        self.assertTrue(summary["critique_allow_advisory_escalation"])
+        self.assertEqual(summary["panel_min_successful_reviewers_for_resolution"], 2)
+        self.assertTrue(summary["critique_enabled"])
+        self.assertTrue(summary["critique_blind_reviewer_identity"])
+        self.assertFalse(summary["critique_allow_severity_downgrade"])
+
+
+class ConfigVersionMigrationTests(unittest.TestCase):
+    """review_config.v2 is rejected once, by name, with the whole removal list."""
+
+    def _v2_document(self, extra: str = "") -> str:
+        text = _REPO_CONFIG.read_text(encoding="utf-8").replace(
+            f"schema_version: {CONFIG_SCHEMA_VERSION}", "schema_version: review_config.v2", 1
+        )
+        return text + extra
+
+    def _load(self, text: str) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "review.yaml"
+            path.write_text(text, encoding="utf-8")
+            with mock.patch.dict("os.environ", {}, clear=True):
+                load_config(path)
+
+    def test_v2_is_rejected_and_the_message_names_every_removed_key(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self._load(self._v2_document())
+
+        message = str(raised.exception)
+        for key in V3_REMOVED_CONFIG_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(key, message)
+        self.assertIn(CONFIG_SCHEMA_VERSION, message)
+        self.assertIn("CHANGELOG.md", message)
+
+    def test_a_v3_document_still_carrying_a_removed_key_is_rejected(self) -> None:
+        for key, text in (
+            ("severity_policy", "\nseverity_policy:\n  quorum_blocker:\n    block_merge: true\n"),
+            ("panel", "\n  quorum:\n    votes_required: 2\n"),
+        ):
+            with self.subTest(key=key):
+                document = _REPO_CONFIG.read_text(encoding="utf-8")
+                if key == "panel":
+                    document = document.replace(
+                        "  min_successful_reviewers_for_resolution: 2",
+                        "  min_successful_reviewers_for_resolution: 2\n  quorum:\n"
+                        "    votes_required: 2",
+                        1,
+                    )
+                else:
+                    document += text
+                with self.assertRaisesRegex(ConfigError, f"unknown config keys at {key}|{key}"):
+                    self._load(document)
+
+    def test_a_hand_authored_yaml_below_the_floor_is_rejected(self) -> None:
+        # The roster and per-seat paths are covered above. This is the third:
+        # a document that simply authors too few enabled seats, with no override
+        # involved at all.
+        document = _REPO_CONFIG.read_text(encoding="utf-8")
+        for seat in ("codex", "opencode"):
+            document = document.replace(
+                f"  {seat}:\n    enabled: true", f"  {seat}:\n    enabled: false", 1
+            )
+
+        with self.assertRaisesRegex(ConfigError, "at least 3 reviewers must be enabled, got 1"):
+            self._load(document)
+
+    def test_a_retired_env_override_reports_before_the_migration_message(self) -> None:
+        # Env overrides are applied before validation, so a document that still
+        # sets a retired variable reports the variable, not the version. That
+        # ordering is intentional; the test exists so it stays deliberate.
+        with (
+            mock.patch.dict("os.environ", {"AI_REVIEW_STATE_BACKEND": "gitlab_mr_state_note"}),
+            self.assertRaisesRegex(ConfigError, "AI_REVIEW_STATE_BACKEND is retired"),
+        ):
+            load_config(_REPO_CONFIG)
 
 
 class PostingModeConfigTests(unittest.TestCase):

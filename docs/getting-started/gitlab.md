@@ -59,9 +59,9 @@ the template's `AI_REVIEW_LOCAL_MOCK: "0"`; mock mode additionally requires
 `AI_REVIEW_ALLOW_LOCAL_MOCK=true` and is reserved for image preflight and
 operator evidence Chain B.
 
-### Enforcing installs
+### Strict state handling
 
-For an enforcing gate, prefer a trusted config with
+For a strict install, prefer a trusted config with
 `state.fail_closed_on_load_error: true`. The shipped default is `false` so a
 transient state-load error starts from empty recoverable state rather than
 failing prepare.
@@ -76,24 +76,41 @@ Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS`, supply
 `AI_REVIEW_CURSOR_MODEL` to an exact slug when you want model-stable
 reproducibility.
 
-## Require the gate
+## Merge-request settings
 
-Enable **Pipelines must succeed** under merge-request settings. The default
-pipeline runs automatically. Setting `AI_REVIEW_MANUAL` to exact `true` makes
-the entry job non-blocking manual; an unstarted manual job cannot protect a
-merge, so use that only for an advisory rollout.
+**Code Tribunal is informational and requires no merge check.** It publishes
+review threads and a summary; it never decides whether a change may merge. There
+is no `ai_review_gate` job any more — if you are upgrading from a release that
+had one, remove any custom `needs`, dashboard, or script that names it.
+
+**Pipelines must succeed** remains worth enabling, but understand what it covers
+here: a failed `post_ai_review` job means publication or state persistence
+failed, not that the review found something. Findings of any severity leave the
+job green. If you would rather a publication failure not block, the consuming
+project can mark the job `allow_failure: true`.
+
+Setting `AI_REVIEW_MANUAL` to exact `true` makes the entry job non-blocking
+manual, so the review may not run at all on a given merge request.
+
+Requiring unresolved threads to be resolved before merge is a supported project
+policy if you want posted threads acknowledged, but it is your policy — the
+template neither sets it nor depends on it.
 
 ## First run and verification
 
 Open a small merge request and verify:
 
-1. The `prepare → review → critique → consensus → post → gate` dependency chain
+1. The `prepare → review → critique → consensus → post` dependency chain
    uses the protected template and digest-pinned images.
 2. Artifacts contain a single run ID and matching effective-config digest.
 3. The bot creates or updates state and finding discussions without duplicates.
-4. A blocking consensus makes the gate job fail; an advisory-only finding does
-   not.
+4. `out/post/post_result.json` reports `status: success` and `post_ai_review`
+   succeeded. A `blocker` finding posts a thread and does not fail the job.
 5. Job traces and downloaded artifacts contain no credential values.
+
+Seeing a green pipeline with a summary note and no discussions is normal: it
+means no finding reached two independent supporters, so every one of them is
+FYI.
 
 Before a production rollout, execute the hostile-MR checklist in the
 [evidence runbook](../evidence/README.md). Repository-only tests do not
@@ -110,5 +127,6 @@ configuration into another.
 
 Remove the include or bridge job, remove `ai_review` from a consumer-only stage
 list if unused, delete Code Tribunal variables, and review whether **Pipelines
-must succeed** still has another required pipeline. Existing discussions and
+must succeed** still has another required pipeline. Also delete any custom
+`needs` or script still referring to `ai_review_gate` or `post_ai_review`. Existing discussions and
 state notes remain until removed under project policy.

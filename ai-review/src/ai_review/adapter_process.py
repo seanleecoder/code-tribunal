@@ -69,8 +69,8 @@ _ANTHROPIC_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 # Process exit code written for terminal error statuses (model_error,
 # schema_error, timeout, config_error, internal_error). The CI reviewer/critique
 # jobs stay `allow_failure: true`, so a non-zero exit surfaces as a visible
-# "warning" without hard-blocking the pipeline — the panel degradation policy
-# (min_successful_reviewers_for_blocking) still governs merge gating. Intentional
+# "warning" without hard-blocking the pipeline — a lost seat degrades the panel,
+# leaving its findings without a second independent supporter. Intentional
 # Non-run outcomes (success and skipped) keep exit code 0.
 
 

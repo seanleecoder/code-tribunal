@@ -148,31 +148,36 @@ Prerequisites:
   the workflow copied from `R` and
   repinned to the pair above (copying an older template can carry env keys that `R`
   rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
-  `OPENROUTER_API_KEY` secret; the `gate` job added as a **required status
-  check** in branch protection/ruleset. Note that a required-check ruleset also
-  blocks direct pushes to the default branch, so adopting the workflow itself has
-  to go through a PR — run that PR in mock mode so it costs nothing. Setup:
+  `OPENROUTER_API_KEY` secret. **No required status check.** The `gate` job was
+  removed: Code Tribunal is informational and requires no check, so a consumer
+  ruleset must not name one. If the scratch consumer still carries a required
+  `gate` entry from an earlier release, delete it before repinning — a required
+  check that never reports leaves every PR unmergeable. A ruleset requiring
+  `post` instead is optional and reports publication, not findings; if you enable
+  it, note that a required-check ruleset also blocks direct pushes to the default
+  branch, so adopting the workflow has to go through a PR — run that PR in mock
+  mode so it costs nothing. Setup:
   [`docs/getting-started/github.md`](../getting-started/github.md).
 
 ## Cost model: where the tokens go
 
 A full panel is 6–8 real reviewer LLM calls (3–4 reviewers × review + critique).
 Only the **review** and **critique** stages call a model; prepare, consensus,
-post, and gate are deterministic. The historically expensive procedures ran a
+and post are deterministic. The historically expensive procedures ran a
 fresh full panel for *every* lifecycle step, and weak-model nondeterminism forced
 repeated re-runs. This runbook removes almost all of that spend:
 
 1. **One real 3-model panel per platform** (Chain A) proves the default models and
    adapter wiring. Everything else uses the deterministic mock reviewer.
-2. **Deterministic mock for the whole lifecycle/gate chain** (Chain B) — zero
+2. **Deterministic mock for the whole lifecycle chain** (Chain B) — zero
    tokens, no flakiness, and it still drives the *real* platform
-   posting/resolve/reopen/gate APIs, which is what those steps exist to prove.
+   posting/resolve/reopen APIs, which is what those steps exist to prove.
    The two chains use separate change requests and separate finding identities.
 3. **Single reviewer, critique off, cheapest model, minimal diff** for any live
    step that is not the one 3-model smoke.
 4. **No dual-digest re-runs of token-bearing rows** — validate the real panel once,
    against the single final rebuilt pair, rather than repeating it across candidate
-   digests. (The gate/mock code ships in the base image, so both images are rebuilt
+   digests. (The mock code ships in the base image, so both images are rebuilt
    from one commit and validated together — see the precondition above.)
 
 ### The deterministic mock reviewer
@@ -198,7 +203,7 @@ line is "first added", changing the anchor and opening a new discussion.
 > while scanning, raising `absolute paths are not allowed: /dev/null`. Finalization
 > caught that and **dropped the finding**, so every seat reported
 > `raw_finding_count=1, accepted_finding_count=0, usable_for_resolution=false`,
-> consensus exited 3, and `post`/`gate` were skipped. Observed live in GitHub run
+> consensus exited 3, and nothing was published. Observed live in GitHub run
 > `30172413739`. It affected **real reviewers too**, not just the mock: the raise
 > happened while scanning the diff, before the anchor's own paths were compared,
 > and it triggered on an added or deleted file, or on a file appearing *after* one
@@ -224,7 +229,7 @@ line is "first added", changing the anchor and opening a new discussion.
 > finding identity is preserved and the persisted state anchor follows the marker,
 > so the run updates the one existing discussion instead of opening a duplicate — is
 > proven by
-> `integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
+> `integration/test_revision_lifecycle_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
 > (two independently prepared revisions, each with its own head SHA, diff digest, and
 > run_id) plus the `test_anchors` remap and `test_post.py` run-to-run upsert unit
 > tests. What that test does **not** prove is *platform-visible* re-anchoring:
@@ -238,9 +243,9 @@ The scenarios:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
-| `blocking` | one blocker/correctness finding | inline create + blocking gate (with a ≥2-seat quorum, `block_merge=true`, gate exit `7`) |
+| `blocking` | one blocker/correctness finding | inline create at two independent supporters. Severity is an impact label: `post` exits `0` and nothing blocks the merge |
 | `blocking_alt` | same identity as `blocking` (same title, category, anchor), different body | the changed-body in-place update: the existing discussion is updated, `body_hash` changes, no new discussion is created |
-| `advisory` | one minor/maintainability finding | a **non-blocking inline surface** finding at quorum; the gate passes |
+| `advisory` | one minor/maintainability finding | a lower-severity inline surface finding at two independent supporters; identical publication outcome to `blocking`, which is the point |
 | `none` | no findings | absence-based resolution / withdrawal of a previously posted finding (NOT an unchanged rerun) |
 | `default` | historical `records[0]` heuristic | local `make consensus-local` demo |
 
@@ -251,7 +256,7 @@ against the real diff exactly like a real reviewer's output.
 > summary fallback** are not reachable through these uniform mock scenarios (the
 > mock emits identical findings across seats, which always group to quorum, and
 > config validation rejects a `votes_required`/enabled-seat mismatch). Both are
-> **regression-covered** (`integration/test_post_gate_e2e.py` FYI cases and
+> **regression-covered** (`integration/test_publish_e2e.py` FYI cases and
 > `test_post.py` summary-fallback cases); do not attempt a single-seat FYI live
 > run.
 
@@ -342,7 +347,7 @@ Read this before driving a chain. Each item cost real time to discover during th
   `gh api repos/<repo>/actions/runs/<id>/attempts/<n>/jobs`.
 - **GitLab:** `POST /projects/:id/merge_requests/:iid/pipelines` creates a fresh MR
   pipeline on the same head. Do **not** use pipeline *retry* — it only re-runs failed
-  jobs, so it re-runs the gate rather than re-driving prepare→post.
+  jobs, so it does not re-drive prepare→post.
 
 **Added-file diffs differ by platform.** GitHub renders an added file as
 `--- /dev/null`; GitLab renders `--- a/<path>`. A fixture that behaves one way on one
@@ -424,7 +429,7 @@ do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
 **Chain B — deterministic mock lifecycle (zero tokens).** On a second change
 request, enable the mock via the platform-specific mock enablement above (GitLab
 project variables / GitHub workflow-variable mapping). Every step drives the real
-platform posting/state/resolve/reopen/gate APIs on **one mock finding identity**;
+platform posting/state/resolve/reopen APIs on **one mock finding identity**;
 model quality is irrelevant, so no tokens are spent:
 
 1. create (`blocking`) → one inline discussion at the mapped line;
@@ -450,16 +455,19 @@ model quality is irrelevant, so no tokens are spent:
    moved comment is not reproduced by the mock and remains a live-optional
    confirmation, not release-gating; skip it as a token-free step and confirm live
    only if convenient;
-7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → post/gate
-   detect the superseded revision and do not act (disposition commands are already
-   covered by steps 4–5);
-8. force the blocking gate (`blocking`, ≥2 seats) with enforcement on → the
-   required check / **Pipelines must succeed** actually blocks merge, and the gate
-   agrees with `out/consensus/consensus.json` + `out/post/post_result.json`.
+7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → `post`
+   detects the superseded revision, does not act, reports `status: stale_head`,
+   and **exits 0** (disposition commands are already covered by steps 4–5);
+8. confirm a `blocker` does **not** block: with `blocking` at two supporters and
+   the thread posted, `post_result.status` is `success`, the job is green, and
+   the change request is mergeable as far as Code Tribunal is concerned. This
+   step replaces the former blocking-gate probe. There is no longer any step
+   that verifies a required check blocks — if you find one in an older copy of
+   this runbook, it is not executable.
 
-The `advisory` scenario (non-blocking inline surface, passing gate) may be run as
-an extra state; the FYI/summary-comment and inline-unmappable fallback paths are
-regression-covered and are not part of this live chain.
+The `advisory` scenario may be run as an extra state to confirm severity changes
+nothing about publication; the FYI/summary-comment and inline-unmappable fallback
+paths are regression-covered and are not part of this live chain.
 
 ### Run 3 — GitLab hostile-MR credential & enforcement boundary
 

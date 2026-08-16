@@ -15,19 +15,7 @@ def _config() -> dict:
             "claude": {"enabled": True},
             "codex": {"enabled": True},
         },
-        "panel": {
-            "min_successful_reviewers_for_blocking": 2,
-            "quorum": {"mode": "absolute", "votes_required": 2},
-        },
-        "severity_policy": {
-            "single_reviewer_blocker": {
-                "categories": ["security", "correctness"],
-                "post": True,
-                "block_merge": False,
-                "human_ack_recommended": True,
-            },
-            "quorum_blocker": {"post": True, "block_merge": True},
-        },
+        "panel": {"min_successful_reviewers_for_resolution": 2},
     }
 
 
@@ -142,6 +130,43 @@ def _record(
     }
 
 
+# Shared with test_consensus_policy and test_phase5_consensus, which already take
+# _batch/_config/_finding/_manifest/_record from here. `_critique_config` stays
+# per-module: the policy suite needs a fourth enabled seat for its majority-noise
+# denominator cases, and the two shapes are a real difference rather than drift.
+def _critique(
+    critic: str,
+    target: str,
+    verdict: str,
+    *,
+    duplicate_of: str | None = None,
+    adjusted_severity: str | None = None,
+    rationale: str = "checked against the diff",
+) -> dict:
+    critique = {
+        "target_source_finding_id": target,
+        "critic": critic,
+        "verdict": verdict,
+        "rationale": rationale,
+        "adjusted_severity": adjusted_severity,
+        "confidence": 0.8,
+    }
+    if duplicate_of is not None:
+        critique["duplicate_of_source_finding_id"] = duplicate_of
+    return critique
+
+
+def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
+    return {
+        "schema_version": "critique_batch.v1",
+        "run_id": "run",
+        "critic": critic,
+        "adapter_status": status,
+        "effective_config_sha256": "0" * 64,
+        "critiques": critiques,
+    }
+
+
 class ConsensusStateMatchingTests(unittest.TestCase):
     def _batches(self) -> list[dict]:
         return [
@@ -154,27 +179,26 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         consensus = build_consensus(_manifest(), self._batches(), _config())
 
         self.assertEqual(len(consensus["groups"]), 1)
-        self.assertEqual(consensus["groups"][0]["vote_count"], 3)
+        self.assertEqual(consensus["groups"][0]["support_count"], 3)
         self.assertEqual(consensus["summary"]["surface_count"], 1)
-        self.assertEqual(consensus["summary"]["panel_convergence"], 1.0)
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_panel_convergence_counts_only_surfaced_groups(self) -> None:
-        config = _config()
-        config["panel"]["min_successful_reviewers_for_blocking"] = 3
+    def test_degraded_panel_does_not_hold_back_a_supported_group(self) -> None:
         consensus = build_consensus(
             _manifest(),
             [
                 _batch("claude", _finding("claude", "1" * 64)),
                 _batch("codex", _finding("codex", "2" * 64)),
             ],
-            config,
+            _config(),
         )
 
-        self.assertEqual(consensus["panel_status"], "advisory_only")
-        self.assertEqual(consensus["groups"][0]["vote_count"], 2)
-        self.assertEqual(consensus["groups"][0]["decision"], "fyi")
-        self.assertEqual(consensus["summary"]["panel_convergence"], 0.0)
+        self.assertEqual(consensus["panel_status"], "degraded")
+        self.assertEqual(consensus["groups"][0]["support_count"], 2)
+        self.assertEqual(consensus["groups"][0]["decision"], "surface")
+        self.assertEqual(
+            consensus["summary"], {"surface_count": 1, "fyi_count": 0, "drop_count": 0}
+        )
         validate_instance(consensus, "consensus.schema.json")
 
     def test_matched_state_reuses_issue_id(self) -> None:
@@ -190,7 +214,7 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         self.assertEqual(group["state_match"]["precedence"], "source_finding_id")
         validate_instance(consensus, "consensus.schema.json")
 
-    def test_ambiguous_state_match_is_fyi_without_issue_id_or_block(self) -> None:
+    def test_ambiguous_state_match_is_fyi_without_an_issue_id(self) -> None:
         state = {"records": [_record("4" * 64), _record("5" * 64)]}
 
         consensus = build_consensus(_manifest(), self._batches(), _config(), state=state)
@@ -199,9 +223,9 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         self.assertIsNone(group["issue_id"])
         self.assertEqual(group["issue_id_source"], "ambiguous_unassigned")
         self.assertEqual(group["decision"], "fyi")
-        self.assertFalse(group["block_merge"])
+        # Three direct supporters, and still FYI: ambiguity outranks support.
+        self.assertEqual(group["support_count"], 3)
         self.assertEqual(group["state_match"]["status"], "ambiguous")
-        self.assertFalse(consensus["summary"]["block_merge"])
         validate_instance(consensus, "consensus.schema.json")
 
     def test_ambiguous_groups_sort_after_assigned_groups_with_deterministic_ties(self) -> None:

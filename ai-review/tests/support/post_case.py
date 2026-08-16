@@ -32,13 +32,11 @@ class PostCase(unittest.TestCase):
                     "issue_id": "a" * 64,
                     "decision": "surface",
                     "final_severity": "major",
-                    "block_merge": False,
-                    "human_ack_recommended": False,
                     "category": "correctness",
                     "title": "Title",
                     "body": "Body",
-                    "vote_count": 1,
-                    "critique_support_count": 0,
+                    "support_count": 1,
+                    "agreeing_critics": [],
                     "contributing_reviewers": ["claude"],
                     "source_finding_ids": ["b" * 64],
                     "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
@@ -139,7 +137,7 @@ class PostCase(unittest.TestCase):
         position: dict[str, Any] | None = None,
         resolved: bool = False,
     ) -> dict[str, Any]:
-        body, _body_hash = render_body(group, 1, "previous-run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "previous-run", posting_mode="gitlab_discussions")
         note: dict[str, Any] = {
             "id": note_id,
             "body": body,

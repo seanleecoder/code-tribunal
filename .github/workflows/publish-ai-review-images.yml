@@ -150,7 +150,7 @@ jobs:
               expected_head_sha=os.environ["PREFLIGHT_HEAD_SHA"],
           )
           '
-          for module in input_bundle consensus post gate schema; do
+          for module in input_bundle consensus post schema; do
             docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
               python -m "ai_review.$module" --help >/dev/null
           done

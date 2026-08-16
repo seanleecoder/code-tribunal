@@ -1,4 +1,4 @@
-schema_version: review_config.v2 # Schema version for config compatibility validation (must be review_config.v2)
+schema_version: review_config.v3 # Schema version for config compatibility validation (must be review_config.v3)
 
 # Configured LLM reviewer backends. Review process groups use a 1800-second
 # (30-minute) timeout and critique process groups use a 900-second (15-minute)
@@ -7,10 +7,12 @@ schema_version: review_config.v2 # Schema version for config compatibility valid
 # Every reviewer below is a peer seat, and any of them may be left out of the
 # panel. The primary way to choose the panel is AI_REVIEW_REVIEWERS, a
 # comma-separated roster (e.g. AI_REVIEW_REVIEWERS=claude,codex,cursor) that
-# enables exactly the seats it names and disables the rest. Two to four enabled
-# seats are supported; the panel thresholds below clamp to the enabled count, so
-# changing the roster never requires editing them in lock-step. A one-seat panel
-# is rejected — consensus needs a second opinion to corroborate against.
+# enables exactly the seats it names and disables the rest. Three or four enabled
+# seats are supported; the resolution threshold below clamps to the enabled
+# count, so changing the roster never requires editing it in lock-step. Fewer
+# than three enabled seats is rejected: a finding surfaces only when two reviewer
+# identities support it independently, and a two-seat panel cannot reach that
+# after losing a seat.
 # Per-reviewer `model` and `enabled` can also be overridden individually at
 # runtime without a rebuild via AI_REVIEW_<REVIEWER>_MODEL /
 # AI_REVIEW_<REVIEWER>_ENABLED (e.g. AI_REVIEW_CLAUDE_MODEL,
@@ -73,27 +75,18 @@ reviewers:
     max_findings: 50
     credential_variable: CURSOR_API_KEY # Cursor account/service key — NOT OpenRouter
 
-# Panel voting and consensus aggregation rules. These are authored against the
-# configured reviewer count (4) and take effect clamped to the enabled count, so
-# a smaller roster degrades rather than failing validation.
+# Cross-run thread lifecycle. Authored against the configured reviewer count (4)
+# and clamped to the enabled count, so a smaller roster degrades rather than
+# failing validation. Surfacing is not configured here: a finding surfaces when
+# two reviewer identities support it independently across review and critique,
+# which is a product invariant rather than an operator setting.
 panel:
-  min_successful_reviewers_for_blocking: 2 # Minimum successful reviewer runs required to issue a merge-blocking verdict
   min_successful_reviewers_for_resolution: 2 # Minimum successful reviewer runs required to resolve findings across runs
-  quorum:
-    votes_required: 2 # Minimum agreeing votes required across reviewers to reach consensus
-
-# Severity rules governing MR merge blocking and consensus requirements
-severity_policy:
-  single_reviewer_blocker:
-    categories: [security, correctness] # Finding categories eligible for single-reviewer blocker reporting
-  quorum_blocker:
-    block_merge: true # Block MR merge when consensus quorum agrees on a blocker finding
 
 # Optional multi-agent cross-examination phase (critique)
 critique:
   enabled: true # Override: AI_REVIEW_CRITIQUE_ENABLED (strict true/false; same var gates the CI critique jobs, default "true" in the CI template — single source of truth)
   blind_reviewer_identity: true # Anonymize reviewer identities during critique to prevent model bias
-  allow_advisory_escalation: true # Surface peer-supported advisory findings; escalation remains non-blocking
   allow_severity_downgrade: false # Security default: downgrades are opt-in and never cross blocker boundary
 
 # Placement and formatting rules for MR inline comments & summaries
@@ -101,13 +94,8 @@ posting:
   mode: gitlab_discussions # Integration backend target for discussions; set github_reviews for GitHub Actions. Also selects state.backend.
   v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
   inline_multiline: true # Support multiline diff range comments
-  fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
   fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
   stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
-
-# Merge gating integration rules
-merge_gate:
-  enabled: true # Override: AI_REVIEW_MERGE_GATE_ENABLED (set false for advisory, non-blocking mode)
 
 # Persistent state management across pipeline runs
 state:
@@ -129,8 +117,7 @@ state:
 limits:
   max_diff_bytes: 250000 # Max git diff payload size in bytes accepted for review
   max_files: 200 # Max number of changed files analyzed per review run
-  max_posted_surface_findings: 25 # Limit on inline posted comments to prevent MR thread spam
-  max_fyi_findings: 50 # Cap on non-blocking findings in MR summary comment
+  max_fyi_findings: 50 # Cap on FYI findings listed in the summary comment (truncation is visible; surfaced threads are never capped)
   max_prompt_bytes: 500000 # Max prompt payload size in bytes sent to model APIs
 
 # Runtime security controls

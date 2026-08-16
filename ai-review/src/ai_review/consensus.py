@@ -15,6 +15,7 @@ from .config import (
     load_config,
 )
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
+from .consensus_policy import apply_group_decision
 from .constants import SEVERITY_RANK
 from .critique import _apply_critiques, _critique_enabled, _valid_duplicate_links
 from .grouping import (
@@ -34,11 +35,18 @@ from .schema import (
 from .types import Consensus, FindingGroup, PanelStatus, State
 
 
-def panel_status(successful: list[str], enabled: list[str], min_successful: int) -> str:
+def panel_status(successful: list[str], enabled: list[str]) -> str:
+    """Execution health only.
+
+    Panel status reports which seats produced a usable review batch. It does not
+    alter the support threshold in either direction: a degraded panel still
+    surfaces a finding two independent identities support, and a full panel does
+    not promote a finding only one identity supports. There is no
+    ``advisory_only`` mode — it existed to describe a panel below the blocking
+    minimum, and there is no merge policy left for it to describe.
+    """
     if not successful:
         return "failed"
-    if len(successful) < min_successful:
-        return "advisory_only"
     if len(successful) < len(enabled):
         return "degraded"
     return "full"
@@ -70,39 +78,15 @@ def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
     return {reviewer: "; ".join(entries) for reviewer, entries in evidence.items()}
 
 
-def decision_for_group(
-    findings: list[dict[str, Any]],
-    config: dict[str, Any],
-    status: str,
-) -> tuple[str, bool, bool, str]:
-    reviewers = {finding["reviewer"] for finding in findings}
-    severity = max(
+def _final_severity(findings: list[dict[str, Any]]) -> str:
+    """Highest reviewed impact in the group.
+
+    Severity is an impact label. It changes no decision in either direction: a
+    lone `blocker` is `fyi`, and a two-support `minor` surfaces.
+    """
+    return max(
         (str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value]
     )
-    category = str(findings[0]["category"])
-    single_policy = config["severity_policy"]["single_reviewer_blocker"]
-    # quorum is only required (and validated) when >1 reviewer is enabled; a valid
-    # single-reviewer config may omit it, so default to a quorum that one reviewer
-    # cannot reach — routing findings through the single-reviewer/fyi policy instead.
-    quorum = config.get("panel", {}).get("quorum", {})
-    votes_required = int(quorum.get("votes_required", 2)) if isinstance(quorum, dict) else 2
-    single_reviewer_blocker = (
-        severity == "blocker"
-        and len(reviewers) == 1
-        and category in set(single_policy["categories"])
-    )
-    if status == "advisory_only":
-        if single_reviewer_blocker:
-            return "surface", False, True, "blocker"
-        return "fyi", False, False, severity
-    if len(reviewers) >= votes_required:
-        block_merge = severity == "blocker" and bool(
-            config["severity_policy"]["quorum_blocker"]["block_merge"]
-        )
-        return "surface", block_merge, False, severity
-    if single_reviewer_blocker:
-        return "surface", False, True, "blocker"
-    return "fyi", False, False, severity
 
 
 def _batch_usable_for_panel(batch: dict[str, Any]) -> bool:
@@ -178,11 +162,7 @@ def build_consensus(
     )
     resolution_eligible = list(successful)
     failed = sorted(set(enabled) - set(successful))
-    status = panel_status(
-        successful,
-        enabled,
-        int(config["panel"]["min_successful_reviewers_for_blocking"]),
-    )
+    status = panel_status(successful, enabled)
 
     all_findings = []
     for batch in finding_batches:
@@ -202,11 +182,6 @@ def build_consensus(
         for findings in group_findings(all_findings, valid_duplicate_links):
             issue_id = issue_id_for_group(findings)
             representative = _representative(findings)
-            decision, block_merge, require_ack, final_severity = decision_for_group(
-                findings,
-                config,
-                status,
-            )
             contributing = sorted({finding["reviewer"] for finding in findings})
             source_ids = sorted({finding["source_finding_id"] for finding in findings})
             candidate_signature_hashes = sorted(
@@ -219,10 +194,10 @@ def build_consensus(
             group = {
                 "issue_id": issue_id,
                 "issue_id_source": "new_signature",
-                "decision": decision,
-                "final_severity": final_severity,
-                "block_merge": block_merge,
-                "human_ack_recommended": require_ack,
+                # Assigned by consensus_policy.apply_group_decision once the
+                # cross-run state match is known; never written here.
+                "decision": "fyi",
+                "final_severity": _final_severity(findings),
                 "category": representative["category"],
                 "title": representative["title"],
                 "body": representative["body"],
@@ -230,9 +205,8 @@ def build_consensus(
                 "evidence_by_reviewer": _evidence_by_reviewer(findings),
                 "critique_disputes": [],
                 "body_hash": "0" * 64,
-                "vote_count": len(contributing),
-                "critique_support_count": 0,
-                "critique_noise_count": 0,
+                "agreeing_critics": [],
+                "support_count": 0,
                 "contributing_reviewers": contributing,
                 "source_finding_ids": source_ids,
                 "candidate_issue_signature_hashes": candidate_signature_hashes,
@@ -274,29 +248,27 @@ def build_consensus(
             elif state_match.status == "ambiguous":
                 group["issue_id"] = None
                 group["issue_id_source"] = "ambiguous_unassigned"
-                group["decision"] = "fyi"
-                group["block_merge"] = False
-                group["human_ack_recommended"] = False
                 group["state_match"] = {
                     "status": "ambiguous",
                     "matched_issue_id": None,
                     "precedence": state_match.precedence,
                 }
+            # After the state match, because ambiguity is an input to the policy.
+            apply_group_decision(group)
             groups.append(group)
     else:
         valid_duplicate_links = set()
-    _apply_critiques(groups, critique_batches, config, status, valid_duplicate_links)
+    _apply_critiques(groups, critique_batches, config, valid_duplicate_links)
     for group in groups:
         _body, body_hash = render_body(
             cast(FindingGroup, group),
-            len(successful),
             manifest["run_id"],
             posting_mode=posting_mode,
         )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
     return {
-        "schema_version": "consensus.v1",
+        "schema_version": "consensus.v2",
         "run_id": manifest["run_id"],
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
@@ -311,17 +283,6 @@ def build_consensus(
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             "drop_count": sum(1 for group in groups if group["decision"] == "drop"),
-            "block_merge": any(group["block_merge"] for group in groups),
-            "panel_convergence": (
-                sum(
-                    1
-                    for group in groups
-                    if group["decision"] == "surface" and group["vote_count"] >= 2
-                )
-                / sum(1 for group in groups if group["decision"] == "surface")
-                if any(group["decision"] == "surface" for group in groups)
-                else 0.0
-            ),
         },
     }
 

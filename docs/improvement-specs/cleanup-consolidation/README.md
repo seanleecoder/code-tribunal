@@ -1,0 +1,133 @@
+# Code Tribunal cleanup and consolidation implementation specs
+
+- **Repository:** `seanleecoder/code-tribunal`
+- **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
+- **Intended destination:** `docs/improvement-specs/`
+- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 through SPEC-61 are pending, and
+  their requirement documents land with their own change series rather than here.
+
+Sections below that describe SPEC-54/55 work state what was done, not what to do. Read them
+as record; the shipped contract is the code, the tests, and
+[`CHANGELOG.md`](../../../CHANGELOG.md).
+
+## Purpose
+
+This package converts the agreed cleanup and consolidation direction into individual,
+implementation-ready specifications. It deliberately preserves the product features that
+are required in production:
+
+- four first-party reviewer adapters: Claude, Codex, OpenCode, and Cursor;
+- one review stage and one critique stage;
+- deterministic consensus over untrusted model output;
+- GitHub and GitLab support;
+- persistent cross-run finding state and thread reconciliation;
+- secure revision binding, snapshot containment, credential isolation, and artifact
+  validation.
+
+The product policy this package targets is informational. SPEC-54 and SPEC-55 shipped it;
+the remaining specs must not walk it back:
+
+- a finding is surfaced when at least two independent reviewers support it across direct
+  review and critique;
+- every anchorable surfaced finding is posted as a discussion thread;
+- severity, including `blocker`, is an impact label only;
+- Code Tribunal does not decide whether a change may merge;
+- humans and downstream agents decide what to do after reading the threads.
+
+## Spec set
+
+SPEC-54 and SPEC-55 landed as one change series. Their documents are still here and will be
+deleted in a follow-up, once this series is on `main` and
+[the improvement-spec index](../README.md)'s rule — completed specs are deleted rather than
+archived, because `git log` holds them — is actually true of them. Deleting them in the same
+change that introduced them would not satisfy it: this repository squash-merges, so a file
+added and removed within one pull request leaves no trace in `main` at all.
+
+Rows for SPEC-56 through SPEC-61 are plain text because those documents are not in this
+repository yet. They land with their own change series.
+
+| Spec | Title | Type | Depends on |
+|---|---|---|---|
+| [SPEC-54](spec-54-independent-support-informational-findings.md) — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
+| [SPEC-55](spec-55-publish-only-pipeline-no-merge-gate.md) — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
+| SPEC-56 — *pending, document not yet added* | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
+| SPEC-57 — *pending, document not yet added* | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
+| SPEC-58 — *pending, document not yet added* | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
+| SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
+| SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
+| SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
+
+## Required implementation order
+
+Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadmap.
+
+1. ~~**Land SPEC-59 first or in parallel.**~~ **Superseded.** SPEC-59 did not land first.
+   SPEC-54/55 changed the contracts before the product boundary was recorded, so SPEC-59 now
+   describes a boundary that already moved and must be rebased against the shipped
+   informational contract before it is implemented.
+2. ~~**Implement SPEC-54 and SPEC-55 as one coordinated change series.**~~ **Done.** They
+   shipped together: SPEC-54 defined `consensus.v2` and SPEC-55 the renderer and the
+   publish-only pipeline over it. The hazard this step warned about — an intermediate state
+   in which the consensus schema had lost fields the renderer still read through defaulted
+   lookups — was avoided by shipping them as one series, and is now spent. There is no merge
+   gate left for a future step to coordinate with.
+3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests. The policy
+   contracts they coordinate with — `consensus.v2` and `review_config.v3` — are now stable
+   and shipped. Note that SPEC-54/55 already removed `merge_gate`,
+   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings` from
+   `review_config.v3`; SPEC-57 appends to that same removal list rather than opening a new
+   config version.
+4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
+   tests rather than add a second suite beside them. Some of this arrived early: landing
+   SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so
+   SPEC-58 should re-survey rather than assume that duplication is still present.
+5. **Implement SPEC-60 and SPEC-61 as follow-ups.** Neither is a prerequisite for the
+   cleanup. SPEC-60 is observational and must not change surfacing decisions; its
+   prohibitions on changing the `post` exit status and on restoring a merge gate describe the
+   contract SPEC-55 established. SPEC-61 is required before promoting or repinning a
+   candidate image that changes reviewer-path behavior, but it is not a general pull-request
+   gate.
+
+## Cross-spec rules for coding agents
+
+- Preserve the four adapters and critique. Optional means selectable by a deployment,
+  not experimental.
+- Do not introduce a dynamic plugin system.
+- Do not preserve private Python imports, logger names, helper signatures, or test fixture
+  internals for compatibility.
+- Version public configuration and artifact shape changes explicitly. Do not change a
+  versioned shape while keeping the old version identifier.
+- Avoid long-lived old/new code paths. A migration message is preferable to a permanent
+  compatibility adapter.
+- Preserve all security boundaries around revision binding, no-follow snapshot traversal,
+  external-fork secret refusal, provider credential isolation, endpoint validation,
+  immutable dependency pins, and strict artifact validation.
+- Do not add line-count, file-count, or test-count quality gates.
+- Do not add exact-prose documentation tests.
+- A new abstraction must either remove duplicated behavior immediately or establish a
+  product boundary named in SPEC-59. Do not add framework layers for hypothetical future
+  adapters, stages, platforms, or state backends.
+- Run `make quality`, update workflow parity, regenerate golden artifacts where required,
+  and execute the spec-specific negative tests before declaring a spec complete.
+
+## Explicitly out of scope
+
+The following existing proposals remain separate:
+
+- SPEC-41 reviewer confidence defaulting;
+- SPEC-43 trusted consumer image verification;
+- SPEC-45 critique provenance display;
+- SPEC-46 unanchored advisories;
+- SPEC-47 trusted project review configuration;
+- SPEC-48 auditable scope exclusions;
+- SPEC-53 broader stringified structured-output normalization.
+
+SPEC-42 became obsolete when SPEC-55 removed merge-gate semantics, and was deleted from the
+open-spec index as part of that implementation. The human `wontfix` disposition it reasoned
+about is unchanged and still supported.
+
+Three of the specs that stay open also contained contract text that SPEC-54 and SPEC-55
+invalidated — SPEC-45 and SPEC-46 read `block_merge` and quorum as given inputs, and SPEC-48
+specified a gate outcome that no longer exists. They were reconciled as part of landing
+SPEC-55, along with SPEC-47 and ADR-0002. No open specification now describes a consumer of
+a deleted artifact.

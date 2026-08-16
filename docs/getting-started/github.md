@@ -46,9 +46,9 @@ normally report authorized users as `MEMBER` or `COLLABORATOR`, so configure the
 resolve token there for command authorization. Ordinary comments and state
 continue to use `GITHUB_TOKEN`.
 
-### Enforcing installs
+### Strict state handling
 
-For an enforcing gate, set `state.fail_closed_on_load_error: true` in a custom
+For a strict install, set `state.fail_closed_on_load_error: true` in a custom
 config mounted into the trusted image, or accept the shipped default only during
 advisory rollout. The shipped default is `false` so a transient state-load error
 starts from empty recoverable state (conservative repost risk) rather than
@@ -68,29 +68,46 @@ Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
 unset for shipped defaults. Never set `AI_REVIEW_LOCAL_MOCK` in production.
 
-## Require the gate
+## Branch protection
 
-Run the workflow once so its checks are visible, then add the `gate` job from
-the **AI Review** workflow as a required status check in the target branch's
-ruleset or branch protection. Merely setting
-`AI_REVIEW_MERGE_GATE_ENABLED=true` does not make a non-required check block a
-merge.
+**Code Tribunal is informational and requires no status check.** It publishes
+review threads and a summary; it never decides whether a change may merge. There
+is no gate job to require.
 
-For an advisory rollout, set the repository variable
-`AI_REVIEW_MERGE_GATE_ENABLED` to `false` and do not require the gate yet.
-Operational posting or state failures still fail the gate.
+If you are upgrading from a release that had one, remove the `gate` entry from
+the target branch's ruleset or branch protection **before or together with** the
+workflow upgrade. A required status check that never reports leaves pull requests
+permanently unmergeable — the workflow does not fail, it simply never produces
+the check the ruleset is waiting for.
+
+If you want the review to have *run* before a merge, you may require the `post`
+check instead. Understand what that does and does not give you:
+
+- it reports whether publication completed, not what the review found. A
+  `blocker` finding posts a thread and `post` still succeeds;
+- it does not cover a run whose `prepare` job never started. `post` is gated on
+  `prepare` succeeding, and a pull request that `prepare` declines produces no
+  `post` check at all. Requiring `post` is therefore not equivalent to the
+  deleted gate, which had the same limitation and did not advertise it.
+
+`Require conversation resolution` is a reasonable repository policy if you want
+posted threads acknowledged before merge, but it is your policy, not a Code
+Tribunal requirement, and Code Tribunal does not enable it for you.
 
 ## First run and verification
 
 Open a same-repository pull request with a small, reviewable change. Confirm:
 
-1. `prepare`, reviewer, `consensus`, `post`, and `gate` jobs ran.
+1. `prepare`, reviewer, `consensus`, and `post` jobs ran.
 2. `ai-review-inputs`, reviewer, consensus, and post artifacts exist.
 3. The state comment is authored by `github-actions[bot]`.
 4. Any surfaced finding is posted once and rerunning updates rather than
    duplicates it.
-5. The gate result agrees with `out/consensus/consensus.json` and
-   `out/post/post_result.json`.
+5. `out/post/post_result.json` reports `status: success` and the `post` job
+   exited 0. A `blocker` finding does not change either.
+
+Seeing a green run with a summary comment and no threads is normal: it means no
+finding reached two independent supporters, so every one of them is FYI.
 
 Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. Current
 repository-level live evidence and its limits are recorded in
@@ -105,6 +122,9 @@ do not reuse old prepare/reviewer artifacts across versions.
 
 ## Uninstall
 
-Remove `.github/workflows/ai-review.yml`, remove the AI Review required check,
-and delete Code Tribunal secrets and variables. Existing bot comments remain as
+Remove `.github/workflows/ai-review.yml` and delete Code Tribunal secrets and
+variables. If your ruleset or branch protection requires an **AI Review** check —
+`post`, or a `gate` entry left over from a release before the gate was removed —
+delete that entry too, or the branch stays blocked on a check that will never
+report again. Existing bot comments remain as
 review history and can be removed according to repository policy.

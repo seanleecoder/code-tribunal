@@ -24,8 +24,7 @@ variables:
   # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL AI_REVIEW_CLAUDE_ENABLED
   # AI_REVIEW_CODEX_ENABLED AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED
   # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT
-  # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_MERGE_GATE_ENABLED
-  # AI_REVIEW_POSTING_MODE
+  # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_POSTING_MODE
   # AI_REVIEW_REVIEWERS is the panel roster: a comma-separated list of reviewers
   # (e.g. "claude,codex,cursor") that enables exactly those seats and disables
   # every other configured seat. All four reviewers are peers, so any of them may
@@ -256,11 +255,25 @@ consensus_ai_review:
     paths:
       - out/consensus/
 
+# The terminal product job. Code Tribunal publishes review output and never
+# decides whether a change may merge, so this job's result reports one thing:
+# whether publication completed. Findings of any severity exit zero, and a
+# posting failure remains a failed job unless the consuming project marks it
+# allowed to fail.
+#
+# Deliberately NOT mirroring the GitHub template's `if: always()` guard here.
+# GitLab enforces at pipeline level through "Pipelines must succeed", so a failed
+# consensus_ai_review already blocks and this job staying skipped is correct.
+# GitHub enforces per job, where a skipped required check never reports at all.
+# The asymmetry follows from the platforms; do not "restore symmetry" by adding
+# an unreachable guard.
 post_ai_review:
   stage: ai_review
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
+  # Serializes concurrent posting for one merge request. Unrelated to merge
+  # enforcement; keep it.
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
   needs:
     - job: prepare_ai_review
@@ -274,21 +287,3 @@ post_ai_review:
     expire_in: 30 days
     paths:
       - out/post/
-
-ai_review_gate:
-  stage: ai_review
-  extends: .ai_review_rules
-  image: "$AI_REVIEW_BASE_IMAGE"
-  interruptible: false
-  needs:
-    - job: consensus_ai_review
-      artifacts: true
-    - job: post_ai_review
-      artifacts: true
-  script:
-    - python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - out/gate/

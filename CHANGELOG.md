@@ -7,7 +7,195 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: findings are informational and surface on independent support.**
+  A grouped finding surfaces when at least two unique reviewer identities support
+  it across direct review and critique. Severity, including `blocker`, is an
+  impact label and changes no decision in either direction.
+
+  The reducer used to decide the same policy in four places: a pre-critique
+  quorum function, a post-critique recompute with an advisory-escalation path,
+  the ambiguous state-match override, and the majority-noise drop. There is now
+  one pure function in `ai_review/consensus_policy.py`, and one call site that
+  assigns `decision`. Its branches are ordered by precedence: an ambiguous
+  cross-run state match stays `fyi` whatever the support, majority independent
+  noise then drops the group, and only after both does the two-support threshold
+  apply.
+
+  Against the shipped v2 defaults most decisions are unchanged — two direct
+  reviewers already surfaced, and one reviewer plus one agreeing critic already
+  surfaced through advisory escalation. Four things do change:
+
+  - **A lone `blocker` in `security` or `correctness` no longer surfaces.** It
+    was surfaced with `human_ack_recommended`; it is now `fyi`. This is the only
+    change that reduces what maintainers see, and it is deliberate.
+  - **A thin panel can now surface.** A panel below the old blocking minimum was
+    forced to `fyi`; one successful review seat plus one independent agreeing
+    critic now reaches two supporters and surfaces.
+  - **Mixed verdicts from one critic collapse semantically.** Where grouping
+    combines findings a critic critiqued separately, the surviving verdict used
+    to be chosen by an incidental sort key under which `agree` beat `noise`. The
+    strongest objection now wins, by the precedence
+    `noise > dispute > duplicate > agree`. A critic still contributes at most one
+    verdict, one support vote, and one severity request per group.
+  - **`panel_status` loses `advisory_only`**, which described a panel below the
+    blocking minimum. Status now reports execution health only and never alters
+    the threshold. Absence-based cross-run resolution is unaffected: it has
+    always been decided by `panel.min_successful_reviewers_for_resolution`
+    against the resolution-eligible seats, never by panel status.
+
+  Dissent is unchanged and remains first-class: an effective `dispute` keeps its
+  critic, rationale, and optional adjusted severity, is rendered with the
+  finding, and subtracts no support even when the group surfaces.
+
+- **`render-body.v3` becomes `render-body.v4` — one bump for the whole series.**
+  The footer heading is now `Support:` rather than `Consensus:`. It no longer
+  reports direct votes, critique support, blocking, or human acknowledgement; it
+  reports the direct reviewers, agreeing critics (or `none`), the independent
+  support count, `Status: surfaced for discussion`, and that the merge decision is
+  left to maintainers and downstream automation. The highest severity header may
+  still read `BLOCKER`; the footer is what makes its informational meaning
+  unambiguous.
+
+  `parse_review_note` accepts **both** headings for one release, because marker
+  recovery reads thread bodies written by the previous version; the `Consensus:`
+  section boundary is a temporary compatibility entry with a removal target, not
+  a permanent alias.
+
+  The version string is a body-hash input, so **expect every pre-existing thread
+  to be updated once** on the first v4 run instead of reported
+  `skipped_unchanged`. That churn is cosmetic: finding identity lives in
+  `issue_id` and the alias chain, and the persisted state schema carries none of
+  the removed fields, so no state migration is required.
+
+- **Minority dissent now outranks evidence and suggestion under truncation.**
+  The renderer fits fragments in order and stops at the first one that does not
+  fit, so position is priority. Dissent previously sat after evidence and could
+  be dropped from an oversized body while the footer — which is never truncated —
+  survived. The new footer is longer, which would have made that more likely. A
+  body under platform pressure now loses supporting detail before it loses the
+  argument against the finding.
+
+- **Breaking: the `gate` required status check is gone. Remove it from branch
+  protection before or together with this upgrade.**
+
+  The installation guides used to instruct repositories to add the workflow's
+  `gate` job as a required status check. That job no longer exists, and on GitHub
+  a required check that never reports leaves pull requests **permanently
+  unmergeable** — the workflow does not fail, it simply never produces the check
+  the ruleset waits for. Delete the `gate` entry from every ruleset and
+  branch-protection rule that names it, **before or together with** installing
+  the new workflow. On GitLab, delete any custom `needs`, dashboard, or script
+  naming the `ai_review_gate` job.
+
+  A repository that wants the review to have *run* before a merge may require
+  `post` instead, but it is not equivalent: `post` reports whether publication
+  completed, not what the review found, and cannot cover a run whose `prepare`
+  job never started.
+
+- **`post` is the terminal stage and its exit status reports publication only.**
+  `success` and `stale_head` exit 0; `failed`, `partial_failed`, and
+  `state_overflow` exit nonzero. A finding of any severity, `blocker` included,
+  exits 0. `stale_head` is a successful no-op: a newer revision superseded the
+  run, so performing no mutation is correct. An **unrecognized** status also
+  exits nonzero, so a status added later without revisiting `post.py` fails
+  loudly instead of reporting a false success. `--dry-run` uses the same mapping.
+
+- **`ai_review_gate` stays reserved in `scripts/pipeline_trust.py` for one
+  release**, because a consumer pinned to an older template still declares the
+  job and un-reserving a name loosens a trust boundary. Tracked for removal.
+
 ### Removed
+
+- **Breaking: the merge gate is deleted.** `ai_review/gate.py`,
+  `gate_result.schema.json`, `GateResult`, `GateStatus`, `test_gate.py`, the
+  GitHub `gate` job, and the GitLab `ai_review_gate` job are gone, along with the
+  gate artifact upload/download paths. See the operator migration above.
+
+  Two behaviors disappear with it, both deliberately:
+
+  - **The cross-artifact run-id check.** `evaluate_gate` re-verified that
+    `post_result.run_id` matched `consensus.run_id` as SPEC-33 defense in depth.
+    It existed because the gate was the one stage that recombined two
+    independently downloaded artifacts. No stage does that now: `post.py` derives
+    its result from the consensus it loaded in the same process, so a mismatch is
+    unreachable rather than merely unlikely. Do not reintroduce the check
+    elsewhere.
+  - **Consumer-side validation of `post_result.json`.** The gate CLI was its only
+    reader. `post.py` validates on write and nothing in the pipeline reads the
+    artifact afterwards, so the write-side validation is now the only one — and
+    is retained.
+
+  On GitHub, `post` gains `if: always() && needs.prepare.result == 'success'` and
+  a step that fails when consensus did not succeed, so a failed consensus
+  produces a *failed* `post` rather than a skipped one. This is **not** mirrored
+  on GitLab: **Pipelines must succeed** already enforces at pipeline level there,
+  so a failed `consensus_ai_review` blocks and `post_ai_review` staying skipped is
+  correct. The asymmetry follows from the platforms and is intentional.
+
+- **Breaking: the artifact contract is now `consensus.v2`.** Groups gain
+  `support_count` and `agreeing_critics`, and lose `vote_count`,
+  `critique_support_count`, `critique_noise_count` (available as
+  `critique_summary.noise`), `block_merge`, and `human_ack_recommended`. The
+  summary keeps only `surface_count`, `fyi_count`, and `drop_count`, losing
+  `block_merge` and `panel_convergence` — the latter was computed from direct
+  quorum and has no clear meaning once direct and critique support are
+  deliberately combined, and nothing in the runtime ever read it. Of the removed
+  fields only `summary.block_merge` had a behavioral consumer; the rest were read
+  by the thread footer or by the reducer itself. The removed fields are not
+  reintroduced as optional compatibility fields.
+
+- **Breaking: the configuration contract is now `review_config.v3`**, and every
+  configuration must leave at least **three** reviewer seats enabled.
+  `review_config.v2` is rejected with a message naming this migration.
+
+  ### Migrating a `review_config.v2` document
+
+  | v2 key | v3 | Why |
+  |---|---|---|
+  | `severity_policy` (whole object) | **delete** | Severity no longer affects any decision. `blocker` remains the highest impact label. |
+  | `panel.min_successful_reviewers_for_blocking` | **delete** | There is no blocking verdict to gate. |
+  | `panel.quorum` | **delete** | The support threshold is a product invariant, not an operator setting. Lowering it would make consensus a passthrough of one model's output. |
+  | `critique.allow_advisory_escalation` | **delete** | An agreeing independent critic is simply a second supporter; there is no separate escalation path to enable. |
+  | `merge_gate` (whole object) | **delete** | There is no merge gate. Publication health is reported by the `post` job's exit status. |
+  | `posting.fallback_to_summary_comment` | **delete** | Summary fallback is now unconditional. Set to `false` it discarded every surfaced finding that could not be anchored — from the threads *and* from the summary — leaving it only in persisted state and a warning. A flag whose only reachable effect is losing product output is not a choice. |
+  | `limits.max_posted_surface_findings` | **delete** | Every anchorable surfaced finding becomes a thread. The cap silently reclassified a finding two reviewers supported independently into summary-only because a configured count was reached. The volume bound is each reviewer's `max_findings`. `limits.max_fyi_findings` **stays**: it truncates a list that is already summary-only and renders a visible "more" trailer, which is a different thing. |
+  | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
+  | `schema_version: review_config.v2` | `review_config.v3` | |
+
+  The shipped `ai-review/config/review.yaml` already enables exactly three seats
+  (claude, codex, opencode; cursor off by default), so the floor does not change
+  the shipped default. It **does** reject two-seat deployments that were valid
+  under v2.
+
+  `critique.blind_reviewer_identity` and `critique.allow_severity_downgrade` are
+  now type-checked as booleans, like `critique.enabled`. They were read through
+  `bool()`, so the string `"false"` silently enabled them.
+
+  The removals change `effective_config_summary`, and therefore the cross-stage
+  effective-config digest. Every stage recomputes it per run, so no artifact
+  migration is needed.
+
+  **`AI_REVIEW_MERGE_GATE_ENABLED` is now rejected by name**, not ignored. A run
+  fails at config load while it is set, naming the migration. Delete it from
+  every repository variable, GitLab project variable, and group variable — these
+  outlive template revisions, which is exactly why a retired override must raise
+  rather than become a silent no-op. The tombstone is a temporary-compatibility
+  entry with a removal target, not a permanent fixture.
+
+  **The effective-config digest changes for every configuration**, including one
+  whose YAML you never touched, because `merge_gate_enabled` leaves
+  `effective_config_summary()`. Consensus re-derives that digest as a cross-job
+  drift detector, so a pipeline that mixes a pre-upgrade `prepare` manifest with
+  post-upgrade `consensus` fails the drift check. **In-flight runs must be
+  restarted from `prepare` after upgrading, not resumed.**
+
+  `AI_REVIEW_STATE_BACKEND`, `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`, and
+  `…_SEMANTIC_THRESHOLD` stay rejected by name. The v1 note below called them
+  droppable at the next major release; v3 is that release, and the decision taken
+  is to keep them. Silently ignoring a stale GitLab project variable is the exact
+  failure these entries exist to prevent.
 
 - **Breaking: the configuration contract is now `review_config.v2`.** Four keys
   that were never choices are gone. `review_config.v1` is rejected with a message

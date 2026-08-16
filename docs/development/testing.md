@@ -2,10 +2,12 @@
 
 Tests are organized by the boundary they protect:
 
-- `unit/` pins parsing, configuration, adapters, consensus, posting, gate, and
+- `unit/` pins parsing, configuration, adapters, consensus, posting, and
   workflow contracts.
 - `contract/` keeps platform implementations and golden consensus cases aligned.
-- `integration/` exercises prepare/post/gate behavior across fake platforms.
+- `integration/` exercises prepare and publish behavior across fake platforms
+  (`test_publish_e2e.py`), and the cross-revision thread lifecycle
+  (`test_revision_lifecycle_e2e.py`).
 - `security/` covers hostile model text and state authenticity.
 
 Repository CI runs `make quality`. Live platform checks are recorded separately

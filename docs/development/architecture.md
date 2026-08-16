@@ -8,8 +8,7 @@ policy and platform mutation.
 | Prepare | trusted deterministic container | Bind revision, diff, config, prior state, and contained snapshot |
 | Review/critique | untrusted model output in reviewer container | Produce schema-constrained proposals and assessments |
 | Consensus | trusted deterministic container | Validate evidence identity/integrity, group, vote, and decide policy |
-| Post | trusted deterministic container | Reconcile state and mutate platform discussions/comments |
-| Gate | trusted deterministic container | Fail on operational loss and configured blocking findings |
+| Post | trusted deterministic container | Reconcile state, mutate platform discussions/comments, and report publication health as the terminal job's exit status |
 
 Reviewer subprocesses receive an allowlisted environment containing only their
 selected credential and runtime controls. GitHub/GitLab posting tokens are held
