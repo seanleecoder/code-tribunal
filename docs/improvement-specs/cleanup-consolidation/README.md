@@ -30,10 +30,16 @@ The target product policy is informational:
 
 ## Spec set
 
+SPEC-54 and SPEC-55 landed as one change series and their requirement documents were
+deleted, as [the improvement-spec index](../README.md) requires of every completed spec:
+`git log` holds them, and the shipped contract is described by the code, the tests, and
+[`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
+specs that follow state their dependencies in terms of them.
+
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
-| [SPEC-54](spec-54-independent-support-informational-findings.md) | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
-| [SPEC-55](spec-55-publish-only-pipeline-no-merge-gate.md) | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
+| SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
+| SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
 | [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |

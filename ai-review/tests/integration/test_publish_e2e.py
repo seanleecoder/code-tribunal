@@ -11,7 +11,6 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import load_config
 from ai_review.consensus import build_consensus
-from ai_review.input_bundle import prepare_local_bundle
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
 from ai_review.posting import post_consensus
@@ -22,9 +21,10 @@ if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
 FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
-
-FIXTURE_ROOT = TESTS_ROOT / "fixtures"
-AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
+_e2e_bundle = importlib.import_module("support.e2e_bundle")
+AI_REVIEW_ROOT = _e2e_bundle.AI_REVIEW_ROOT
+FIXTURE_ROOT = _e2e_bundle.FIXTURE_ROOT
+prepare_simple_bundle = _e2e_bundle.prepare_simple_bundle
 
 
 class PublishEndToEndTests(unittest.TestCase):
@@ -201,21 +201,7 @@ class PublishEndToEndTests(unittest.TestCase):
             return client, consensus, post_result, exit_code_for_status(post_result["status"])
 
     def _prepare_bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
-        repo = tmp / "repo"
-        (repo / "src").mkdir(parents=True)
-        (repo / "src" / "foo.py").write_text(
-            "def extract_name(records):\n"
-            "    if not records:\n"
-            "        return None\n"
-            '    return records[0]["name"]\n',
-            encoding="utf-8",
-        )
-        bundle = prepare_local_bundle(
-            AI_REVIEW_ROOT / "config" / "review.yaml",
-            FIXTURE_ROOT / "diffs" / "simple.diff",
-            repo,
-            tmp / "bundle",
-        )
+        bundle = prepare_simple_bundle(tmp)
         config = load_config(bundle / "config.review.yaml")
         config["critique"]["enabled"] = False
         config["posting"]["inline_multiline"] = False

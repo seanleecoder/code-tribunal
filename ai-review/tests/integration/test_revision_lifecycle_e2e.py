@@ -20,9 +20,10 @@ TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
-
-FIXTURE_ROOT = TESTS_ROOT / "fixtures"
-AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
+_e2e_bundle = importlib.import_module("support.e2e_bundle")
+AI_REVIEW_ROOT = _e2e_bundle.AI_REVIEW_ROOT
+FIXTURE_ROOT = _e2e_bundle.FIXTURE_ROOT
+prepare_simple_bundle = _e2e_bundle.prepare_simple_bundle
 
 
 class MockScenarioLifecycleTests(unittest.TestCase):
@@ -49,21 +50,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     }
 
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
-        repo = tmp / "repo"
-        (repo / "src").mkdir(parents=True)
-        (repo / "src" / "foo.py").write_text(
-            "def extract_name(records):\n"
-            "    if not records:\n"
-            "        return None\n"
-            '    return records[0]["name"]\n',
-            encoding="utf-8",
-        )
-        bundle = prepare_local_bundle(
-            AI_REVIEW_ROOT / "config" / "review.yaml",
-            FIXTURE_ROOT / "diffs" / "simple.diff",
-            repo,
-            tmp / "bundle",
-        )
+        bundle = prepare_simple_bundle(tmp)
         config = load_config(bundle / "config.review.yaml")
         manifest = dict(
             load_json_file(bundle / "manifest.json"),

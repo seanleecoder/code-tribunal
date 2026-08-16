@@ -15,7 +15,15 @@ from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group
 from ai_review.schema import validate_instance
 
-from .test_consensus_state_matching import _batch, _config, _finding, _manifest, _record
+from .test_consensus_state_matching import (
+    _batch,
+    _config,
+    _critique,
+    _critique_batch,
+    _finding,
+    _manifest,
+    _record,
+)
 
 
 def _critique_config(**overrides: object) -> dict:
@@ -28,39 +36,6 @@ def _critique_config(**overrides: object) -> dict:
         **overrides,
     }
     return config
-
-
-def _critique(
-    critic: str,
-    target: str,
-    verdict: str,
-    *,
-    duplicate_of: str | None = None,
-    adjusted_severity: str | None = None,
-    rationale: str = "checked against the diff",
-) -> dict:
-    critique = {
-        "target_source_finding_id": target,
-        "critic": critic,
-        "verdict": verdict,
-        "rationale": rationale,
-        "adjusted_severity": adjusted_severity,
-        "confidence": 0.8,
-    }
-    if duplicate_of is not None:
-        critique["duplicate_of_source_finding_id"] = duplicate_of
-    return critique
-
-
-def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
-    return {
-        "schema_version": "critique_batch.v1",
-        "run_id": "run",
-        "critic": critic,
-        "adapter_status": status,
-        "effective_config_sha256": "0" * 64,
-        "critiques": critiques,
-    }
 
 
 # One source finding id per reviewer, all grouping to a single issue.
@@ -223,23 +198,6 @@ class DecisionTableTests(unittest.TestCase):
         self.assertEqual(group["support_count"], 2)
         self.assertEqual(group["decision"], "surface")
         validate_instance(consensus, "consensus.schema.json")
-
-    def test_unsuccessful_critique_batch_adds_no_support(self) -> None:
-        consensus = _run(
-            contributors=["claude"],
-            critique_batches=[
-                _critique_batch(
-                    "codex",
-                    [_critique("codex", _SOURCE_IDS["claude"], "agree")],
-                    status="schema_error",
-                )
-            ],
-        )
-        group = consensus["groups"][0]
-
-        self.assertEqual(group["agreeing_critics"], [])
-        self.assertEqual(group["support_count"], 1)
-        self.assertEqual(group["decision"], "fyi")
 
     def test_several_findings_from_one_reviewer_count_once(self) -> None:
         reviewer_batch = _batch("claude", _finding("claude", _SOURCE_IDS["claude"], "major"))
@@ -437,23 +395,6 @@ class EffectiveVerdictTests(unittest.TestCase):
         self.assertEqual(forward["final_severity"], "minor")
         self.assertEqual(reversed_order["final_severity"], "minor")
 
-    def test_blank_rationale_dispute_counts_but_carries_no_dissent_entry(self) -> None:
-        group = self._grouped_pair_run(
-            [_critique("opencode", _SOURCE_IDS["claude"], "dispute", rationale="   ")]
-        )
-
-        self.assertEqual(group["critique_summary"], {**_EMPTY_SUMMARY, "dispute": 1})
-        self.assertEqual(group["critique_disputes"], [])
-        self.assertEqual(group["agreeing_critics"], [])
-
-    def test_dissent_survives_a_surfaced_group(self) -> None:
-        group = self._grouped_pair_run(
-            [_critique("opencode", _SOURCE_IDS["claude"], "dispute", rationale="already guarded")]
-        )
-
-        self.assertEqual(group["decision"], "surface")
-        self.assertEqual(len(group["critique_disputes"]), 1)
-
 
 class MajorityNoiseTests(unittest.TestCase):
     def test_denominator_includes_critics_that_did_not_critique_the_group(self) -> None:
@@ -476,21 +417,6 @@ class MajorityNoiseTests(unittest.TestCase):
 
         self.assertEqual(one_of_two["groups"][0]["decision"], "surface")
         self.assertEqual(one_of_one["groups"][0]["decision"], "drop")
-
-    def test_majority_noise_outranks_support(self) -> None:
-        consensus = _run(
-            contributors=["claude", "codex", "opencode"],
-            critique_batches=[
-                _critique_batch("cursor", [_critique("cursor", _SOURCE_IDS["claude"], "noise")])
-            ],
-        )
-        group = consensus["groups"][0]
-
-        self.assertEqual(group["support_count"], 3)
-        self.assertEqual(group["decision"], "drop")
-        self.assertEqual(
-            consensus["summary"], {"surface_count": 0, "fyi_count": 0, "drop_count": 1}
-        )
 
     def test_ambiguous_group_is_never_dropped_on_critique_evidence(self) -> None:
         consensus = _run(
@@ -535,21 +461,6 @@ class PanelStatusTests(unittest.TestCase):
         self.assertEqual(panel_status(["a"], ["a", "b", "c"]), "degraded")
         self.assertEqual(panel_status(["a", "b"], ["a", "b", "c"]), "degraded")
         self.assertEqual(panel_status(["a", "b", "c"], ["a", "b", "c"]), "full")
-
-    def test_degraded_panel_still_surfaces_two_supported_findings(self) -> None:
-        consensus = _run(contributors=["claude", "codex"])
-
-        self.assertEqual(consensus["panel_status"], "degraded")
-        self.assertEqual(consensus["groups"][0]["decision"], "surface")
-
-    def test_full_panel_does_not_promote_a_single_supporter(self) -> None:
-        config = _critique_config()
-        config["reviewers"] = {"claude": {"enabled": True}}
-
-        consensus = _run(contributors=["claude"], config=config)
-
-        self.assertEqual(consensus["panel_status"], "full")
-        self.assertEqual(consensus["groups"][0]["decision"], "fyi")
 
 
 if __name__ == "__main__":

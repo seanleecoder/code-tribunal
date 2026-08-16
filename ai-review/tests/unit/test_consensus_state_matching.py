@@ -130,6 +130,43 @@ def _record(
     }
 
 
+# Shared with test_consensus_policy and test_phase5_consensus, which already take
+# _batch/_config/_finding/_manifest/_record from here. `_critique_config` stays
+# per-module: the policy suite needs a fourth enabled seat for its majority-noise
+# denominator cases, and the two shapes are a real difference rather than drift.
+def _critique(
+    critic: str,
+    target: str,
+    verdict: str,
+    *,
+    duplicate_of: str | None = None,
+    adjusted_severity: str | None = None,
+    rationale: str = "checked against the diff",
+) -> dict:
+    critique = {
+        "target_source_finding_id": target,
+        "critic": critic,
+        "verdict": verdict,
+        "rationale": rationale,
+        "adjusted_severity": adjusted_severity,
+        "confidence": 0.8,
+    }
+    if duplicate_of is not None:
+        critique["duplicate_of_source_finding_id"] = duplicate_of
+    return critique
+
+
+def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
+    return {
+        "schema_version": "critique_batch.v1",
+        "run_id": "run",
+        "critic": critic,
+        "adapter_status": status,
+        "effective_config_sha256": "0" * 64,
+        "critiques": critiques,
+    }
+
+
 class ConsensusStateMatchingTests(unittest.TestCase):
     def _batches(self) -> list[dict]:
         return [

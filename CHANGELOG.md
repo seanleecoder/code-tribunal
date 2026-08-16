@@ -80,19 +80,19 @@ versioning.
 - **Breaking: the `gate` required status check is gone. Remove it from branch
   protection before or together with this upgrade.**
 
-  Installation guides used to instruct repositories to add the workflow's `gate`
-  job as a required status check. That job no longer exists. On GitHub a required
-  status check that never reports leaves pull requests **permanently
+  The installation guides used to instruct repositories to add the workflow's
+  `gate` job as a required status check. That job no longer exists, and on GitHub
+  a required check that never reports leaves pull requests **permanently
   unmergeable** — the workflow does not fail, it simply never produces the check
-  the ruleset is waiting for. Delete the `gate` entry from every ruleset and
+  the ruleset waits for. Delete the `gate` entry from every ruleset and
   branch-protection rule that names it, **before or together with** installing
   the new workflow. On GitLab, delete any custom `needs`, dashboard, or script
-  that names the `ai_review_gate` job.
+  naming the `ai_review_gate` job.
 
-  Code Tribunal requires no status check: it is informational. A repository that
-  wants the review to have *run* before a merge may require `post` instead, but
-  that is not equivalent — `post` reports whether publication completed, not what
-  the review found, and it cannot cover a run whose `prepare` job never started.
+  A repository that wants the review to have *run* before a merge may require
+  `post` instead, but it is not equivalent: `post` reports whether publication
+  completed, not what the review found, and cannot cover a run whose `prepare`
+  job never started.
 
 - **`post` is the terminal stage and its exit status reports publication only.**
   `success` and `stale_head` exit 0; `failed`, `partial_failed`, and
@@ -103,18 +103,15 @@ versioning.
   loudly instead of reporting a false success. `--dry-run` uses the same mapping.
 
 - **`ai_review_gate` stays reserved in `scripts/pipeline_trust.py` for one
-  release.** The in-pipeline GitLab trusted-template auditor runs against a
-  consuming project's configuration, and a consumer pinned to an older template
-  still declares the job. Un-reserving a name loosens a trust boundary, so the
-  removal is tracked as a temporary-compatibility entry rather than done here.
+  release**, because a consumer pinned to an older template still declares the
+  job and un-reserving a name loosens a trust boundary. Tracked for removal.
 
 ### Removed
 
 - **Breaking: the merge gate is deleted.** `ai_review/gate.py`,
   `gate_result.schema.json`, `GateResult`, `GateStatus`, `test_gate.py`, the
   GitHub `gate` job, and the GitLab `ai_review_gate` job are gone, along with the
-  gate artifact upload/download paths. Code Tribunal publishes review output and
-  never decides whether a change may merge. See the operator migration above.
+  gate artifact upload/download paths. See the operator migration above.
 
   Two behaviors disappear with it, both deliberately:
 

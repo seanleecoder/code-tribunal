@@ -6,7 +6,14 @@ import unittest
 from ai_review.consensus import build_consensus
 from ai_review.schema import finalize_critique_batch, validate_instance
 
-from .test_consensus_state_matching import _batch, _config, _finding, _manifest
+from .test_consensus_state_matching import (
+    _batch,
+    _config,
+    _critique,
+    _critique_batch,
+    _finding,
+    _manifest,
+)
 
 
 def _critique_config(
@@ -21,39 +28,6 @@ def _critique_config(
         "allow_severity_downgrade": allow_severity_downgrade,
     }
     return config
-
-
-def _critique(
-    critic: str,
-    target: str,
-    verdict: str,
-    *,
-    duplicate_of: str | None = None,
-    adjusted_severity: str | None = None,
-    rationale: str = "checked against the diff",
-) -> dict:
-    critique = {
-        "target_source_finding_id": target,
-        "critic": critic,
-        "verdict": verdict,
-        "rationale": rationale,
-        "adjusted_severity": adjusted_severity,
-        "confidence": 0.8,
-    }
-    if duplicate_of is not None:
-        critique["duplicate_of_source_finding_id"] = duplicate_of
-    return critique
-
-
-def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
-    return {
-        "schema_version": "critique_batch.v1",
-        "run_id": "run",
-        "critic": critic,
-        "adapter_status": status,
-        "effective_config_sha256": "0" * 64,
-        "critiques": critiques,
-    }
 
 
 class Phase5ConsensusTests(unittest.TestCase):
