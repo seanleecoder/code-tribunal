@@ -1,11 +1,11 @@
 # SPEC-54 - Independent-support informational findings
 
-- **Status:** Ready
+- **Status:** Implemented; retained pending merge to `main`
 - **Severity:** High product-policy simplification
 - **Effort:** L
-- **Depends on:** Current `main` at `451472d2`; coordinated delivery with SPEC-55. This spec
-  cannot land as a standalone commit — the merge gate consumes `summary.block_merge`, which this
-  spec deletes and SPEC-55 removes the consumer of.
+- **Historical implementation coordination:** The work was based on `main` at `451472d2` and
+  delivered with SPEC-55. It could not land as a standalone change because the former merge gate
+  consumed `summary.block_merge`, which this spec deleted while SPEC-55 removed the consumer.
 - **Contract changes:** `review_config.v3`, `consensus.v2`
 
 ## Objective
@@ -509,8 +509,8 @@ At minimum inspect and update:
   this file is the one way to ship a silently wrong artifact, because every footer read of a
   removed field is defaulted rather than required;
 - `ai-review/src/ai_review/gate.py` and `ai-review/schemas/gate_result.schema.json` — both consume
-  `summary.block_merge`, which this spec deletes. SPEC-55 removes them outright, which is why
-  SPEC-54 **cannot land as a standalone commit**; the two specs ship as one change series;
+  `summary.block_merge`, which this spec deleted. SPEC-55 removed them outright. During
+  implementation, that coupling required SPEC-54 and SPEC-55 to ship as one change series;
 - `ai-review/src/ai_review/types.py`;
 - `ai-review/src/ai_review/config.py`;
 - `ai-review/src/ai_review/mock_reviewer.py` — its scenario documentation is written in

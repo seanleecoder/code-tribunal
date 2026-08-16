@@ -1,12 +1,12 @@
 # SPEC-55 - Publish-only pipeline with no merge gate
 
-- **Status:** Ready
+- **Status:** Implemented; retained pending merge to `main`
 - **Severity:** High workflow and policy simplification
 - **Effort:** L
-- **Depends on:** SPEC-54, as **coordinated delivery rather than a sequential dependency**. This
-  spec cannot land as a standalone commit either: SPEC-54 deletes `summary.block_merge` and this
-  spec removes its only consumer. The two ship as one change series, as
-  [the package README](README.md) requires.
+- **Historical implementation coordination:** This work was delivered with SPEC-54 rather than
+  after it as a sequential dependency. It could not land as a standalone change because SPEC-54
+  deleted `summary.block_merge` while this spec removed its only consumer. The two shipped as one
+  change series, as [the package README](README.md) records.
 - **Contract changes:** completes `review_config.v3`; deletes the gate artifact family
 - **Breaking for operators:** removes the `gate` job that installation guides instruct
   repositories to configure as a required status check. See
@@ -409,11 +409,12 @@ thread-update compatibility; existing bot threads should update once to the new 
 identity lives in `issue_id` and the marker, not in the hash, so this produces one round of
 in-place updates and no duplicates.
 
-`RENDER_BODY_VERSION` moves from `render-body.v3` to `render-body.v4` so the format change is
-explicit in the hash input rather than implicit in the footer text. **SPEC-54 owns that bump**
-and states it in its own rendering section; this spec inherits it and must not bump again. The
-two specs ship as one series, so the version moves exactly once — an implementer splitting them
-would otherwise either no-op the second instruction or land on `render-body.v5`.
+`RENDER_BODY_VERSION` moved from `render-body.v3` to `render-body.v4` so the format change was
+explicit in the hash input rather than implicit in the footer text. **SPEC-54 owned that bump**
+and states it in its own rendering section; this spec inherited it and did not bump again. The
+two specs shipped as one series, so the version moved exactly once. Splitting them during
+implementation would otherwise have made the second instruction a no-op or landed on
+`render-body.v5`.
 
 Remember that `ai-review/tests/fixtures/golden/render_body_hostile.json` pins the entire footer
 text and the body hash, and `make update-golden` does **not** regenerate it. It is maintained by
