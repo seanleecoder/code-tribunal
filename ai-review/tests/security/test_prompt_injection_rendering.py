@@ -25,7 +25,7 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        rendered, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         body_without_trusted_marker = rendered.rsplit("<!-- ai-review:v1", 1)[0]
 
         self.assertNotIn("<!-- ai-review-state:v1", rendered)
@@ -49,7 +49,7 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        rendered, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         body_without_trusted_marker = rendered.rsplit("<!-- ai-review:v1", 1)[0]
 
         self.assertNotIn("<!-- ai-review:v1", body_without_trusted_marker)
@@ -73,7 +73,7 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        rendered, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Title: `` # title with `ticks` ``", rendered)
         # Prose renders one code span per line so it wraps, and a model-authored
@@ -116,11 +116,11 @@ class PromptInjectionRenderingTests(unittest.TestCase):
             "source_finding_ids": ["2" * 64],
         }
 
-        rendered, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        rendered, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         for line in bait:
             self.assertIn(f"`{line}`", rendered)
-        body = rendered.split("Body:\n", 1)[1].split("\n\nConsensus:", 1)[0]
+        body = rendered.split("Body:\n", 1)[1].split("\n\nSupport:", 1)[0]
         for line in body.split("\n"):
             # A bare hard break is renderer-owned; every other line is a span.
             self.assertTrue(

@@ -49,23 +49,93 @@ versioning.
   critic, rationale, and optional adjusted severity, is rendered with the
   finding, and subtracts no support even when the group surfaces.
 
-- **`render-body.v3` becomes `render-body.v4`.** The thread footer no longer
+- **`render-body.v3` becomes `render-body.v4` — one bump for the whole series.**
+  The footer heading is now `Support:` rather than `Consensus:`. It no longer
   reports direct votes, critique support, blocking, or human acknowledgement; it
-  reports the supporting reviewers, any agreeing critics, the independent support
-  count, and states that the review does not decide whether the change may merge.
+  reports the direct reviewers, agreeing critics (or `none`), the independent
+  support count, `Status: surfaced for discussion`, and that the merge decision is
+  left to maintainers and downstream automation. The highest severity header may
+  still read `BLOCKER`; the footer is what makes its informational meaning
+  unambiguous.
+
+  `parse_review_note` accepts **both** headings for one release, because marker
+  recovery reads thread bodies written by the previous version; the `Consensus:`
+  section boundary is a temporary compatibility entry with a removal target, not
+  a permanent alias.
+
   The version string is a body-hash input, so **expect every pre-existing thread
   to be updated once** on the first v4 run instead of reported
   `skipped_unchanged`. That churn is cosmetic: finding identity lives in
   `issue_id` and the alias chain, and the persisted state schema carries none of
   the removed fields, so no state migration is required.
 
-- **The gate no longer reads consensus.** `consensus.v2` has no merge-blocking
-  field, so `failed_blocking_findings` is unreachable and `gate_result.v1` keeps
-  the value only until the gate itself is removed. The job still fails closed on
-  post/state operational failure and on a cross-run `post_result` binding
-  mismatch.
+- **Minority dissent now outranks evidence and suggestion under truncation.**
+  The renderer fits fragments in order and stops at the first one that does not
+  fit, so position is priority. Dissent previously sat after evidence and could
+  be dropped from an oversized body while the footer — which is never truncated —
+  survived. The new footer is longer, which would have made that more likely. A
+  body under platform pressure now loses supporting detail before it loses the
+  argument against the finding.
+
+- **Breaking: the `gate` required status check is gone. Remove it from branch
+  protection before or together with this upgrade.**
+
+  Installation guides used to instruct repositories to add the workflow's `gate`
+  job as a required status check. That job no longer exists. On GitHub a required
+  status check that never reports leaves pull requests **permanently
+  unmergeable** — the workflow does not fail, it simply never produces the check
+  the ruleset is waiting for. Delete the `gate` entry from every ruleset and
+  branch-protection rule that names it, **before or together with** installing
+  the new workflow. On GitLab, delete any custom `needs`, dashboard, or script
+  that names the `ai_review_gate` job.
+
+  Code Tribunal requires no status check: it is informational. A repository that
+  wants the review to have *run* before a merge may require `post` instead, but
+  that is not equivalent — `post` reports whether publication completed, not what
+  the review found, and it cannot cover a run whose `prepare` job never started.
+
+- **`post` is the terminal stage and its exit status reports publication only.**
+  `success` and `stale_head` exit 0; `failed`, `partial_failed`, and
+  `state_overflow` exit nonzero. A finding of any severity, `blocker` included,
+  exits 0. `stale_head` is a successful no-op: a newer revision superseded the
+  run, so performing no mutation is correct. An **unrecognized** status also
+  exits nonzero, so a status added later without revisiting `post.py` fails
+  loudly instead of reporting a false success. `--dry-run` uses the same mapping.
+
+- **`ai_review_gate` stays reserved in `scripts/pipeline_trust.py` for one
+  release.** The in-pipeline GitLab trusted-template auditor runs against a
+  consuming project's configuration, and a consumer pinned to an older template
+  still declares the job. Un-reserving a name loosens a trust boundary, so the
+  removal is tracked as a temporary-compatibility entry rather than done here.
 
 ### Removed
+
+- **Breaking: the merge gate is deleted.** `ai_review/gate.py`,
+  `gate_result.schema.json`, `GateResult`, `GateStatus`, `test_gate.py`, the
+  GitHub `gate` job, and the GitLab `ai_review_gate` job are gone, along with the
+  gate artifact upload/download paths. Code Tribunal publishes review output and
+  never decides whether a change may merge. See the operator migration above.
+
+  Two behaviors disappear with it, both deliberately:
+
+  - **The cross-artifact run-id check.** `evaluate_gate` re-verified that
+    `post_result.run_id` matched `consensus.run_id` as SPEC-33 defense in depth.
+    It existed because the gate was the one stage that recombined two
+    independently downloaded artifacts. No stage does that now: `post.py` derives
+    its result from the consensus it loaded in the same process, so a mismatch is
+    unreachable rather than merely unlikely. Do not reintroduce the check
+    elsewhere.
+  - **Consumer-side validation of `post_result.json`.** The gate CLI was its only
+    reader. `post.py` validates on write and nothing in the pipeline reads the
+    artifact afterwards, so the write-side validation is now the only one — and
+    is retained.
+
+  On GitHub, `post` gains `if: always() && needs.prepare.result == 'success'` and
+  a step that fails when consensus did not succeed, so a failed consensus
+  produces a *failed* `post` rather than a skipped one. This is **not** mirrored
+  on GitLab: **Pipelines must succeed** already enforces at pipeline level there,
+  so a failed `consensus_ai_review` blocks and `post_ai_review` staying skipped is
+  correct. The asymmetry follows from the platforms and is intentional.
 
 - **Breaking: the artifact contract is now `consensus.v2`.** Groups gain
   `support_count` and `agreeing_critics`, and lose `vote_count`,
@@ -91,6 +161,9 @@ versioning.
   | `panel.min_successful_reviewers_for_blocking` | **delete** | There is no blocking verdict to gate. |
   | `panel.quorum` | **delete** | The support threshold is a product invariant, not an operator setting. Lowering it would make consensus a passthrough of one model's output. |
   | `critique.allow_advisory_escalation` | **delete** | An agreeing independent critic is simply a second supporter; there is no separate escalation path to enable. |
+  | `merge_gate` (whole object) | **delete** | There is no merge gate. Publication health is reported by the `post` job's exit status. |
+  | `posting.fallback_to_summary_comment` | **delete** | Summary fallback is now unconditional. Set to `false` it discarded every surfaced finding that could not be anchored — from the threads *and* from the summary — leaving it only in persisted state and a warning. A flag whose only reachable effect is losing product output is not a choice. |
+  | `limits.max_posted_surface_findings` | **delete** | Every anchorable surfaced finding becomes a thread. The cap silently reclassified a finding two reviewers supported independently into summary-only because a configured count was reached. The volume bound is each reviewer's `max_findings`. `limits.max_fyi_findings` **stays**: it truncates a list that is already summary-only and renders a visible "more" trailer, which is a different thing. |
   | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
   | `schema_version: review_config.v2` | `review_config.v3` | |
 
@@ -106,6 +179,20 @@ versioning.
   The removals change `effective_config_summary`, and therefore the cross-stage
   effective-config digest. Every stage recomputes it per run, so no artifact
   migration is needed.
+
+  **`AI_REVIEW_MERGE_GATE_ENABLED` is now rejected by name**, not ignored. A run
+  fails at config load while it is set, naming the migration. Delete it from
+  every repository variable, GitLab project variable, and group variable — these
+  outlive template revisions, which is exactly why a retired override must raise
+  rather than become a silent no-op. The tombstone is a temporary-compatibility
+  entry with a removal target, not a permanent fixture.
+
+  **The effective-config digest changes for every configuration**, including one
+  whose YAML you never touched, because `merge_gate_enabled` leaves
+  `effective_config_summary()`. Consensus re-derives that digest as a cross-job
+  drift detector, so a pipeline that mixes a pre-upgrade `prepare` manifest with
+  post-upgrade `consensus` fails the drift check. **In-flight runs must be
+  restarted from `prepare` after upgrading, not resumed.**
 
   `AI_REVIEW_STATE_BACKEND`, `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`, and
   `…_SEMANTIC_THRESHOLD` stay rejected by name. The v1 note below called them

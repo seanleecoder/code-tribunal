@@ -9,19 +9,19 @@
 | Summary and state | MR notes; state author must match token bot | PR issue comments; state author must match configured bot login |
 | Commands | Reply in finding discussion; Developer/30+ | Reply to root inline comment; user-repository `OWNER`, or Write/Maintain/Admin verified with a fine-grained token (effectively required for organization repositories) |
 | Thread resolution | GitLab discussion API | GraphQL; optional fine-grained resolve token |
-| Merge enforcement | **Pipelines must succeed** | Gate job configured as required check |
+| Merge enforcement | None from Code Tribunal. Repository policy only; **Pipelines must succeed** covers a failed publication job | None from Code Tribunal. Repository policy only; a ruleset may require the `post` check, which reports publication and not findings |
 | Fork behavior | Protected variables withheld; deployment topology determines whether trusted jobs run | External forks skipped by the canonical workflow |
 | Concurrency | Post serialized with an MR-scoped resource group | Workflow concurrency groups by PR; in-progress runs are not cancelled |
 | Diff collection | Paginated MR diff API; exact-path raw recovery for collapsed entries, with incomplete fallbacks rejected | Immutable base/head comparison raw diff; HTTP 406/too-large rejected |
-| Artifact retention | 7 days for prepare/review/critique; 30 days for consensus/post/gate | Repository/organization Actions default |
+| Artifact retention | 7 days for prepare/review/critique; 30 days for consensus/post | Repository/organization Actions default |
 
 Both platforms use the same configuration, reviewer adapters, artifact schemas,
-consensus policy, posting reconciliation, and gate evaluator. Platform-specific
+consensus policy, and posting reconciliation. Platform-specific
 credentials are never passed into reviewer subprocess environments.
 
 ## Rendered review output
 
-The shared posting renderer uses `render-body.v3`. Model-authored titles, paths,
+The shared posting renderer uses `render-body.v4`. Model-authored titles, paths,
 reviewer names, bodies, evidence, critique text, and suggestions are displayed as
 literal data on both platforms. The invariant is structural and single:
 **every model-authored value renders inside a `code` or `pre` element.** Redaction and

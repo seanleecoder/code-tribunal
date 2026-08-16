@@ -3,11 +3,18 @@
 ## Assets and trust boundaries
 
 Protected assets include provider credentials, GitHub/GitLab mutation tokens,
-repository content, model prompts/output, persisted finding state, trusted
-configuration, and the merge-gate result.
+repository content, model prompts/output, persisted finding state, and trusted
+configuration.
+
+The merge-gate result was formerly on this list and is not any more, because the
+gate no longer exists. This narrows the stated security model deliberately:
+Code Tribunal publishes review output and makes no merge decision, so there is no
+Code Tribunal-authored verdict for an attacker to forge into a merge. Whether a
+change may merge is decided entirely by repository policy — branch protection,
+rulesets, required reviewers — which is outside this boundary and always was.
 
 Merge-request/pull-request content and all model output are untrusted. Prepare,
-consensus, post, gate, the protected templates, and their container images are
+consensus, post, the protected templates, and their container images are
 trusted deterministic components. The outer CI job is trusted and can see
 CI-provided variables; isolation claims apply to reviewer subprocesses, not to a
 hostile replacement of the trusted job definition.
@@ -92,17 +99,18 @@ withheld from unprotected refs, and hardened child mode blocks general variable
 forwarding. Direct GitLab mode is safe only when the root CI namespace and all
 relevant includes are protected from merge-request authors.
 
-## Failure and advisory policy
+## Failure policy
 
 Failure behavior is not globally open or closed. See the executable
-[failure matrix](operations.md#failure-behavior). In particular, advisory mode
-disables finding-based blocking only; post/state loss still fails the gate.
+[failure matrix](operations.md#failure-behavior). Findings are not a failure
+class: severity is an impact label and no finding causes a nonzero exit. Post and
+state loss do fail the `post` job.
 
 ## Evidence
 
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
-integrity, and gate unit/integration tests. Deployment evidence and unexercised
+integrity, and posting unit/integration tests. Deployment evidence and unexercised
 paths are indexed under [docs/evidence](evidence/README.md).
 
 Evidence must record source and image digests, expected/actual outcomes, and a

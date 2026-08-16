@@ -21,9 +21,53 @@ from support.post_case import PostCase  # noqa: E402
 class ReviewNoteParsingTests(PostCase):
     """Recovering the renderer's own output from a posted note body."""
 
+    def test_both_support_and_legacy_consensus_footers_bound_the_body(self) -> None:
+        """Marker recovery reads bodies written by the *previous* release.
+
+        `REVIEW_SECTION_BOUNDARIES` carries `Consensus:` alongside `Support:` for
+        one release for exactly that reason. Without the legacy heading the old
+        footer parses as body content, which does not raise — it silently
+        corrupts the recovered summary that feeds `title_anchor` matching.
+        """
+        group = self._consensus()["groups"][0]
+        current, _hash = render_body(group, "run", posting_mode="gitlab_discussions")
+        self.assertIn("\nSupport:", current)
+
+        parsed_current = parse_review_note(current)
+        self.assertIsNotNone(parsed_current)
+        assert parsed_current is not None
+        self.assertEqual(parsed_current["category"], "correctness")
+        self.assertEqual(parsed_current["title"], "Title")
+        self.assertEqual(parsed_current["summary"], "Body")
+
+        # The legacy heading is load-bearing on the unfenced body path, where the
+        # footer is not separated from the body by a blank line. Drop `Consensus:`
+        # from the boundary set and the whole footer is recovered *as body text* —
+        # no exception, just a corrupted summary.
+        marker = (
+            "<!-- ai-review:v1 issue_id="
+            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
+        )
+        legacy = (
+            "**AI review: MAJOR correctness**\n\n"
+            "Legacy title\n\n"
+            "Legacy body line\n"
+            "Consensus:\n"
+            "- Reviewers: claude, codex\n"
+            "- Decision: surface\n\n" + marker
+        )
+        parsed_legacy = parse_review_note(legacy)
+        self.assertIsNotNone(parsed_legacy)
+        assert parsed_legacy is not None
+        self.assertEqual(parsed_legacy["category"], "correctness")
+        self.assertEqual(parsed_legacy["title"], "Legacy title")
+        self.assertEqual(parsed_legacy["summary"], "Legacy body line")
+        self.assertIn("Consensus:", notes_module.REVIEW_SECTION_BOUNDARIES)
+        self.assertIn("Support:", notes_module.REVIEW_SECTION_BOUNDARIES)
+
     def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
         v3_body, _body_hash = render_body(
-            self._consensus()["groups"][0], 1, "run", posting_mode="gitlab_discussions"
+            self._consensus()["groups"][0], "run", posting_mode="gitlab_discussions"
         )
         parsed_v3 = parse_review_note(v3_body)
         self.assertIsNotNone(parsed_v3)
@@ -459,10 +503,10 @@ class ReviewNoteParsingTests(PostCase):
         literal_backslash_n["title"] = r"line one\nline two"
 
         encoded_body, encoded_hash = render_body(
-            encoded_newline, 1, "run", posting_mode="github_reviews"
+            encoded_newline, "run", posting_mode="github_reviews"
         )
         literal_body, literal_hash = render_body(
-            literal_backslash_n, 1, "run", posting_mode="github_reviews"
+            literal_backslash_n, "run", posting_mode="github_reviews"
         )
 
         parsed_encoded = parse_review_note(encoded_body)

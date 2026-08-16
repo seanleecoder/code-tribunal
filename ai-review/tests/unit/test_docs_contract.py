@@ -472,6 +472,60 @@ class DocumentationContractTests(unittest.TestCase):
         checker = _load_docs_checker()
         self.assertEqual(checker.find_issues(), [])
 
+    def test_installation_guides_do_not_require_the_removed_gate(self) -> None:
+        """The guides used to say "add `gate` as a required status check".
+
+        Following that today leaves a repository permanently unmergeable, so the
+        instruction must not survive anywhere a reader would act on it. The
+        migration note that tells operators to *remove* the entry must.
+        """
+        docs = _REPO_ROOT / "docs" / "getting-started"
+        for name in ("github.md", "gitlab.md"):
+            text = (docs / name).read_text(encoding="utf-8")
+            with self.subTest(guide=name):
+                self.assertNotIn("## Require the gate", text)
+                self.assertIn("informational and requires no", text)
+                for instruction in (
+                    "add the `gate` job",
+                    "`gate` as a **required status check**",
+                ):
+                    self.assertNotIn(instruction, text)
+
+        github = (docs / "github.md").read_text(encoding="utf-8")
+        self.assertIn("before or together with", github)
+        # Requiring `post` is offered, but never as an equivalent.
+        self.assertIn("not equivalent to the", github)
+
+    def test_conversation_resolution_is_documented_as_repository_policy(self) -> None:
+        """Code Tribunal must not present acknowledgement as its own requirement.
+
+        It may be a reasonable repository policy; it is not a Code Tribunal
+        requirement and nothing here enables it.
+        """
+        github = (
+            _REPO_ROOT / "docs" / "getting-started" / "github.md"
+        ).read_text(encoding="utf-8")
+        gitlab = (
+            _REPO_ROOT / "docs" / "getting-started" / "gitlab.md"
+        ).read_text(encoding="utf-8")
+
+        collapse = " ".join(github.split())
+        self.assertIn(
+            "`Require conversation resolution` is a reasonable repository policy",
+            collapse,
+        )
+        self.assertIn("it is your policy, not a Code Tribunal requirement", collapse)
+        self.assertIn("does not enable it for you", collapse)
+
+        gitlab_collapsed = " ".join(gitlab.split())
+        self.assertIn(
+            "Requiring unresolved threads to be resolved before merge is a "
+            "supported project policy",
+            gitlab_collapsed,
+        )
+        self.assertIn("it is your policy", gitlab_collapsed)
+        self.assertIn("the template neither sets it nor depends on it", gitlab_collapsed)
+
 
 if __name__ == "__main__":
     unittest.main()

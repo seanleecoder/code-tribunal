@@ -193,17 +193,15 @@ not when they happen to choose similar phrasing.
 
 `critique.max_rounds` is not an active compatibility alias and is rejected.
 
-### Posting, gate, and state
+### Posting and state
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `posting.mode` | enum, `gitlab_discussions` | `gitlab_discussions` or `github_reviews`. |
 | `posting.v1_inline_sides` | list, `[new, old, unchanged]` | Diff sides eligible for inline placement. |
 | `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
-| `posting.fallback_to_summary_comment` | boolean, `true` | Put unanchorable findings in a summary. |
 | `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
-| `merge_gate.enabled` | boolean, `true` | Report the publication job's status. Findings never block; operational post/state failures still fail. |
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
 | `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
@@ -220,8 +218,7 @@ not when they happen to choose similar phrasing.
 |---|---|---|
 | `limits.max_diff_bytes` | integer, `250000` | Maximum complete diff accepted for review. |
 | `limits.max_files` | integer, `200` | Maximum changed files. |
-| `limits.max_posted_surface_findings` | integer, `25` | Maximum surfaced inline/fallback findings posted. |
-| `limits.max_fyi_findings` | integer, `50` | Maximum FYI findings in the summary. |
+| `limits.max_fyi_findings` | integer, `50` | Maximum FYI findings listed in the summary comment; the section renders a visible "more" trailer when it truncates. There is no equivalent cap on surfaced threads — every anchorable surfaced finding becomes a thread, and the volume bound is each reviewer's `max_findings`. |
 | `limits.max_prompt_bytes` | integer, `500000` | Maximum rendered prompt bytes sent to a model. |
 | `security.allow_external_fork_secrets` | boolean, `false` | Guard against provider/platform credentials in external-fork execution. Canonical GitHub workflows skip forks independently. |
 
@@ -248,7 +245,6 @@ artifacts.
 | `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
 | `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
-| `AI_REVIEW_MERGE_GATE_ENABLED` | `true` | Exact boolean; reports the publication job as skipped when `false`. Operational post/state failures still fail. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
@@ -283,6 +279,7 @@ untrusted endpoints in merge-request-controlled configuration.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
+| `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in `review_config.v3` with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
 | `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; the state backend follows `posting.mode`. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in `review_config.v2` with semantic grouping itself. |
@@ -343,7 +340,7 @@ surface.
 ## Stage visibility and integrity
 
 Configuration overrides that affect decisions must be visible to prepare,
-review, critique, consensus, post, and gate. Prepare records an
+review, critique, consensus, and post. Prepare records an
 `effective_config_sha256`; successful reviewer and critique evidence is bound to
 it. Consensus exits 3 when consequential configuration, run identity, or
 artifact identity differs. This digest detects pipeline misconfiguration; it is

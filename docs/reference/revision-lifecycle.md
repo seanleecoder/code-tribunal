@@ -17,7 +17,9 @@ Later runs reconcile new consensus against those records.
 Reruns against the same state and consensus are designed to update or skip the
 same platform object rather than create a duplicate. This behavior is covered
 by the GitHub and GitLab rerun cases in
-[`test_post_gate_e2e.py`](../../ai-review/tests/integration/test_post_gate_e2e.py)
+[`test_publish_e2e.py`](../../ai-review/tests/integration/test_publish_e2e.py),
+the cross-revision remap case in
+[`test_revision_lifecycle_e2e.py`](../../ai-review/tests/integration/test_revision_lifecycle_e2e.py),
 and the unchanged/update/remap cases in
 [`test_post.py`](../../ai-review/tests/unit/test_post.py). It still depends on
 the state record being authentic and available.

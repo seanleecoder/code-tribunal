@@ -251,8 +251,16 @@ def _classify_post_groups(
     *,
     inline_sides: set[str],
     inline_multiline: bool,
-    max_surface: int,
 ) -> PostGroupClassification:
+    """Route each consensus group to a thread, the summary fallback, or FYI.
+
+    There is no surfaced-thread cap: every anchorable ``surface`` group becomes a
+    thread. The volume bound is each reviewer's ``max_findings`` upstream. A group
+    reaches the summary only because its anchor cannot carry a thread — never
+    because a configured count was reached.
+    """
+
+
     inline_candidates: list[FindingGroup] = []
     summary_fallback_groups: list[FindingGroup] = []
     fyi_groups: list[FindingGroup] = []
@@ -276,14 +284,6 @@ def _classify_post_groups(
         inline_candidates.append(group)
 
     inline_candidates = _sort_groups(inline_candidates)
-    if len(inline_candidates) > max_surface:
-        overflow = inline_candidates[max_surface:]
-        inline_candidates = inline_candidates[:max_surface]
-        for group in overflow:
-            warnings.append(
-                f"surface fallback to summary: max_posted_surface_findings ({max_surface}) reached"
-            )
-            summary_fallback_groups.append(group)
     return PostGroupClassification(
         inline_candidates=inline_candidates,
         summary_fallback_groups=summary_fallback_groups,
@@ -515,7 +515,6 @@ def post_inline(
 
         body, body_hash = render_body(
             cast(FindingGroup, post_group),
-            len(consensus.get("successful_reviewers", [])),
             consensus["run_id"],
             posting_mode=posting_mode,
         )
@@ -599,12 +598,14 @@ def finalize_state(
     fyi_groups: list[FindingGroup],
     *,
     posting_mode: str,
-    fallback_to_summary: bool,
     fyi_mode: str,
     max_fyi: int,
     dry_run: bool,
 ) -> PostResult:
-    fallback_to_post = summary_fallback_groups if fallback_to_summary else []
+    # Summary fallback is unconditional. A surfaced finding that could not be
+    # anchored is still a finding two reviewers supported independently; the
+    # configuration key that used to suppress this list erased it from all
+    # product output, leaving it only in persisted state and a warning.
     fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
     result["summary_comment"] = cast(
         SummaryComment,
@@ -613,7 +614,7 @@ def finalize_state(
             manifest,
             consensus["run_id"],
             raw_discussions,
-            fallback_to_post,
+            summary_fallback_groups,
             fyi_to_post,
             max_fyi,
             posting_mode=posting_mode,
@@ -782,9 +783,7 @@ def post_consensus(
 
     inline_multiline = bool(posting.get("inline_multiline", False))
     inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fallback_to_summary = bool(posting.get("fallback_to_summary_comment", True))
     fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
-    max_surface = int(limits.get("max_posted_surface_findings", 25))
     max_fyi = int(limits.get("max_fyi_findings", 50))
     context = prepare_post_context(
         client,
@@ -796,12 +795,11 @@ def post_consensus(
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side / multiline/cap), and FYI findings.
+    # back to the summary comment (unsupported side or multiline anchor), and FYI findings.
     classification = _classify_post_groups(
         consensus.get("groups", []),
         inline_sides=inline_sides,
         inline_multiline=inline_multiline,
-        max_surface=max_surface,
     )
     inline_candidates = classification.inline_candidates
     summary_fallback_groups = classification.summary_fallback_groups
@@ -850,7 +848,6 @@ def post_consensus(
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         posting_mode=posting_mode,
-        fallback_to_summary=fallback_to_summary,
         fyi_mode=fyi_mode,
         max_fyi=max_fyi,
         dry_run=dry_run,

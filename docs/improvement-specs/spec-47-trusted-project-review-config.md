@@ -44,7 +44,14 @@ state.
   and future review-scope settings, while the image retains reviewer identity,
   adapters, credential mappings, prompts, rules, and runtime paths.
 - A resolved inputs/config.review.yaml artifact, config-source provenance, and
-  effective-config binding for prepare, review, critique, consensus, post, and gate.
+  effective-config binding for prepare, review, critique, consensus, and post.
+
+> **Reconciled against SPEC-55.** This spec was written while a `gate` stage
+> existed. It was deleted: `post` is the terminal stage and nothing downstream
+> reads `post_result.json`. Every stage enumeration below is one stage shorter,
+> and `merge_gate` is no longer an admitted policy field. Nothing else about the
+> trusted-config contract changes — the binding argument applies to the stages
+> that remain exactly as written.
 - Continued support for the existing documented policy environment overrides, subject
   to a uniform cross-stage visibility and digest check.
 - Schemas, templates, tests, configuration/reference documentation, and supply-chain
@@ -150,8 +157,8 @@ are sealed to the baseline:
 
 Every other admitted configuration field is policy-owned, subject to the normal
 strict validator and cross-field checks. In particular, a project may set
-reviewer enabled/model/effort/timeout/max-findings policy; panel, severity, critique,
-posting, gate, state, limits, and security policy; and the review_scope field
+reviewer enabled/model/effort/timeout/max-findings policy; panel, critique,
+posting, state, limits, and security policy; and the review_scope field
 introduced by SPEC-48. A policy value that is incompatible with the selected platform
 still fails normal validation. This permission does not make a provider endpoint,
 adapter, or credential variable project-controlled.
@@ -204,7 +211,7 @@ The effective_config summary and its SHA-256 must grow to include:
 
 - the resolved-policy digest and source/provenance identity;
 - every policy value that can alter prepare, model execution, consensus, posting,
-  gate behavior, or review coverage, including limits and review_scope;
+  or review coverage, including limits and review_scope;
 - the exact supported policy-override keys present in the environment and their
   non-secret effective values.
 
@@ -219,7 +226,7 @@ They do not bypass sealed-field comparison and cannot select a config path, adap
 credential variable, prompt, rule, trusted root, image, or provider endpoint.
 
 Prepare records the canonical effective summary, digest, and explicit supported
-override map. Review, critique, consensus, post, and gate each reconstruct the
+override map. Review, critique, consensus, and post each reconstruct the
 effective policy from the bundle artifact and their own environment, then validate it
 against that record before doing consequential work. The templates must therefore
 scope supported overrides uniformly to every job in the DAG: workflow-level on
@@ -231,8 +238,7 @@ The check is intentionally stronger than comparing a model string after a model 
 - review and critique validate before rendering a prompt or spawning an adapter;
 - consensus validates before reading reviewer results into a decision;
 - post validates before creating a platform client, loading/planning state, or
-  writing a comment;
-- gate validates before evaluating a result.
+  writing a comment.
 
 A missing, added, or changed supported override in a later job is an
 effective-config mismatch even if a coincidental default would otherwise yield a
@@ -284,7 +290,7 @@ partially trusted bundle for a downstream job to consume.
 | A historical bundle lacks the new provenance/binding fields | Refuse it as an incompatible input; require a fresh prepare with this release. |
 
 The errors above are terminal prepare/configuration errors, not reviewer
-degradation. Templates must not retry consensus, post, or gate against a missing
+degradation. Templates must not retry consensus or post against a missing
 manifest. Reviewer allow_failure remains relevant only to a valid, already-bound
 input bundle and cannot convert a config-selection failure into an incomplete review.
 
@@ -297,7 +303,7 @@ input bundle and cannot convert a config-selection failure into an incomplete re
 | ai-review/src/ai_review/platform/base.py, platform/github.py, and platform/gitlab.py | Add typed target-revision file retrieval and read-capability proof. Keep GitHub comparison diffs and GitLab complete-diff recovery independent of config retrieval. |
 | Snapshot copying | Preserve existing no-follow containment. The copied policy must never originate from repo_snapshot or a project symlink; SPEC-48 later adds scope-aware snapshot filtering. |
 | adapter_runner.py and prompt_render.py | Load only the bundle policy after prepare, validate the binding before prompt/provider work, and resolve runtime assets from the trusted root rather than config.parent. |
-| consensus.py, post.py, and gate.py | Validate the same artifact/provenance/effective binding before consuming findings, platform state, comments, or gate inputs. Retain the existing successful-batch config-digest checks as defense in depth. |
+| consensus.py and post.py | Validate the same artifact/provenance/effective binding before consuming findings, platform state, or comments. Retain the existing successful-batch config-digest checks as defense in depth. (This spec predates SPEC-55; `gate.py` was deleted and `post.py` is the terminal consumer.) |
 | Schemas and types | Add an input-manifest schema/type or equivalent strict validator for config_provenance and the expanded effective summary. Extend artifact provenance only additively where historical read compatibility is safe. |
 | GitHub and GitLab templates | Declare and propagate the required, immutable, template-owned `AI_REVIEW_TRUSTED_ROOT` for runtime assets; adding it to the GitHub Actions template is a prerequisite. Only after trusted-root asset resolution and its regression tests pass may later jobs use `AI_REVIEW_CONFIG=inputs/config.review.yaml`. Ensure prepare failure prevents every downstream consumer of inputs. |
 | Configuration, artifact, security, and installation docs | Document the fixed target-branch path, source precedence, sealed fields, migration, missing-file fallback, and the fact that this remains proposed until released. Update the artifact reference when implementation lands. |
@@ -327,7 +333,7 @@ Add focused unit, contract, template, and platform-harness coverage. At minimum:
 - Baseline and project byte hashes, resolved-policy hash, and source provenance are
   deterministic and validate through the manifest reader/schema.
 - Each supported environment override works when visible identically to prepare,
-  reviewer, critique, consensus, post, and gate; a missing/changed/extra later-stage
+  reviewer, critique, consensus, and post; a missing/changed/extra later-stage
   override fails before provider invocation and before post/state mutation.
 - Tampering with inputs/config.review.yaml or config provenance after prepare causes
   a binding failure. A successful finding/critique batch whose digest differs remains

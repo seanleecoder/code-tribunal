@@ -60,7 +60,7 @@ def _is_released_note(path: Path) -> bool:
     When no tags resolve at all — a `--no-tags` or shallow clone, or no git — every
     release note is treated as frozen. The alternative would fail docs-check in a
     fresh shallow clone on links that are correct at their own tag. CI fetches
-    tags, so the merge gate gets the strict behaviour; see
+    tags, so the repository's own required check gets the strict behaviour; see
     test_release_tools.test_released_notes_remain_tag_identical for the byte check
     that carries the real guarantee.
 
@@ -107,6 +107,7 @@ TABLE_KEY_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
 # and a rejected variable is precisely the kind an operator needs documented.
 REJECTED_ENV_NAMES = {
     "AI_REVIEW_CURSOR_EFFORT",
+    "AI_REVIEW_MERGE_GATE_ENABLED",
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD",
     "AI_REVIEW_STATE_BACKEND",

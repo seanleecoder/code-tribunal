@@ -27,7 +27,11 @@ state migration.
    hashing also invalidates old prepare manifests.
 7. Expect a one-time update of existing bot-authored bodies when the render-body
    version changes. This should update existing identities, not duplicate them.
-8. Verify state ownership, posting, commands, and the gate before enforcing it.
+8. Verify state ownership, posting, and commands. There is no gate to enforce:
+   Code Tribunal publishes review output and never decides whether a change may
+   merge. Remove any branch-protection or ruleset entry that requires the
+   deleted `gate` check — on GitHub a required check that never reports leaves
+   pull requests permanently unmergeable.
 9. Leave Cursor off unless you deliberately accept its separate egress path. It
    is a supported peer seat; enabling it requires `CURSOR_API_KEY`.
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
@@ -59,19 +63,20 @@ There is no supported installable Python distribution in 1.0.
 | Run/config/artifact identity mismatch | Consensus exits 3 before combining evidence | Rerun from prepare with identical project-scoped overrides |
 | State load fails and `fail_closed_on_load_error=false` | Prepare warns and begins from empty recoverable state | Investigate ownership/API/checksum; expect conservative repost risk |
 | State load fails and option is true | Prepare fails | Restore state/API access or make a deliberate policy change |
-| Post is `failed`, `partial_failed`, or `state_overflow` | Gate exits 7 even in advisory mode | Repair API/state capacity and rerun post/gate |
-| Head changes before posting | No stale mutation; gate records stale/no-op success | Let the newer revision's run own the review |
-| Blocking consensus with gate enabled | Gate exits 7 | Fix, dismiss with authorization, or change reviewed policy |
-| Blocking consensus in advisory mode | Finding is reported but finding-based gate passes | Promote to enforcing only after validation |
+| Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
+| Head changes before posting | No stale mutation; `post` reports `stale_head` and exits 0 | Let the newer revision's run own the review |
+| Consensus surfaces a `blocker` finding | A thread is posted; `post` exits 0 | Treat it as review input. Merge policy is the repository's, not Code Tribunal's |
 | External fork lacks protected secrets | Canonical GitHub flow skips; GitLab topology withholds/fails safely | Use maintainer-controlled trusted review, never expose secrets to fork code |
 
 “Fail closed” is therefore failure-class specific. Reviewer-seat loss can
 degrade open; artifact integrity and post/state loss fail closed; stale-head
 handling intentionally performs no mutation and yields to the newer run.
+Findings are not a failure class at all: severity is an impact label, and no
+finding causes a nonzero exit anywhere in the pipeline.
 The precedence and exit behavior are exercised by
-[`test_gate.py`](../ai-review/tests/unit/test_gate.py),
+[`test_post.py`](../ai-review/tests/unit/test_post.py),
 [`test_consensus_integrity.py`](../ai-review/tests/unit/test_consensus_integrity.py),
-and [`test_post_gate_e2e.py`](../ai-review/tests/integration/test_post_gate_e2e.py).
+and [`test_publish_e2e.py`](../ai-review/tests/integration/test_publish_e2e.py).
 
 ## Concurrency
 
@@ -83,11 +88,11 @@ serialization.
 
 ## Observability and artifacts
 
-Start with `out/status/`, then consensus, post, and gate artifacts. Record run
+Start with `out/status/`, then the consensus and post artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
-resolution-eligible reviewers, post status, and gate reason. GitLab canonical
-prepare/review/critique artifacts expire after seven days; consensus/post/gate
-evidence expires after 30 days. GitHub follows repository/organization retention.
+resolution-eligible reviewers, post status, and `post_result.warnings`. GitLab
+canonical prepare/review/critique artifacts expire after seven days;
+consensus/post evidence expires after 30 days. GitHub follows repository/organization retention.
 Export sanitized evidence before expiry.
 
 Never retain credentials, CLI session files, sensitive prompts, raw proprietary
@@ -105,7 +110,7 @@ source; record it per run when collecting live evidence.
 
 For validation and lifecycle rehearsal without model spend, the deterministic
 mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state/gate path
+scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state path
 with a canned finding set and no provider calls. Mock mode is forbidden in
 production consumer projects: GitLab project/pipeline variables can override the
 template's `AI_REVIEW_LOCAL_MOCK: "0"`, so the companion allow flag is required.

@@ -22,9 +22,12 @@ changed-path validation with MR-wide degradation, a YAML-only per-reviewer cap,
 consensus transport of individually attributed advisories, summary rendering,
 quality/integrity/audit fields, drift observability, prompts, and tests.
 
-**Out:** loosening anchor validation; creating anchorless semantic grouping, quorum
-votes, inline discussions, state records, automatic resolution, or merge-gate
-behavior. Critique of advisories is also out of scope here, but it is deferred rather
+**Out:** loosening anchor validation; creating anchorless semantic grouping,
+independent-support counting, inline discussions, state records, or automatic
+resolution. (This spec predates SPEC-54/55: there is no vote count and no merge
+gate left to hold out of scope. Read "quorum"/"votes" throughout as "independent
+support" — the two-supporter surfacing rule — and read every "no merge-gate
+power" clause as already true of the whole product.) Critique of advisories is also out of scope here, but it is deferred rather
 than rejected — see [Rejected and deferred extensions](#rejected-and-deferred-extensions).
 
 ### Rejected and deferred extensions
@@ -40,8 +43,8 @@ it ships disabled, YAML-only, and outside the 1.0 compatibility guarantee.
 Anchorless grouping would promote that deliberately distrusted mechanism to sole
 authority on the hardest input: MR-wide prose is abstract, so two reviewers phrasing
 something similarly may mean different things. A false merge silently suppresses a
-distinct concern; a false split manufactures a fake quorum. Neither is detectable
-afterwards, and both would feed votes.
+distinct concern; a false split manufactures fake independent support. Neither is
+detectable afterwards, and both would feed the support count.
 
 Cross-run identity is an independent blocker. `issue_id` derives from the anchor
 signature, which is what makes state records, thread matching, and absence-based
@@ -58,7 +61,7 @@ on safer terms, because a critic's `duplicate_of_source_finding_id` claim runs t
 the existing `valid_duplicate_links` validation rather than a similarity threshold.
 
 Those verdicts would drive display order and reuse SPEC-45's majority-noise
-suppression — and nothing else: still no votes, no `block_merge`, no state, no
+suppression — and nothing else: still no support counting, no state, no
 resolution, no `issue_id`. That also replaces this specification's weakest control:
 a reviewer routing an anchorable concern into `advisories` would be voted down by
 peers instead of merely discouraged by prompt wording. Two consequences must be
@@ -114,7 +117,8 @@ cannot be evaluated mechanically, and making it a drop condition would turn an
 unreviewable opinion into silent data loss.
 
 `severity` and `category` use the existing enums but are descriptive only. They
-must never feed severity policy, quorum, `block_merge`, or any group decision.
+must never feed the support count or any group decision. (They named severity
+policy and `block_merge` too; both were removed in SPEC-54/55.)
 
 Update [`ai-review/prompts/review.md`](../../ai-review/prompts/review.md) to state:
 
@@ -290,9 +294,12 @@ A default of 10 was considered and rejected. Until critique of advisories exists
 suppresses a low-value advisory after the fact, so this cap and the required
 `anchor_attempt_reason` are the *only* mechanical controls on advisory volume and
 quality in this phase — prompt wording is not a control. A default of 10 across the
-four shipped reviewers would permit 40 non-gating entries in one summary comment;
-anchored findings are bounded by both `max_findings` and the global
-`max_posted_surface_findings` / `max_fyi_findings`, which advisories consume neither of.
+four shipped reviewers would permit 40 entries in one summary comment; anchored
+findings are bounded by each reviewer's `max_findings`, and FYI entries
+additionally by `max_fyi_findings`, which advisories consume neither of.
+(`max_posted_surface_findings` was deleted in SPEC-55: surfaced threads have no
+cap, because a configured count is not a reason to reclassify a corroborated
+finding.)
 Operators who want more can raise it per reviewer, and the default is worth revisiting
 once advisory critique lands.
 
@@ -346,9 +353,9 @@ concern therefore render twice; that is accepted, and merging is a possible foll
 once advisory critique provides a principled deduplication path.
 
 Advisories are never sent to the critique pool, `group_findings`, state matching, vote
-calculation, or gate input. `consensus.groups`, `summary.surface_count`,
-`summary.fyi_count`, `summary.drop_count`, and `summary.block_merge` retain their
-anchored-finding-only meanings.
+calculation. `consensus.groups`, `summary.surface_count`, `summary.fyi_count`,
+and `summary.drop_count` retain their anchored-finding-only meanings.
+(`summary.block_merge` was removed in SPEC-54.)
 
 **Panel gating.** Advisories follow the same panel gate as findings. `build_consensus`
 already skips grouping when `panel_status == "failed"`; advisories must be dropped on
@@ -444,12 +451,12 @@ These requirements changed after the first committed draft of this specification
 changes were ratified in
 [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md); the rest are defect fixes
 or gap fills. Recorded here so a reviewer comparing against the original sees a decision
-rather than drift. The authority model is untouched: advisories still have no grouping,
-quorum, state, resolution, or merge-gate power.
+rather than drift. The authority model is untouched: advisories still have no
+grouping, support counting, state, or resolution power.
 
 | Original requirement | Now | Reason | Decided in |
 | --- | --- | --- | --- |
-| `max_advisories` is 0–10, default 10 | Same range, **default 3** | With advisory critique deferred, nothing suppresses a low-value advisory after the fact. Four shipped reviewers × 10 permits 40 non-gating entries in one summary, and advisories consume neither global finding cap. Revisit once critique lands. | ADR-0002 §4 |
+| `max_advisories` is 0–10, default 10 | Same range, **default 3** | With advisory critique deferred, nothing suppresses a low-value advisory after the fact. Four shipped reviewers × 10 permits 40 entries in one summary, and advisories consume no other cap. Revisit once critique lands. | ADR-0002 §4 |
 | Advisory fields are exactly the enumerated set | Adds required `anchor_attempt_reason`, validated as present-and-nonblank only | The only in-phase quality control. It raises the cost of choosing the anchorless path and gives a maintainer evidence to judge the choice. Content is never judged, so no unreviewable opinion becomes a drop condition. | ADR-0002 §4 |
 | Any invalid `scope_paths` member drops the advisory | Split by failure mode: malformed/absolute/traversal/unavailable-diff drops; well-formed-but-absent degrades scope to MR-wide | Broken paths are evidence about the whole advisory; a well-formed path outside the diff is a common benign case, and `scope_paths` is display-only and never dereferenced. Neither case ever keeps a partial list. | ADR-0002 §5 |
 | Any batch containing an advisory candidate loses resolution eligibility | Only advisory-**only** batches lose it | With four reviewers and `min_successful_reviewers_for_resolution: 2`, the blanket rule stops absence-based resolution once three reviewers emit one advisory each — the steady state, since the prompt requires the key. See the interpretation section above. | n/a — would disable a shipped feature |
@@ -526,8 +533,9 @@ reasoning.
   `test_summary_renders_review_level_advisories_without_state_entry`,
   `test_advisories_sort_by_severity_before_reviewer`, and
   `test_summary_drops_whole_review_advisories_before_critique_dispositions`.
-- `ai-review/tests/integration/test_post_gate_e2e.py` — add
-  `test_advisory_only_batch_has_no_thread_state_resolution_or_merge_gate_effect`
+- `ai-review/tests/integration/test_publish_e2e.py` (the surviving half of the
+  renamed `test_post_gate_e2e.py`) — add
+  `test_advisory_only_batch_has_no_thread_state_or_resolution_effect`
   with a pre-existing state record, then assert the advisory is summary-only and
   that absence resolution is not triggered.
 - `ai-review/tests/contract/test_golden_consensus.py` — add an advisory-only golden

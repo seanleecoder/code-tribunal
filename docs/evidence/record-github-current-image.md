@@ -82,12 +82,18 @@ Reply comment `3682573146` from a write-access author. `resolved_discussions: 1`
 `skipped_unchanged: 1`; the platform thread reported `isResolved: true`.
 
 **The gate still failed and the merge stayed `BLOCKED`.** This reproduces the
-documented behavior in
-[SPEC-42](../improvement-specs/spec-42-wontfix-gate-semantics.md) exactly — a human
-`wontfix` durably dismisses a finding and stops it being re-posted but never clears
-the merge gate, because reviewers keep emitting it and consensus keeps counting it as
-blocking. SPEC-42 remains a proposed post-1.0 change; this is not a regression and not
-a new defect.
+documented behavior in SPEC-42 exactly — a human `wontfix` durably dismisses a finding
+and stops it being re-posted but never clears the merge gate, because reviewers keep
+emitting it and consensus keeps counting it as blocking. SPEC-42 remained a proposed
+post-1.0 change at the time; this was not a regression and not a new defect.
+
+> **Annotation (release removing the merge gate).** The behavior above is history.
+> SPEC-55 deleted the gate, so there is no merge gate for a `wontfix` to fail to
+> clear and the question SPEC-42 posed no longer exists — SPEC-42 was deleted from
+> the open-spec index and its link here is intentionally plain text. The human
+> `wontfix` disposition itself is unchanged and still supported. This record is left
+> as written because it states what the released image under test actually did on the
+> date given.
 
 ### Step 4b — disposition persistence (attempt 5)
 
@@ -117,7 +123,9 @@ with `out/consensus/consensus.json` and `out/post/post_result.json` throughout.
 
 The internal cross-revision remap is regression-covered
 (`integration/test_post_gate_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-plus the `test_anchors`/`test_post` remap tests) and platform-visible re-anchoring is
+— split out and renamed to `integration/test_revision_lifecycle_e2e.py` in the
+release that removed the merge gate — plus the `test_anchors`/`test_post` remap
+tests) and platform-visible re-anchoring is
 live-optional, not release-gating. Not attempted.
 
 ### Stale-head no-op: not run

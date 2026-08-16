@@ -262,7 +262,6 @@ def build_consensus(
     for group in groups:
         _body, body_hash = render_body(
             cast(FindingGroup, group),
-            len(successful),
             manifest["run_id"],
             posting_mode=posting_mode,
         )

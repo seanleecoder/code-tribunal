@@ -316,11 +316,21 @@ no-reviewable-changes input outcome:
 - consensus emits a schema-defined no_reviewable_changes outcome with zero findings
   and the compact scope identity;
 - post emits skipped_no_reviewable_changes without creating a platform client,
-  loading/planning state, posting, updating, resolving, or mutating any comment;
-- gate emits passed_no_reviewable_changes with block_merge=false and an explicit
-  no_reviewable_changes reason.
+  loading/planning state, posting, updating, resolving, or mutating any comment,
+  and **exits zero** — it is the terminal stage, and a deliberate no-op is a
+  successful publication outcome, not a failure.
 
-This is a successful no-op gate, not a failed panel, a reviewer skip hidden as a
+> **Reconciled against SPEC-55.** This spec originally added a fourth bullet, a
+> `passed_no_reviewable_changes` gate outcome with `block_merge=false`. There is
+> no gate and no `block_merge`: Code Tribunal publishes review output and makes
+> no merge decision. The no-reviewable outcome is carried entirely by
+> `post_result.status` and the artifacts, which is where it always did the real
+> work. Adding a status to `post_result.status` requires revisiting `post.py`'s
+> exit mapping in the same change — an unrecognized status exits nonzero by
+> design, so a new status added without that edit fails loudly rather than
+> reporting a false success.
+
+This is a successful no-op, not a failed panel, a reviewer skip hidden as a
 normal clean review, or an empty consensus that can resolve every historical record.
 It must be distinguishable in artifacts, job output, and operator diagnostics.
 
@@ -360,12 +370,12 @@ exception.
 | anchors.py and diff parsing | Share a lossless old/new-path block representation with scope filtering and anchor validation so an excluded/unknown path cannot be reintroduced by a separate parser. |
 | Snapshot copying | Extend the existing no-follow copier with a policy predicate applied to repository-relative paths, preserving containment and reporting scope-filter counts without copying excluded content. |
 | prompt_render.py and adapter_runner.py | Treat inputs/mr.diff plus the filtered snapshot as the only reviewable model input. Recognize the explicit no-reviewable outcome before prompt generation or adapter/provider execution. |
-| schema.py, types.py, and schemas | Add strict manifest review_scope, compact downstream scope identity, no-reviewable consensus/post/gate statuses, and compatibility-safe artifact validation. Require policy/diff identity equality where artifacts meet. |
+| schema.py, types.py, and schemas | Add strict manifest review_scope, compact downstream scope identity, no-reviewable consensus/post statuses, and compatibility-safe artifact validation. Require policy/diff identity equality where artifacts meet. |
 | consensus.py | Bind finalized batches to the scoped effective config, propagate scope provenance, and pass the reviewed-path proof into resolution eligibility. |
 | post.py and state planning | Do not create or mutate state/comments for the no-reviewable outcome; prevent absence resolution for excluded or unreviewed record paths. |
-| gate.py | Recognize and explicitly pass the no-reviewable outcome while retaining fail-closed behavior for malformed/mismatched artifacts. |
-| GitHub and GitLab templates | Avoid model fan-out for the no-reviewable case when platform orchestration permits; otherwise use a trusted preflight. Keep prepare terminal and ensure the gate consumes the explicit no-op artifacts. |
-| Reference, configuration, security, and operations docs | Document exact glob semantics, default empty policy, coverage artifacts, no-op gate, review/approval expectations, and the fact that a scope exclusion is not platform-truncation relief. |
+| post.py exit mapping | Add the new status to the successful set in `post.py` in the same change that adds it to `PostStatus`; an unrecognized status exits nonzero by design. |
+| GitHub and GitLab templates | Avoid model fan-out for the no-reviewable case when platform orchestration permits; otherwise use a trusted preflight. Keep prepare terminal and ensure `post` reports the explicit no-op rather than being skipped. |
+| Reference, configuration, security, and operations docs | Document exact glob semantics, default empty policy, coverage artifacts, the no-op publication outcome, review/approval expectations, and the fact that a scope exclusion is not platform-truncation relief. |
 | Images, templates, and supply chain | Release the matcher, schema/type changes, all stage handlers, and both templates in one immutable image/template revision. Do not allow a consumer to enable the new config on a mixed deployment where an older stage would treat the artifact as a normal empty review. |
 
 ## Tests

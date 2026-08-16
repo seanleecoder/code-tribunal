@@ -4,10 +4,19 @@
 > non-normative; see the [history index](../docs/history/README.md). This
 > transcript reflects the 1.0.0 run; its model rows are historical and may
 > differ from the current defaults in the [configuration reference](../docs/configuration.md).
+>
+> **The merge gate this run ends in no longer exists.** Stage 6 and the
+> `block_merge` decision it reports were removed in `review_config.v3`: Code
+> Tribunal now publishes review output and never decides whether a change may
+> merge. The transcript is left intact because it records what a released image
+> actually did on that date. Read Stage 6 as history, not as behavior to expect.
+> See [`docs/reference/cli-and-exit-codes.md`](../docs/reference/cli-and-exit-codes.md)
+> for the current `post` exit contract.
 
 This is a concrete, artifact-backed walkthrough of one real GitLab CI pipeline
 run, showing how the [pipeline stages](../README.md#pipeline-at-a-glance) turned
-three independent model opinions into a single merge-gate decision. All data
+three independent model opinions into a single merge-gate decision — the
+decision stage that release had and current releases do not. All data
 below was pulled directly from that pipeline's job artifacts and traces (no
 simulation).
 
@@ -92,9 +101,11 @@ Consensus summary: `surface_count=4`, `fyi_count=0`, `drop_count=0`, `block_merg
 
 `post_ai_review` (job `2529368`) upserted one GitLab inline discussion per consensus issue — 4 `created`, 0 `updated`, 0 `skipped_unchanged` (fresh MR run). No summary/FYI comment was needed since `fyi_count=0`.
 
-## Stage 6 — Gate
+## Stage 6 — Gate (removed after this run)
 
-`ai_review_gate` (job `2529369`) read `consensus.json` and **failed** with `status=failed_blocking_findings`, `reason=blocking_consensus`. This is the correct, intended outcome: the trusted config now runs critique permanently enabled, and this smoke test confirms a real 3/3-quorum blocker still fails the pipeline exactly as before critique was turned on — cross-examination changes *evidence*, not the final merge-gate contract.
+`ai_review_gate` (job `2529369`) read `consensus.json` and **failed** with `status=failed_blocking_findings`, `reason=blocking_consensus`. That was the correct, intended outcome *for the release under test*: the trusted config ran critique permanently enabled, and this smoke test confirmed a real 3/3-quorum blocker still failed the pipeline exactly as before critique was turned on — cross-examination changed *evidence*, not the merge-gate contract of the day.
+
+There is no equivalent stage today. `post_ai_review` is terminal, and the same four findings would post the same four discussions and exit zero. A `blocker` severity is an impact label on a thread; whether the merge request may merge is the project's policy to decide.
 
 ## Takeaways
 

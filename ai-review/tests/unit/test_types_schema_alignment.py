@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import types
 import unittest
-from typing import Literal, TypedDict, Union, get_args, get_origin, get_type_hints, is_typeddict
+from typing import (
+    Literal,
+    NotRequired,
+    TypedDict,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    is_typeddict,
+)
 
 from ai_review import types as domain_types
 from ai_review.schema import load_schema
@@ -16,7 +25,6 @@ ARTIFACT_TYPES = {
     "state.schema.json": domain_types.State,
     "state_aliases.schema.json": domain_types.StateAliasesArtifact,
     "post_result.schema.json": domain_types.PostResult,
-    "gate_result.schema.json": domain_types.GateResult,
 }
 ALL_JSON_TYPES = {
     "array",
@@ -39,12 +47,26 @@ class _ObsoleteCritique(TypedDict, total=False):
     severity_adjustment: domain_types.Severity | None
 
 
-class _WrongScalarGateResult(TypedDict):
-    schema_version: Literal["gate_result.v1"]
+# Negative control for scalar alignment. Deliberately wrong in exactly two
+# fields — `run_id` is a string in the schema and `created_discussions` an
+# integer — with every other field, the required/optional split, and the closed
+# object shape correct, so the assertion it trips can only be the scalar-type
+# comparison. It moved here from the deleted gate result; a checker with no
+# proof that it detects a mismatch is not a checker.
+class _WrongScalarPostResult(TypedDict):
+    schema_version: Literal["post_result.v1"]
     run_id: int
-    status: domain_types.GateStatus
-    block_merge: str
-    reason: str
+    status: domain_types.PostStatus
+    head_sha: str
+    current_head_sha: str
+    created_discussions: str
+    updated_discussions: int
+    resolved_discussions: int
+    skipped_unchanged: int
+    stale_unverified: int
+    posted_discussions: list[domain_types.PostedDiscussion]
+    warnings: list[str]
+    summary_comment: NotRequired[domain_types.SummaryComment]
 
 
 def _unwrap_alias(annotation: object) -> object:
@@ -295,9 +317,9 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
             _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)
 
     def test_wrong_scalar_types_fail_alignment(self) -> None:
-        schema = load_schema("gate_result.schema.json")
+        schema = load_schema("post_result.schema.json")
         with self.assertRaises(AssertionError):
-            _assert_typed_dict_matches_schema(_WrongScalarGateResult, schema, schema)
+            _assert_typed_dict_matches_schema(_WrongScalarPostResult, schema, schema)
 
     def test_wrong_array_item_scalar_fails_alignment(self) -> None:
         schema: dict[str, object] = {

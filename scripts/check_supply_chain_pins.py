@@ -199,9 +199,10 @@ def _github_review_container_issues(text: str) -> list[str]:
         "base": [image for image in containers if "/ai-review-base:" in image],
         "reviewer": [image for image in containers if "/ai-review-reviewer:" in image],
     }
-    if len(containers) != 6 or len(classified["base"]) != 4 or len(classified["reviewer"]) != 2:
+    # base: prepare, consensus, post. reviewer: review, critique.
+    if len(containers) != 5 or len(classified["base"]) != 3 or len(classified["reviewer"]) != 2:
         issues.append(
-            "GitHub review workflow must contain four base and two reviewer job containers"
+            "GitHub review workflow must contain three base and two reviewer job containers"
         )
     if len(set(classified["base"])) > 1:
         issues.append("GitHub review base job containers must use one identical image pin")

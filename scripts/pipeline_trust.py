@@ -34,6 +34,12 @@ RESERVED_DIRECT_JOB_NAMES = {
     "AI review: [codex]",
     "AI review: [cursor]",
     "AI review: [opencode]",
+    # Deleted from the template with the merge gate, but kept reserved for one
+    # release: this auditor runs from the image against a *consuming* project's
+    # configuration, and a consumer pinned to an older template still declares the
+    # job. Un-reserving a name is the direction that loosens a trust boundary, so
+    # the removal is tracked as a temporary-compatibility entry rather than done
+    # here.
     "ai_review_gate",
     "consensus_ai_review",
     "post_ai_review",

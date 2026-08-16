@@ -137,7 +137,7 @@ class PostCase(unittest.TestCase):
         position: dict[str, Any] | None = None,
         resolved: bool = False,
     ) -> dict[str, Any]:
-        body, _body_hash = render_body(group, 1, "previous-run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "previous-run", posting_mode="gitlab_discussions")
         note: dict[str, Any] = {
             "id": note_id,
             "body": body,

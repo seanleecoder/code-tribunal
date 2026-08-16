@@ -50,7 +50,7 @@ internal container implementation, not a supported Python package or API.
 - **Known defect on GitHub:** a pull request that **adds or deletes a file** can
   lose findings and fail the review — anchor resolution rejects the `/dev/null`
   path GitHub uses for added files, so affected findings are dropped and the
-  review can stop before the gate runs. GitLab is unaffected. Land file
+  review can stop before it publishes anything. GitLab is unaffected. Land file
   additions separately, or re-run once they merge. **Present in the shipped
   1.0.0 runtime; a fix is queued for 1.0.1 and is not released yet.** See
   [`release/1.0.0.md`](release/1.0.0.md) and
@@ -112,7 +112,7 @@ For contributor setup and all quality checks, see
 
 ## Pipeline at a glance
 
-One logical DAG performs six operations:
+One logical DAG performs five operations:
 
 1. `prepare` binds the diff, repository snapshot, state, configuration, and
    revision metadata into an input bundle.
@@ -121,8 +121,8 @@ One logical DAG performs six operations:
 4. `consensus` validates cross-stage integrity, groups findings, and surfaces
    each group two reviewer identities support independently.
 5. `post` reconciles prior state and upserts GitLab discussions or GitHub review
-   comments.
-6. `gate` fails on operational posting/state loss.
+   comments. It is the terminal stage: its exit status reports whether
+   publication succeeded, never what the review found.
 
 See [architecture](docs/development/architecture.md),
 [consensus](docs/reference/consensus.md), and

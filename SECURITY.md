@@ -20,10 +20,10 @@ while a fix is prepared.
 
 In scope:
 
-- Pipeline templates, reviewer adapters, consensus, posting, gate, schemas, and
+- Pipeline templates, reviewer adapters, consensus, posting, schemas, and
   state handling in this repository.
 - Token handling, prompt-injection boundaries, snapshot containment, state
-  authenticity, artifact integrity, and merge-gate behavior.
+  authenticity, and artifact integrity.
 - Bypasses of documented adapter endpoint validation or subprocess environment
   isolation.
 

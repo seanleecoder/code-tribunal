@@ -25,8 +25,13 @@ SUMMARY_MARKER_RE = re.compile(
 )
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
+# Headings that end the recovered summary. `Consensus:` is the pre-v4 footer
+# heading and is carried alongside `Support:` for one release: this parser runs on
+# the marker-recovery path taken when the persisted state note is missing, so it
+# must still decompose thread bodies written by the previous version. Removal is
+# tracked as a temporary-compatibility entry, not left to be noticed later.
 REVIEW_SECTION_BOUNDARIES = frozenset(
-    {"Evidence:", "Dissent:", "Suggestion:", "Consensus:"}
+    {"Evidence:", "Dissent:", "Suggestion:", "Support:", "Consensus:"}
 )
 BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
 

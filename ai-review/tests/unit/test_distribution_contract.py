@@ -168,6 +168,72 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertLessEqual(required, set(gitignore))
         self.assertLessEqual(required, set(dockerignore))
 
+    def test_base_image_smoke_loop_names_only_modules_that_exist(self) -> None:
+        """The publish workflow runs `--help` over a hardcoded module list.
+
+        Deleting a module without editing that list breaks **image publication**,
+        not the review pipeline, so nothing else in this suite would catch it.
+        """
+        workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        match = re.search(r"for module in ([^;]+); do", workflow)
+        self.assertIsNotNone(match, "base-image smoke module loop not found")
+        assert match is not None
+
+        modules = match.group(1).split()
+        self.assertIn("post", modules)
+        package_root = _AI_REVIEW_ROOT / "src" / "ai_review"
+        for module in modules:
+            with self.subTest(module=module):
+                self.assertTrue(
+                    (package_root / f"{module}.py").exists(),
+                    f"publish workflow smoke-tests ai_review.{module}, which does not exist",
+                )
+
+    def test_no_merge_gate_remains_in_the_runtime_or_its_schemas(self) -> None:
+        """The gate is deleted, not disabled. Nothing may still name it.
+
+        Code Tribunal publishes review output and never decides whether a change
+        may merge, so a reintroduced module, schema, or type must fail the build
+        rather than reappear quietly.
+        """
+        package_root = _AI_REVIEW_ROOT / "src" / "ai_review"
+        schemas_root = _AI_REVIEW_ROOT / "schemas"
+
+        self.assertFalse((package_root / "gate.py").exists())
+        self.assertFalse((schemas_root / "gate_result.schema.json").exists())
+
+        # `config.py` is exempt from the `merge_gate` name check and only from
+        # that one: it holds the deliberate tombstones — the v2→v3 removed-key
+        # list and the retired `AI_REVIEW_MERGE_GATE_ENABLED` override — whose
+        # whole purpose is to name the deleted key back at an operator. The
+        # active-surface assertions below cover it instead.
+        for source in sorted(package_root.rglob("*.py")):
+            text = source.read_text(encoding="utf-8")
+            tokens = ("GateResult", "GateStatus", "gate_result")
+            if source.name != "config.py":
+                tokens += ("merge_gate",)
+            with self.subTest(source=source.name):
+                for token in tokens:
+                    self.assertNotIn(token, text, f"{source.name} still names {token}")
+
+        from ai_review import config as config_module
+
+        self.assertNotIn("merge_gate", config_module.TOP_LEVEL_KEYS)
+        self.assertFalse(hasattr(config_module, "MERGE_GATE_KEYS"))
+        self.assertNotIn(
+            "merge_gate_enabled", config_module.effective_config_summary({})
+        )
+        self.assertIn("merge_gate", config_module.V3_REMOVED_CONFIG_KEYS)
+        self.assertIn(
+            "AI_REVIEW_MERGE_GATE_ENABLED", config_module.RETIRED_ENV_OVERRIDES
+        )
+
+        for schema in sorted(schemas_root.glob("*.json")):
+            with self.subTest(schema=schema.name):
+                self.assertNotIn(
+                    "block_merge", schema.read_text(encoding="utf-8")
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

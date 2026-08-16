@@ -26,6 +26,9 @@ V3_REMOVED_CONFIG_KEYS = (
     "panel.min_successful_reviewers_for_blocking",
     "panel.quorum",
     "critique.allow_advisory_escalation",
+    "merge_gate",
+    "posting.fallback_to_summary_comment",
+    "limits.max_posted_surface_findings",
 )
 
 TOP_LEVEL_KEYS = {
@@ -34,7 +37,6 @@ TOP_LEVEL_KEYS = {
     "panel",
     "critique",
     "posting",
-    "merge_gate",
     "state",
     "limits",
     "security",
@@ -68,11 +70,9 @@ POSTING_KEYS = {
     "mode",
     "v1_inline_sides",
     "inline_multiline",
-    "fallback_to_summary_comment",
     "fyi_mode",
     "stale_head_guard",
 }
-MERGE_GATE_KEYS = {"enabled"}
 STATE_KEYS = {
     "backend",
     "recover_from_discussion_markers",
@@ -88,10 +88,13 @@ STATE_RETENTION_KEYS = {
     "max_records",
     "max_state_bytes",
 }
+# max_fyi_findings stays while max_posted_surface_findings goes: the FYI cap
+# truncates a list that is already summary-only and renders a visible "more"
+# trailer, whereas the surface cap silently reclassified a finding from thread to
+# summary. Sibling names, different defects.
 LIMIT_KEYS = {
     "max_diff_bytes",
     "max_files",
-    "max_posted_surface_findings",
     "max_fyi_findings",
     "max_prompt_bytes",
 }
@@ -133,6 +136,12 @@ RETIRED_ENV_OVERRIDES = {
     ),
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": (
         "semantic grouping was removed in review_config.v2; unset this variable"
+    ),
+    "AI_REVIEW_MERGE_GATE_ENABLED": (
+        "the merge gate was removed in review_config.v3; Code Tribunal publishes "
+        "review output and never decides whether a change may merge. Remove the "
+        "gate job and any branch-protection entry that requires it, then unset "
+        "this variable"
     ),
 }
 
@@ -297,7 +306,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
-    - ``AI_REVIEW_MERGE_GATE_ENABLED`` -> ``merge_gate.enabled``
     - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. ``state.backend`` follows it
       automatically; there is no separate state-backend override.
 
@@ -338,13 +346,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
         if isinstance(critique, dict):
             critique["enabled"] = flag
 
-    gate_env = os.environ.get("AI_REVIEW_MERGE_GATE_ENABLED")
-    if gate_env is not None:
-        flag = _env_flag("AI_REVIEW_MERGE_GATE_ENABLED", gate_env)
-        merge_gate = config.setdefault("merge_gate", {})
-        if isinstance(merge_gate, dict):
-            merge_gate["enabled"] = flag
-
     posting_mode_env = os.environ.get("AI_REVIEW_POSTING_MODE")
     if posting_mode_env is not None and posting_mode_env.strip():
         posting = config.setdefault("posting", {})
@@ -364,7 +365,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     """
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
-    merge_gate = config.get("merge_gate", {}) if isinstance(config, dict) else {}
     posting = config.get("posting", {}) if isinstance(config, dict) else {}
     state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
@@ -392,7 +392,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "critique_enabled": bool(critique.get("enabled")),
         "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
-        "merge_gate_enabled": bool(merge_gate.get("enabled")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
         "state_backend": state.get("backend") if isinstance(state, dict) else None,
         "panel_min_successful_reviewers_for_resolution": int(
@@ -561,10 +560,6 @@ def validate_config(config: dict[str, Any]) -> None:
     for flag in sorted(CRITIQUE_KEYS):
         if not isinstance(critique.get(flag), bool):
             raise ConfigError(f"critique.{flag} must be a boolean")
-    merge_gate = config.setdefault("merge_gate", {})
-    if not isinstance(merge_gate, dict):
-        raise ConfigError("merge_gate must be a mapping")
-    _reject_unknown_keys(merge_gate, MERGE_GATE_KEYS, "merge_gate")
     # The resolution threshold is authored against the *configured* seat count
     # and takes effect against the *enabled* count. The two bounds answer
     # different questions: a threshold above the configured count is an authoring

@@ -31,7 +31,6 @@ def _base_config() -> dict:
             "cursor": {"model": "auto", "enabled": False},
         },
         "critique": {"enabled": True},
-        "merge_gate": {"enabled": True},
     }
 
 
@@ -133,16 +132,15 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             apply_env_overrides(config)
         self.assertNotIn("effort", config["reviewers"]["claude"])
 
-    def test_critique_and_merge_gate_overrides(self) -> None:
+    def test_critique_override(self) -> None:
         config = _base_config()
         with mock.patch.dict(
             "os.environ",
-            {"AI_REVIEW_CRITIQUE_ENABLED": "false", "AI_REVIEW_MERGE_GATE_ENABLED": "false"},
+            {"AI_REVIEW_CRITIQUE_ENABLED": "false"},
             clear=True,
         ):
             apply_env_overrides(config)
         self.assertFalse(config["critique"]["enabled"])
-        self.assertFalse(config["merge_gate"]["enabled"])
 
     def test_posting_mode_override_carries_the_state_backend(self) -> None:
         """One variable moves the platform.
@@ -173,7 +171,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         # AND non-canonical casing/whitespace must raise, never silently no-op.
         for var, value in (
             ("AI_REVIEW_CRITIQUE_ENABLED", "1"),
-            ("AI_REVIEW_MERGE_GATE_ENABLED", "flase"),
+            ("AI_REVIEW_CRITIQUE_ENABLED", "flase"),
             ("AI_REVIEW_CODEX_ENABLED", "yes"),
             ("AI_REVIEW_CRITIQUE_ENABLED", "TRUE"),
             ("AI_REVIEW_CRITIQUE_ENABLED", " true "),
@@ -204,6 +202,50 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                 ):
                     apply_env_overrides(config)
                 self.assertTrue(guidance, f"{var} must state what to do instead")
+
+    def test_merge_gate_override_fails_with_migration_guidance(self) -> None:
+        """The merge gate is gone; its override must say so, not go quiet.
+
+        The guidance has to name the branch-protection consequence, because that
+        is the half of the migration a config error cannot perform: an operator
+        who only unsets the variable and leaves a required `gate` check in place
+        has an unmergeable repository, not a fixed one.
+        """
+        guidance = RETIRED_ENV_OVERRIDES["AI_REVIEW_MERGE_GATE_ENABLED"]
+        self.assertIn("review_config.v3", guidance)
+        self.assertIn("gate job", guidance)
+
+        with (
+            mock.patch.dict(
+                "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "true"}, clear=True
+            ),
+            self.assertRaisesRegex(
+                ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
+            ),
+        ):
+            apply_env_overrides(_base_config())
+
+    def test_retired_override_is_reported_before_the_v3_migration_message(self) -> None:
+        """Overrides are applied before validation, so the env error wins.
+
+        A `review_config.v2` document that also sets the retired variable reports
+        the env-var error, not the v2→v3 migration. Pinning the order keeps a
+        later reader from "fixing" a test that is asserting the real sequence.
+        """
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "review.yaml"
+            path.write_text(
+                "schema_version: review_config.v2\nreviewers: {}\n", encoding="utf-8"
+            )
+            with (
+                mock.patch.dict(
+                    "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "false"}, clear=True
+                ),
+                self.assertRaisesRegex(
+                    ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
+                ),
+            ):
+                load_config(path)
 
 
 class LoadConfigOverrideTests(unittest.TestCase):
@@ -456,7 +498,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 "  post_lock_resource_group: ai-review-mr-lock\n",
                 "posting",
             ),
-            ("merge_gate:\n", "  mechanism: ci_job_failure\n", "merge_gate"),
             ("state:\n", "  marker_version: ai-review-state:v1\n", "state"),
             (
                 "  retention:\n",

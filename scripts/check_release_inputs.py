@@ -30,7 +30,6 @@ GITHUB_CONTAINER_ROLES = {
     "critique": "reviewer",
     "consensus": "base",
     "post": "base",
-    "gate": "base",
 }
 
 EVIDENCE_DIR = Path("docs/evidence")

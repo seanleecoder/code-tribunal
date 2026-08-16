@@ -69,7 +69,7 @@ class StatePlanningTests(PostCase):
 
     def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
         group = self._consensus()["groups"][0]
-        body, _body_hash = render_body(group, 1, "run", posting_mode="gitlab_discussions")
+        body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         discussions = index_ai_review_discussions(
             [
                 {
@@ -120,7 +120,6 @@ class StatePlanningTests(PostCase):
     def test_discussion_marker_recovery_filters_non_bot_authors(self) -> None:
         body, _body_hash = render_body(
             self._consensus()["groups"][0],
-            1,
             "run",
             posting_mode="gitlab_discussions",
         )
@@ -408,7 +407,6 @@ class StatePlanningTests(PostCase):
             [group],
             [],
             posting_mode="gitlab_discussions",
-            fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
             dry_run=False,
@@ -466,7 +464,6 @@ class StatePlanningTests(PostCase):
             [group],
             [],
             posting_mode="gitlab_discussions",
-            fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
             dry_run=False,
@@ -519,7 +516,6 @@ class StatePlanningTests(PostCase):
             [group],
             [],
             posting_mode="gitlab_discussions",
-            fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
             dry_run=False,
@@ -571,7 +567,6 @@ class StatePlanningTests(PostCase):
             [group],
             [],
             posting_mode="gitlab_discussions",
-            fallback_to_summary=True,
             fyi_mode="summary_comment",
             max_fyi=50,
             dry_run=False,

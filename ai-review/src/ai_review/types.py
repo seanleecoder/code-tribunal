@@ -53,13 +53,6 @@ type PostStatus = Literal[
 ]
 type SummaryCommentAction = Literal["none", "created", "updated", "unchanged"]
 type PostedDiscussionAction = Literal["created", "updated"]
-type GateStatus = Literal[
-    "passed",
-    "failed_blocking_findings",
-    "failed_post_result",
-    "passed_stale_head",
-    "skipped_disabled",
-]
 type StateRecordStatus = Literal[
     "open",
     "resolved",
@@ -358,11 +351,3 @@ class PostResult(TypedDict):
     posted_discussions: list[PostedDiscussion]
     warnings: list[str]
     summary_comment: NotRequired[SummaryComment]
-
-
-class GateResult(TypedDict):
-    schema_version: Literal["gate_result.v1"]
-    run_id: RunId
-    status: GateStatus
-    block_merge: bool
-    reason: str

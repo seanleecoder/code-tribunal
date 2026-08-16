@@ -31,7 +31,6 @@ class GoldenConsensusContractTests(unittest.TestCase):
             with self.subTest(posting_mode=posting_mode):
                 rendered, body_hash = render_body(
                     fixture["group"],
-                    fixture["successful_reviewer_count"],
                     fixture["run_id"],
                     posting_mode=posting_mode,
                 )

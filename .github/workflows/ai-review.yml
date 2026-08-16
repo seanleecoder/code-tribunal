@@ -30,8 +30,8 @@ env:
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
   # Actions repository variables live in the `vars` context; they are not
   # process environment variables until explicitly mapped. Keep overrides at
-  # workflow scope so prepare, review, critique, consensus, post, and gate all
-  # load the same effective configuration.
+  # workflow scope so prepare, review, critique, consensus, and post all load the
+  # same effective configuration.
   AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
   AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
   AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
@@ -67,7 +67,6 @@ env:
   AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
   AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
   AI_REVIEW_CRITIQUE_ENABLED: ${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}
-  AI_REVIEW_MERGE_GATE_ENABLED: ${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}
 
 jobs:
   prepare:
@@ -289,11 +288,27 @@ jobs:
           name: ai-review-consensus
           path: out/consensus/
 
+  # The terminal product job. Code Tribunal publishes review output and never
+  # decides whether a change may merge, so this job's result reports one thing:
+  # whether publication completed. Findings of any severity exit zero.
   post:
     needs: [prepare, consensus]
+    # `always()` so a failed `consensus` produces a *failed* `post` rather than a
+    # skipped one. On GitHub a skipped required check never reports, and a
+    # repository that requires `post` would wait on it forever. Gating on
+    # `prepare` keeps the job skipped for the events `prepare` itself declines.
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
     steps:
+      # Before the downloads: with `always()` this job runs after a failed
+      # consensus, and the consensus artifact it needs does not exist. Fail on the
+      # upstream reason rather than on a confusing missing-artifact error.
+      - name: Require successful consensus
+        if: needs.consensus.result != 'success'
+        run: |
+          echo "::error::consensus job result was '${{ needs.consensus.result }}'; no review to publish."
+          exit 1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
@@ -312,19 +327,3 @@ jobs:
         with:
           name: ai-review-post
           path: out/post/
-
-  gate:
-    needs: [consensus, post]
-    runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ai-review-consensus
-          path: out/consensus
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ai-review-post
-          path: out/post
-      - name: Evaluate gate
-        run: python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json

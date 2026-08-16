@@ -20,7 +20,7 @@ The supported artifacts are:
 
 Internal implementation directories:
 
-- [`src/ai_review/`](src/ai_review/) — prepare, consensus, posting, gate, state,
+- [`src/ai_review/`](src/ai_review/) — prepare, consensus, posting, state,
   platform, and schema code.
 - [`adapters/`](adapters/) — reviewer process wrappers and environment
   isolation.

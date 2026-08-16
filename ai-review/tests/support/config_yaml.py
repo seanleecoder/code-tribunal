@@ -31,8 +31,6 @@ def config_tail(
         f"  allow_severity_downgrade: {flag(allow_severity_downgrade)}",
         "posting:",
         "  mode: gitlab_discussions",
-        "merge_gate:",
-        "  enabled: true",
         "state:",
         "  backend: gitlab_mr_state_note",
         "limits:",

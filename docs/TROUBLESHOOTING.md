@@ -8,8 +8,9 @@ credentials or sensitive model content into issues.
 | Reviewer job failed | Provider/CLI/model/config/timeout error | `out/status/<reviewer>.json` and redacted job log | Fix credential scope/model/config or retry transient failure |
 | Reviewer succeeded but does not count | All findings dropped or batch not resolution-eligible | Finding batch quality counts and `usable_for_resolution` | Use a stronger/compatible model; do not lower safety thresholds blindly |
 | Consensus exits 3 | No usable panel, config drift, wrong run, malformed or spoofed artifact | Consensus log, manifest run/config digests, finding/critique identities | Rerun from prepare with identical project-scoped variables; do not mix artifacts |
-| Gate exits 7 with no blocker | Post/state failure has precedence | `out/post/post_result.json`, `out/gate/gate_result.json` | Repair platform API/state capacity and rerun post/gate |
+| `post` exits nonzero with no blocker | Publication or state persistence failed (`failed`, `partial_failed`, `state_overflow`) — findings never affect the exit status | `out/post/post_result.json` `status` and `warnings` | Repair platform API/state capacity and rerun post |
 | Pipeline is green but no comments appear | Zero surfaced findings, stale head, or a degraded panel where nothing reached two independent supporters | Consensus summary, group `support_count`, and post result | Confirm expected policy; let newer revision run after stale head |
+| Pipeline is green, a summary comment exists, but no threads were posted | Every finding had exactly one independent supporter, so all of them are FYI. This is the expected outcome for an unconfirmed finding, not a fault | Consensus `summary.surface_count` is 0 with a nonzero `fyi_count`; each group's `support_count` is 1 | Read the FYI list in the summary comment. Investigate only if a seat failed or returned nothing — a lost seat lowers what can reach two supporters |
 | A finding you expected is only FYI | Only one reviewer identity supported it; severity does not promote it | Group `support_count`, `contributing_reviewers`, `agreeing_critics` | Expected: two independent identities are required to surface. Check for a failed or silently empty seat |
 | Duplicate-looking discussion | Lost/untrusted state, changed bot identity, conservative rematch, or different category | Issue markers, state author, `issue_id`, remap status | Restore bot/state ownership; distinguish a true duplicate from a new identity |
 | `/ai-review` command ignored | Wrong thread, syntax, insufficient access, or collaborator permission could not be verified | Root finding marker, author permission, and `post_result.json` warnings naming the note and author | Reply in the finding thread with one exact command line; on GitHub organization repositories configure the fine-grained resolve token |
@@ -93,8 +94,9 @@ meet them:
    by `kept 0 finding(s), dropped N malformed/unresolvable finding(s)`.
 2. `out/status/<reviewer>.json` shows `dropped_finding_count` equal to
    `raw_finding_count` with `usable_for_resolution: false` — often on every seat.
-3. The `consensus` job exits 3, so `post` and `gate` never run and the required
-   `gate` check cannot succeed.
+3. The `consensus` job exits 3, so no review is published. On GitHub the `post`
+   job then fails rather than being skipped, reporting the upstream consensus
+   failure.
 
 Cause: GitHub renders an added file's diff with `--- /dev/null`, which anchor
 resolution rejects as an absolute path while scanning for the anchor's file. It
@@ -108,8 +110,8 @@ is accepted (`accepted_finding_count == raw_finding_count`).
 
 Workaround on 1.0.0 images: split file additions into a separate change request
 from the code you want reviewed, or re-run the review once the added file has
-merged. Disabling `merge_gate.enabled` unblocks the merge but does not recover the
-dropped findings.
+merged. Nothing in Code Tribunal blocks the merge in the first place — the review
+is simply missing its findings.
 
 ## Configuration drift
 

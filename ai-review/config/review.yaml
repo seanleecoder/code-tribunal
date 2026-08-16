@@ -94,15 +94,8 @@ posting:
   mode: gitlab_discussions # Integration backend target for discussions; set github_reviews for GitHub Actions. Also selects state.backend.
   v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
   inline_multiline: true # Support multiline diff range comments
-  fallback_to_summary_comment: true # Post to general MR summary comment if inline diff matching fails
   fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
   stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
-
-# Publication-health job. Findings never block: review output is informational
-# and severity is an impact label only. What remains here reports whether posting
-# and state persistence succeeded.
-merge_gate:
-  enabled: true # Override: AI_REVIEW_MERGE_GATE_ENABLED (set false to report the job as skipped; operational post/state failures still fail)
 
 # Persistent state management across pipeline runs
 state:
@@ -124,8 +117,7 @@ state:
 limits:
   max_diff_bytes: 250000 # Max git diff payload size in bytes accepted for review
   max_files: 200 # Max number of changed files analyzed per review run
-  max_posted_surface_findings: 25 # Limit on inline posted comments to prevent MR thread spam
-  max_fyi_findings: 50 # Cap on non-blocking findings in MR summary comment
+  max_fyi_findings: 50 # Cap on FYI findings listed in the summary comment (truncation is visible; surfaced threads are never capped)
   max_prompt_bytes: 500000 # Max prompt payload size in bytes sent to model APIs
 
 # Runtime security controls

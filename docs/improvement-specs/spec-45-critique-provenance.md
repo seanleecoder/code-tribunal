@@ -48,9 +48,11 @@ inline/summary rendering behind renderer-owned disclosure, an opt-in summary aud
 for majority-noise suppression, schema/type/golden updates, and the
 `render-body.v4` refresh.
 
-**Out:** critique prompts and verdict vocabulary; grouping, quorum, severity, merge
-gate, state matching, state retention, or the rules that determine whether a
-duplicate claim is valid. Those decisions must remain byte-for-byte equivalent apart
+**Out:** critique prompts and verdict vocabulary; grouping, independent-support
+counting, severity, state matching, state retention, or the rules that determine
+whether a duplicate claim is valid. (This spec predates SPEC-54/55: there is no
+quorum and no merge gate to hold out of scope any more. Read the original
+"quorum" as "independent support" — the two-supporter surfacing rule.) Those decisions must remain byte-for-byte equivalent apart
 from the new descriptive fields and render hashes.
 
 ## Consensus artifact contract
@@ -97,8 +99,9 @@ effective verdict is `dispute`, preserving its current `{critic, rationale,
 adjusted_severity}` shape. Existing consumers of that property continue to work.
 
 The implementation must derive `critique_summary`, support/noise counts, duplicate
-links, severity downgrade inputs, group decisions, and `block_merge` from the same
-effective verdicts as before. `critique_observations` records those decisions; it
+links, severity downgrade inputs, and group decisions from the same effective
+verdicts as before. (`block_merge` was removed with the merge gate in SPEC-54/55
+and is no longer among them.) `critique_observations` records those decisions; it
 does not recalculate them.
 
 ### The suppression reason must be persisted, not re-derived
@@ -291,10 +294,16 @@ disposition selection, because neither their noise rationales nor their suppress
 reason was ever stored. Treat a missing `drop_reason` as "unknown", never as
 `critique_majority_noise`.
 
-`render-body.v4` causes one deliberate refresh of existing bot threads. Shipping
+`render-body.v4` causes one deliberate refresh of existing bot threads.
+
+> **Superseded numbering.** SPEC-54/55 already shipped the `render-body.v4` bump
+> for the support footer. A later body-format change is `render-body.v5`; the
+> one-refresh reasoning below is unchanged, only the version string moves.
+ Shipping
 SPEC-44 and SPEC-45 in one release keeps that at one refresh total rather than two
 (implementation surface item 6). It does not change issue IDs, state records, consensus
-decisions, or merge gates. Reverting the feature restores the prior renderer and causes
+decisions. (It named merge gates too; there are none.) Reverting the feature
+restores the prior renderer and causes
 at most one reverse refresh; retain the additive artifact fields so historical run
 records remain inspectable.
 
@@ -365,8 +374,9 @@ artifact.
   `test_summary_entry_shows_found_by_and_inline_body_does_not`,
   `test_disposition_section_absent_by_default_and_summary_bytes_unchanged`, and
   `test_summary_drops_whole_critique_dispositions_before_normal_entries`.
-- `ai-review/tests/integration/test_post_gate_e2e.py` — add
-  `test_majority_noise_disposition_creates_no_thread_state_or_gate_effect` using a
+- `ai-review/tests/integration/test_publish_e2e.py` (the surviving half of the
+  renamed `test_post_gate_e2e.py`) — add
+  `test_majority_noise_disposition_creates_no_thread_or_state_effect` using a
   persisted open state record, then assert no disposition record is added or
   resolved, with the audit both disabled and enabled.
 - `ai-review/tests/contract/test_golden_consensus.py` — add valid duplicate,

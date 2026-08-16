@@ -83,7 +83,6 @@ class ConsensusCliTests(unittest.TestCase):
             manifest["effective_config"] = {
                 "reviewers": {},
                 "critique_enabled": False,
-                                "merge_gate_enabled": False,
             }
             manifest["effective_config_sha256"] = "a" * 64
             write_canonical_json(input_dir / "manifest.json", manifest)
