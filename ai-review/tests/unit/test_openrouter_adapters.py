@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file, write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
@@ -38,7 +39,6 @@ _ENV_KEYS = [
     "AI_REVIEW_ALLOW_LOCAL_MOCK",
     "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
     "AI_REVIEW_REQUIRE_REAL_CLAUDE",
-    "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
     "AI_REVIEW_REQUIRE_REAL_CURSOR",
     "AI_REVIEW_REVIEWERS",
@@ -158,8 +158,16 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = "true"
             if reviewer == "cursor":
                 os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-            os.environ.pop("AI_REVIEW_REQUIRE_REAL_OPENROUTER", None)
-            os.environ.pop("OPENROUTER_API_KEY", None)
+            # A clean shell: no credentials, no REQUIRE_REAL control, and no
+            # provider endpoint. This is the environment the reviewer-image
+            # preflight and `make review-local` actually run in, so every seat
+            # must reach the mock path without a caller supplying an endpoint.
+            for reviewer_definition in REVIEWERS.values():
+                os.environ.pop(reviewer_definition.require_real_control, None)
+                for credential in reviewer_definition.credential_variables:
+                    os.environ.pop(credential, None)
+            os.environ.pop("ANTHROPIC_BASE_URL", None)
+            os.environ.pop("OPENROUTER_BASE_URL", None)
             try:
                 self.assertEqual(run_adapter(reviewer, "review"), 0)
                 return load_json_file(output_dir / "findings" / f"{reviewer}.json")
@@ -169,6 +177,18 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                         os.environ.pop(key, None)
                     else:
                         os.environ[key] = value
+
+    def test_claude_mock_fallback_produces_valid_batch(self) -> None:
+        """The claude seat runs from a clean shell, with no endpoint supplied.
+
+        Its absence here is what let a claude-only endpoint requirement ship
+        green: the reviewer-image preflight loops over claude/codex/opencode and
+        `make review-local` defaults to claude, and neither exports a provider
+        endpoint. Both broke while the suite stayed green.
+        """
+        batch = self._run_mocked("claude")
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertEqual(batch["reviewer"], "claude")
 
     def test_codex_mock_fallback_produces_valid_batch(self) -> None:
         batch = self._run_mocked("codex")
@@ -556,8 +576,6 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                 }
                 if reviewer == "cursor":
                     env["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-                if reviewer == "claude":
-                    env["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
                 completed = subprocess.run(
                     [str(_ADAPTERS / "run_reviewer.sh"), reviewer, "review"],
                     check=False,
@@ -1082,7 +1100,6 @@ PY
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
             os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
-            os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
                 self.assertEqual(run_adapter("claude", "review"), 0)
@@ -1122,8 +1139,8 @@ PY
         self.assertNotIn('"$schema"', cli_args)
         # Effort comes from the repo config default (reviewers.claude.effort).
         self.assertIn("--effort medium", cli_args)
-        # This test runs the OpenRouter route (ANTHROPIC_BASE_URL above), where
-        # --bare would break ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
+        # Claude only has the OpenRouter route, where --bare would break
+        # ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
         self.assertNotIn("--bare", cli_args)
         self.assertIn("--safe-mode", cli_args)
         self.assertIn("--model anthropic/claude-haiku-4.5", cli_args)
@@ -1145,7 +1162,15 @@ PY
         # Only the agent-config symlinks are removed; their target is untouched.
         self.assertIn("steer.txt", tree)
 
-    def test_claude_direct_anthropic_route_is_rejected(self) -> None:
+    def test_claude_native_anthropic_route_is_unreachable(self) -> None:
+        """Native Anthropic credentials and endpoints cannot reach the claude CLI.
+
+        The ambient shell here holds exactly what a pre-OpenRouter operator would
+        have: a native ANTHROPIC_API_KEY and a lookalike endpoint. The runner
+        injects the pinned OpenRouter base and copies only the seat's declared
+        OPENROUTER_API_KEY, so the CLI sees the OpenRouter route and nothing else
+        — no caller has to supply or scrub the endpoint for that to hold.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -1160,12 +1185,14 @@ PY
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
             os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
+            os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
-            os.environ.pop("ANTHROPIC_BASE_URL", None)
+            os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai.evil.com/api"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("claude", "review"), _EXIT_ERROR)
+                self.assertEqual(run_adapter("claude", "review"), 0)
                 batch = load_json_file(output_dir / "findings" / "claude.json")
+                cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
             finally:
                 for key, value in previous.items():
                     if value is None:
@@ -1173,8 +1200,11 @@ PY
                     else:
                         os.environ[key] = value
 
-        self.assertEqual(batch["adapter_status"], "model_error")
-        self.assertFalse((output_dir / "claude.argv").exists())
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertIn("ANTHROPIC_BASE_URL=https://openrouter.ai/api", cli_env)
+        self.assertNotIn("evil.com", cli_env)
+        self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
+        self.assertNotIn("ANTHROPIC_API_KEY=anthropic-test-key", cli_env)
 
     def test_claude_critique_runs_without_repo_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1193,7 +1223,6 @@ PY
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
             os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
-            os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
                 self.assertEqual(run_adapter("claude", "critique"), 0)
@@ -1508,7 +1537,6 @@ PY
         self,
         reviewer: str,
         *,
-        base_url: str = "https://openrouter.ai/api/v1",
         extra_env: dict[str, str] | None = None,
     ) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1539,7 +1567,6 @@ PY
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
-            os.environ["OPENROUTER_BASE_URL"] = base_url
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             for key in _REVIEWER_OVERRIDE_KEYS:
                 os.environ.pop(key, None)
@@ -1560,23 +1587,53 @@ PY
                     else:
                         os.environ[key] = value
 
-    def test_invalid_openrouter_base_url_is_model_error_without_cli_invocation(self) -> None:
-        batch = self._run_invalid_cli_config(
-            "codex",
-            base_url="https://attacker.example.invalid/api/v1",
+    def test_hostile_ambient_endpoint_does_not_reach_the_cli(self) -> None:
+        """The runner injects the pinned endpoint, so ambient values never apply.
+
+        These are provider-native variable names an unrelated developer or CI
+        shell may legitimately export, so the runner overrides them instead of
+        refusing to run — a lookalike host cannot redirect egress, and no caller
+        has to supply the endpoint for the adapter to start.
+        """
+        hostile = {"OPENROUTER_BASE_URL": "https://openrouter.ai.evil.com/api/v1"}
+
+        batch, cli_args, cli_env, _meta = self._run_with_fake_cli(
+            "codex", "codex", extra_env=hostile
         )
-
-        self.assertEqual(batch["adapter_status"], "model_error")
-
-    def test_invalid_anthropic_base_url_is_model_error_without_cli_invocation(self) -> None:
-        batch = self._run_invalid_cli_config(
-            "claude",
-            extra_env={"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"},
+        self.assertEqual(batch["adapter_status"], "success")
+        # codex takes the endpoint from the injected variable and passes it on the
+        # command line, so the canonical host is what the CLI is configured with.
+        self.assertIn(
+            'model_providers.openrouter.base_url="https://openrouter.ai/api/v1"', cli_args
         )
+        self.assertNotIn("evil.com", cli_args)
+        self.assertNotIn("evil.com", cli_env)
 
-        self.assertEqual(batch["adapter_status"], "model_error")
+        batch, cli_args, cli_env, meta = self._run_with_fake_cli(
+            "opencode", "opencode", extra_env=hostile
+        )
+        self.assertEqual(batch["adapter_status"], "success")
+        # opencode never reads the variable: its baseURL is a literal in the
+        # generated config, and the adapter's fixed CLI env drops the injected
+        # name entirely. Assert that rather than a forwarded value.
+        opencode_config = meta["opencode_config"]
+        assert isinstance(opencode_config, dict)
+        self.assertEqual(
+            opencode_config["provider"]["openrouter"]["options"]["baseURL"],
+            "https://openrouter.ai/api/v1",
+        )
+        self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
+        self.assertNotIn("evil.com", cli_args)
+        self.assertNotIn("evil.com", cli_env)
 
     def test_claude_shell_maps_openrouter_token_unconditionally(self) -> None:
+        """The shell maps the OpenRouter token with no endpoint condition.
+
+        Claude has one route, so the mapping is unconditional. The endpoint is
+        not read here at all — the runner injects it (see
+        test_claude_native_anthropic_route_is_unreachable, which covers what the
+        CLI actually receives through the supported path).
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -1599,8 +1656,6 @@ PY
                 "AI_REVIEW_STAGE": "review",
                 "AI_REVIEW_MODEL": "anthropic/claude-haiku-4.5",
                 "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api",
-                "ANTHROPIC_API_KEY": "anthropic-native-secret",
                 "OPENROUTER_API_KEY": "sk-or-v1-test",
                 "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
             }
@@ -1616,7 +1671,6 @@ PY
             self.assertEqual(completed.stdout, '{"findings":[]}')
             cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
             self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
-            self.assertIn("ANTHROPIC_API_KEY=anthropic-native-secret", cli_env)
 
     def test_codex_model_override_reaches_cli(self) -> None:
         batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(

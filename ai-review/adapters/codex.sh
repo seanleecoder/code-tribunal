@@ -1,18 +1,18 @@
 #!/bin/sh
 set -eu
 
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CODEX:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
+# The seat's REQUIRE_REAL control name is owned by the reviewer registry
+# (reviewers.py) and is the only one the runner forwards; a second name read here
+# would be dead code.
+REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}"
 . "${0%/*}/common.sh"
 
 mock_if_requested
 
-if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
-  echo "OPENROUTER_BASE_URL must be unset or exactly https://openrouter.ai/api/v1" >&2
-  exit 2
-fi
-
 # Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_CODEX_MODEL
-# override) and is not pinned here; the OpenRouter endpoint above remains fixed.
+# override) and is not pinned here. The OpenRouter endpoint is fixed but not
+# checked here: the runner injects OPENROUTER_BASE_URL from the registry's
+# endpoint_kind, so a non-canonical value cannot reach this adapter.
 require_model
 
 if ! command -v codex >/dev/null 2>&1; then
@@ -29,7 +29,7 @@ resolve_prompt_file
 resolve_tmp_dir
 resolve_output_schema
 
-BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+BASE_URL="$OPENROUTER_BASE_URL"
 RAW_OUT="$TMP_DIR/${AI_REVIEW_REVIEWER}-${AI_REVIEW_STAGE}.raw.json"
 CODEX_HOME_DIR="$TMP_DIR/codex-home"
 CODEX_REVIEW_ROOT="$TMP_DIR/codex-review-root.$$"

@@ -51,12 +51,6 @@ _AI_REVIEW_COMMON_ADAPTER_CONTROLS = {
 }
 
 
-_PROVIDER_ENDPOINT_ENV = {
-    "OPENROUTER_BASE_URL",
-    "ANTHROPIC_BASE_URL",
-}
-
-
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
@@ -91,14 +85,24 @@ def _build_adapter_env(
     )
     if (control := os.environ.get(reviewer_definition.require_real_control)) is not None:
         env[reviewer_definition.require_real_control] = control
-    if reviewer_definition.endpoint_kind != "cursor_backend":
-        env.update(
-            {
-                key: value
-                for key in _PROVIDER_ENDPOINT_ENV
-                if (value := os.environ.get(key)) is not None
-            }
-        )
+    # The provider endpoint is an image-owned constant, not configuration: each
+    # endpoint_kind has exactly one accepted host, so the runner supplies it
+    # rather than forwarding an ambient value and then rejecting everything but
+    # the canonical one. Ambient ANTHROPIC_BASE_URL / OPENROUTER_BASE_URL are
+    # therefore ignored, not errors — they are provider-native names a developer
+    # or CI shell may legitimately export for unrelated tooling, and overriding
+    # them here makes the egress boundary independent of the caller's
+    # environment. Nothing outside this function needs to know the URL.
+    if reviewer_definition.endpoint_kind == "anthropic_openrouter":
+        # Claude runs Anthropic's CLI, whose only egress knob is its native
+        # endpoint variable, pointed at OpenRouter's Anthropic-compatible base.
+        env["ANTHROPIC_BASE_URL"] = _ANTHROPIC_OPENROUTER_BASE_URL
+    elif reviewer_definition.endpoint_kind == "openrouter":
+        env["OPENROUTER_BASE_URL"] = _OPENROUTER_BASE_URL
+    # cursor_backend gets no endpoint env: the Cursor CLI exposes none to pin.
+    # Its backend is an explicit, opt-in second egress destination gated by
+    # reviewers.cursor enabled=false and a dedicated CURSOR_API_KEY credential;
+    # no OpenRouter fallback is injected for it, and cursor.sh scrubs env again.
 
     for credential_variable in reviewer_definition.credential_variables:
         if (credential := os.environ.get(credential_variable)) is not None:
@@ -130,37 +134,19 @@ def _build_adapter_env(
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 
-def _cli_reviewer_validation_error(
-    reviewer_definition: ReviewerDefinition, model: str
-) -> str | None:
+def _model_id_validation_error(model: str) -> str | None:
     # The model is intentionally not pinned to a specific id (operators may override
     # it via AI_REVIEW_<REVIEWER>_MODEL without rebuilding the image), but it IS
     # format-checked for every reviewer: the value flows into shell `--model` args
     # and, for opencode, is interpolated into a generated JSON config, so a value
     # containing quotes/backslashes/whitespace could corrupt or inject config.
     # Rejecting here writes a clean model_error and the adapter is never spawned.
+    #
+    # The provider endpoint needs no check: _build_adapter_env injects the
+    # canonical host per endpoint_kind, so an adapter can never receive a
+    # non-canonical one through the supported path.
     if not _MODEL_ID_RE.fullmatch(model or ""):
         return f"model id has unsupported characters: {model!r}"
-    # The OpenRouter endpoint remains a hard exfiltration boundary for the CLI
-    # reviewers and must stay the canonical host. Claude uses Anthropic's
-    # endpoint env var and OpenRouter's Anthropic-compatible /api base; validate
-    # it before spawning the shell adapter so substring-lookalike hosts never see
-    # the shared OpenRouter token.
-    if reviewer_definition.endpoint_kind == "anthropic_openrouter":
-        base_url = os.environ.get("ANTHROPIC_BASE_URL")
-        if base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
-            return f"ANTHROPIC_BASE_URL must be exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
-        return None
-    if reviewer_definition.endpoint_kind == "cursor_backend":
-        # Cursor CLI exposes no endpoint/base-url env to pin. Its backend is an
-        # explicit, opt-in second egress destination gated by reviewers.cursor
-        # enabled=false and a dedicated CURSOR_API_KEY credential; _build_adapter_env
-        # injects no OpenRouter fallback for cursor, and cursor.sh scrubs env again.
-        return None
-    if reviewer_definition.endpoint_kind == "openrouter":
-        base_url = os.environ.get("OPENROUTER_BASE_URL")
-        if base_url is not None and base_url != _OPENROUTER_BASE_URL:
-            return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"
     return None
 
 

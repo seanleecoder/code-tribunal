@@ -14,10 +14,12 @@ from unittest import mock
 
 from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import (
+    _ANTHROPIC_OPENROUTER_BASE_URL,
+    _OPENROUTER_BASE_URL,
     _SHELL_MOCK_ALLOW_REFUSAL,
     _build_adapter_env,
-    _cli_reviewer_validation_error,
     _effective_adapter_timeout_seconds,
+    _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
@@ -65,47 +67,72 @@ class AdapterEndpointValidationTests(unittest.TestCase):
         self.assertNotIn("OPENROUTER_BASE_URL", env)
         self.assertNotIn("ANTHROPIC_BASE_URL", env)
 
-    def test_claude_rejects_hostile_anthropic_openrouter_lookalike(self) -> None:
-        with mock.patch.dict(
-            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False
-        ):
-            error = _cli_reviewer_validation_error(
-                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
-            )
+    def _endpoint_env(self, reviewer: str) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in _build_adapter_env(
+                reviewer=reviewer,
+                stage="review",
+                model="anthropic/claude-haiku-4.5",
+                input_dir=Path("inputs"),
+                output_dir=Path("out"),
+                reviewer_config={"timeout_seconds": 900},
+                prompt_tmp=Path("prompt.md"),
+                reviewer_definition=REVIEWERS[reviewer],
+            ).items()
+            if key.endswith("BASE_URL")
+        }
 
-        self.assertIsNotNone(error)
-        self.assertIn(
-            "ANTHROPIC_BASE_URL must be exactly https://openrouter.ai/api", error
-        )
+    def test_endpoint_is_injected_per_endpoint_kind_for_every_seat(self) -> None:
+        """The endpoint is an image-owned constant, not a forwarded input.
 
-    def test_claude_rejects_unset_anthropic_base_url(self) -> None:
+        Each endpoint_kind has exactly one accepted host, so the runner supplies
+        it and no caller has to know the URL. This is what makes the image
+        preflight and `make review-local` work from a clean shell.
+        """
+        expected = {
+            "claude": {"ANTHROPIC_BASE_URL": _ANTHROPIC_OPENROUTER_BASE_URL},
+            "codex": {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
+            "opencode": {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
+            "cursor": {},
+        }
+        self.assertEqual(set(expected), set(REVIEWERS))
+
         with mock.patch.dict(os.environ, {}, clear=True):
-            error = _cli_reviewer_validation_error(
-                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
+            for reviewer, endpoints in expected.items():
+                with self.subTest(reviewer=reviewer):
+                    self.assertEqual(self._endpoint_env(reviewer), endpoints)
+
+    def test_injected_endpoint_overrides_hostile_ambient_value(self) -> None:
+        """An ambient lookalike host cannot influence egress.
+
+        These are provider-native variable names an unrelated developer or CI
+        shell may legitimately export, so they are overridden rather than
+        rejected — the boundary does not depend on the caller's environment.
+        """
+        hostile = {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api",
+            "OPENROUTER_BASE_URL": "https://openrouter.ai.evil.com/api/v1",
+        }
+        with mock.patch.dict(os.environ, hostile, clear=False):
+            self.assertEqual(
+                self._endpoint_env("claude"),
+                {"ANTHROPIC_BASE_URL": _ANTHROPIC_OPENROUTER_BASE_URL},
             )
-
-        self.assertEqual(
-            error,
-            "ANTHROPIC_BASE_URL must be exactly https://openrouter.ai/api",
-        )
-
-    def test_claude_accepts_canonical_anthropic_openrouter_base(self) -> None:
-        with mock.patch.dict(
-            os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False
-        ):
-            error = _cli_reviewer_validation_error(
-                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
+            self.assertEqual(
+                self._endpoint_env("codex"),
+                {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
             )
-
-        self.assertIsNone(error)
+            self.assertEqual(self._endpoint_env("cursor"), {})
 
     def test_model_id_requires_full_match(self) -> None:
-        error = _cli_reviewer_validation_error(
-            REVIEWERS["codex"], "openai/gpt-5.6-luna\n"
-        )
+        error = _model_id_validation_error("openai/gpt-5.6-luna\n")
 
         self.assertIsNotNone(error)
         self.assertIn("unsupported characters", error)
+
+    def test_canonical_model_id_is_accepted(self) -> None:
+        self.assertIsNone(_model_id_validation_error("anthropic/claude-haiku-4.5:free"))
 
 
 class AdapterTimeoutSelectionTests(unittest.TestCase):

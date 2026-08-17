@@ -82,6 +82,61 @@ class ReviewerRegistryTests(unittest.TestCase):
                     copied = set(env) & all_credentials
                     self.assertEqual(copied, set(definition.credential_variables))
 
+    def test_each_adapter_reads_exactly_its_registry_require_real_control(self) -> None:
+        """The registry owns the control name, so the adapter must read that one.
+
+        `_build_adapter_env` forwards only `require_real_control`. A second name
+        read as a fallback is either dead (it never arrives) or a fail-closed
+        guard the runner silently stops delivering, so neither is acceptable.
+        """
+        all_controls = {
+            definition.require_real_control for definition in REVIEWERS.values()
+        }
+        for reviewer_id, definition in REVIEWERS.items():
+            with self.subTest(reviewer=reviewer_id):
+                adapter = resolve_adapter_path(definition).read_text(encoding="utf-8")
+                assignment = next(
+                    line
+                    for line in adapter.splitlines()
+                    if line.startswith("REQUIRE_REAL=")
+                )
+                self.assertIn(definition.require_real_control, assignment)
+                for other in all_controls - {definition.require_real_control}:
+                    self.assertNotIn(other, adapter)
+
+    def test_endpoint_is_injected_from_the_registry_endpoint_kind(self) -> None:
+        """The endpoint is supplied by the runner, never read from the caller.
+
+        Each endpoint_kind has exactly one accepted host, so no caller — the
+        reviewer-image preflight, `make review-local`, a consumer pipeline — has
+        to know or export the URL, and an ambient value cannot redirect egress.
+        """
+        endpoint_names = {"ANTHROPIC_BASE_URL", "OPENROUTER_BASE_URL"}
+        expected_by_kind = {
+            "anthropic_openrouter": {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"},
+            "openrouter": {"OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1"},
+            "cursor_backend": {},
+        }
+        hostile = dict.fromkeys(endpoint_names, "https://openrouter.ai.evil.com/api")
+        for ambient in ({}, hostile):
+            with mock.patch.dict(os.environ, ambient, clear=True):
+                for reviewer_id, definition in REVIEWERS.items():
+                    with self.subTest(reviewer=reviewer_id, ambient=bool(ambient)):
+                        env = _build_adapter_env(
+                            reviewer=reviewer_id,
+                            stage="review",
+                            model="model",
+                            input_dir=Path("inputs"),
+                            output_dir=Path("out"),
+                            reviewer_config={"timeout_seconds": 30},
+                            reviewer_definition=definition,
+                            prompt_tmp=None,
+                        )
+                        self.assertEqual(
+                            {k: v for k, v in env.items() if k in endpoint_names},
+                            expected_by_kind[definition.endpoint_kind],
+                        )
+
 
 class ReviewerConfigAndWorkflowParityTests(unittest.TestCase):
     def setUp(self) -> None:

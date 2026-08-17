@@ -268,8 +268,13 @@ untrusted endpoints in merge-request-controlled configuration.
 | `GITHUB_API_URL` | `https://api.github.com` | GitHub REST endpoint; Actions supplies the GHES value. |
 | `CI_API_V4_URL` | GitLab predefined variable | Preferred GitLab v4 API endpoint. |
 | `GITLAB_API_URL` | none | Fallback GitLab API endpoint for custom runtimes without `CI_API_V4_URL`. |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Exact pinned endpoint accepted by Codex and OpenCode adapters. |
-| `ANTHROPIC_BASE_URL` | `https://openrouter.ai/api` | Required pinned Claude OpenRouter route; unset and all other values are rejected. Native Anthropic routing is no longer supported. |
+
+Reviewer provider endpoints are **not** configuration and are listed with the
+internal runtime variables below. Each seat declares an endpoint family in the
+trusted registry (`ai_review/reviewers.py`) and the adapter runner supplies the one
+accepted host for that family, so nothing reads either name from the environment:
+setting one has no effect, because an ambient value is overridden rather than
+rejected. Native Anthropic routing is not supported.
 
 | Rejected variable | Reason |
 |---|---|
@@ -302,15 +307,21 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
 | `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and operator evidence Chain B only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
-| `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Prevent missing provider prerequisites from falling back to mock behavior. |
+| `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Require the real Codex CLI; prevents a missing prerequisite from falling back to mock behavior. This is the Codex seat's control name. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |
 | `AI_REVIEW_REQUIRE_REAL_OPENCODE` | Require the real OpenCode CLI. |
 | `AI_REVIEW_REQUIRE_REAL_CURSOR` | Require the real Cursor CLI. |
+
+Each seat has exactly one control name, declared in the trusted reviewer registry,
+and the runner forwards only that name to that seat's adapter. Setting any other
+`AI_REVIEW_REQUIRE_REAL_*` name has no effect on a seat that does not declare it.
 | `AI_REVIEW_GITHUB_PR_NUMBER` | Immutable selected pull-request number passed to prepare. |
 | `AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA` | Immutable selected pull-request head passed to prepare. |
 | `AI_REVIEW_REVIEWER` | Selected adapter seat inside dispatch. |
 | `AI_REVIEW_STAGE` | `review` or `critique` inside dispatch. |
 | `AI_REVIEW_MODEL` | Effective model passed to one adapter. |
+| `ANTHROPIC_BASE_URL` | Pinned Claude egress route, set by the runner to `https://openrouter.ai/api` (OpenRouter's Anthropic-compatible base — the Claude CLI has no other endpoint knob). Not read from the environment; an ambient value is overridden. |
+| `OPENROUTER_BASE_URL` | Pinned Codex and OpenCode egress route, set by the runner to `https://openrouter.ai/api/v1`. Not read from the environment; an ambient value is overridden. Cursor receives no endpoint variable — its CLI exposes none to pin. |
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
 | `AI_REVIEW_OPENCODE_ROOT` | Clean, disposable OpenCode working root passed to the loopback server client. |
@@ -332,7 +343,6 @@ surface.
 | `AI_REVIEW_CLAUDE_NPM_PACKAGE` | Pinned Claude package name during image build. |
 | `AI_REVIEW_CODEX_NPM_PACKAGE` | Pinned Codex package name during image build. |
 | `AI_REVIEW_OPENCODE_NPM_PACKAGE` | Pinned OpenCode package name during image build. |
-| `AI_REVIEW_REQUIRE_REAL_CODEX` | Image preflight requires the real Codex CLI. |
 | `AI_REVIEW_ROOT_DIR` | Internal shell path to the implementation root. |
 
 ## Stage visibility and integrity

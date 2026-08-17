@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENCODE:-${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}}"
+# The seat's REQUIRE_REAL control name is owned by the reviewer registry
+# (reviewers.py) and is the only one the runner forwards; a second name read here
+# would be dead code — and a fallback the runner never delivers would silently
+# drop this seat's fail-closed guard.
+REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENCODE:-}"
 . "${0%/*}/common.sh"
 
 mock_if_requested
@@ -36,13 +40,10 @@ resolve_trusted() {
   command -v "$1" 2>/dev/null
 }
 
-if [ "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}" != "https://openrouter.ai/api/v1" ]; then
-  echo "OPENROUTER_BASE_URL must be unset or exactly https://openrouter.ai/api/v1" >&2
-  exit 2
-fi
-
 # Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_OPENCODE_MODEL
-# override) and is not pinned here; the OpenRouter endpoint above remains fixed.
+# override) and is not pinned here. The OpenRouter endpoint is fixed but not
+# checked here: the runner injects OPENROUTER_BASE_URL from the registry's
+# endpoint_kind, so a non-canonical value cannot reach this adapter.
 require_model
 
 # The availability gate IS the resolution: the pinned binary is looked up first and

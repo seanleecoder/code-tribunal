@@ -22,9 +22,9 @@ from .adapter_output import (
 from .adapter_process import (
     _adapter_exit_is_mock_allow_refusal,
     _build_adapter_env,
-    _cli_reviewer_validation_error,
     _effective_adapter_timeout_seconds,
     _local_mock_unauthorized,
+    _model_id_validation_error,
     _run_adapter_process,
 )
 from .config import (
@@ -137,11 +137,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
             return 0
 
-        if (
-            validation_error := _cli_reviewer_validation_error(
-                reviewer_definition, model
-            )
-        ) is not None:
+        if (validation_error := _model_id_validation_error(model)) is not None:
             _write_empty(
                 output_dir,
                 output_file,

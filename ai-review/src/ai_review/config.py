@@ -539,8 +539,8 @@ def validate_config(config: dict[str, Any]) -> None:
         effort = reviewer.get("effort")
         if not REVIEWERS[name].supports_effort and effort is not None:
             raise ConfigError(
-                "reviewer cursor does not support effort; select the desired reasoning "
-                "variant with reviewers.cursor.model or AI_REVIEW_CURSOR_MODEL"
+                f"reviewer {name} does not support effort; select the desired reasoning "
+                f"variant with reviewers.{name}.model or AI_REVIEW_{name.upper()}_MODEL"
             )
         if effort is not None and effort not in EFFORT_LEVELS:
             raise ConfigError(
@@ -566,8 +566,10 @@ def validate_config(config: dict[str, Any]) -> None:
     # changing the roster never requires hand-editing it in lock-step.
     #
     # The enabled floor is checked here rather than in apply_reviewer_roster
-    # because it must hold after *every* override path, including per-seat
-    # AI_REVIEW_<NAME>_ENABLED flags and a YAML document authored by hand.
+    # because it must hold after *every* path into the config, including a YAML
+    # document authored by hand. AI_REVIEW_REVIEWERS is now the only runtime
+    # roster override — the per-seat AI_REVIEW_<NAME>_ENABLED flags are retired
+    # and rejected via RETIRED_ENV_OVERRIDES.
     configured_count = len(reviewers)
     enabled_count = len(enabled_reviewers(config))
     if enabled_count < _MINIMUM_PANEL_REVIEWERS:

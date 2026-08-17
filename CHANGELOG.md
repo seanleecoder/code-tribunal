@@ -173,9 +173,21 @@ versioning.
   under v2.
 
   Claude now supports the pinned OpenRouter Anthropic-compatible endpoint only.
-  Native Anthropic credentials and an unset `ANTHROPIC_BASE_URL` are no longer
-  accepted; configure `OPENROUTER_API_KEY` and
-  `ANTHROPIC_BASE_URL=https://openrouter.ai/api`.
+  Native Anthropic credentials are no longer accepted; configure
+  `OPENROUTER_API_KEY`.
+
+  **Provider endpoints are no longer read from the environment.** Each reviewer
+  seat declares an endpoint family in the trusted registry, and the adapter runner
+  supplies the one accepted host for it — Claude gets
+  `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, Codex and OpenCode get
+  `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`, Cursor gets neither. Setting
+  either variable now has no effect: an ambient value is overridden rather than
+  rejected, so no caller has to know a URL that was never configurable. Both CI
+  templates stop declaring the two variables; a consumer copy that still declares
+  them keeps working. This replaces the endpoint validation that shipped earlier in
+  this series, which rejected an unset `ANTHROPIC_BASE_URL` and so broke the
+  reviewer-image publication preflight and every `make *-local` target defaulting
+  to the claude seat.
 
   `critique.blind_reviewer_identity` and `critique.allow_severity_downgrade` are
   now type-checked as booleans, like `critique.enabled`. They were read through

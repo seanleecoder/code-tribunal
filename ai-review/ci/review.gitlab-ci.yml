@@ -91,7 +91,6 @@ prepare_ai_review:
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
     AI_REVIEW_LOCAL_MOCK: "0"
-    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   needs:
     - job: prepare_ai_review
@@ -110,7 +109,6 @@ prepare_ai_review:
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 "AI review: [codex]":
   extends: .review_template
@@ -141,7 +139,6 @@ prepare_ai_review:
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
     AI_REVIEW_LOCAL_MOCK: "0"
-    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   # Critique gating must combine BOTH the enabled-flag AND the source gate in
   # this one rules: block. A job's own rules: FULLY REPLACES any rules inherited
@@ -189,7 +186,6 @@ prepare_ai_review:
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 "AI critique: [codex]":
   extends: .critique_template

@@ -846,17 +846,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
-        self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
-    def test_cli_openrouter_jobs_keep_shared_endpoint_and_require_real_cli(self) -> None:
+    def test_cli_openrouter_jobs_require_real_cli(self) -> None:
         template = _template_variables()
 
         for reviewer in ("codex", "opencode"):
             variables = _effective_variables(template, f"AI review: [{reviewer}]")
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
 
     def test_opencode_requires_real_opencode_cli(self) -> None:
@@ -880,12 +877,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
-        self.assertEqual(claude["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
 
         for reviewer in ("codex", "opencode"):
             variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         opencode = _effective_critique_variables(template, "AI critique: [opencode]")
         self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
