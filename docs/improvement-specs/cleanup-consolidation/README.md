@@ -53,7 +53,7 @@ because their documents land separately.
 | SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
 | SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
-| [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
+| [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; land before the first tagged v3 release |
 | SPEC-58 — *pending, document not yet added* | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
 | SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
 | SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
