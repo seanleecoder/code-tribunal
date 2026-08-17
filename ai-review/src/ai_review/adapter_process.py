@@ -21,6 +21,7 @@ from typing import Any
 
 from .config import resolve_reviewer_timeout_seconds
 from .redact import redact_text
+from .reviewers import ReviewerDefinition
 
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
@@ -38,7 +39,7 @@ _ADAPTER_RUNTIME_ENV = {
 }
 
 
-_AI_REVIEW_ADAPTER_CONTROLS = {
+_AI_REVIEW_COMMON_ADAPTER_CONTROLS = {
     "AI_REVIEW_LOCAL_MOCK",
     # Exact lowercase "true" is required alongside AI_REVIEW_LOCAL_MOCK=1 so a
     # GitLab project/pipeline variable cannot silently enable the mock path in
@@ -47,11 +48,6 @@ _AI_REVIEW_ADAPTER_CONTROLS = {
     # Selects a deterministic mock-reviewer scenario when the mock path runs
     # (default|blocking|advisory|none). Ignored by the real reviewer CLIs.
     "AI_REVIEW_MOCK_SCENARIO",
-    "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
-    "AI_REVIEW_REQUIRE_REAL_CLAUDE",
-    "AI_REVIEW_REQUIRE_REAL_CODEX",
-    "AI_REVIEW_REQUIRE_REAL_OPENCODE",
-    "AI_REVIEW_REQUIRE_REAL_CURSOR",
 }
 
 
@@ -83,16 +79,19 @@ def _build_adapter_env(
     output_dir: Path,
     reviewer_config: dict[str, Any],
     prompt_tmp: Path | None,
+    reviewer_definition: ReviewerDefinition,
 ) -> dict[str, str]:
     env = {key: value for key in _ADAPTER_RUNTIME_ENV if (value := os.environ.get(key)) is not None}
     env.update(
         {
             key: value
-            for key in _AI_REVIEW_ADAPTER_CONTROLS
+            for key in _AI_REVIEW_COMMON_ADAPTER_CONTROLS
             if (value := os.environ.get(key)) is not None
         }
     )
-    if reviewer != "cursor":
+    if (control := os.environ.get(reviewer_definition.require_real_control)) is not None:
+        env[reviewer_definition.require_real_control] = control
+    if reviewer_definition.endpoint_kind != "cursor_backend":
         env.update(
             {
                 key: value
@@ -101,17 +100,9 @@ def _build_adapter_env(
             }
         )
 
-    credential_variable = str(reviewer_config.get("credential_variable", "")).strip()
-    if credential_variable and (credential := os.environ.get(credential_variable)) is not None:
-        env[credential_variable] = credential
-
-    anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    if (
-        reviewer == "claude"
-        and anthropic_base_url == _ANTHROPIC_OPENROUTER_BASE_URL
-        and (openrouter_key := os.environ.get("OPENROUTER_API_KEY")) is not None
-    ):
-        env["OPENROUTER_API_KEY"] = openrouter_key
+    for credential_variable in reviewer_definition.credential_variables:
+        if (credential := os.environ.get(credential_variable)) is not None:
+            env[credential_variable] = credential
 
     env["AI_REVIEW_REVIEWER"] = reviewer
     env["AI_REVIEW_STAGE"] = stage
@@ -139,7 +130,9 @@ def _build_adapter_env(
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 
-def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
+def _cli_reviewer_validation_error(
+    reviewer_definition: ReviewerDefinition, model: str
+) -> str | None:
     # The model is intentionally not pinned to a specific id (operators may override
     # it via AI_REVIEW_<REVIEWER>_MODEL without rebuilding the image), but it IS
     # format-checked for every reviewer: the value flows into shell `--model` args
@@ -153,18 +146,18 @@ def _cli_reviewer_validation_error(reviewer: str, model: str) -> str | None:
     # endpoint env var and OpenRouter's Anthropic-compatible /api base; validate
     # it before spawning the shell adapter so substring-lookalike hosts never see
     # the shared OpenRouter token.
-    if reviewer == "claude":
+    if reviewer_definition.endpoint_kind == "anthropic_openrouter":
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
-        if base_url is not None and base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
-            return f"ANTHROPIC_BASE_URL must be unset or exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
+        if base_url != _ANTHROPIC_OPENROUTER_BASE_URL:
+            return f"ANTHROPIC_BASE_URL must be exactly {_ANTHROPIC_OPENROUTER_BASE_URL}"
         return None
-    if reviewer == "cursor":
+    if reviewer_definition.endpoint_kind == "cursor_backend":
         # Cursor CLI exposes no endpoint/base-url env to pin. Its backend is an
         # explicit, opt-in second egress destination gated by reviewers.cursor
         # enabled=false and a dedicated CURSOR_API_KEY credential; _build_adapter_env
         # injects no OpenRouter fallback for cursor, and cursor.sh scrubs env again.
         return None
-    if reviewer in {"codex", "opencode"}:
+    if reviewer_definition.endpoint_kind == "openrouter":
         base_url = os.environ.get("OPENROUTER_BASE_URL")
         if base_url is not None and base_url != _OPENROUTER_BASE_URL:
             return f"OPENROUTER_BASE_URL must be unset or exactly {_OPENROUTER_BASE_URL}"

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.schema import (
@@ -454,7 +455,7 @@ class SchemaValidationTests(unittest.TestCase):
                 input_dir / "prior_decisions.json",
                 {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
             )
-            bad_adapter = adapter_dir / "bad.sh"
+            bad_adapter = adapter_dir / "codex.sh"
             bad_adapter.write_text('#!/bin/sh\nprintf "{not-json"\n', encoding="utf-8")
             bad_adapter.chmod(bad_adapter.stat().st_mode | stat.S_IXUSR)
             config_path = config_dir / "review.yaml"
@@ -463,14 +464,12 @@ class SchemaValidationTests(unittest.TestCase):
                     [
                         "schema_version: review_config.v3",
                         "reviewers:",
-                        "  bad:",
+                        "  codex:",
                         "    enabled: true",
-                        "    adapter: adapters/bad.sh",
                         "    model: bad-model",
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
-                        "    credential_variable: BAD_KEY",
-                        *panel_filler(1),
+                        *panel_filler("codex"),
                         *CONFIG_TAIL,
                     ]
                 ),
@@ -485,14 +484,18 @@ class SchemaValidationTests(unittest.TestCase):
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             try:
-                self.assertEqual(run_adapter("bad", "review"), _EXIT_ERROR)
+                with mock.patch(
+                    "ai_review.adapter_runner.resolve_adapter_path",
+                    return_value=bad_adapter,
+                ):
+                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
             finally:
                 for key, value in previous.items():
                     if value is None:
                         os.environ.pop(key, None)
                     else:
                         os.environ[key] = value
-            batch = load_json_file(output_dir / "findings" / "bad.json")
+            batch = load_json_file(output_dir / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
             self.assertEqual(batch["findings"], [])
             validate_instance(batch, "finding_batch.schema.json")

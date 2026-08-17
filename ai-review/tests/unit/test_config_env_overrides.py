@@ -106,18 +106,6 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             },
         )
 
-    def test_reviewer_enabled_override(self) -> None:
-        config = _base_config()
-        with mock.patch.dict(
-            "os.environ",
-            {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CURSOR_ENABLED": "true"},
-            clear=True,
-        ):
-            apply_env_overrides(config)
-        self.assertFalse(config["reviewers"]["opencode"]["enabled"])
-        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
-        self.assertTrue(config["reviewers"]["codex"]["enabled"])
-
     def test_effort_override_per_reviewer(self) -> None:
         config = _base_config()
         with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "low"}, clear=True):
@@ -172,7 +160,6 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         for var, value in (
             ("AI_REVIEW_CRITIQUE_ENABLED", "1"),
             ("AI_REVIEW_CRITIQUE_ENABLED", "flase"),
-            ("AI_REVIEW_CODEX_ENABLED", "yes"),
             ("AI_REVIEW_CRITIQUE_ENABLED", "TRUE"),
             ("AI_REVIEW_CRITIQUE_ENABLED", " true "),
         ):
@@ -253,23 +240,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "openai/some-new-model"}):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/some-new-model")
-
-    def test_disabling_one_reviewer_needs_another_seat_enabled(self) -> None:
-        # Three enabled seats is the floor on every path, including per-seat
-        # ENABLED flags: switching one of the shipped three off leaves two.
-        with (
-            mock.patch.dict("os.environ", {"AI_REVIEW_OPENCODE_ENABLED": "false"}),
-            self.assertRaisesRegex(ConfigError, "at least 3 reviewers must be enabled"),
-        ):
-            load_config(_REPO_CONFIG)
-
-        with mock.patch.dict(
-            "os.environ",
-            {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CURSOR_ENABLED": "true"},
-        ):
-            config = load_config(_REPO_CONFIG)
-        self.assertFalse(config["reviewers"]["opencode"]["enabled"])
-        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
 
     def test_roster_selects_an_arbitrary_panel_without_claude(self) -> None:
         # The point of the roster: no seat is structurally fixed. Claude sitting out
@@ -355,66 +325,11 @@ class LoadConfigOverrideTests(unittest.TestCase):
             ):
                 load_config(_REPO_CONFIG)
 
-    def test_roster_and_per_seat_enabled_flag_conflict_is_rejected(self) -> None:
-        # Either precedence would surprise an operator who set both, so refuse.
-        with (
-            mock.patch.dict(
-                "os.environ",
-                {
-                    "AI_REVIEW_REVIEWERS": "claude,codex",
-                    "AI_REVIEW_CURSOR_ENABLED": "true",
-                },
-            ),
-            self.assertRaisesRegex(ConfigError, "cannot be combined"),
-        ):
-            load_config(_REPO_CONFIG)
-
     def test_unset_roster_leaves_yaml_defaults_alone(self) -> None:
         config = load_config(_REPO_CONFIG)
         self.assertEqual(
             sorted(enabled_reviewers(config)), ["claude", "codex", "opencode"]
         )
-
-    def test_empty_enabled_override_is_treated_as_unset(self) -> None:
-        # The canonical GitHub Actions workflow maps absent repository variables to
-        # '', which must not count as a per-seat override — otherwise it would
-        # permanently conflict with the roster.
-        with mock.patch.dict(
-            "os.environ",
-            {
-                "AI_REVIEW_CURSOR_ENABLED": "",
-                "AI_REVIEW_CLAUDE_ENABLED": "   ",
-                "AI_REVIEW_REVIEWERS": "codex,opencode,cursor",
-            },
-        ):
-            config = load_config(_REPO_CONFIG)
-
-        self.assertEqual(
-            sorted(enabled_reviewers(config)), ["codex", "cursor", "opencode"]
-        )
-
-    def test_cursor_enabled_override_round_trips_to_summary(self) -> None:
-        from ai_review.config import effective_config_summary
-
-        with mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_ENABLED": "true"}):
-            config = load_config(_REPO_CONFIG)
-
-        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
-        summary = effective_config_summary(config)
-        self.assertIn("cursor", summary["reviewers"])
-        self.assertTrue(summary["reviewers"]["cursor"]["enabled"])
-        self.assertEqual(summary["reviewers"]["cursor"]["model"], "auto")
-
-    def test_cursor_disabled_override_round_trips_to_summary(self) -> None:
-        from ai_review.config import effective_config_summary
-
-        with mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_ENABLED": "false"}):
-            config = load_config(_REPO_CONFIG)
-
-        self.assertFalse(config["reviewers"]["cursor"]["enabled"])
-        summary = effective_config_summary(config)
-        self.assertIn("cursor", summary["reviewers"])
-        self.assertFalse(summary["reviewers"]["cursor"]["enabled"])
 
     def test_github_platform_env_overrides_load_valid_config(self) -> None:
         with mock.patch.dict(
@@ -604,16 +519,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
             ):
                 load_config(_REPO_CONFIG)
 
-    def test_disabling_too_many_reviewers_fails_loudly(self) -> None:
-        with (
-            mock.patch.dict(
-                "os.environ",
-                {"AI_REVIEW_OPENCODE_ENABLED": "false", "AI_REVIEW_CODEX_ENABLED": "false"},
-            ),
-            self.assertRaisesRegex(ConfigError, "at least 3 reviewers must be enabled"),
-        ):
-            load_config(_REPO_CONFIG)
-
     def test_resolution_threshold_must_fit_configured_panel(self) -> None:
         # Out-of-range is measured against the *configured* seat count (4), not the
         # enabled count: a threshold no roster could ever satisfy is an authoring
@@ -721,9 +626,8 @@ class ConfigVersionMigrationTests(unittest.TestCase):
                     self._load(document)
 
     def test_a_hand_authored_yaml_below_the_floor_is_rejected(self) -> None:
-        # The roster and per-seat paths are covered above. This is the third:
-        # a document that simply authors too few enabled seats, with no override
-        # involved at all.
+        # The roster path is covered above. A document that directly authors too
+        # few enabled seats must fail too.
         document = _REPO_CONFIG.read_text(encoding="utf-8")
         for seat in ("codex", "opencode"):
             document = document.replace(

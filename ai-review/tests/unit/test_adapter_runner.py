@@ -21,6 +21,7 @@ from ai_review.adapter_process import (
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
+from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -54,8 +55,9 @@ class AdapterEndpointValidationTests(unittest.TestCase):
                 model="auto",
                 input_dir=Path("inputs"),
                 output_dir=Path("out"),
-                reviewer_config={"credential_variable": "CURSOR_API_KEY", "timeout_seconds": 900},
+                reviewer_config={"timeout_seconds": 900},
                 prompt_tmp=Path("prompt.md"),
+                reviewer_definition=REVIEWERS["cursor"],
             )
 
         self.assertEqual(env["CURSOR_API_KEY"], "cursor-secret")
@@ -67,23 +69,40 @@ class AdapterEndpointValidationTests(unittest.TestCase):
         with mock.patch.dict(
             os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api"}, clear=False
         ):
-            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+            error = _cli_reviewer_validation_error(
+                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
+            )
 
         self.assertIsNotNone(error)
         self.assertIn(
-            "ANTHROPIC_BASE_URL must be unset or exactly https://openrouter.ai/api", error
+            "ANTHROPIC_BASE_URL must be exactly https://openrouter.ai/api", error
+        )
+
+    def test_claude_rejects_unset_anthropic_base_url(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            error = _cli_reviewer_validation_error(
+                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
+            )
+
+        self.assertEqual(
+            error,
+            "ANTHROPIC_BASE_URL must be exactly https://openrouter.ai/api",
         )
 
     def test_claude_accepts_canonical_anthropic_openrouter_base(self) -> None:
         with mock.patch.dict(
             os.environ, {"ANTHROPIC_BASE_URL": "https://openrouter.ai/api"}, clear=False
         ):
-            error = _cli_reviewer_validation_error("claude", "anthropic/claude-haiku-4.5")
+            error = _cli_reviewer_validation_error(
+                REVIEWERS["claude"], "anthropic/claude-haiku-4.5"
+            )
 
         self.assertIsNone(error)
 
     def test_model_id_requires_full_match(self) -> None:
-        error = _cli_reviewer_validation_error("codex", "openai/gpt-5.6-luna\n")
+        error = _cli_reviewer_validation_error(
+            REVIEWERS["codex"], "openai/gpt-5.6-luna\n"
+        )
 
         self.assertIsNotNone(error)
         self.assertIn("unsupported characters", error)
@@ -668,13 +687,11 @@ class EffortEnvTests(unittest.TestCase):
             )
             adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
             reviewer_lines = [
-                "  effortrev:",
+                "  codex:",
                 "    enabled: true",
-                "    adapter: adapters/effort.sh",
                 "    model: effort-model",
                 "    timeout_seconds: 30",
                 "    max_findings: 50",
-                "    credential_variable: EFFORT_KEY",
             ]
             if config_effort is not None:
                 reviewer_lines.insert(5, f"    effort: {config_effort}")
@@ -685,7 +702,7 @@ class EffortEnvTests(unittest.TestCase):
                         "schema_version: review_config.v3",
                         "reviewers:",
                         *reviewer_lines,
-                        *panel_filler(1),
+                        *panel_filler("codex"),
                         *_CONFIG_TAIL,
                     ]
                 ),
@@ -695,19 +712,22 @@ class EffortEnvTests(unittest.TestCase):
                 "AI_REVIEW_INPUT_DIR": os.environ.get("AI_REVIEW_INPUT_DIR"),
                 "AI_REVIEW_OUTPUT_DIR": os.environ.get("AI_REVIEW_OUTPUT_DIR"),
                 "AI_REVIEW_CONFIG": os.environ.get("AI_REVIEW_CONFIG"),
-                "AI_REVIEW_EFFORTREV_EFFORT": os.environ.get("AI_REVIEW_EFFORTREV_EFFORT"),
+                "AI_REVIEW_CODEX_EFFORT": os.environ.get("AI_REVIEW_CODEX_EFFORT"),
             }
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             if env_effort is None:
-                os.environ.pop("AI_REVIEW_EFFORTREV_EFFORT", None)
+                os.environ.pop("AI_REVIEW_CODEX_EFFORT", None)
             else:
-                os.environ["AI_REVIEW_EFFORTREV_EFFORT"] = env_effort
+                os.environ["AI_REVIEW_CODEX_EFFORT"] = env_effort
             try:
-                self.assertEqual(run_adapter("effortrev", "review"), 0)
+                with mock.patch(
+                    "ai_review.adapter_runner.resolve_adapter_path", return_value=adapter
+                ):
+                    self.assertEqual(run_adapter("codex", "review"), 0)
                 seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
-                batch = load_json_file(output_dir / "findings" / "effortrev.json")
+                batch = load_json_file(output_dir / "findings" / "codex.json")
                 self.assertEqual(batch["adapter_status"], "success")
             finally:
                 for key, value in previous.items():
@@ -785,12 +805,10 @@ def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: 
                 "reviewers:",
                 f"  {reviewer}:",
                 "    enabled: true",
-                f"    adapter: adapters/{reviewer}.sh",
                 f"    model: {reviewer}-model",
                 f"    timeout_seconds: {timeout_seconds}",
                 "    max_findings: 50",
-                f"    credential_variable: {reviewer.upper()}_KEY",
-                *panel_filler(1),
+                *panel_filler(reviewer),
                 *_CONFIG_TAIL,
             ]
         ),
@@ -811,6 +829,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         self._previous = {key: os.environ.get(key) for key in self._env_keys}
 
     def tearDown(self) -> None:
+        if hasattr(self, "_adapter_path_patch"):
+            self._adapter_path_patch.stop()
         for key, value in self._previous.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -821,19 +841,25 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         os.environ["AI_REVIEW_INPUT_DIR"] = str(paths["input_dir"])
         os.environ["AI_REVIEW_OUTPUT_DIR"] = str(paths["output_dir"])
         os.environ["AI_REVIEW_CONFIG"] = str(config_path)
+        self._adapter_path_patch = mock.patch(
+            "ai_review.adapter_runner.resolve_adapter_path",
+            side_effect=lambda definition: paths["adapter_dir"]
+            / f"{definition.reviewer_id}.sh",
+        )
+        self._adapter_path_patch.start()
 
     def test_status_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "broken")
-            _write_adapter(paths["adapter_dir"], "broken", '#!/bin/sh\necho "boom" >&2\nexit 1\n')
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(paths["adapter_dir"], "codex", '#!/bin/sh\necho "boom" >&2\nexit 1\n')
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("broken", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
-            batch = load_json_file(paths["output_dir"] / "findings" / "broken.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
-            status = load_json_file(paths["output_dir"] / "status" / "broken.json")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
 
@@ -1010,22 +1036,22 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "garbled")
-            _write_adapter(paths["adapter_dir"], "garbled", "#!/bin/sh\nprintf 'not json at all'\n")
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(paths["adapter_dir"], "codex", "#!/bin/sh\nprintf 'not json at all'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("garbled", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
-            batch = load_json_file(paths["output_dir"] / "findings" / "garbled.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
-            status = load_json_file(paths["output_dir"] / "status" / "garbled.json")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "schema_error")
-            self.assertTrue((paths["output_dir"] / "status" / "garbled-parse-debug.txt").exists())
+            self.assertTrue((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
     def test_parse_failure_persists_full_stdout_with_newlines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "streamy")
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             # Long enough that the 4 KB preview must elide the middle, so the
             # elided region is only recoverable from the raw artifact.
             filler = "\n".join(
@@ -1035,38 +1061,38 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             _write_adapter(
                 paths["adapter_dir"],
-                "streamy",
+                "codex",
                 f"#!/bin/sh\ncat <<'STREAM'\n{filler}\nSTREAM\n",
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("streamy", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
             status_dir = paths["output_dir"] / "status"
-            raw_path = status_dir / "streamy-parse-raw-stdout.txt"
+            raw_path = status_dir / "codex-parse-raw-stdout.txt"
             self.assertTrue(raw_path.exists())
             raw_text = raw_path.read_text(encoding="utf-8")
             # Whole stream, line structure intact, so it can be replayed.
             self.assertEqual(len(raw_text.strip().splitlines()), 300)
             self.assertIn('"text": "step 150"', raw_text)
-            preview = (status_dir / "streamy-parse-debug.txt").read_text(encoding="utf-8")
+            preview = (status_dir / "codex-parse-debug.txt").read_text(encoding="utf-8")
             self.assertIn("...[truncated]...", preview)
             self.assertIn("\n", preview.split("stdout_preview:")[1].strip())
 
     def test_successful_run_writes_no_parse_debug_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "clean")
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_adapter(
-                paths["adapter_dir"], "clean", "#!/bin/sh\nprintf '%s' '{\"findings\":[]}'\n"
+                paths["adapter_dir"], "codex", "#!/bin/sh\nprintf '%s' '{\"findings\":[]}'\n"
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("clean", "review"), 0)
+            self.assertEqual(run_adapter("codex", "review"), 0)
 
             status_dir = paths["output_dir"] / "status"
-            self.assertFalse((status_dir / "clean-parse-debug.txt").exists())
-            self.assertFalse((status_dir / "clean-parse-raw-stdout.txt").exists())
+            self.assertFalse((status_dir / "codex-parse-debug.txt").exists())
+            self.assertFalse((status_dir / "codex-parse-raw-stdout.txt").exists())
 
     def test_review_drops_malformed_finding_without_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1107,38 +1133,38 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             bad_finding = dict(good_finding)
             bad_finding["title"] = "Bad evidence item"
             bad_finding["evidence"] = [None]
-            config_path = _write_reviewer_config(paths["config_dir"], "mixed")
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             raw = json.dumps({"findings": [bad_finding, good_finding]})
-            _write_adapter(paths["adapter_dir"], "mixed", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
+            _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("mixed", "review"), 0)
+            self.assertEqual(run_adapter("codex", "review"), 0)
 
-            batch = load_json_file(paths["output_dir"] / "findings" / "mixed.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "success")
             self.assertEqual(
                 [finding["title"] for finding in batch["findings"]], ["Validate before indexing"]
             )
-            status = load_json_file(paths["output_dir"] / "status" / "mixed.json")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "success")
-            self.assertFalse((paths["output_dir"] / "status" / "mixed-parse-debug.txt").exists())
+            self.assertFalse((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
     def test_status_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "slow", timeout_seconds=6)
+            config_path = _write_reviewer_config(paths["config_dir"], "codex", timeout_seconds=6)
             _write_adapter(
                 paths["adapter_dir"],
-                "slow",
+                "codex",
                 "#!/bin/sh\nsleep 5\nprintf '{\"findings\":[]}'\n",
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("slow", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
-            batch = load_json_file(paths["output_dir"] / "findings" / "slow.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "timeout")
-            status = load_json_file(paths["output_dir"] / "status" / "slow.json")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "timeout")
 
     def test_timeout_kills_child_holding_pipe_open(self) -> None:
@@ -1150,23 +1176,23 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         # that hang observable — the call must still return promptly.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "hang", timeout_seconds=6)
+            config_path = _write_reviewer_config(paths["config_dir"], "codex", timeout_seconds=6)
             _write_adapter(
                 paths["adapter_dir"],
-                "hang",
+                "codex",
                 "#!/bin/sh\nsleep 30\n",
             )
             self._set_env(paths, config_path)
 
             started = time.monotonic()
-            self.assertEqual(run_adapter("hang", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
             elapsed = time.monotonic() - started
 
             # Effective timeout is ~1s (config 6 minus the runner's 5s margin); a
             # correct group-kill returns in a couple of seconds. If it regressed to
             # killing only the shell, this would block ~30s until `sleep` exits.
             self.assertLess(elapsed, 15)
-            status = load_json_file(paths["output_dir"] / "status" / "hang.json")
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "timeout")
 
     def test_timeout_archives_partial_output_for_debugging(self) -> None:
@@ -1175,17 +1201,17 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         # timeout-debug artifact so a stuck reviewer isn't a black box.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "chatty", timeout_seconds=6)
+            config_path = _write_reviewer_config(paths["config_dir"], "codex", timeout_seconds=6)
             _write_adapter(
                 paths["adapter_dir"],
-                "chatty",
+                "codex",
                 "#!/bin/sh\nprintf 'progress-marker\\n'\nsleep 30\n",
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("chatty", "review"), _EXIT_ERROR)
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
-            debug = paths["output_dir"] / "status" / "chatty-timeout-debug.txt"
+            debug = paths["output_dir"] / "status" / "codex-timeout-debug.txt"
             self.assertTrue(debug.exists())
             self.assertIn("progress-marker", debug.read_text(encoding="utf-8"))
 
@@ -1199,24 +1225,20 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                     [
                         "schema_version: review_config.v3",
                         "reviewers:",
-                        "  disabled_reviewer:",
+                        "  cursor:",
                         "    enabled: false",
-                        "    adapter: adapters/disabled_reviewer.sh",
                         "    model: disabled-model",
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
-                        "    credential_variable: DISABLED_KEY",
                         # validate_config requires a full panel of enabled
                         # reviewers; these are never invoked by the test but keep
                         # the document valid.
-                        "  other_reviewer:",
+                        "  claude:",
                         "    enabled: true",
-                        "    adapter: adapters/other_reviewer.sh",
                         "    model: other-model",
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
-                        "    credential_variable: OTHER_KEY",
-                        *panel_filler(1),
+                        *panel_filler("cursor", "claude"),
                         *_CONFIG_TAIL,
                     ]
                 ),
@@ -1224,39 +1246,39 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             _write_adapter(
                 paths["adapter_dir"],
-                "disabled_reviewer",
+                "cursor",
                 f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("disabled_reviewer", "review"), 0)
+            self.assertEqual(run_adapter("cursor", "review"), 0)
 
-            batch = load_json_file(paths["output_dir"] / "findings" / "disabled_reviewer.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "cursor.json")
             self.assertEqual(batch["adapter_status"], "skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "disabled_reviewer.json")
+            status = load_json_file(paths["output_dir"] / "status" / "cursor.json")
             self.assertEqual(status["status"], "skipped")
             self.assertFalse(sentinel.exists())
 
     def test_disabled_critique_skips_without_running_adapter_and_uses_stage_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "critic")
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             sentinel = paths["output_dir"] / "adapter_ran.txt"
             _write_adapter(
                 paths["adapter_dir"],
-                "critic",
+                "codex",
                 f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"critiques":[]}}\'\n',
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("critic", "critique"), 0)
+            self.assertEqual(run_adapter("codex", "critique"), 0)
 
-            batch = load_json_file(paths["output_dir"] / "critiques" / "critic.json")
+            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "critique-critic.json")
+            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
             self.assertEqual(status["stage"], "critique")
             self.assertEqual(status["status"], "skipped")
-            self.assertFalse((paths["output_dir"] / "status" / "critic.json").exists())
+            self.assertFalse((paths["output_dir"] / "status" / "codex.json").exists())
             self.assertFalse(sentinel.exists())
 
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
@@ -1268,14 +1290,12 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                     [
                         "schema_version: review_config.v3",
                         "reviewers:",
-                        "  critic:",
+                        "  codex:",
                         "    enabled: true",
-                        "    adapter: adapters/critic.sh",
                         "    model: critic-model",
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
-                        "    credential_variable: CRITIC_KEY",
-                        *panel_filler(1),
+                        *panel_filler("codex"),
                         *config_tail(critique_enabled=True),
                     ]
                 ),
@@ -1301,7 +1321,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             _write_adapter(
                 paths["adapter_dir"],
-                "critic",
+                "codex",
                 "#!/bin/sh\n"
                 'test -f "$AI_REVIEW_RENDERED_PROMPT"\n'
                 'grep -q POOLED_FINDINGS_JSON "$AI_REVIEW_RENDERED_PROMPT"\n'
@@ -1309,14 +1329,14 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("critic", "critique"), 0)
+            self.assertEqual(run_adapter("codex", "critique"), 0)
 
-            batch = load_json_file(paths["output_dir"] / "critiques" / "critic.json")
+            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "success")
-            self.assertEqual(batch["critic"], "critic")
-            pooled = load_json_file(paths["output_dir"] / "pooled_findings" / "critic.json")
+            self.assertEqual(batch["critic"], "codex")
+            pooled = load_json_file(paths["output_dir"] / "pooled_findings" / "codex.json")
             self.assertEqual(pooled["findings"][0]["source_finding_id"], "1" * 64)
-            status = load_json_file(paths["output_dir"] / "status" / "critique-critic.json")
+            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
             self.assertEqual(status["status"], "success")
 
 

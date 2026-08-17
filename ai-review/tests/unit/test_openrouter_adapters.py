@@ -41,7 +41,7 @@ _ENV_KEYS = [
     "AI_REVIEW_REQUIRE_REAL_CODEX",
     "AI_REVIEW_REQUIRE_REAL_OPENCODE",
     "AI_REVIEW_REQUIRE_REAL_CURSOR",
-    "AI_REVIEW_CURSOR_ENABLED",
+    "AI_REVIEW_REVIEWERS",
     "AI_REVIEW_CURSOR_MODEL",
     "CURSOR_API_KEY",
     "AI_REVIEW_CLAUDE_MODEL",
@@ -157,7 +157,7 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
             os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = "true"
             if reviewer == "cursor":
-                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
             os.environ.pop("AI_REVIEW_REQUIRE_REAL_OPENROUTER", None)
             os.environ.pop("OPENROUTER_API_KEY", None)
             try:
@@ -555,7 +555,9 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     "AI_REVIEW_REVIEWER": reviewer,
                 }
                 if reviewer == "cursor":
-                    env["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                    env["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
+                if reviewer == "claude":
+                    env["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
                 completed = subprocess.run(
                     [str(_ADAPTERS / "run_reviewer.sh"), reviewer, "review"],
                     check=False,
@@ -760,7 +762,7 @@ PY
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = "https://openrouter.ai/api/v1"
             if reviewer == "cursor":
-                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
@@ -1143,10 +1145,7 @@ PY
         # Only the agent-config symlinks are removed; their target is untouched.
         self.assertIn("steer.txt", tree)
 
-    def test_claude_direct_anthropic_route_adds_bare(self) -> None:
-        # Without an OpenRouter ANTHROPIC_BASE_URL, auth is plain
-        # ANTHROPIC_API_KEY, so --bare (which restricts auth to exactly that)
-        # is safe and skips startup auto-discovery on top of --safe-mode.
+    def test_claude_direct_anthropic_route_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -1165,9 +1164,8 @@ PY
             os.environ.pop("ANTHROPIC_BASE_URL", None)
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("claude", "review"), 0)
+                self.assertEqual(run_adapter("claude", "review"), _EXIT_ERROR)
                 batch = load_json_file(output_dir / "findings" / "claude.json")
-                argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
             finally:
                 for key, value in previous.items():
                     if value is None:
@@ -1175,9 +1173,8 @@ PY
                     else:
                         os.environ[key] = value
 
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertIn("--bare", argv)
-        self.assertIn("--safe-mode", argv)
+        self.assertEqual(batch["adapter_status"], "model_error")
+        self.assertFalse((output_dir / "claude.argv").exists())
 
     def test_claude_critique_runs_without_repo_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1538,7 +1535,7 @@ PY
             if reviewer == "opencode":
                 os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
             if reviewer == "cursor":
-                os.environ["AI_REVIEW_CURSOR_ENABLED"] = "true"
+                os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
                 os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
@@ -1579,7 +1576,7 @@ PY
 
         self.assertEqual(batch["adapter_status"], "model_error")
 
-    def test_claude_shell_does_not_map_token_for_hostile_base_url(self) -> None:
+    def test_claude_shell_maps_openrouter_token_unconditionally(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -1618,7 +1615,7 @@ PY
 
             self.assertEqual(completed.stdout, '{"findings":[]}')
             cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
-            self.assertNotIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
+            self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
             self.assertIn("ANTHROPIC_API_KEY=anthropic-native-secret", cli_env)
 
     def test_codex_model_override_reaches_cli(self) -> None:

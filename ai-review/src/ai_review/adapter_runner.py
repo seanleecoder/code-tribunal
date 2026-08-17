@@ -30,10 +30,14 @@ from .adapter_process import (
 from .config import (
     ConfigError,
     load_config,
-    resolve_adapter_path,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
+from .reviewers import (
+    ReviewerRegistryError,
+    get_reviewer_definition,
+    resolve_adapter_path,
+)
 from .schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -62,6 +66,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
     try:
         if mock_error := _local_mock_unauthorized():
             raise ConfigError(mock_error)
+        try:
+            reviewer_definition = get_reviewer_definition(reviewer)
+        except ReviewerRegistryError as exc:
+            raise ConfigError(str(exc)) from exc
+        if stage not in reviewer_definition.supported_stages:
+            raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         config = load_config(config_path)
         config_digest = _resolve_config_digest(input_dir, config)
         reviewer_config = config["reviewers"].get(reviewer)
@@ -127,7 +137,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
             return 0
 
-        if (validation_error := _cli_reviewer_validation_error(reviewer, model)) is not None:
+        if (
+            validation_error := _cli_reviewer_validation_error(
+                reviewer_definition, model
+            )
+        ) is not None:
             _write_empty(
                 output_dir,
                 output_file,
@@ -158,7 +172,10 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
             return _EXIT_ERROR
 
-        adapter_path = resolve_adapter_path(config_path, str(reviewer_config["adapter"]))
+        try:
+            adapter_path = resolve_adapter_path(reviewer_definition)
+        except ReviewerRegistryError as exc:
+            raise ConfigError(str(exc)) from exc
         prompt_tmp: Path | None = None
 
         if stage == "review":
@@ -188,6 +205,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             input_dir=input_dir,
             output_dir=output_dir,
             reviewer_config=reviewer_config,
+            reviewer_definition=reviewer_definition,
             prompt_tmp=prompt_tmp,
         )
 

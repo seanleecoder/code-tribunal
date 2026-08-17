@@ -418,24 +418,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIsNotNone(prepare)
         self.assertIn("needs: []", prepare.group(1))
 
-    def test_reviewer_jobs_use_identity_preserving_group_names(self) -> None:
-        text = _CI_TEMPLATE.read_text(encoding="utf-8")
-
-        for phase in ("review", "critique"):
-            for reviewer in ("claude", "codex", "opencode", "cursor"):
-                self.assertIn(f'"AI {phase}: [{reviewer}]":', text)
-        for old_name in (
-            "review_claude",
-            "review_codex",
-            "review_opencode",
-            "review_cursor",
-            "critique_claude",
-            "critique_codex",
-            "critique_opencode",
-            "critique_cursor",
-        ):
-            self.assertNotIn(old_name, text)
-
     @unittest.skipUnless(
         _CONFIG_DOC.exists(),
         "repository-only configuration reference is absent from the runtime image",
@@ -836,10 +818,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("critique_antigravity", text)
         self.assertNotIn("antigravity", text)
         self.assertNotRegex(text, r"\bagy\b")
-        self.assertIn('"AI review: [opencode]"', text)
-        self.assertIn('"AI critique: [opencode]"', text)
-        self.assertIn('"AI review: [cursor]"', text)
-        self.assertIn('"AI critique: [cursor]"', text)
         self.assertIn("opencode --version", text)
         self.assertIn("cursor-agent --version", text)
 
@@ -866,7 +844,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
         variables = _effective_variables(_template_variables(), "AI review: [claude]")
 
-        self.assertEqual(variables["REVIEWER"], "claude")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(variables["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api")
@@ -878,7 +855,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         for reviewer in ("codex", "opencode"):
             variables = _effective_variables(template, f"AI review: [{reviewer}]")
-            self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
@@ -886,7 +862,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_opencode_requires_real_opencode_cli(self) -> None:
         variables = _effective_variables(_template_variables(), "AI review: [opencode]")
 
-        self.assertEqual(variables["REVIEWER"], "opencode")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
@@ -894,7 +869,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
     def test_cursor_requires_real_cursor_cli_without_enabling_in_template(self) -> None:
         variables = _effective_variables(_template_variables(), "AI review: [cursor]")
 
-        self.assertEqual(variables["REVIEWER"], "cursor")
         self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
         self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
@@ -903,7 +877,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         template = _template_variables()
 
         claude = _effective_critique_variables(template, "AI critique: [claude]")
-        self.assertEqual(claude["REVIEWER"], "claude")
         self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
@@ -911,14 +884,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         for reviewer in ("codex", "opencode"):
             variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
-            self.assertEqual(variables["REVIEWER"], reviewer)
             self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
             self.assertEqual(variables["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
             self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
         opencode = _effective_critique_variables(template, "AI critique: [opencode]")
         self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
         cursor = _effective_critique_variables(template, "AI critique: [cursor]")
-        self.assertEqual(cursor["REVIEWER"], "cursor")
         self.assertEqual(cursor["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
         self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", cursor)
 
@@ -1024,29 +995,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CODEX_MODEL": "${{ vars.AI_REVIEW_CODEX_MODEL || '' }}",
             "AI_REVIEW_OPENCODE_MODEL": "${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}",
             "AI_REVIEW_CURSOR_MODEL": "${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}",
-            # The per-seat ENABLED flags must reach the parser as unset when a
-            # roster is set, since a hardcoded boolean would permanently contradict
-            # it. They are blanked *only* when a roster is set: blanking them
-            # unconditionally fails `prepare` against a pinned image built before
-            # empty-as-unset, because the jobs run /opt/ai-review from the image
-            # rather than this checkout.
             "AI_REVIEW_REVIEWERS": "${{ vars.AI_REVIEW_REVIEWERS || '' }}",
-            "AI_REVIEW_CLAUDE_ENABLED": (
-                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
-                "(vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}"
-            ),
-            "AI_REVIEW_CODEX_ENABLED": (
-                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
-                "(vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}"
-            ),
-            "AI_REVIEW_OPENCODE_ENABLED": (
-                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
-                "(vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}"
-            ),
-            "AI_REVIEW_CURSOR_ENABLED": (
-                "${{ vars.AI_REVIEW_REVIEWERS == '' && "
-                "(vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}"
-            ),
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
@@ -1073,10 +1022,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CODEX_MODEL",
             "AI_REVIEW_OPENCODE_MODEL",
             "AI_REVIEW_CURSOR_MODEL",
-            "AI_REVIEW_CLAUDE_ENABLED",
-            "AI_REVIEW_CODEX_ENABLED",
-            "AI_REVIEW_OPENCODE_ENABLED",
-            "AI_REVIEW_CURSOR_ENABLED",
             "AI_REVIEW_CLAUDE_EFFORT",
             "AI_REVIEW_CODEX_EFFORT",
             "AI_REVIEW_OPENCODE_EFFORT",
@@ -1295,7 +1240,6 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
-        self.assertIn("matrix:\n        reviewer: [claude, codex, opencode, cursor]", critique)
         self.assertIn("continue-on-error: true", critique)
         self.assertIn('run_reviewer.sh "$REVIEWER" critique', critique)
         self.assertIn("pattern: ai-review-review-*", critique)
@@ -1311,13 +1255,10 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
         # The Cursor credential reaches exactly one matrix entry, and only when
         # Cursor is on the panel. Dropping `matrix.reviewer == 'cursor'` would put
-        # the key in every seat's job environment; dropping the roster-unset guard
-        # on the legacy flag would hand it to a seat the roster excluded.
+        # the key in every seat's job environment.
         conditional_cursor_secret = (
             "CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' "
-            "&& (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') "
-            "|| (vars.AI_REVIEW_REVIEWERS == '' "
-            "&& vars.AI_REVIEW_CURSOR_ENABLED == 'true')) "
+            "&& contains(vars.AI_REVIEW_REVIEWERS, 'cursor') "
             "&& secrets.CURSOR_API_KEY || '' }}"
         )
         self.assertEqual(text.count(conditional_cursor_secret), 2)
@@ -1329,24 +1270,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             text.count("AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}"),
             1,
         )
-        # The per-seat flags keep their previous literal defaults when no roster is
-        # set, so this template still runs against an image built before
-        # empty-as-unset. Losing the `vars.AI_REVIEW_REVIEWERS == ''` guard would
-        # export '' unconditionally and fail `prepare` on the pinned runtime.
-        for name, literal in (
-            ("AI_REVIEW_CLAUDE_ENABLED", "'true'"),
-            ("AI_REVIEW_CODEX_ENABLED", "'true'"),
-            ("AI_REVIEW_OPENCODE_ENABLED", "'true'"),
-            ("AI_REVIEW_CURSOR_ENABLED", "'false'"),
-        ):
-            with self.subTest(name=name):
-                self.assertEqual(
-                    text.count(
-                        f"{name}: ${{{{ vars.AI_REVIEW_REVIEWERS == '' "
-                        f"&& (vars.{name} || {literal}) || '' }}}}"
-                    ),
-                    1,
-                )
+        for reviewer in ("CLAUDE", "CODEX", "OPENCODE", "CURSOR"):
+            self.assertNotIn(f"AI_REVIEW_{reviewer}_ENABLED", text)
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
         template = Path(__file__).resolve().parents[2] / "ci" / "review.github-actions.yml"
