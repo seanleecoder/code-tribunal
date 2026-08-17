@@ -3,7 +3,12 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** Ready for implementation handoff
+- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 through SPEC-61 are pending
+  implementation.
+
+Sections below that describe SPEC-54/55 work state what was done, not what to do. Read them
+as record; the shipped contract is the code, the tests, and
+[`CHANGELOG.md`](../../../CHANGELOG.md).
 
 ## Purpose
 
@@ -19,7 +24,8 @@ are required in production:
 - secure revision binding, snapshot containment, credential isolation, and artifact
   validation.
 
-The target product policy is informational:
+The product policy this package targets is informational. SPEC-54 and SPEC-55 shipped it;
+the remaining specs must not walk it back:
 
 - a finding is surfaced when at least two independent reviewers support it across direct
   review and critique;
@@ -49,22 +55,34 @@ specs that follow state their dependencies in terms of them.
 
 ## Required implementation order
 
-1. **Land SPEC-59 first or in parallel.** It records the product boundary before the
-   cleanup changes contracts again.
-2. **Implement SPEC-54 and SPEC-55 as one coordinated change series.** SPEC-54 defines
-   `consensus.v2`; SPEC-54 through SPEC-57 together define `review_config.v3`, and SPEC-55
-   defines the renderer over the new consensus shape. Do not merge an intermediate state in
-   which the consensus schema no longer contains fields still consumed by the renderer, the
-   gate, or posting. The renderer is the dangerous one: it reads the removed fields through
-   defaulted lookups, so an intermediate state renders wrong output instead of failing.
-3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests after the new
-   policy contracts are stable.
+Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadmap.
+
+1. ~~**Land SPEC-59 first or in parallel.**~~ **Superseded.** SPEC-59 did not land first.
+   SPEC-54/55 changed the contracts before the product boundary was recorded, so SPEC-59 now
+   describes a boundary that already moved and must be rebased against the shipped
+   informational contract before it is implemented.
+2. ~~**Implement SPEC-54 and SPEC-55 as one coordinated change series.**~~ **Done.** They
+   shipped together: SPEC-54 defined `consensus.v2` and SPEC-55 the renderer and the
+   publish-only pipeline over it. The hazard this step warned about — an intermediate state
+   in which the consensus schema had lost fields the renderer still read through defaulted
+   lookups — was avoided by shipping them as one series, and is now spent. There is no merge
+   gate left for a future step to coordinate with.
+3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests. The policy
+   contracts they coordinate with — `consensus.v2` and `review_config.v3` — are now stable
+   and shipped. Note that SPEC-54/55 already removed `merge_gate`,
+   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings` from
+   `review_config.v3`; SPEC-57 appends to that same removal list rather than opening a new
+   config version.
 4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
-   tests rather than add a second suite beside them.
+   tests rather than add a second suite beside them. Some of this arrived early: landing
+   SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so
+   SPEC-58 should re-survey rather than assume that duplication is still present.
 5. **Implement SPEC-60 and SPEC-61 as follow-ups.** Neither is a prerequisite for the
-   cleanup. SPEC-60 is observational and must not change surfacing decisions. SPEC-61 is
-   required before promoting or repinning a candidate image that changes reviewer-path
-   behavior, but it is not a general pull-request gate.
+   cleanup. SPEC-60 is observational and must not change surfacing decisions; its
+   prohibitions on changing the `post` exit status and on restoring a merge gate describe the
+   contract SPEC-55 established. SPEC-61 is required before promoting or repinning a
+   candidate image that changes reviewer-path behavior, but it is not a general pull-request
+   gate.
 
 ## Cross-spec rules for coding agents
 
@@ -100,11 +118,12 @@ The following existing proposals remain separate:
 - SPEC-48 auditable scope exclusions;
 - SPEC-53 broader stringified structured-output normalization.
 
-SPEC-42 becomes obsolete when SPEC-55 removes merge-gate semantics and must be deleted
-from the open-spec index as part of that implementation.
+SPEC-42 became obsolete when SPEC-55 removed merge-gate semantics, and was deleted from the
+open-spec index as part of that implementation. The human `wontfix` disposition it reasoned
+about is unchanged and still supported.
 
-Three of the specs that stay open also contain contract text that SPEC-54 and SPEC-55
-invalidate, and must be reconciled rather than left to contradict the shipped runtime:
-SPEC-45 and SPEC-46 both read `block_merge` and quorum as given inputs, and SPEC-48 specifies
-a gate outcome that no longer exists. Reconciling them is part of landing SPEC-55, not a
-follow-up.
+Three of the specs that stay open also contained contract text that SPEC-54 and SPEC-55
+invalidated — SPEC-45 and SPEC-46 read `block_merge` and quorum as given inputs, and SPEC-48
+specified a gate outcome that no longer exists. They were reconciled as part of landing
+SPEC-55, along with SPEC-47 and ADR-0002. No open specification now describes a consumer of
+a deleted artifact.
