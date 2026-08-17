@@ -11,18 +11,6 @@ documents were deleted rather than archived — `git log` holds them, and a
 completed spec is a description of work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-SPEC-54 and SPEC-55 are a temporary exception: they are implemented on their feature branch,
-but their documents remain indexed until that branch is squash-merged so the requirements first
-become reachable in `main` history. Remove these entries and documents in a follow-up change on
-`main`.
-
-## Implemented specifications pending merge to `main`
-
-| Spec | Status | Summary |
-|---|---|---|
-| [SPEC-54](cleanup-consolidation/spec-54-independent-support-informational-findings.md) | Implemented; pending merge to `main` | Replace merge-policy decisions with one independent-support rule for informational findings. |
-| [SPEC-55](cleanup-consolidation/spec-55-publish-only-pipeline-no-merge-gate.md) | Implemented; pending merge to `main` | Remove the merge gate and publish every supported, anchorable finding as a discussion thread. |
-
 ## Open specifications
 
 | Spec | Status | Summary |

@@ -3,8 +3,8 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 is pending implementation;
-  SPEC-57 through SPEC-61 land in a separate change series.
+- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 through SPEC-61 are pending
+  implementation.
 
 Sections below that describe SPEC-54/55 work state what was done, not what to do. Read them
 as record; the shipped contract is the code, the tests, and
@@ -36,26 +36,22 @@ the remaining specs must not walk it back:
 
 ## Spec set
 
-SPEC-54 and SPEC-55 landed as one change series. Their documents are still here and will be
-deleted in a follow-up, once this series is on `main` and
-[the improvement-spec index](../README.md)'s rule — completed specs are deleted rather than
-archived, because `git log` holds them — is actually true of them. Deleting them in the same
-change that introduced them would not satisfy it: this repository squash-merges, so a file
-added and removed within one pull request leaves no trace in `main` at all.
-
-SPEC-56 lands with this change series. SPEC-57 through SPEC-61 remain plain text because
-their documents land separately.
+SPEC-54 and SPEC-55 landed as one change series and their requirement documents were
+deleted, as [the improvement-spec index](../README.md) requires of every completed spec:
+`git log` holds them, and the shipped contract is described by the code, the tests, and
+[`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
+specs that follow state their dependencies in terms of them.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
-| [SPEC-54](spec-54-independent-support-informational-findings.md) — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
-| [SPEC-55](spec-55-publish-only-pipeline-no-merge-gate.md) — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
+| SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
+| SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
-| SPEC-57 — *pending, document not yet added* | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
-| SPEC-58 — *pending, document not yet added* | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
-| SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
-| SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
-| SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
+| [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
+| [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
+| [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
+| [SPEC-60](spec-60-critique-quality-observability.md) | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
+| [SPEC-61](spec-61-candidate-image-panel-canary.md) | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
 
 ## Required implementation order
 
