@@ -8,7 +8,6 @@ variables:
   AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4"
   AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab"
   AI_REVIEW_TRUSTED_IMAGE_SHA: "54dffa130be5c921602f264a2123fda4b1895f13"
-  AI_REVIEW_TRUSTED_ROOT: /opt/ai-review
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
   # Single source of truth for critique: this exact variable gates BOTH the
@@ -21,27 +20,21 @@ variables:
   # effective_config_sha256; consensus fails closed if a later job sees a
   # different effective config. Supported override names:
   # AI_REVIEW_REVIEWERS AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL
-  # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL AI_REVIEW_CLAUDE_ENABLED
-  # AI_REVIEW_CODEX_ENABLED AI_REVIEW_OPENCODE_ENABLED AI_REVIEW_CURSOR_ENABLED
+  # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL
   # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT
   # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_POSTING_MODE
   # AI_REVIEW_REVIEWERS is the panel roster: a comma-separated list of reviewers
   # (e.g. "claude,codex,cursor") that enables exactly those seats and disables
   # every other configured seat. All four reviewers are peers, so any of them may
-  # be left out. It is mutually exclusive with the per-reviewer *_ENABLED flags
-  # and must be project/group-scoped like every other override — a roster visible
-  # to only some jobs is caught by the effective_config_sha256 check, not silently
-  # applied per stage. Seats left out of the roster produce skipped artifacts, so
+  # be left out. It must be project/group-scoped like every other override — a
+  # roster visible to only some jobs is caught by the effective_config_sha256
+  # check, not silently applied per stage. Seats left out produce skipped artifacts, so
   # their statically declared jobs below complete quickly and do not vote.
   # AI_REVIEW_REVIEWERS requires a runtime that supports it. Jobs run
   # /opt/ai-review from $AI_REVIEW_BASE_IMAGE/$AI_REVIEW_REVIEWER_IMAGE, so an
   # image pinned before roster support ignores the variable and leaves the panel
-  # at the seats enabled in review.yaml — with no error. Unlike the GitHub
-  # workflow, which fails loudly on an older pin because it blanks the per-seat
-  # flags, nothing here makes a stale runtime detectable: this template sets no
-  # per-seat flags of its own, so an ignored roster is silent. Confirm the image
-  # pins ship roster support before relying on it, or use the per-reviewer
-  # *_ENABLED flags, which every supported runtime honors.
+  # at the seats enabled in review.yaml. Confirm the image pins ship roster
+  # support before relying on it.
   # Do not set AI_REVIEW_LOCAL_MOCK as a project/pipeline variable in production
   # (mock is forbidden).
 
@@ -98,7 +91,6 @@ prepare_ai_review:
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
     AI_REVIEW_LOCAL_MOCK: "0"
-    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   needs:
     - job: prepare_ai_review
@@ -117,7 +109,6 @@ prepare_ai_review:
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 "AI review: [codex]":
   extends: .review_template
@@ -148,7 +139,6 @@ prepare_ai_review:
     AI_REVIEW_INPUT_DIR: inputs
     AI_REVIEW_OUTPUT_DIR: out
     AI_REVIEW_LOCAL_MOCK: "0"
-    OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
   # Critique gating must combine BOTH the enabled-flag AND the source gate in
   # this one rules: block. A job's own rules: FULLY REPLACES any rules inherited
@@ -196,7 +186,6 @@ prepare_ai_review:
   variables:
     REVIEWER: claude
     AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-    ANTHROPIC_BASE_URL: https://openrouter.ai/api
 
 "AI critique: [codex]":
   extends: .critique_template

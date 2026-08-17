@@ -98,12 +98,10 @@ class CritiquePromptRenderTests(unittest.TestCase):
                         "reviewers:",
                         "  claude:",
                         "    enabled: true",
-                        "    adapter: adapters/claude.sh",
                         "    model: claude-model",
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
-                        "    credential_variable: CLAUDE_KEY",
-                        *panel_filler(1),
+                        *panel_filler("claude"),
                         *config_tail(critique_enabled=True),
                     ]
                 ),

@@ -161,6 +161,9 @@ versioning.
   | `merge_gate` (whole object) | **delete** | There is no merge gate. Publication health is reported by the `post` job's exit status. |
   | `posting.fallback_to_summary_comment` | **delete** | Summary fallback is now unconditional. Set to `false` it discarded every surfaced finding that could not be anchored — from the threads *and* from the summary — leaving it only in persisted state and a warning. A flag whose only reachable effect is losing product output is not a choice. |
   | `limits.max_posted_surface_findings` | **delete** | Every anchorable surfaced finding becomes a thread. The cap silently reclassified a finding two reviewers supported independently into summary-only because a configured count was reached. The volume bound is each reviewer's `max_findings`. `limits.max_fyi_findings` **stays**: it truncates a list that is already summary-only and renders a visible "more" trailer, which is a different thing. |
+  | `reviewers.<name>.adapter` | **delete** | Adapter paths are fixed by the trusted first-party reviewer registry shipped in the image. |
+  | `reviewers.<name>.credential_variable` | **delete** | Credential names and isolation are fixed by each seat's registry definition. Claude, Codex, and OpenCode use `OPENROUTER_API_KEY`; Cursor uses `CURSOR_API_KEY`. |
+  | `AI_REVIEW_<REVIEWER>_ENABLED` environment variables | **unset and use `AI_REVIEW_REVIEWERS`** | One roster replaces four booleans that could express contradictory or accidental panel sizes. Retired names fail loudly so persisted repository/project variables do not become silent no-ops. |
   | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
   | `schema_version: review_config.v2` | `review_config.v3` | |
 
@@ -168,6 +171,23 @@ versioning.
   (claude, codex, opencode; cursor off by default), so the floor does not change
   the shipped default. It **does** reject two-seat deployments that were valid
   under v2.
+
+  Claude now supports the pinned OpenRouter Anthropic-compatible endpoint only.
+  Native Anthropic credentials are no longer accepted; configure
+  `OPENROUTER_API_KEY`.
+
+  **Provider endpoints are no longer read from the environment.** Each reviewer
+  seat declares an endpoint family in the trusted registry, and the adapter runner
+  supplies the one accepted host for it — Claude gets
+  `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, Codex and OpenCode get
+  `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`, Cursor gets neither. Setting
+  either variable now has no effect: an ambient value is overridden rather than
+  rejected, so no caller has to know a URL that was never configurable. Both CI
+  templates stop declaring the two variables; a consumer copy that still declares
+  them keeps working. This replaces the endpoint validation that shipped earlier in
+  this series, which rejected an unset `ANTHROPIC_BASE_URL` and so broke the
+  reviewer-image publication preflight and every `make *-local` target defaulting
+  to the claude seat.
 
   `critique.blind_reviewer_identity` and `critique.allow_severity_downgrade` are
   now type-checked as booleans, like `critique.enabled`. They were read through
@@ -334,8 +354,7 @@ versioning.
   OpenCode, and Cursor may sit out — none is structurally fixed. Previously Cursor was a
   documented "substitute" for OpenCode, swapped by keeping two independent booleans in
   sync, which could silently produce a four-seat or two-seat panel. Unknown names,
-  duplicates, a single-seat roster, and combining the roster with the per-seat
-  `AI_REVIEW_<REVIEWER>_ENABLED` flags are all rejected at config load. The roster is part
+  duplicates, and a single-seat roster are rejected at config load. The roster is part
   of the effective-config digest, so one scoped to only some pipeline jobs fails the
   cross-stage consistency check instead of producing a different panel per stage. The
   shipped default roster is unchanged (Claude, Codex, OpenCode); Cursor stays off by
@@ -354,27 +373,17 @@ versioning.
   loudly rather than self-approving. A configuration authored with one reviewer and
   matching thresholds of `1` remains valid.
 
-- `AI_REVIEW_<REVIEWER>_ENABLED` now treats an empty or whitespace-only value as unset,
-  matching the existing `_MODEL` and `_EFFORT` handling. The canonical GitHub Actions
-  workflow relies on this: when a roster is set its per-seat enablement variables resolve
-  to `''` rather than a literal boolean, which is what lets `AI_REVIEW_REVIEWERS` work
-  without being permanently contradicted by a workflow-scope default. They keep their
-  previous literal defaults when no roster is set, so the template still runs against an
-  image pinned before this change — CI stages execute `/opt/ai-review` from the pinned
-  images rather than the checkout, and an older runtime rejects an empty value instead of
-  treating it as unset. Non-empty values keep the strict lowercase `true`/`false` contract.
-  `CURSOR_API_KEY` is supplied only to the Cursor matrix entry — the workflow now gates it
+- `AI_REVIEW_<REVIEWER>_ENABLED` is retired. `AI_REVIEW_REVIEWERS` is the sole
+  environment-level panel selector; YAML `enabled` values remain the default when it is
+  unset. The four old names are rejected with migration guidance rather than ignored,
+  because repository and project variables outlive the templates that once read them.
+  `CURSOR_API_KEY` is supplied only to the Cursor matrix entry — the workflow gates it
   on `matrix.reviewer == 'cursor'`, where it was previously placed in every reviewer job's
-  environment whenever Cursor was enabled — and only when Cursor is on the panel. With a
-  roster set, a stale `AI_REVIEW_CURSOR_ENABLED=true` no longer grants the credential,
-  matching the roster's authority over selection.
+  environment whenever Cursor was enabled — and only when Cursor is on the roster.
 
-  `AI_REVIEW_REVIEWERS` requires an image that ships roster support, and the two platforms
-  behave differently on an older pin. GitHub Actions fails `prepare` loudly, because the
-  workflow resolves the per-seat flags to `''` and a runtime without empty-as-unset rejects
-  that value. GitLab ignores the roster silently, since that template sets no per-seat flags
-  for a stale runtime to reject. Confirm the image pins before relying on the roster —
-  mandatory on GitLab, where nothing will tell you.
+  `AI_REVIEW_REVIEWERS` requires an image that ships roster support. An older pin ignores
+  it and uses its packaged YAML defaults, so confirm both image pins before relying on a
+  roster change.
 
 ### Fixed
 

@@ -3,10 +3,10 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 through SPEC-61 are pending, and
-  their requirement documents land with their own change series rather than here.
+- **Status:** SPEC-54, SPEC-55, and SPEC-56 are implemented. SPEC-57 through SPEC-61 land in
+  a separate change series.
 
-Sections below that describe SPEC-54/55 work state what was done, not what to do. Read them
+Sections below that describe SPEC-54/55/56 work state what was done, not what to do. Read them
 as record; the shipped contract is the code, the tests, and
 [`CHANGELOG.md`](../../../CHANGELOG.md).
 
@@ -43,14 +43,14 @@ archived, because `git log` holds them — is actually true of them. Deleting th
 change that introduced them would not satisfy it: this repository squash-merges, so a file
 added and removed within one pull request leaves no trace in `main` at all.
 
-Rows for SPEC-56 through SPEC-61 are plain text because those documents are not in this
-repository yet. They land with their own change series.
+SPEC-56 lands with this change series. SPEC-57 through SPEC-61 remain plain text because
+their documents land separately.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
 | [SPEC-54](spec-54-independent-support-informational-findings.md) — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
 | [SPEC-55](spec-55-publish-only-pipeline-no-merge-gate.md) — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
-| SPEC-56 — *pending, document not yet added* | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
+| [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | SPEC-57 — *pending, document not yet added* | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
 | SPEC-58 — *pending, document not yet added* | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
 | SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
@@ -72,11 +72,14 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
    lookups — was avoided by shipping them as one series, and is now spent. There is no merge
    gate left for a future step to coordinate with.
 3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests. The policy
-   contracts they coordinate with — `consensus.v2` and `review_config.v3` — are now stable
-   and shipped. Note that SPEC-54/55 already removed `merge_gate`,
-   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings` from
-   `review_config.v3`; SPEC-57 appends to that same removal list rather than opening a new
-   config version.
+   contracts they coordinate with — `consensus.v2` and `review_config.v3` — have landed on
+   `main` and are stable in shape, but neither has appeared in a tagged release: the newest
+   release still ships `review_config.v1`. `review_config.v3` is jointly defined by SPEC-54
+   through SPEC-57 and is not closed until SPEC-57 lands. Note that SPEC-54/55 already removed
+   `merge_gate`, `posting.fallback_to_summary_comment`, and
+   `limits.max_posted_surface_findings` from `review_config.v3`; **SPEC-56 and SPEC-57 each
+   append to that same removal list rather than opening a new config version.** SPEC-57, as
+   the last config-changing spec, owns the final consolidated migration message.
 4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
    tests rather than add a second suite beside them. Some of this arrived early: landing
    SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so
@@ -96,7 +99,11 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
 - Do not preserve private Python imports, logger names, helper signatures, or test fixture
   internals for compatibility.
 - Version public configuration and artifact shape changes explicitly. Do not change a
-  versioned shape while keeping the old version identifier.
+  *released* versioned shape while keeping its version identifier. A version identifier that
+  has not yet appeared in a tagged release is still being defined: a spec that this package
+  names as a co-author of that version amends it in place, and the series takes one bump for
+  the whole release rather than one per spec. `review_config.v3` is the current example —
+  SPEC-54 through SPEC-57 jointly define it.
 - Avoid long-lived old/new code paths. A migration message is preferable to a permanent
   compatibility adapter.
 - Preserve all security boundaries around revision binding, no-follow snapshot traversal,
