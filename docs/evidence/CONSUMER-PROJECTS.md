@@ -44,9 +44,9 @@ repo's canonical template.
   Because a required check also blocks direct pushes to `main`, adopting a
   workflow change has to go through a PR — run that PR in mock mode so it costs
   nothing.
-- **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
-  `AI_REVIEW_OPENCODE_ENABLED=true`, `AI_REVIEW_CURSOR_ENABLED=false`,
-  `AI_REVIEW_MANUAL=false`.
+- **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true` and
+  `AI_REVIEW_MANUAL=false`. Delete the retired per-seat `AI_REVIEW_*_ENABLED`
+  variables; use `AI_REVIEW_REVIEWERS` only when overriding the packaged roster.
 
   > **Delete `AI_REVIEW_MERGE_GATE_ENABLED` from this consumer.** It is a retired
   > override: a run against a current image fails at config load while the
@@ -106,9 +106,10 @@ Public, project id `84667714`. Verified present:
 
 - A runner.
 - `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
-  masked**. The behavioral toggles — `AI_REVIEW_CRITIQUE_ENABLED=true`,
-  `AI_REVIEW_OPENCODE_ENABLED=true`, `AI_REVIEW_CURSOR_ENABLED=false` — are
-  deliberately *unprotected*, so they apply on any ref including the hostile probe.
+  masked**. `AI_REVIEW_CRITIQUE_ENABLED=true` is deliberately *unprotected*, so
+  it applies on any ref including the hostile probe. Delete retired per-seat
+  `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
+  packaged roster.
   **Delete the project's `AI_REVIEW_MERGE_GATE_ENABLED` variable**: it is retired
   and a current image fails at config load while it is set.
 - `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge

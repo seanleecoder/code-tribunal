@@ -40,29 +40,7 @@ env:
   # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
   # enabled while every other configured seat sits out. Leave it unset to use the
   # defaults in config/review.yaml.
-  #
-  # Requires a runtime that supports the roster. The jobs below execute
-  # /opt/ai-review from the pinned images, not this checkout. Setting a roster
-  # while the pins predate roster support fails `prepare` loudly rather than
-  # changing the panel: the per-seat flags below resolve to '' and a runtime
-  # without empty-as-unset rejects that value. The failure is the intended signal
-  # to repin; it is not silent. Leaving the roster unset keeps this template fully
-  # compatible with the older pins.
   AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
-  # The roster is mutually exclusive with these per-seat flags, so when a roster
-  # is set they must reach the config parser as unset ('') rather than as a
-  # hardcoded boolean that would permanently contradict it.
-  #
-  # They are only blanked when a roster is actually set. Older runtimes reject an
-  # empty value instead of treating it as unset, so blanking unconditionally would
-  # fail `prepare` on every run against a pinned image built before that change.
-  # Gating on the roster keeps this template working against both runtimes: no
-  # roster means the previous literal defaults, and the empty form is reached only
-  # by an operator who has opted into a feature that needs the newer image anyway.
-  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}
-  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}
-  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}
-  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}
   AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
   AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
   AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
@@ -169,7 +147,6 @@ jobs:
           AI_REVIEW_OUTPUT_DIR: out
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
           # Cursor's backend is a deliberate second egress destination, so this
           # credential reaches exactly one matrix entry and only when Cursor is on
           # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
@@ -182,12 +159,11 @@ jobs:
           #
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".
-          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && contains(vars.AI_REVIEW_REVIEWERS, 'cursor') && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
-          ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -226,7 +202,6 @@ jobs:
           AI_REVIEW_OUTPUT_DIR: out
           AI_REVIEW_LOCAL_MOCK: "0"
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
-          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
           # Cursor's backend is a deliberate second egress destination, so this
           # credential reaches exactly one matrix entry and only when Cursor is on
           # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
@@ -239,12 +214,11 @@ jobs:
           #
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".
-          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && contains(vars.AI_REVIEW_REVIEWERS, 'cursor') && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
           AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
-          ANTHROPIC_BASE_URL: https://openrouter.ai/api
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

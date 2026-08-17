@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import stable_json_hash
+from .reviewers import REVIEWER_IDS, REVIEWERS
 
 
 class ConfigError(ValueError):
@@ -29,6 +30,8 @@ V3_REMOVED_CONFIG_KEYS = (
     "merge_gate",
     "posting.fallback_to_summary_comment",
     "limits.max_posted_surface_findings",
+    "reviewers.<name>.adapter",
+    "reviewers.<name>.credential_variable",
 )
 
 TOP_LEVEL_KEYS = {
@@ -44,11 +47,9 @@ TOP_LEVEL_KEYS = {
 
 REVIEWER_REQUIRED_KEYS = {
     "enabled",
-    "adapter",
     "model",
     "timeout_seconds",
     "max_findings",
-    "credential_variable",
 }
 REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_seconds"}
 # Critique budget when a reviewer does not state one. The critique CI job's outer
@@ -118,6 +119,8 @@ STATE_BACKEND_BY_POSTING_MODE = {
 # the rejection would have turned a loud error into a no-op. The same reasoning
 # keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
 # AI_REVIEW_CURSOR_EFFORT rejected in validate_config.
+# Reviewer tombstones: AI_REVIEW_CLAUDE_ENABLED, AI_REVIEW_CODEX_ENABLED,
+# AI_REVIEW_OPENCODE_ENABLED, AI_REVIEW_CURSOR_ENABLED.
 #
 # review_config.v3 is the "next major release" the previous note deferred this
 # to, and the decision taken there is to KEEP all three. The reasoning above is
@@ -143,6 +146,13 @@ RETIRED_ENV_OVERRIDES = {
         "gate job and any branch-protection entry that requires it, then unset "
         "this variable"
     ),
+    **{
+        f"AI_REVIEW_{reviewer_id.upper()}_ENABLED": (
+            "panel selection is controlled by AI_REVIEW_REVIEWERS; move the "
+            "roster there and unset this variable"
+        )
+        for reviewer_id in REVIEWER_IDS
+    },
 }
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
@@ -151,8 +161,8 @@ RETIRED_ENV_OVERRIDES = {
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
 # Smallest panel a v3 deployment may run, on every path: the shipped YAML,
-# AI_REVIEW_REVIEWERS, and per-seat ENABLED overrides after all overrides are
-# applied. Three, not two, for two reasons.
+# AI_REVIEW_REVIEWERS after all overrides are applied. Three, not two, for two
+# reasons.
 #
 # Every critique seat comes from the same enabled roster and self-critique cannot
 # corroborate a direct finding, so a one-seat panel can never reach two
@@ -204,7 +214,6 @@ def _env_flag(name: str, value: str) -> bool:
 def apply_reviewer_roster(
     config: dict[str, Any],
     raw: str | None,
-    per_seat_enabled_vars: list[str] | None = None,
 ) -> None:
     """Apply ``AI_REVIEW_REVIEWERS`` as the authoritative panel roster.
 
@@ -222,9 +231,6 @@ def apply_reviewer_roster(
     variable scoped to only some CI jobs is caught as configuration drift instead
     of silently producing a differently-sized panel per stage.
 
-    ``per_seat_enabled_vars`` lists the ``AI_REVIEW_<NAME>_ENABLED`` variables that
-    were actually applied. Combining the two mechanisms is rejected rather than
-    resolved by precedence: either answer would surprise an operator who set both.
     """
     if raw is None or not raw.strip():
         return
@@ -232,13 +238,6 @@ def apply_reviewer_roster(
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict):
         raise ConfigError("reviewers must be a mapping")
-
-    if per_seat_enabled_vars:
-        raise ConfigError(
-            "AI_REVIEW_REVIEWERS selects the panel roster and cannot be combined "
-            f"with {sorted(per_seat_enabled_vars)}; unset the per-reviewer ENABLED "
-            "variables and list the seats you want in AI_REVIEW_REVIEWERS"
-        )
 
     names = [item.strip() for item in raw.split(",")]
     selected: list[str] = [name for name in names if name]
@@ -289,15 +288,8 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_REVIEWERS`` -> the authoritative panel roster (see
       ``apply_reviewer_roster``). Every reviewer named is enabled and every other
       configured reviewer is disabled, so an operator selects the panel with one
-      variable instead of keeping N booleans in sync. Mutually exclusive with the
-      per-reviewer ``ENABLED`` flags below.
+      variable instead of keeping N booleans in sync.
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
-    - ``AI_REVIEW_<REVIEWER>_ENABLED`` -> ``reviewers.<name>.enabled``. An empty
-      or whitespace-only value is treated as unset, exactly like ``MODEL`` and
-      ``EFFORT``, so a CI template can map an absent repository variable to ``''``
-      without forcing an override. Unlike ``AI_REVIEW_CRITIQUE_ENABLED``, GitLab
-      job creation is not gated on these vars, so the byte-for-byte mirror rule in
-      ``_env_flag`` has nothing to mirror here; non-empty values are still strict.
     - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` for
       Claude, Codex, and OpenCode (one of ``low|medium|high|xhigh|max``,
       validated in ``validate_config``; each adapter forwards only the levels
@@ -320,7 +312,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
 
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
-        per_seat_enabled: list[str] = []
         for name, reviewer in reviewers.items():
             if not isinstance(reviewer, dict):
                 continue
@@ -328,16 +319,10 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
             model_env = os.environ.get(f"{prefix}MODEL")
             if model_env is not None and model_env.strip():
                 reviewer["model"] = model_env.strip()
-            enabled_env = os.environ.get(f"{prefix}ENABLED")
-            if enabled_env is not None and enabled_env.strip():
-                reviewer["enabled"] = _env_flag(f"{prefix}ENABLED", enabled_env)
-                per_seat_enabled.append(f"{prefix}ENABLED")
             effort_env = os.environ.get(f"{prefix}EFFORT")
             if effort_env is not None and effort_env.strip():
                 reviewer["effort"] = effort_env.strip()
-        apply_reviewer_roster(
-            config, os.environ.get("AI_REVIEW_REVIEWERS"), per_seat_enabled
-        )
+        apply_reviewer_roster(config, os.environ.get("AI_REVIEW_REVIEWERS"))
 
     critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")
     if critique_env is not None:
@@ -517,15 +502,28 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     _validate_posting(config)
     reviewers = config.get("reviewers")
-    if not isinstance(reviewers, dict) or not reviewers:
-        raise ConfigError("at least one reviewer must be configured")
+    if not isinstance(reviewers, dict):
+        raise ConfigError("reviewers must be a mapping")
+    reviewer_ids = set(reviewers)
+    if reviewer_ids != REVIEWER_IDS:
+        missing_reviewers = sorted(REVIEWER_IDS - reviewer_ids)
+        unknown_reviewers = sorted(reviewer_ids - REVIEWER_IDS)
+        details = []
+        if missing_reviewers:
+            details.append(f"missing {missing_reviewers}")
+        if unknown_reviewers:
+            details.append(f"unknown {unknown_reviewers}")
+        raise ConfigError(
+            "reviewer keys must equal the first-party reviewer registry: "
+            + ", ".join(details)
+        )
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
             raise ConfigError(f"reviewer {name} must be a mapping")
         _reject_unknown_keys(reviewer, REVIEWER_ALLOWED_KEYS, f"reviewers.{name}")
-        missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
-        if missing:
-            raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
+        missing_keys = REVIEWER_REQUIRED_KEYS - set(reviewer)
+        if missing_keys:
+            raise ConfigError(f"reviewer {name} missing keys: {sorted(missing_keys)}")
         timeout_seconds = reviewer.get("timeout_seconds")
         if type(timeout_seconds) is not int or timeout_seconds <= 0:
             raise ConfigError(
@@ -539,10 +537,10 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"reviewer {name} critique_timeout_seconds must be a positive integer"
             )
         effort = reviewer.get("effort")
-        if name == "cursor" and effort is not None:
+        if not REVIEWERS[name].supports_effort and effort is not None:
             raise ConfigError(
-                "reviewer cursor does not support effort; select the desired reasoning "
-                "variant with reviewers.cursor.model or AI_REVIEW_CURSOR_MODEL"
+                f"reviewer {name} does not support effort; select the desired reasoning "
+                f"variant with reviewers.{name}.model or AI_REVIEW_{name.upper()}_MODEL"
             )
         if effort is not None and effort not in EFFORT_LEVELS:
             raise ConfigError(
@@ -568,8 +566,10 @@ def validate_config(config: dict[str, Any]) -> None:
     # changing the roster never requires hand-editing it in lock-step.
     #
     # The enabled floor is checked here rather than in apply_reviewer_roster
-    # because it must hold after *every* override path, including per-seat
-    # AI_REVIEW_<NAME>_ENABLED flags and a YAML document authored by hand.
+    # because it must hold after *every* path into the config, including a YAML
+    # document authored by hand. AI_REVIEW_REVIEWERS is now the only runtime
+    # roster override — the per-seat AI_REVIEW_<NAME>_ENABLED flags are retired
+    # and rejected via RETIRED_ENV_OVERRIDES.
     configured_count = len(reviewers)
     enabled_count = len(enabled_reviewers(config))
     if enabled_count < _MINIMUM_PANEL_REVIEWERS:
@@ -611,12 +611,3 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(security, dict):
         raise ConfigError("security must be a mapping")
     _reject_unknown_keys(security, SECURITY_KEYS, "security")
-
-
-def resolve_adapter_path(config_path: str | Path, adapter: str) -> Path:
-    config_path = Path(config_path)
-    root = config_path.parent.parent
-    adapter_path = Path(adapter)
-    if not adapter_path.is_absolute():
-        adapter_path = root / adapter_path
-    return adapter_path

@@ -14,20 +14,22 @@ must retain `schema_version: review_config.v3`.
 ### Reviewers
 
 `reviewers.<name>` is repeated for `claude`, `codex`, `opencode`, and `cursor`.
-All four are peer seats with the same contract; see
+All four keys must always be present. They are peer seats with the same deployment
+contract; see
 [Choosing the panel](#choosing-the-panel) for how to select which of them vote.
+Adapter paths, credential names, endpoint families, real-provider controls, effort
+support, and supported stages are fixed by the trusted image's first-party reviewer
+registry; they are not operator configuration.
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `schema_version` | string, `review_config.v3` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
-| `reviewers.<name>.adapter` | path | Adapter below the image's `ai-review/` root. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
 | `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
-| `reviewers.<name>.credential_variable` | environment-variable name | Credential selected for this reviewer; not forwarded to other seats. |
 
 ### Choosing the panel
 
@@ -53,17 +55,16 @@ Rules, all enforced at config load with a loud `ConfigError`:
   clean one.
 - Unknown or duplicated reviewer names are rejected, so a typo cannot silently
   shrink the panel.
-- `AI_REVIEW_REVIEWERS` is mutually exclusive with the per-seat
-  `AI_REVIEW_<REVIEWER>_ENABLED` flags. Setting both is an error rather than a
-  precedence puzzle. The per-seat flags remain supported on their own; an empty
-  value means "no override", which is how the canonical GitHub Actions workflow
-  can map absent repository variables to `''`.
-- Each selected seat needs its `credential_variable` present in the reviewer
-  jobs, or that seat fails and the panel degrades. Cursor additionally requires
-  `CURSOR_API_KEY`, which the canonical workflow supplies only to the Cursor
-  matrix entry and only when Cursor is on the panel. A stale
-  `AI_REVIEW_CURSOR_ENABLED=true` does not reopen that path: with a roster set the
-  legacy flag is ignored for credential gating as well as for selection.
+- The configuration must contain exactly the four first-party reviewer keys.
+  Omit a seat from the active panel with `enabled: false`, not by deleting it.
+- `AI_REVIEW_REVIEWERS` is the only environment-level panel selector. The YAML
+  `enabled` values provide the default when it is unset. Retired per-seat
+  `AI_REVIEW_<REVIEWER>_ENABLED` variables are rejected by name.
+- Each selected seat needs the credential fixed for it by the trusted image:
+  `OPENROUTER_API_KEY` for Claude, Codex, and OpenCode, or `CURSOR_API_KEY` for
+  Cursor. If it is absent, that seat fails and the panel degrades. The canonical
+  workflow supplies `CURSOR_API_KEY` only to the Cursor matrix entry and only
+  when Cursor is on the roster.
 
 Roster changes are part of the effective-config digest, so a roster visible to
 only some pipeline jobs fails the cross-stage consistency check instead of
@@ -72,27 +73,12 @@ group scope.
 
 **Minimum runtime.** Every stage executes `/opt/ai-review` from the pinned base
 and reviewer images, not from your checkout, so `AI_REVIEW_REVIEWERS` is honored
-only by an image that ships roster support. What happens on an older pin differs
-by platform:
-
-- **GitHub Actions** fails loudly. Setting a roster makes the canonical workflow
-  resolve the per-seat `AI_REVIEW_<REVIEWER>_ENABLED` variables to an empty
-  string, and a runtime without empty-as-unset rejects that value, so `prepare`
-  fails instead of reviewing with the wrong panel. Treat that failure as the
-  signal to repin. Leaving the roster unset keeps the workflow fully compatible
-  with older pins, because the per-seat variables then keep their previous
-  literal defaults.
-- **GitLab** ignores it silently. The template sets no per-seat flags of its own,
-  so there is nothing for a stale runtime to reject: the roster is simply not
-  read and the panel stays at whatever `review.yaml` enables.
-
-Confirm the image pins before relying on the roster — mandatory on GitLab, where
-nothing will tell you. The per-seat `AI_REVIEW_<REVIEWER>_ENABLED` flags work on
-every supported runtime.
+only by an image that ships roster support. An older pin ignores the variable
+and keeps the panel from its packaged `review.yaml`, so repin both images before
+relying on a roster change.
 
 Every configuration must leave at least **three** reviewer seats enabled, on
-every path: the shipped YAML, `AI_REVIEW_REVIEWERS`, and the per-seat
-`AI_REVIEW_<REVIEWER>_ENABLED` flags after all overrides are applied. A finding
+every path: the shipped YAML and `AI_REVIEW_REVIEWERS`. A finding
 surfaces only when two reviewer identities support it independently, so a
 one-seat panel could never surface anything and a two-seat panel could not after
 losing a seat. Two-seat deployments were valid before `review_config.v3` and are
@@ -234,15 +220,11 @@ artifacts.
 
 | Variable | Default/source | Scope and validation |
 |---|---|---|
-| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Three or four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support: an older pin fails `prepare` on GitHub and ignores the roster silently on GitLab — see [Choosing the panel](#choosing-the-panel). |
+| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | The only environment-level panel selector. A comma-separated roster enables exactly those seats and disables the rest. Three or four seats; unknown or duplicated names are rejected. Requires an image that ships roster support; see [Choosing the panel](#choosing-the-panel). |
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
 | `AI_REVIEW_CURSOR_MODEL` | `auto` | Cursor model selector; effort is encoded in the model variant. `auto` is a valid Cursor CLI value and is fine in production — it delegates model choice to Cursor. Pin an exact slug when you need model-stable reproducibility, which is also what an evidence campaign proving behavior for one model requires. |
-| `AI_REVIEW_CLAUDE_ENABLED` | YAML `enabled` (`true`) | Exact lowercase `true` or `false`; empty means no override. Rejected alongside `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CODEX_ENABLED` | YAML `enabled` (`true`) | Same. |
-| `AI_REVIEW_OPENCODE_ENABLED` | YAML `enabled` (`true`) | Same. |
-| `AI_REVIEW_CURSOR_ENABLED` | YAML `enabled` (`false`) | Same; also requires `CURSOR_API_KEY`. |
 | `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum. |
 | `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
 | `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
@@ -256,8 +238,7 @@ artifacts.
 | Variable | Visibility | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | reviewer jobs only | OpenRouter authentication for Claude/Codex/OpenCode. |
-| `ANTHROPIC_AUTH_TOKEN` | Claude reviewer only | Alternate Claude authentication for the pinned OpenRouter route; the canonical templates derive it from `OPENROUTER_API_KEY`. |
-| `ANTHROPIC_API_KEY` | Claude reviewer only | Native Anthropic credential recognized by the Claude CLI; cleared by the canonical OpenRouter route. |
+| `ANTHROPIC_AUTH_TOKEN` | Claude adapter internal | Derived unconditionally by the Claude adapter from `OPENROUTER_API_KEY`; do not configure it as the seat credential. |
 | `CURSOR_API_KEY` | Cursor reviewer/critique job only | Cursor authentication and separate egress destination. The canonical GitHub workflow gates it on `matrix.reviewer == 'cursor'`, so the other seats' jobs never carry it. |
 | `GITLAB_TOKEN` | trusted prepare/post jobs | GitLab API access with `api` scope. |
 | `GITHUB_TOKEN` | trusted prepare/post jobs | GitHub API access supplied by Actions. |
@@ -266,7 +247,8 @@ artifacts.
 
 The "visibility" column describes what reaches the **adapter process**, which is
 where per-seat credential isolation is enforced: the runner builds each adapter's
-environment from scratch and copies only the credential that seat declares.
+environment from scratch and copies only the credentials declared by the trusted
+first-party registry.
 
 Do not read it as a description of job-level secret scoping, which differs by
 platform. The canonical GitHub workflow gates `CURSOR_API_KEY` on the matrix
@@ -286,12 +268,21 @@ untrusted endpoints in merge-request-controlled configuration.
 | `GITHUB_API_URL` | `https://api.github.com` | GitHub REST endpoint; Actions supplies the GHES value. |
 | `CI_API_V4_URL` | GitLab predefined variable | Preferred GitLab v4 API endpoint. |
 | `GITLAB_API_URL` | none | Fallback GitLab API endpoint for custom runtimes without `CI_API_V4_URL`. |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Exact pinned endpoint accepted by Codex and OpenCode adapters. |
-| `ANTHROPIC_BASE_URL` | unset, or `https://openrouter.ai/api` | Selects the Claude OpenRouter route; any other configured value is rejected. |
+
+Reviewer provider endpoints are **not** configuration and are listed with the
+internal runtime variables below. Each seat declares an endpoint family in the
+trusted registry (`ai_review/reviewers.py`) and the adapter runner supplies the one
+accepted host for that family, so nothing reads either name from the environment:
+setting one has no effect, because an ambient value is overridden rather than
+rejected. Native Anthropic routing is not supported.
 
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
+| `AI_REVIEW_CLAUDE_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CODEX_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_OPENCODE_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CURSOR_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in `review_config.v3` with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
 | `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; the state backend follows `posting.mode`. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
@@ -309,7 +300,6 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_BASE_IMAGE` | GitLab template base image pin. |
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
-| `AI_REVIEW_TRUSTED_ROOT` | Declares the trusted in-image root, `/opt/ai-review`. Set by the GitLab template only, and read by no runtime component — adapter and asset paths are resolved from the active configuration path, not from this variable. Setting or unsetting it changes no behavior. |
 | `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
@@ -317,15 +307,21 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
 | `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and operator evidence Chain B only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
-| `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Prevent missing provider prerequisites from falling back to mock behavior. |
+| `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Require the real Codex CLI; prevents a missing prerequisite from falling back to mock behavior. This is the Codex seat's control name. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |
 | `AI_REVIEW_REQUIRE_REAL_OPENCODE` | Require the real OpenCode CLI. |
 | `AI_REVIEW_REQUIRE_REAL_CURSOR` | Require the real Cursor CLI. |
+
+Each seat has exactly one control name, declared in the trusted reviewer registry,
+and the runner forwards only that name to that seat's adapter. Setting any other
+`AI_REVIEW_REQUIRE_REAL_*` name has no effect on a seat that does not declare it.
 | `AI_REVIEW_GITHUB_PR_NUMBER` | Immutable selected pull-request number passed to prepare. |
 | `AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA` | Immutable selected pull-request head passed to prepare. |
 | `AI_REVIEW_REVIEWER` | Selected adapter seat inside dispatch. |
 | `AI_REVIEW_STAGE` | `review` or `critique` inside dispatch. |
 | `AI_REVIEW_MODEL` | Effective model passed to one adapter. |
+| `ANTHROPIC_BASE_URL` | Pinned Claude egress route, set by the runner to `https://openrouter.ai/api` (OpenRouter's Anthropic-compatible base — the Claude CLI has no other endpoint knob). Not read from the environment; an ambient value is overridden. |
+| `OPENROUTER_BASE_URL` | Pinned Codex and OpenCode egress route, set by the runner to `https://openrouter.ai/api/v1`. Not read from the environment; an ambient value is overridden. Cursor receives no endpoint variable — its CLI exposes none to pin. |
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
 | `AI_REVIEW_OPENCODE_ROOT` | Clean, disposable OpenCode working root passed to the loopback server client. |
@@ -347,7 +343,6 @@ surface.
 | `AI_REVIEW_CLAUDE_NPM_PACKAGE` | Pinned Claude package name during image build. |
 | `AI_REVIEW_CODEX_NPM_PACKAGE` | Pinned Codex package name during image build. |
 | `AI_REVIEW_OPENCODE_NPM_PACKAGE` | Pinned OpenCode package name during image build. |
-| `AI_REVIEW_REQUIRE_REAL_CODEX` | Image preflight requires the real Codex CLI. |
 | `AI_REVIEW_ROOT_DIR` | Internal shell path to the implementation root. |
 
 ## Stage visibility and integrity

@@ -1,14 +1,8 @@
-"""Shared pieces for tests that author a `review_config.v3` document on disk.
-
-Every v3 configuration needs at least three enabled reviewer seats, so a test
-that cares about exactly one reviewer still has to author a panel around it.
-``panel_filler`` supplies the remaining seats; they exist only to satisfy the
-floor and are never invoked.
-"""
+"""Shared pieces for tests that author a ``review_config.v3`` document."""
 
 from __future__ import annotations
 
-MINIMUM_PANEL_REVIEWERS = 3
+from ai_review.reviewers import REVIEWERS
 
 
 def config_tail(
@@ -43,18 +37,17 @@ def config_tail(
 CONFIG_TAIL = config_tail()
 
 
-def panel_filler(enabled_seats: int) -> list[str]:
-    """Reviewer entries that bring ``enabled_seats`` up to the v3 floor."""
+def panel_filler(*occupied_reviewers: str) -> list[str]:
+    """Add every first-party seat not already authored by a focused test."""
     return [
         line
-        for index in range(MINIMUM_PANEL_REVIEWERS - enabled_seats)
+        for reviewer in REVIEWERS
+        if reviewer not in occupied_reviewers
         for line in (
-            f"  panel_peer_{index}:",
+            f"  {reviewer}:",
             "    enabled: true",
-            f"    adapter: adapters/panel_peer_{index}.sh",
-            f"    model: panel-peer-{index}-model",
+            f"    model: {reviewer}-model",
             "    timeout_seconds: 30",
             "    max_findings: 50",
-            f"    credential_variable: PANEL_PEER_{index}_KEY",
         )
     ]

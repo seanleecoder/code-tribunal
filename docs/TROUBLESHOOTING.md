@@ -25,7 +25,7 @@ credentials or sensitive model content into issues.
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
 | Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status, optional streamed adapter log | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (or `min(timeout_seconds, 900)` for its legacy fallback); temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`, then unset it |
 | GitHub: every seat drops its findings and consensus exits 3 | 1.0.0-only defect: the PR adds or deletes a file, so anchor resolution rejects `/dev/null` | Reviewer log line `absolute paths are not allowed: /dev/null`; `dropped_finding_count` equals `raw_finding_count` | Fixed in 1.0.1 — upgrade the pinned images. On 1.0.0 images, land file additions in a separate change request or re-run after they merge |
-| Local provider call rejects an endpoint | Developer shell exported a non-canonical provider URL | Redacted `model_error` naming `ANTHROPIC_BASE_URL` or `OPENROUTER_BASE_URL` | Run with `env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL make review-local ...` |
+| Reviewer reports `model_error` naming a model id | A `AI_REVIEW_<REVIEWER>_MODEL` override contains characters that cannot be passed safely to a CLI or interpolated into adapter config | Redacted `model_error` reading `model id has unsupported characters` | Set the override to a plain provider/slug id, optionally with an OpenRouter `:variant` suffix |
 
 ## Reviewer status meanings
 
@@ -132,14 +132,10 @@ These commands use deterministic mock output. A real local provider call sends
 repository content to that provider and should be run only under the operator's
 data-handling policy.
 
-Provider endpoint pinning also applies locally. If the developer shell exports
-an Anthropic or OpenRouter endpoint for unrelated tooling, remove it for the
-harness:
-
-```bash
-env -u ANTHROPIC_BASE_URL -u OPENROUTER_BASE_URL \
-  make review-local REVIEWER=claude
-```
+Provider endpoint pinning needs nothing from the caller: the adapter runner
+supplies each seat's pinned endpoint itself, so an `ANTHROPIC_BASE_URL` or
+`OPENROUTER_BASE_URL` the developer shell exports for unrelated tooling is
+overridden for the harness and does not have to be unset.
 
 See [operations](operations.md#failure-behavior) for the full failure matrix and
 [artifacts](reference/artifacts-and-schemas.md) for paths and schemas.

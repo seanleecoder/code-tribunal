@@ -11,15 +11,10 @@ if ! command -v claude >/dev/null 2>&1; then
     "claude CLI is required for this AI review job but was not found" 127
 fi
 
-if [ "${ANTHROPIC_BASE_URL:-}" = "https://openrouter.ai/api" ]; then
-  if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-    export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
-  fi
-  export ANTHROPIC_API_KEY=""
-  if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-    echo "OpenRouter review requires OPENROUTER_API_KEY or ANTHROPIC_AUTH_TOKEN" >&2
-    exit 2
-  fi
+export ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
+if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+  echo "OpenRouter review requires OPENROUTER_API_KEY or ANTHROPIC_AUTH_TOKEN" >&2
+  exit 2
 fi
 
 export ANTHROPIC_MODEL="${AI_REVIEW_MODEL}"
@@ -62,13 +57,8 @@ set -- -p \
   --verbose \
   --json-schema "$JSON_SCHEMA_VALUE"
 
-# --bare skips startup auto-discovery (hooks, skills, plugins, MCP, auto
-# memory, CLAUDE.md) on top of --safe-mode, but it restricts Anthropic auth to
-# strictly ANTHROPIC_API_KEY — so skip it on the OpenRouter route, which
-# authenticates via ANTHROPIC_AUTH_TOKEN (mapped above).
-if [ "${ANTHROPIC_BASE_URL:-}" != "https://openrouter.ai/api" ]; then
-  set -- "$@" --bare
-fi
+# --bare cannot authenticate with the OpenRouter ANTHROPIC_AUTH_TOKEN route, so
+# the adapter relies on --safe-mode plus the explicit stage tool allowlist.
 
 # Default working directory for stages that don't explore the repo.
 RUN_DIR="."

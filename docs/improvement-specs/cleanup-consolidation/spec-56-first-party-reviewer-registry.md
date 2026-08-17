@@ -227,6 +227,21 @@ unexercised. The implementation must:
   the seat's declared credential now covers it;
 - tighten claude endpoint validation from "unset or the OpenRouter endpoint" to "must be the
   OpenRouter endpoint". An unset value becomes an error;
+
+  **As implemented, superseded — the endpoint is injected, not validated.** Requiring the
+  caller to supply a value with exactly one accepted setting broke two callers this document
+  did not enumerate: the reviewer-image publication preflight
+  (`.github/workflows/publish-ai-review-images.yml`), which loops over claude/codex/opencode
+  under `sh -e`, and `make review-local`, whose default reviewer is claude — neither exports
+  a provider endpoint, and the check runs before the adapter is spawned, so even the mock
+  path was unreachable. `_build_adapter_env()` therefore sets the endpoint from the seat's
+  `endpoint_kind` and no longer reads the ambient value. This is strictly stronger than the
+  specified check: an unset value cannot fail, and a lookalike host cannot be supplied at
+  all. Ambient `ANTHROPIC_BASE_URL` / `OPENROUTER_BASE_URL` are overridden rather than
+  rejected, because they are provider-native names an unrelated developer or CI shell may
+  legitimately export. The redundant re-checks in `adapters/codex.sh` and
+  `adapters/opencode.sh` are deleted with the validation, and both CI templates stop
+  declaring variables that nothing reads;
 - make the `OPENROUTER_API_KEY` to `ANTHROPIC_AUTH_TOKEN` mapping in `adapters/claude.sh`
   unconditional, and drop the line that blanks `ANTHROPIC_API_KEY`;
 - record the removal in `CHANGELOG.md` and update the credential table in the configuration
@@ -239,8 +254,12 @@ unexercised. The implementation must:
 - Only the selected reviewer's declared credentials are copied, and no seat receives a
   credential it does not declare.
 - Cursor receives no OpenRouter fallback credential.
-- Endpoint validation dispatches on `endpoint_kind`, not string sets duplicated in
-  `adapter_process.py`.
+- The provider endpoint is injected per `endpoint_kind` — one accepted host per family,
+  supplied by the runner — rather than forwarded from the environment and validated against
+  string sets duplicated in `adapter_process.py`.
+- Only the seat's declared `require_real_control` is forwarded, so each adapter reads exactly
+  that name. A second name read as a fallback is either dead or a fail-closed guard the
+  runner no longer delivers.
 
 Note that this is the only place per-seat credential isolation is enforced on GitLab, whose
 template injects no credentials per job — project variables reach every job in the pipeline.
@@ -316,7 +335,17 @@ Add or consolidate:
   `credential_variables`, and no seat receives a credential it does not declare. These are the
   two assertions that matter; do not assert that credential names are unique across seats,
   because three seats legitimately share the OpenRouter account;
-- Claude's endpoint validation rejects an unset `ANTHROPIC_BASE_URL`;
+- the endpoint `_build_adapter_env()` sets for a seat is the one its `endpoint_kind` implies,
+  from a clean environment and with a hostile lookalike exported — Claude gets
+  `ANTHROPIC_BASE_URL`, Codex and OpenCode get `OPENROUTER_BASE_URL`, Cursor gets neither
+  (replaces "Claude's endpoint validation rejects an unset `ANTHROPIC_BASE_URL`", which
+  described the superseded contract above);
+- every seat produces a valid batch on the mock path from a clean shell, with no credential,
+  `REQUIRE_REAL` control, or provider endpoint exported. The claude case is the one the
+  original series omitted, and its absence is why the preflight and local-harness breaks
+  shipped green;
+- each adapter's `REQUIRE_REAL` assignment names exactly its registry `require_real_control`
+  and no other;
 - review and critique are supported for every seat;
 - Cursor is the only seat without effort support;
 - config rejects `adapter` and `credential_variable` keys;

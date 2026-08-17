@@ -3,10 +3,10 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 and SPEC-55 are implemented. SPEC-56 through SPEC-61 are pending
-  implementation.
+- **Status:** SPEC-54, SPEC-55, and SPEC-56 are implemented. SPEC-57 through SPEC-61 are
+  pending implementation.
 
-Sections below that describe SPEC-54/55 work state what was done, not what to do. Read them
+Sections below that describe SPEC-54/55/56 work state what was done, not what to do. Read them
 as record; the shipped contract is the code, the tests, and
 [`CHANGELOG.md`](../../../CHANGELOG.md).
 
@@ -42,11 +42,16 @@ deleted, as [the improvement-spec index](../README.md) requires of every complet
 [`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
 specs that follow state their dependencies in terms of them.
 
+SPEC-56 landed as its own change series; its document is still here and will be deleted in a
+follow-up, once that series is on `main`. Deleting it in the same change that introduced it
+would leave no trace, because this repository squash-merges. The SPEC-57 through SPEC-61
+documents land with this change series; their implementations follow.
+
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
 | SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
 | SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
-| [SPEC-56](spec-56-first-party-reviewer-registry.md) | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
+| [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
 | [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
 | [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |

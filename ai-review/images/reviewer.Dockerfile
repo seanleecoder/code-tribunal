@@ -148,13 +148,13 @@ RUN opencode --pure serve --help 2>&1 | grep -F -- '--hostname' \
 RUN (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
       --no-session-persistence --output-format stream-json --verbose \
       --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/raw_finding_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
-      --bare --add-dir /workspace --tools "Read,Grep,Glob" \
+      --add-dir /workspace --tools "Read,Grep,Glob" \
       --effort medium || true) \
     | grep -q '"type":"result"' \
     && (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
       --no-session-persistence --output-format stream-json --verbose \
       --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/critique_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
-      --bare --tools "" \
+      --tools "" \
       --effort medium || true) \
     | grep -q '"type":"result"'
 
