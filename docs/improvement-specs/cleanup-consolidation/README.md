@@ -44,9 +44,8 @@ specs that follow state their dependencies in terms of them.
 
 SPEC-56 landed as its own change series; its document is still here and will be deleted in a
 follow-up, once that series is on `main`. Deleting it in the same change that introduced it
-would leave no trace, because this repository squash-merges. The SPEC-57 document lands with
-this change series; its implementation follows. SPEC-58 through SPEC-61 remain plain text
-because their documents land separately.
+would leave no trace, because this repository squash-merges. The SPEC-57 through SPEC-61
+documents land with this change series; their implementations follow.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
@@ -54,10 +53,10 @@ because their documents land separately.
 | SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
-| SPEC-58 — *pending, document not yet added* | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
-| SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
-| SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
-| SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
+| [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
+| [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
+| [SPEC-60](spec-60-critique-quality-observability.md) | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
+| [SPEC-61](spec-61-candidate-image-panel-canary.md) | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
 
 ## Required implementation order
 
