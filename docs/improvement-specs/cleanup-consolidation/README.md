@@ -68,11 +68,14 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
    lookups — was avoided by shipping them as one series, and is now spent. There is no merge
    gate left for a future step to coordinate with.
 3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests. The policy
-   contracts they coordinate with — `consensus.v2` and `review_config.v3` — are now stable
-   and shipped. Note that SPEC-54/55 already removed `merge_gate`,
-   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings` from
-   `review_config.v3`; SPEC-57 appends to that same removal list rather than opening a new
-   config version.
+   contracts they coordinate with — `consensus.v2` and `review_config.v3` — have landed on
+   `main` and are stable in shape, but neither has appeared in a tagged release: the newest
+   release still ships `review_config.v1`. `review_config.v3` is jointly defined by SPEC-54
+   through SPEC-57 and is not closed until SPEC-57 lands. Note that SPEC-54/55 already removed
+   `merge_gate`, `posting.fallback_to_summary_comment`, and
+   `limits.max_posted_surface_findings` from `review_config.v3`; **SPEC-56 and SPEC-57 each
+   append to that same removal list rather than opening a new config version.** SPEC-57, as
+   the last config-changing spec, owns the final consolidated migration message.
 4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
    tests rather than add a second suite beside them. Some of this arrived early: landing
    SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so
@@ -92,7 +95,11 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
 - Do not preserve private Python imports, logger names, helper signatures, or test fixture
   internals for compatibility.
 - Version public configuration and artifact shape changes explicitly. Do not change a
-  versioned shape while keeping the old version identifier.
+  *released* versioned shape while keeping its version identifier. A version identifier that
+  has not yet appeared in a tagged release is still being defined: a spec that this package
+  names as a co-author of that version amends it in place, and the series takes one bump for
+  the whole release rather than one per spec. `review_config.v3` is the current example —
+  SPEC-54 through SPEC-57 jointly define it.
 - Avoid long-lived old/new code paths. A migration message is preferable to a permanent
   compatibility adapter.
 - Preserve all security boundaries around revision binding, no-follow snapshot traversal,

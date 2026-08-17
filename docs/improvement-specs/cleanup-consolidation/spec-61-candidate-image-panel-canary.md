@@ -75,6 +75,11 @@ Stages:
 
 The critique stage uses the finalized review findings from the same candidate run.
 
+All four seats are required. Note that the existing image-publish preflight smokes only
+Claude, Codex, and OpenCode, even though the reviewer image build does probe `cursor-agent`.
+Cursor is therefore the one seat with no pre-promotion functional check today, which is
+precisely the gap this canary closes; do not model the canary matrix on that preflight.
+
 ## Input
 
 Use a small, public, sanitized fixture repository and diff that:

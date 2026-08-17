@@ -46,9 +46,11 @@ regardless of the roster.
 
 Rules, all enforced at config load with a loud `ConfigError`:
 
-- Two to four seats may be enabled. A one-seat panel is rejected — a single
-  reviewer has nothing to corroborate against, so consensus would just pass one
-  model's output through.
+- Three or four seats may be enabled. One- and two-seat panels are rejected. A
+  finding surfaces only when two reviewer identities support it independently
+  across review and critique, and a two-seat panel cannot reach that after losing
+  a seat — the run would then report an empty review indistinguishable from a
+  clean one.
 - Unknown or duplicated reviewer names are rejected, so a typo cannot silently
   shrink the panel.
 - `AI_REVIEW_REVIEWERS` is mutually exclusive with the per-seat
@@ -232,7 +234,7 @@ artifacts.
 
 | Variable | Default/source | Scope and validation |
 |---|---|---|
-| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Two to four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support: an older pin fails `prepare` on GitHub and ignores the roster silently on GitLab — see [Choosing the panel](#choosing-the-panel). |
+| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | Comma-separated panel roster over the configured reviewer names; enables exactly those seats and disables the rest. Three or four seats; unknown or duplicated names are rejected. Mutually exclusive with the per-reviewer `*_ENABLED` flags. Requires an image that ships roster support: an older pin fails `prepare` on GitHub and ignores the roster silently on GitLab — see [Choosing the panel](#choosing-the-panel). |
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
@@ -261,6 +263,17 @@ artifacts.
 | `GITHUB_TOKEN` | trusted prepare/post jobs | GitHub API access supplied by Actions. |
 | `GH_TOKEN` | trusted GitHub prepare/post jobs | Local or custom-workflow fallback when `GITHUB_TOKEN` is absent. |
 | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | trusted post job only | Fine-grained token with Pull requests read/write and Metadata read; optional for personal-repository owner commands, but required when the built-in token cannot authorize collaborators (normally organization repositories) or mutate threads. |
+
+The "visibility" column describes what reaches the **adapter process**, which is
+where per-seat credential isolation is enforced: the runner builds each adapter's
+environment from scratch and copies only the credential that seat declares.
+
+Do not read it as a description of job-level secret scoping, which differs by
+platform. The canonical GitHub workflow gates `CURSOR_API_KEY` on the matrix
+entry, but passes `OPENROUTER_API_KEY` to all four reviewer jobs. The GitLab
+template injects no credentials at all — project and group CI/CD variables are
+inherited by every job in the pipeline. On GitLab the adapter environment is
+therefore the only boundary, not a second layer behind a job-level one.
 
 ### Platform and provider runtime
 
@@ -296,7 +309,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_BASE_IMAGE` | GitLab template base image pin. |
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
-| `AI_REVIEW_TRUSTED_ROOT` | Trusted in-image root, `/opt/ai-review`. |
+| `AI_REVIEW_TRUSTED_ROOT` | Declares the trusted in-image root, `/opt/ai-review`. Set by the GitLab template only, and read by no runtime component — adapter and asset paths are resolved from the active configuration path, not from this variable. Setting or unsetting it changes no behavior. |
 | `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
