@@ -43,8 +43,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     # (which diverges the effective_config digest and only survives because
     # build_consensus is called directly).
     CONSENSUS_ENV = {
-        # One variable selects the platform: state.backend follows posting.mode,
-        # and AI_REVIEW_STATE_BACKEND is retired and now rejected outright.
+        # One variable selects the platform: posting.mode also selects the
+        # adapter that stores persistent state, and AI_REVIEW_STATE_BACKEND is
+        # retired and now rejected outright.
         "AI_REVIEW_POSTING_MODE": "github_reviews",
         "AI_REVIEW_CRITIQUE_ENABLED": "false",
     }

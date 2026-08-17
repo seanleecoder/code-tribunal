@@ -130,13 +130,13 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             apply_env_overrides(config)
         self.assertFalse(config["critique"]["enabled"])
 
-    def test_posting_mode_override_carries_the_state_backend(self) -> None:
-        """One variable moves the platform.
+    def test_posting_mode_override_is_the_only_platform_selector(self) -> None:
+        """One variable moves the platform, and it leaves no derived twin behind.
 
-        The backend follows posting.mode, so the two can no longer disagree by
-        being scoped to different CI jobs. AI_REVIEW_STATE_BACKEND is not merely
-        unread — it is in RETIRED_ENV_OVERRIDES and raises, which the retired-name
-        case above covers.
+        Persistent state has no backend setting: posting.mode selects the adapter
+        that stores it. AI_REVIEW_STATE_BACKEND is not merely unread — it is in
+        RETIRED_ENV_OVERRIDES and raises, which the retired-name case above
+        covers.
         """
         config = _base_config()
         config["posting"] = {"mode": "gitlab_discussions"}
@@ -149,9 +149,6 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             apply_env_overrides(config)
 
         self.assertEqual(config["posting"]["mode"], "github_reviews")
-        # apply_env_overrides does not resolve the backend; _validate_posting does,
-        # which is what test_github_platform_env_overrides_load_valid_config covers
-        # end to end through load_config.
         self.assertNotIn("backend", config["state"])
 
     def test_non_exact_boolean_value_fails_loudly(self) -> None:
@@ -338,7 +335,9 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             config = load_config(_REPO_CONFIG)
         self.assertEqual(config["posting"]["mode"], "github_reviews")
-        self.assertEqual(config["state"]["backend"], "github_pr_comment")
+        # The mode is the whole platform selection; nothing derived is written
+        # back into the resolved state section.
+        self.assertNotIn("backend", config["state"])
 
     def test_invalid_platform_env_override_fails_loudly(self) -> None:
         with (
@@ -572,7 +571,9 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
         summary = effective_config_summary(config)
         self.assertEqual(summary["posting_mode"], "gitlab_discussions")
-        self.assertEqual(summary["state_backend"], "gitlab_mr_state_note")
+        # No state_backend key: the value was derived from posting_mode, so it
+        # only ever restated a field the digest already binds.
+        self.assertNotIn("state_backend", summary)
         self.assertEqual(summary["panel_min_successful_reviewers_for_resolution"], 2)
         self.assertTrue(summary["critique_enabled"])
         self.assertTrue(summary["critique_blind_reviewer_identity"])
@@ -649,20 +650,33 @@ class ConfigVersionMigrationTests(unittest.TestCase):
 
 
 class PostingModeConfigTests(unittest.TestCase):
-    def test_state_backend_contradicting_the_posting_mode_is_rejected(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        config["posting"]["mode"] = "github_reviews"
-        config["state"]["backend"] = "gitlab_mr_state_note"
+    def test_state_backend_is_rejected_with_removal_guidance(self) -> None:
+        """Any value, including the one v2 derived, is now an error.
 
-        with self.assertRaisesRegex(ConfigError, "derived from posting.mode"):
-            validate_config(config)
+        The check runs ahead of the generic unknown-key sweep on purpose: that
+        sweep would report `unknown config keys at state: ['backend']` and never
+        tell the operator the key was removed or what replaced it.
+        """
+        for value in ("gitlab_mr_state_note", "github_pr_comment", "none"):
+            with self.subTest(value=value):
+                config = load_config(_REPO_CONFIG)
+                config["state"]["backend"] = value
 
-    def test_github_reviews_accepts_github_state_backend(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        config["posting"]["mode"] = "github_reviews"
-        config["state"]["backend"] = "github_pr_comment"
+                with self.assertRaisesRegex(
+                    ConfigError, r"state\.backend was removed in review_config\.v3"
+                ) as raised:
+                    validate_config(config)
+                self.assertIn("posting.mode", str(raised.exception))
 
-        validate_config(config)
+    def test_resolved_config_carries_no_state_backend(self) -> None:
+        for mode in ("gitlab_discussions", "github_reviews"):
+            with self.subTest(mode=mode):
+                config = load_config(_REPO_CONFIG)
+                config["posting"]["mode"] = mode
+
+                validate_config(config)
+
+                self.assertNotIn("backend", config["state"])
 
 
 if __name__ == "__main__":

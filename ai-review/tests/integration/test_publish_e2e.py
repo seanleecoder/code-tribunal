@@ -65,7 +65,6 @@ class PublishEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -84,7 +83,6 @@ class PublishEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._fyi_batches(), config)
@@ -104,7 +102,6 @@ class PublishEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -137,7 +134,6 @@ class PublishEndToEndTests(unittest.TestCase):
 
                 if posting_mode == "github_reviews":
                     config["posting"]["mode"] = posting_mode
-                    config["state"]["backend"] = "github_pr_comment"
                     manifest = dict(
                         manifest,
                         project_id="octo-org/octo-repo",

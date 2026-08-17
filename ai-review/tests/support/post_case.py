@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import copy
+import sys
 import unittest
+from pathlib import Path
 from typing import Any
 
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.memory import attach_state_hash
 from ai_review.render import render_body
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import runtime_config  # noqa: E402
 
 
 class PostCase(unittest.TestCase):
@@ -60,18 +65,6 @@ class PostCase(unittest.TestCase):
             "old_path": "src/foo.py",
             "new_path": "src/foo.py",
             "new_line": 2,
-        }
-
-    def _state_config(self) -> dict[str, Any]:
-        return {
-            "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
-            "panel": {"min_successful_reviewers_for_resolution": 1},
-            "state": {
-                "backend": "gitlab_mr_state_note",
-                "checksum_required": True,
-                "recover_from_discussion_markers": True,
-                "retention": {"max_records": 200, "max_state_bytes": 50000},
-            },
         }
 
     def _state_record(
@@ -152,11 +145,29 @@ class PostCase(unittest.TestCase):
             "notes": [note],
         }
 
-    def _config(self, **posting: Any) -> dict[str, Any]:
-        base = {"stale_head_guard": True, "v1_inline_sides": ["new"]}
-        limits = posting.pop("limits", {})
-        base.update(posting)
-        return {"posting": base, "limits": limits}
+    def _config(self, **overrides: Any) -> dict[str, Any]:
+        """A validated runtime config with posting/state/limits overrides.
+
+        There is one config shape now: persistent state is always active, so a
+        posting test and a state test differ only in what they assert. Keyword
+        arguments land in ``posting`` unless they name the ``limits``, ``state``,
+        or ``panel`` section.
+        """
+        limits = overrides.pop("limits", {})
+        state = dict(overrides.pop("state", {}))
+        panel = overrides.pop("panel", {})
+        # Retention is merged rather than replaced, so a test that raises one
+        # bound keeps the shipped defaults for the others.
+        retention = state.pop("retention", {})
+
+        def mutate(config: dict[str, Any]) -> None:
+            config["posting"].update(overrides)
+            config["limits"].update(limits)
+            config["state"].update(state)
+            config["state"]["retention"].update(retention)
+            config["panel"].update(panel)
+
+        return runtime_config(mutate)
 
     def _single_line_diff(self, new_line: int, text: str = "target") -> str:
         return "\n".join(

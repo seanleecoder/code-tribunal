@@ -32,6 +32,7 @@ V3_REMOVED_CONFIG_KEYS = (
     "limits.max_posted_surface_findings",
     "reviewers.<name>.adapter",
     "reviewers.<name>.credential_variable",
+    "state.backend",
 )
 
 TOP_LEVEL_KEYS = {
@@ -75,7 +76,6 @@ POSTING_KEYS = {
     "stale_head_guard",
 }
 STATE_KEYS = {
-    "backend",
     "recover_from_discussion_markers",
     "checksum_required",
     "retention",
@@ -101,20 +101,13 @@ LIMIT_KEYS = {
 }
 SECURITY_KEYS = {"allow_external_fork_secrets"}
 
-# The one state backend each posting mode can use. Derived rather than configured;
-# see _validate_posting.
-STATE_BACKEND_BY_POSTING_MODE = {
-    "gitlab_discussions": "gitlab_mr_state_note",
-    "github_reviews": "github_pr_comment",
-}
-
 # Overrides that used to mean something and no longer do. Set one and the run
 # fails, naming the replacement.
 #
 # Silence would be worse here than anywhere else: GitLab project and group
 # variables are configured once and outlive every template revision that reads
 # them, so after a repin a stale override sits in the project settings looking
-# effective. AI_REVIEW_STATE_BACKEND selected a real backend until this release,
+# effective. AI_REVIEW_STATE_BACKEND selected a real backend two releases ago,
 # and the two semantic names were already rejected by name before it — dropping
 # the rejection would have turned a loud error into a no-op. The same reasoning
 # keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
@@ -131,8 +124,9 @@ STATE_BACKEND_BY_POSTING_MODE = {
 # no longer plausibly be set — not on the next version bump.
 RETIRED_ENV_OVERRIDES = {
     "AI_REVIEW_STATE_BACKEND": (
-        "the state backend follows posting.mode; set AI_REVIEW_POSTING_MODE "
-        "instead and unset this variable"
+        "persistent state has no configurable backend; posting.mode selects the "
+        "platform adapter that stores it, so set AI_REVIEW_POSTING_MODE instead "
+        "and unset this variable"
     ),
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
         "semantic grouping was removed in review_config.v2; unset this variable"
@@ -298,8 +292,9 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
-    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. ``state.backend`` follows it
-      automatically; there is no separate state-backend override.
+    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. The same value selects the
+      platform adapter that stores persistent state; state has no backend
+      setting and no override of its own.
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
@@ -351,7 +346,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
     posting = config.get("posting", {}) if isinstance(config, dict) else {}
-    state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     return {
         "reviewers": {
@@ -378,7 +372,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
-        "state_backend": state.get("backend") if isinstance(state, dict) else None,
         "panel_min_successful_reviewers_for_resolution": int(
             panel.get("min_successful_reviewers_for_resolution", 0) or 0
         ),
@@ -449,6 +442,16 @@ def _validate_posting(config: dict[str, Any]) -> None:
     state = config.setdefault("state", {})
     if not isinstance(state, dict):
         raise ConfigError("state must be a mapping")
+    # Ahead of the generic unknown-key sweep, so the operator gets the removal
+    # guidance instead of `unknown config keys at state: ['backend']`. Persistent
+    # state is always on and has exactly one storage implementation per posting
+    # mode, so there was never a choice for this key to express.
+    if "backend" in state:
+        raise ConfigError(
+            "state.backend was removed in review_config.v3: persistent state is "
+            "always active and posting.mode selects the platform adapter that "
+            "stores it; delete the key"
+        )
     _reject_unknown_keys(state, STATE_KEYS, "state")
     retention = state.get("retention", {})
     if not isinstance(retention, dict):
@@ -459,23 +462,6 @@ def _validate_posting(config: dict[str, Any]) -> None:
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     state.setdefault("fail_closed_on_load_error", False)
-    # state.backend is derived from posting.mode, not chosen. Each mode has exactly
-    # one usable backend, and the previous free choice made one incoherent pairing
-    # authorable: validation rejected github_reviews with a GitLab backend but
-    # accepted gitlab_discussions with github_pr_comment, which cannot work.
-    #
-    # A config may still restate the derived value — consumer configs carrying the
-    # key stay valid, and revalidating an already-resolved config is idempotent —
-    # but a value that disagrees with the mode is an error rather than a silent
-    # overwrite.
-    derived_backend = STATE_BACKEND_BY_POSTING_MODE[mode]
-    declared_backend = state.get("backend")
-    if declared_backend is not None and declared_backend != derived_backend:
-        raise ConfigError(
-            f"state.backend is derived from posting.mode: {mode} implies "
-            f"{derived_backend}, got {declared_backend!r}; remove the key"
-        )
-    state["backend"] = derived_backend
 
 
 def validate_config(config: dict[str, Any]) -> None:

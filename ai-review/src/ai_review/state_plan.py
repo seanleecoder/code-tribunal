@@ -58,11 +58,6 @@ class StatePlan:
     outcome: PlanOutcome
 
 
-def _state_enabled(config: dict[str, Any]) -> bool:
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return state_config.get("backend") in {"gitlab_mr_state_note", "github_pr_comment"}
-
-
 def _pipeline_id(manifest: dict[str, Any]) -> str:
     return os.environ.get("CI_PIPELINE_ID") or str(manifest.get("run_id") or "")
 
@@ -511,8 +506,7 @@ def plan_state(
         pipeline_id=pipeline_id,
         retention=retention,
     )
-    if _state_enabled(config) and overflow is not None:
-        outcome.overflow = overflow
+    outcome.overflow = overflow
 
     return StatePlan(
         persisted_state=persisted_state,

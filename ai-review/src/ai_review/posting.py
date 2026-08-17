@@ -38,7 +38,6 @@ from .state_plan import (
     _desired_discussion_resolved,
     _pipeline_id,
     _process_state_for_persistence,
-    _state_enabled,
     plan_state,
     state_from_existing_discussions,
 )
@@ -68,13 +67,20 @@ def load_persisted_state(
     client: ReviewPlatform,
     config: dict[str, Any],
     manifest: dict[str, Any],
-) -> tuple[dict[str, Any] | None, list[str]]:
-    if not _state_enabled(config):
-        return None, []
+) -> tuple[State | None, list[str]]:
+    """Load the persisted state note, or report its absence.
+
+    ``None`` means "no valid persisted note" and nothing else — never "state is
+    off". Normalizing an empty state here instead would make the caller's
+    discussion-marker recovery branch unreachable, so absence stays visible at
+    this boundary and ``prepare_post_context`` decides what to put in its place.
+    """
     state_config = config.get("state", {})
     bot_author_id = client.current_user_id()
     if bot_author_id is None:
-        raise RuntimeError("state backend requires current_user lookup to verify state-note author")
+        raise RuntimeError(
+            "persisted state requires current_user lookup to verify state-note author"
+        )
     notes = _list_state_notes(
         client,
         manifest["project_id"],
@@ -88,10 +94,13 @@ def load_persisted_state(
     if state is None:
         return None, warnings
     return (
-        normalize_state(
-            state,
-            manifest=manifest,
-            pipeline_id=_pipeline_id(manifest),
+        cast(
+            State,
+            normalize_state(
+                state,
+                manifest=manifest,
+                pipeline_id=_pipeline_id(manifest),
+            ),
         ),
         warnings,
     )
@@ -99,13 +108,18 @@ def load_persisted_state(
 
 def write_persisted_state(
     client: ReviewPlatform,
-    config: dict[str, Any],
     manifest: dict[str, Any],
     state: dict[str, Any],
     *,
     dry_run: bool = False,
 ) -> dict[str, Any] | None:
-    if not _state_enabled(config) or dry_run:
+    """Persist state unless this is a dry run.
+
+    No config argument: nothing in the state section decides whether the write
+    happens, and the platform adapter that receives it is already bound to
+    ``client``.
+    """
+    if dry_run:
         return None
     state_without_hash = {key: value for key, value in state.items() if key != "state_hash"}
     body = encode_state_note(state_without_hash)
@@ -588,7 +602,6 @@ def post_inline(
 
 def finalize_state(
     client: ReviewPlatform,
-    config: dict[str, Any],
     manifest: dict[str, Any],
     consensus: Consensus,
     result: PostResult,
@@ -621,70 +634,68 @@ def finalize_state(
             dry_run=dry_run,
         ),
     )
-    if _state_enabled(config):
-        prior_records = {record["issue_id"]: record for record in state_plan.base_records}
-        prior_status: dict[str, StateRecordStatus | None] = {
-            issue_id: record.get("status") for issue_id, record in prior_records.items()
-        }
-        for record in state_plan.planned_records:
-            discussion_id = record.get("discussion_id")
-            if discussion_id is None:
-                continue
-            desired = _desired_discussion_resolved(record, prior_status)
-            if desired is None or dry_run:
-                continue
-            try:
-                client.resolve_thread(
-                    manifest["project_id"],
-                    manifest["merge_request_iid"],
-                    str(discussion_id),
-                    desired,
-                )
-                if desired:
-                    result["resolved_discussions"] += 1
-            except ReviewPlatformError as exc:
-                action = "resolve" if desired else "unresolve"
-                result["warnings"].append(
-                    f"failed to {action} thread {discussion_id}: {exc}"
-                )
-                if desired:
-                    previous = prior_records.get(record["issue_id"])
-                    record["status"] = previous.get("status", "open") if previous else "open"
-                    record["human_disposition"] = (
-                        previous.get("human_disposition") if previous else None
-                    )
-        final_state, overflow = _process_state_for_persistence(
-            {
-                **state_plan.planned_state,
-                "records": state_plan.planned_records,
-                "updated_at": now_iso(),
-            },
-            manifest=manifest,
-            pipeline_id=state_plan.pipeline_id,
-            retention=state_plan.retention,
-        )
-        if overflow is not None:
-            result["status"] = "partial_failed"
-            result["warnings"].append(f"state overflow after mutations: {overflow}")
-            return result
+    prior_records = {record["issue_id"]: record for record in state_plan.base_records}
+    prior_status: dict[str, StateRecordStatus | None] = {
+        issue_id: record.get("status") for issue_id, record in prior_records.items()
+    }
+    for record in state_plan.planned_records:
+        discussion_id = record.get("discussion_id")
+        if discussion_id is None:
+            continue
+        desired = _desired_discussion_resolved(record, prior_status)
+        if desired is None or dry_run:
+            continue
         try:
-            write_persisted_state(
-                client,
-                config,
-                manifest,
-                cast(dict[str, Any], final_state),
-                dry_run=dry_run,
+            client.resolve_thread(
+                manifest["project_id"],
+                manifest["merge_request_iid"],
+                str(discussion_id),
+                desired,
             )
-        except Exception as exc:
-            result["status"] = (
-                "partial_failed"
-                if result["created_discussions"]
-                or result["updated_discussions"]
-                or result["resolved_discussions"]
-                or result["summary_comment"]["action"] in {"created", "updated"}
-                else "failed"
+            if desired:
+                result["resolved_discussions"] += 1
+        except ReviewPlatformError as exc:
+            action = "resolve" if desired else "unresolve"
+            result["warnings"].append(
+                f"failed to {action} thread {discussion_id}: {exc}"
             )
-            result["warnings"].append(f"state persistence failed: {exc}")
+            if desired:
+                previous = prior_records.get(record["issue_id"])
+                record["status"] = previous.get("status", "open") if previous else "open"
+                record["human_disposition"] = (
+                    previous.get("human_disposition") if previous else None
+                )
+    final_state, overflow = _process_state_for_persistence(
+        {
+            **state_plan.planned_state,
+            "records": state_plan.planned_records,
+            "updated_at": now_iso(),
+        },
+        manifest=manifest,
+        pipeline_id=state_plan.pipeline_id,
+        retention=state_plan.retention,
+    )
+    if overflow is not None:
+        result["status"] = "partial_failed"
+        result["warnings"].append(f"state overflow after mutations: {overflow}")
+        return result
+    try:
+        write_persisted_state(
+            client,
+            manifest,
+            cast(dict[str, Any], final_state),
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        result["status"] = (
+            "partial_failed"
+            if result["created_discussions"]
+            or result["updated_discussions"]
+            or result["resolved_discussions"]
+            or result["summary_comment"]["action"] in {"created", "updated"}
+            else "failed"
+        )
+        result["warnings"].append(f"state persistence failed: {exc}")
     return result
 
 
@@ -714,30 +725,36 @@ def prepare_post_context(
         else client.list_threads(manifest["project_id"], manifest["merge_request_iid"])
     )
     existing_discussions = index_ai_review_discussions(raw_discussions)
-    state_warnings: list[str] = []
-    persisted_state, load_warnings = load_persisted_state(client, config, manifest)
-    state_warnings.extend(load_warnings)
-    recovered_state = recover_state_from_discussions(
-        client,
-        manifest,
-        existing_discussions,
-        dry_run=dry_run,
-    )
+    persisted_state, state_warnings = load_persisted_state(client, config, manifest)
     if persisted_state is None:
+        # Absence, not disablement. Recovery runs only on this branch: when a
+        # valid note was loaded its records are authoritative, and the marker
+        # scan would cost a current_user round trip for a discarded result.
         state_config = config.get("state", {}) if isinstance(config, dict) else {}
-        if not _state_enabled(config) or state_config.get("recover_from_discussion_markers", True):
-            persisted_state = normalize_state(
-                recovered_state,
-                manifest=manifest,
-                pipeline_id=_pipeline_id(manifest),
+        if state_config.get("recover_from_discussion_markers", True):
+            persisted_state = cast(
+                State,
+                normalize_state(
+                    recover_state_from_discussions(
+                        client,
+                        manifest,
+                        existing_discussions,
+                        dry_run=dry_run,
+                    ),
+                    manifest=manifest,
+                    pipeline_id=_pipeline_id(manifest),
+                ),
             )
-    if persisted_state is None:
-        persisted_state = empty_state(
-            project_id=manifest["project_id"],
-            merge_request_iid=manifest["merge_request_iid"],
-            head_sha=manifest["head_sha"],
-            pipeline_id=_pipeline_id(manifest),
-        )
+        else:
+            persisted_state = cast(
+                State,
+                empty_state(
+                    project_id=manifest["project_id"],
+                    merge_request_iid=manifest["merge_request_iid"],
+                    head_sha=manifest["head_sha"],
+                    pipeline_id=_pipeline_id(manifest),
+                ),
+            )
     result["warnings"].extend(state_warnings)
     human_commands = collect_human_commands(
         client,
@@ -749,7 +766,7 @@ def prepare_post_context(
         version=version,
         current_diff_text=current_diff_text,
         raw_discussions=raw_discussions,
-        persisted_state=cast(State, persisted_state),
+        persisted_state=persisted_state,
         human_commands=human_commands,
     )
 
@@ -839,7 +856,6 @@ def post_consensus(
 
     return finalize_state(
         client,
-        config,
         manifest,
         consensus,
         inline_outcome.result,
