@@ -363,14 +363,15 @@ def _process_state_for_persistence(
     pipeline_id: str,
     retention: dict[str, Any],
 ) -> tuple[State, str | None]:
-    processed_state = normalize_state(state, manifest=manifest, pipeline_id=pipeline_id)
-    processed_state = compact_state(processed_state, retention)
+    compacted = compact_state(
+        normalize_state(state, manifest=manifest, pipeline_id=pipeline_id), retention
+    )
     overflow = state_overflow_reason(
-        processed_state,
+        compacted,
         max_records=int(retention.get("max_records", 200)),
         max_state_bytes=int(retention.get("max_state_bytes", 50000)),
     )
-    return cast(State, processed_state), overflow
+    return cast(State, compacted), overflow
 
 
 def plan_state(

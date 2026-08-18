@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import STATE_NOTE_SPEC_RE, encode_state_note
+from ai_review.memory import encode_state_note, state_note_candidates
+from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
@@ -37,18 +38,20 @@ class FakePostClient:
 
         Every valid configuration persists state, so a posting run writes one of
         these alongside any summary note. Tests that care about product output
-        assert on ``summary_notes`` and stay readable.
+        assert on ``summary_notes`` and stay readable. Both properties recognize
+        a note the way production does -- by the marker it wrote -- so a fake can
+        never disagree with the runtime about what a note is.
         """
-        return [
-            note
-            for note in self.mr_notes
-            if STATE_NOTE_SPEC_RE.search(str(note.get("body", ""))) is not None
-        ]
+        candidates, _warnings, _mismatches = state_note_candidates(self.mr_notes)
+        return candidates
 
     @property
     def summary_notes(self) -> list[dict[str, Any]]:
-        state_note_ids = {note["id"] for note in self.state_notes}
-        return [note for note in self.mr_notes if note["id"] not in state_note_ids]
+        return [
+            note
+            for note in self.mr_notes
+            if SUMMARY_MARKER_RE.search(str(note.get("body", ""))) is not None
+        ]
 
     @property
     def updated_summary_notes(self) -> list[dict[str, Any]]:

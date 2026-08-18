@@ -623,7 +623,13 @@ class ConfigVersionMigrationTests(unittest.TestCase):
                     )
                 else:
                     document += text
-                with self.assertRaisesRegex(ConfigError, f"unknown config keys at {key}|{key}"):
+                # Every removed key reports through one mechanism: the unknown-key
+                # sweep looks the dotted path up in V3_REMOVED_CONFIG_KEYS and
+                # names the removal instead of the anonymous "unknown config
+                # keys at ..." it falls back to for a genuine typo.
+                with self.assertRaisesRegex(
+                    ConfigError, rf"{key}[.\w]* was removed in {CONFIG_SCHEMA_VERSION}"
+                ):
                     self._load(document)
 
     def test_a_hand_authored_yaml_below_the_floor_is_rejected(self) -> None:
@@ -653,9 +659,9 @@ class PostingModeConfigTests(unittest.TestCase):
     def test_state_backend_is_rejected_with_removal_guidance(self) -> None:
         """Any value, including the one v2 derived, is now an error.
 
-        The check runs ahead of the generic unknown-key sweep on purpose: that
-        sweep would report `unknown config keys at state: ['backend']` and never
-        tell the operator the key was removed or what replaced it.
+        The guidance comes from the shared V3_REMOVED_CONFIG_KEYS registry, not
+        from a branch of its own, so `state.backend` reports the same way as the
+        nine keys removed alongside it — see the removed-key case above.
         """
         for value in ("gitlab_mr_state_note", "github_pr_comment", "none"):
             with self.subTest(value=value):

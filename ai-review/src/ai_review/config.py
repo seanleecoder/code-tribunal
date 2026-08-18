@@ -18,22 +18,54 @@ class ConfigError(ValueError):
 CONFIG_SCHEMA_VERSION = "review_config.v3"
 
 # Every key removed between v2 and v3, in the order the migration message names
-# them. SPEC-54 opens the list; each later spec in the v3 series appends its own
-# entries here, and a test asserts the rejection message names every one — so an
-# appended removal without an appended message line fails rather than leaving an
-# operator to discover the deletion one unknown-key error at a time.
-V3_REMOVED_CONFIG_KEYS = (
-    "severity_policy",
-    "panel.min_successful_reviewers_for_blocking",
-    "panel.quorum",
-    "critique.allow_advisory_escalation",
-    "merge_gate",
-    "posting.fallback_to_summary_comment",
-    "limits.max_posted_surface_findings",
-    "reviewers.<name>.adapter",
-    "reviewers.<name>.credential_variable",
-    "state.backend",
-)
+# them, each mapped to what the operator should do instead. SPEC-54 opens the
+# list; each later spec in the v3 series appends its own entries here, and a test
+# asserts the rejection message names every one — so an appended removal without
+# an appended message line fails rather than leaving an operator to discover the
+# deletion one unknown-key error at a time.
+#
+# The guidance is not decoration: `_reject_unknown_keys` consults this mapping
+# before it reports an anonymous unknown key, so a v3 document that still carries
+# a removed key is told the key was deleted and why, rather than being left to
+# read `unknown config keys at state: ['backend']` as a typo. One data row per
+# removal, no code per removal.
+V3_REMOVED_CONFIG_KEYS = {
+    "severity_policy": "severity no longer affects any decision; delete the object",
+    "panel.min_successful_reviewers_for_blocking": (
+        "there is no blocking verdict to gate; delete the key"
+    ),
+    "panel.quorum": (
+        "the support threshold is a product invariant, not an operator setting; "
+        "delete the object"
+    ),
+    "critique.allow_advisory_escalation": (
+        "an agreeing independent critic is simply a second supporter and there is "
+        "no separate escalation path to enable; delete the key"
+    ),
+    "merge_gate": (
+        "there is no merge gate; publication health is the post job's exit "
+        "status, so delete the object"
+    ),
+    "posting.fallback_to_summary_comment": (
+        "summary fallback is unconditional; delete the key"
+    ),
+    "limits.max_posted_surface_findings": (
+        "every anchorable surfaced finding becomes a thread; the volume bound is "
+        "each reviewer's max_findings, so delete the key"
+    ),
+    "reviewers.<name>.adapter": (
+        "adapter paths are fixed by the first-party reviewer registry shipped in "
+        "the image; delete the key"
+    ),
+    "reviewers.<name>.credential_variable": (
+        "credential names are fixed by each seat's registry definition; delete "
+        "the key"
+    ),
+    "state.backend": (
+        "persistent state is always active and posting.mode selects the platform "
+        "adapter that stores it; delete the key"
+    ),
+}
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -173,10 +205,36 @@ EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 _MINIMUM_PANEL_REVIEWERS = 3
 
 
-def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) -> None:
-    unknown = set(mapping) - allowed
+def _reject_unknown_keys(
+    mapping: dict[str, Any],
+    allowed: set[str],
+    path: str,
+    *,
+    removal_path: str | None = None,
+) -> None:
+    """Reject keys outside ``allowed``, naming the removal when there was one.
+
+    ``removal_path`` is the dotted prefix a key is registered under in
+    ``V3_REMOVED_CONFIG_KEYS`` when it differs from the reported ``path``:
+    ``reviewers.claude`` is registered under the ``reviewers.<name>``
+    placeholder. ``path`` is empty at the document root.
+    """
+    unknown = sorted(set(mapping) - allowed)
+    lookup_prefix = path if removal_path is None else removal_path
+    for key in unknown:
+        guidance = V3_REMOVED_CONFIG_KEYS.get(f"{lookup_prefix}.{key}" if lookup_prefix else key)
+        if guidance is not None:
+            # Reported under the concrete path -- `reviewers.claude.adapter`, not
+            # the `<name>` placeholder the registry keys it by -- so the operator
+            # reads back the line they wrote.
+            reported = f"{path}.{key}" if path else key
+            raise ConfigError(f"{reported} was removed in {CONFIG_SCHEMA_VERSION}: {guidance}")
     if unknown:
-        raise ConfigError(f"unknown config keys at {path}: {sorted(unknown)}")
+        raise ConfigError(
+            f"unknown config keys at {path}: {unknown}"
+            if path
+            else f"unknown top-level config keys: {unknown}"
+        )
 
 
 def load_yaml_subset(text: str) -> dict[str, Any]:
@@ -439,19 +497,16 @@ def _validate_posting(config: dict[str, Any]) -> None:
     mode = posting.setdefault("mode", "gitlab_discussions")
     if mode not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
+
+
+def _validate_state(config: dict[str, Any]) -> None:
+    # Independent of posting. The two were validated together only while
+    # state.backend was derived from posting.mode and needed it in scope; state
+    # is always on now, and posting.mode selects its storage adapter at runtime
+    # rather than at config time.
     state = config.setdefault("state", {})
     if not isinstance(state, dict):
         raise ConfigError("state must be a mapping")
-    # Ahead of the generic unknown-key sweep, so the operator gets the removal
-    # guidance instead of `unknown config keys at state: ['backend']`. Persistent
-    # state is always on and has exactly one storage implementation per posting
-    # mode, so there was never a choice for this key to express.
-    if "backend" in state:
-        raise ConfigError(
-            "state.backend was removed in review_config.v3: persistent state is "
-            "always active and posting.mode selects the platform adapter that "
-            "stores it; delete the key"
-        )
     _reject_unknown_keys(state, STATE_KEYS, "state")
     retention = state.get("retention", {})
     if not isinstance(retention, dict):
@@ -465,9 +520,7 @@ def _validate_posting(config: dict[str, Any]) -> None:
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    unknown = set(config) - TOP_LEVEL_KEYS
-    if unknown:
-        raise ConfigError(f"unknown top-level config keys: {sorted(unknown)}")
+    _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     declared_version = config.get("schema_version")
     if declared_version == "review_config.v2":
         # A version string whose accepted shape changes is not a contract. v3
@@ -487,6 +540,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     _validate_posting(config)
+    _validate_state(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict):
         raise ConfigError("reviewers must be a mapping")
@@ -506,7 +560,12 @@ def validate_config(config: dict[str, Any]) -> None:
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
             raise ConfigError(f"reviewer {name} must be a mapping")
-        _reject_unknown_keys(reviewer, REVIEWER_ALLOWED_KEYS, f"reviewers.{name}")
+        _reject_unknown_keys(
+            reviewer,
+            REVIEWER_ALLOWED_KEYS,
+            f"reviewers.{name}",
+            removal_path="reviewers.<name>",
+        )
         missing_keys = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing_keys:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing_keys)}")

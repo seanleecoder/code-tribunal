@@ -34,9 +34,9 @@ from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.platform.gitlab import MergeRequestVersion
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.config_yaml import runtime_config  # noqa: E402
+from support.config_yaml import SHIPPED_CONFIG_PATH, runtime_config  # noqa: E402
 
-_REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_REPO_CONFIG = SHIPPED_CONFIG_PATH
 
 
 def _github_platform_mock() -> mock.Mock:

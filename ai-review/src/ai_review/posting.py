@@ -19,7 +19,6 @@ from typing import Any, cast
 from .anchors import remap_anchor
 from .commands import collect_human_commands
 from .memory import (
-    empty_state,
     encode_state_note,
     newest_valid_state_from_notes,
     normalize_state,
@@ -94,13 +93,10 @@ def load_persisted_state(
     if state is None:
         return None, warnings
     return (
-        cast(
-            State,
-            normalize_state(
-                state,
-                manifest=manifest,
-                pipeline_id=_pipeline_id(manifest),
-            ),
+        normalize_state(
+            state,
+            manifest=manifest,
+            pipeline_id=_pipeline_id(manifest),
         ),
         warnings,
     )
@@ -109,7 +105,7 @@ def load_persisted_state(
 def write_persisted_state(
     client: ReviewPlatform,
     manifest: dict[str, Any],
-    state: dict[str, Any],
+    state: Mapping[str, Any],
     *,
     dry_run: bool = False,
 ) -> dict[str, Any] | None:
@@ -680,12 +676,7 @@ def finalize_state(
         result["warnings"].append(f"state overflow after mutations: {overflow}")
         return result
     try:
-        write_persisted_state(
-            client,
-            manifest,
-            cast(dict[str, Any], final_state),
-            dry_run=dry_run,
-        )
+        write_persisted_state(client, manifest, final_state, dry_run=dry_run)
     except Exception as exc:
         result["status"] = (
             "partial_failed"
@@ -724,37 +715,29 @@ def prepare_post_context(
         if dry_run
         else client.list_threads(manifest["project_id"], manifest["merge_request_iid"])
     )
-    existing_discussions = index_ai_review_discussions(raw_discussions)
     persisted_state, state_warnings = load_persisted_state(client, config, manifest)
     if persisted_state is None:
         # Absence, not disablement. Recovery runs only on this branch: when a
         # valid note was loaded its records are authoritative, and the marker
         # scan would cost a current_user round trip for a discarded result.
-        state_config = config.get("state", {}) if isinstance(config, dict) else {}
-        if state_config.get("recover_from_discussion_markers", True):
-            persisted_state = cast(
-                State,
-                normalize_state(
-                    recover_state_from_discussions(
-                        client,
-                        manifest,
-                        existing_discussions,
-                        dry_run=dry_run,
-                    ),
-                    manifest=manifest,
-                    pipeline_id=_pipeline_id(manifest),
-                ),
+        # Normalizing `None` yields the same empty document the recovery-off
+        # path wants, so the two only differ in what they hand to normalize.
+        state_config = config.get("state", {})
+        recovered = (
+            recover_state_from_discussions(
+                client,
+                manifest,
+                index_ai_review_discussions(raw_discussions),
+                dry_run=dry_run,
             )
-        else:
-            persisted_state = cast(
-                State,
-                empty_state(
-                    project_id=manifest["project_id"],
-                    merge_request_iid=manifest["merge_request_iid"],
-                    head_sha=manifest["head_sha"],
-                    pipeline_id=_pipeline_id(manifest),
-                ),
-            )
+            if state_config.get("recover_from_discussion_markers", True)
+            else None
+        )
+        persisted_state = normalize_state(
+            recovered,
+            manifest=manifest,
+            pipeline_id=_pipeline_id(manifest),
+        )
     result["warnings"].extend(state_warnings)
     human_commands = collect_human_commands(
         client,

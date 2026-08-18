@@ -17,6 +17,8 @@ from typing import Any
 from ai_review.config import load_yaml_subset, validate_config
 from ai_review.reviewers import REVIEWERS
 
+# The document an install actually ships, and the one every test that wants a
+# real config should point at rather than re-deriving the path.
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
 
@@ -81,37 +83,27 @@ def panel_filler(*occupied_reviewers: str) -> list[str]:
     ]
 
 
-def minimal_config_text(**tail_kwargs: Any) -> str:
-    """A complete, minimal ``review_config.v3`` document."""
-    return "\n".join(
-        [
-            "schema_version: review_config.v3",
-            "reviewers:",
-            *panel_filler(),
-            *config_tail(**tail_kwargs),
-        ]
-    )
-
-
 def runtime_config(
     mutate: Callable[[dict[str, Any]], None] | None = None,
-    *,
-    shipped: bool = False,
-    **tail_kwargs: Any,
 ) -> dict[str, Any]:
     """Return a resolved config of the only shape production ever sees.
 
-    Loads the minimal fixture (or the shipped YAML with ``shipped=True``),
-    applies ``mutate``, then runs ``validate_config`` so defaults are filled and
-    an unauthorable document fails here rather than silently exercising a
-    runtime path no operator can reach.
+    Loads the minimal document, applies ``mutate``, then runs ``validate_config``
+    so defaults are filled and an unauthorable document fails here rather than
+    silently exercising a runtime path no operator can reach. Every difference a
+    test needs goes through ``mutate``: one knob, so there is no second way to
+    describe a configuration.
     """
-    text = (
-        SHIPPED_CONFIG_PATH.read_text(encoding="utf-8")
-        if shipped
-        else minimal_config_text(**tail_kwargs)
+    config = load_yaml_subset(
+        "\n".join(
+            [
+                "schema_version: review_config.v3",
+                "reviewers:",
+                *panel_filler(),
+                *config_tail(),
+            ]
+        )
     )
-    config = load_yaml_subset(text)
     if mutate is not None:
         mutate(config)
     validate_config(config)

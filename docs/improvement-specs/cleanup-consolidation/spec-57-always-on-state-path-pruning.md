@@ -55,10 +55,11 @@ In `review_config.v3`:
   tells users to delete it;
 - remove `backend` from `STATE_KEYS` and reject a v3 document that still carries it with a
   targeted message that says the key was removed and `posting.mode` selects the platform
-  adapter. The targeted check must run *before* the generic `_reject_unknown_keys(state,
-  STATE_KEYS, "state")` call, which today precedes the derivation block; without that ordering
-  the key fails with the generic `unknown config keys at state: ['backend']` and the removal
-  guidance is never reached;
+  adapter. The guidance belongs to `V3_REMOVED_CONFIG_KEYS`, which carries a removal reason per
+  entry, and `_reject_unknown_keys` consults it before falling back to the anonymous `unknown
+  config keys at state: ['backend']`. Every v3 removal reports the same way for free, and a
+  bespoke pre-sweep branch per removed key -- with the ordering constraint it would impose -- is
+  not needed;
 - stop accepting a matching restatement;
 - stop writing a derived backend into the resolved dictionary;
 - delete `STATE_BACKEND_BY_POSTING_MODE` and its derivation path;
@@ -213,7 +214,8 @@ Cover:
 - resolution quorum and stale-unverified behavior;
 - human resolve/wontfix/reopen behavior;
 - dry-run performs no state mutation;
-- v2 migration error names `state.backend`, while v3 rejects it with targeted removal guidance;
+- v2 migration error names `state.backend`, while v3 rejects it with targeted removal guidance
+  drawn from the same registry that serves every other removed key;
 - `effective_config_summary()` and its digest input no longer contain `state_backend`;
 - a structural source-grep guard proves that no `_state_enabled` symbol or backend-based
   disabled-state branch remains.
