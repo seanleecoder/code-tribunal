@@ -45,8 +45,8 @@ specs that follow state their dependencies in terms of them.
 SPEC-56 and SPEC-57 each landed as their own change series; their documents are still here and
 will be deleted in a follow-up, once those series are on `main`. Deleting a document in the
 same change that implemented it would leave no trace, because this repository squash-merges.
-The SPEC-58 document lands with this change series; its implementation follows. SPEC-59
-through SPEC-61 remain plain text because their documents land separately.
+The SPEC-59 document lands with this change series; its implementation follows. The remaining
+specs stay plain text because their documents land separately.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
@@ -55,7 +55,7 @@ through SPEC-61 remain plain text because their documents land separately.
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | [SPEC-57](spec-57-always-on-state-path-pruning.md) — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
 | [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
-| SPEC-59 — *pending, document not yet added* | Product invariants and lightweight complexity control | Governance | May land first |
+| [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
 | SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
 | SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
 
