@@ -163,6 +163,7 @@ versioning.
   | `limits.max_posted_surface_findings` | **delete** | Every anchorable surfaced finding becomes a thread. The cap silently reclassified a finding two reviewers supported independently into summary-only because a configured count was reached. The volume bound is each reviewer's `max_findings`. `limits.max_fyi_findings` **stays**: it truncates a list that is already summary-only and renders a visible "more" trailer, which is a different thing. |
   | `reviewers.<name>.adapter` | **delete** | Adapter paths are fixed by the trusted first-party reviewer registry shipped in the image. |
   | `reviewers.<name>.credential_variable` | **delete** | Credential names and isolation are fixed by each seat's registry definition. Claude, Codex, and OpenCode use `OPENROUTER_API_KEY`; Cursor uses `CURSOR_API_KEY`. |
+  | `state.backend` | **delete** | v2 accepted a restatement of the value it derived from `posting.mode`; v3 rejects the key outright, with any value. Persistent state is always active and `posting.mode` selects the adapter that stores it (`gitlab_discussions` → a GitLab MR state note, `github_reviews` → a GitHub PR comment). Nothing is written back into `state`, so a resolved configuration no longer carries the field at all. |
   | `AI_REVIEW_<REVIEWER>_ENABLED` environment variables | **unset and use `AI_REVIEW_REVIEWERS`** | One roster replaces four booleans that could express contradictory or accidental panel sizes. Retired names fail loudly so persisted repository/project variables do not become silent no-ops. |
   | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
   | `schema_version: review_config.v2` | `review_config.v3` | |
@@ -194,8 +195,12 @@ versioning.
   `bool()`, so the string `"false"` silently enabled them.
 
   The removals change `effective_config_summary`, and therefore the cross-stage
-  effective-config digest. Every stage recomputes it per run, so no artifact
-  migration is needed.
+  effective-config digest — `state_backend` leaves it alongside the merge-gate
+  field, for the same reason: it only restated `posting_mode`, which the digest
+  already binds. Every stage recomputes the digest per run, so no artifact
+  *format* migration is needed, but an in-flight pipeline that mixes shapes fails
+  the drift check. Start a fresh run from `prepare` after upgrading; a pipeline
+  whose stages all use one immutable runtime revision stays internally consistent.
 
   **`AI_REVIEW_MERGE_GATE_ENABLED` is now rejected by name**, not ignored. A run
   fails at config load while it is set, naming the migration. Delete it from
@@ -205,8 +210,8 @@ versioning.
   entry with a removal target, not a permanent fixture.
 
   **The effective-config digest changes for every configuration**, including one
-  whose YAML you never touched, because `merge_gate_enabled` leaves
-  `effective_config_summary()`. Consensus re-derives that digest as a cross-job
+  whose YAML you never touched, because `merge_gate_enabled` and `state_backend`
+  leave `effective_config_summary()`. Consensus re-derives that digest as a cross-job
   drift detector, so a pipeline that mixes a pre-upgrade `prepare` manifest with
   post-upgrade `consensus` fails the drift check. **In-flight runs must be
   restarted from `prepare` after upgrading, not resumed.**
@@ -229,7 +234,7 @@ versioning.
   | `critique.rounds` | **delete** | A second boolean that had to agree with `critique.enabled` before critique ran. `critique.enabled` is now the only switch. |
   | `critique.can_add_quorum_votes` | **delete** | Validation rejected any value but `false`, and nothing read it. |
   | `panel.grouping.semantic.enabled`, `…threshold` | **delete** | An opt-in Jaccard comparison over finding titles and bodies. Shipped disabled, outside the 1.0 guarantee, with both environment overrides rejected by name. |
-  | `state.backend` | **delete** (may be kept if it matches) | Derived from `posting.mode`: `gitlab_discussions` → `gitlab_mr_state_note`, `github_reviews` → `github_pr_comment`. A value contradicting the mode is an error. |
+  | `state.backend` | **delete** | v2 derived the value from `posting.mode` and tolerated a matching restatement. v3 rejects the key with any value — see the v2 to v3 table above, which is the migration to follow if you are landing on the current release. |
   | `schema_version: review_config.v1` | `review_config.v2` | |
 
   A config copied from the shipped `ai-review/config/review.yaml` carries all of

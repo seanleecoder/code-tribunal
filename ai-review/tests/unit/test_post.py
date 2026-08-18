@@ -208,10 +208,15 @@ class PostTests(PostCase):
                 self.assertEqual(load_json_file(output_path)["status"], status)
 
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
+        # validate_config rejects this mode, so the value is injected after
+        # validation on purpose: the assertion is that posting re-checks it at
+        # its own boundary rather than trusting an upstream stage.
+        config = self._config()
+        config["posting"]["mode"] = "unsupported"
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
             post_consensus(
                 FakePostClient("head"),
-                self._config(mode="unsupported"),
+                config,
                 self._manifest("head"),
                 self._consensus(),
             )
@@ -317,7 +322,7 @@ class PostTests(PostCase):
         client = DiffFailPostClient("head")
         result = post_consensus(
             client,
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             self._consensus(),
         )
@@ -340,7 +345,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text="",
@@ -359,7 +364,7 @@ class PostTests(PostCase):
         client = FakePostClient("new-head")
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True}},
+            self._config(),
             self._manifest("old-head"),
             self._consensus(),
         )
@@ -371,7 +376,7 @@ class PostTests(PostCase):
         client = FakePostClient("head")
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             self._consensus(),
             dry_run=True,
@@ -385,7 +390,7 @@ class PostTests(PostCase):
         client = FakePostClient("head")
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             self._consensus(),
         )
@@ -427,7 +432,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -463,7 +468,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             new_consensus,
         )
@@ -498,7 +503,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -536,7 +541,7 @@ class PostTests(PostCase):
         consensus["groups"][0]["body"] = "Updated Body"
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -577,7 +582,7 @@ class PostTests(PostCase):
         client.discussions = [self._existing_discussion(existing_group, position=self._position())]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -609,7 +614,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -636,7 +641,7 @@ class PostTests(PostCase):
                 client.discussions = [self._existing_discussion(existing_group, position=position)]
                 result = post_consensus(
                     client,  # type: ignore[arg-type]
-                    {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+                    self._config(),
                     self._manifest("head"),
                     consensus,
                 )
@@ -771,7 +776,7 @@ class PostTests(PostCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["summary_comment"]["action"], "created")
         self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(len(client.summary_notes), 1)
         validate_instance(result, "post_result.schema.json")
 
     def test_post_unsupported_side_falls_back_to_summary_and_is_idempotent(self) -> None:
@@ -790,7 +795,7 @@ class PostTests(PostCase):
         self.assertEqual(client.created, 0)
         self.assertEqual(result["summary_comment"]["action"], "created")
         self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(len(client.summary_notes), 1)
         self.assertTrue(any("unsupported side" in warning for warning in result["warnings"]))
         validate_instance(result, "post_result.schema.json")
 
@@ -801,8 +806,8 @@ class PostTests(PostCase):
             consensus,
         )
         self.assertEqual(rerun["summary_comment"]["action"], "unchanged")
-        self.assertEqual(len(client.mr_notes), 1)
-        self.assertEqual(client.updated_mr_notes, [])
+        self.assertEqual(len(client.summary_notes), 1)
+        self.assertEqual(client.updated_summary_notes, [])
         validate_instance(rerun, "post_result.schema.json")
 
     def test_post_multiline_surface_falls_back_to_summary(self) -> None:
@@ -836,8 +841,8 @@ class PostTests(PostCase):
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["summary_comment"]["action"], "created")
         self.assertEqual(result["summary_comment"]["fyi_findings"], 1)
-        self.assertEqual(len(client.mr_notes), 1)
-        self.assertIn("Advisory (FYI) findings", client.mr_notes[0]["body"])
+        self.assertEqual(len(client.summary_notes), 1)
+        self.assertIn("Advisory (FYI) findings", client.summary_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
@@ -851,7 +856,7 @@ class PostTests(PostCase):
             consensus,
         )
         self.assertEqual(result["summary_comment"]["action"], "none")
-        self.assertEqual(len(client.mr_notes), 0)
+        self.assertEqual(client.summary_notes, [])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_creates_a_thread_for_every_anchorable_surface_group(self) -> None:
@@ -875,7 +880,9 @@ class PostTests(PostCase):
         self.assertEqual(client.created, 30)
         self.assertEqual(result["summary_comment"]["surface_findings"], 0)
         self.assertEqual(result["summary_comment"]["action"], "none")
-        self.assertEqual(client.mr_notes, [])
+        self.assertEqual(client.summary_notes, [])
+        # No summary, but state is always written: 30 threads to track.
+        self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(result["warnings"], [])
         validate_instance(result, "post_result.schema.json")
 
@@ -892,12 +899,19 @@ class PostTests(PostCase):
             consensus["groups"].append(group)
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(fyi_mode="summary_comment", limits={"max_fyi_findings": 50}),
+            self._config(
+                fyi_mode="summary_comment",
+                limits={"max_fyi_findings": 50},
+                # 60 tracked findings do not fit the default byte budget, and
+                # state overflow fails the run closed before any summary is
+                # written. This test is about the FYI cap, so give state room.
+                state={"retention": {"max_state_bytes": 500000}},
+            ),
             self._manifest("head"),
             consensus,
         )
         self.assertEqual(result["summary_comment"]["fyi_findings"], 50)
-        self.assertIn("10 more advisory findings", client.mr_notes[0]["body"])
+        self.assertIn("10 more advisory findings", client.summary_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_create_discussion_none_response_is_skipped(self) -> None:
@@ -955,7 +969,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -1021,7 +1035,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -1047,7 +1061,7 @@ class PostTests(PostCase):
         ]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {"posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]}},
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -1062,15 +1076,7 @@ class PostTests(PostCase):
         client.list_state_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {
-                "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
-                "state": {
-                    "backend": "gitlab_mr_state_note",
-                    "checksum_required": True,
-                    "recover_from_discussion_markers": True,
-                    "retention": {"max_records": 0, "max_state_bytes": 50000},
-                },
-            },
+            self._config(state={"retention": {"max_records": 0, "max_state_bytes": 50000}}),
             self._manifest("head"),
             self._consensus(),
         )
@@ -1094,16 +1100,7 @@ class PostTests(PostCase):
         client = StateClient("head")
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            {
-                "posting": {"stale_head_guard": True, "v1_inline_sides": ["new"]},
-                "panel": {"min_successful_reviewers_for_resolution": 2},
-                "state": {
-                    "backend": "gitlab_mr_state_note",
-                    "checksum_required": True,
-                    "recover_from_discussion_markers": True,
-                    "retention": {"max_records": 200, "max_state_bytes": 50000},
-                },
-            },
+            self._config(panel={"min_successful_reviewers_for_resolution": 2}),
             self._manifest("head"),
             self._consensus(),
         )
@@ -1160,7 +1157,7 @@ class PostTests(PostCase):
         ):
             result = post_consensus(
                 client,  # type: ignore[arg-type]
-                self._state_config(),
+                self._config(),
                 self._manifest("head"),
                 consensus,
             )
@@ -1186,7 +1183,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -1221,7 +1218,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -1251,7 +1248,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text=diff_text,
@@ -1274,7 +1271,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text=current_diff,
@@ -1322,7 +1319,7 @@ class PostTests(PostCase):
                 anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
                 state = self._state_with_records([self._state_record(group, anchor=anchor)])
                 client = StatePostClient("head", state)
-                config = self._state_config()
+                config = self._config()
                 config["posting"]["v1_inline_sides"] = ["new", "old"]
 
                 result = post_consensus(
@@ -1363,7 +1360,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text=current_diff,
@@ -1383,7 +1380,7 @@ class PostTests(PostCase):
         anchor = self._anchor_with_context(2, old_diff)
         state = self._state_with_records([self._state_record(group, anchor=anchor)])
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             state,
@@ -1437,7 +1434,7 @@ class PostTests(PostCase):
         record["last_posted_body_hash"] = body_hash
         state = self._state_with_records([record])
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             state,
@@ -1486,7 +1483,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text=self._single_line_diff(2, "different"),
@@ -1545,7 +1542,7 @@ class PostTests(PostCase):
 
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             diff_text=ambiguous_diff,

@@ -21,17 +21,22 @@ from ai_review.input_bundle import (
     _git_command,
     _github_checkout_head,
     _github_pull_request_version,
+    _load_platform_state,
     _resolve_github_pull_request,
     copy_repo_snapshot,
     prepare_github_bundle,
     prepare_gitlab_bundle,
     prepare_local_bundle,
 )
+from ai_review.memory import empty_state, encode_state_note
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.platform.gitlab import MergeRequestVersion
 
-_REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import SHIPPED_CONFIG_PATH, runtime_config  # noqa: E402
+
+_REPO_CONFIG = SHIPPED_CONFIG_PATH
 
 
 def _github_platform_mock() -> mock.Mock:
@@ -90,7 +95,7 @@ class InputBundleLimitTests(unittest.TestCase):
             )
         self.assertIsNone(reason)
 
-    def test_prepare_state_backend_fails_closed_when_current_user_unavailable(self) -> None:
+    def test_prepare_state_load_fails_closed_when_current_user_unavailable(self) -> None:
         class BrokenUserClient:
             def __init__(self, *args: object, **kwargs: object) -> None:
                 pass
@@ -121,12 +126,11 @@ class InputBundleLimitTests(unittest.TestCase):
             ),
             mock.patch(
                 "ai_review.input_bundle.load_config",
-                return_value={
-                    "state": {
-                        "backend": "gitlab_mr_state_note",
-                        "fail_closed_on_load_error": True,
-                    }
-                },
+                return_value=runtime_config(
+                    lambda config: config["state"].update(
+                        {"fail_closed_on_load_error": True}
+                    )
+                ),
             ),
             mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
@@ -166,7 +170,7 @@ class InputBundleLimitTests(unittest.TestCase):
             ),
             mock.patch(
                 "ai_review.input_bundle.load_config",
-                return_value={"state": {"backend": "none"}},
+                return_value=runtime_config(),
             ),
             mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
@@ -205,7 +209,7 @@ class InputBundleLimitTests(unittest.TestCase):
             ),
             mock.patch(
                 "ai_review.input_bundle.load_config",
-                return_value={"state": {"backend": "none"}},
+                return_value=runtime_config(),
             ),
             mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
@@ -214,6 +218,87 @@ class InputBundleLimitTests(unittest.TestCase):
             self.assertRaisesRegex(BundleError, "version changed during diff collection"),
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
+
+
+class PrepareStateLoadTests(unittest.TestCase):
+    """`_load_platform_state` always looks; only failure policy is configurable."""
+
+    def _default_state(self) -> dict[str, object]:
+        return empty_state(
+            project_id="1",
+            merge_request_iid="2",
+            head_sha="head",
+            pipeline_id="pipe",
+        )
+
+    class _Client:
+        def __init__(self, notes: list[dict[str, object]] | Exception) -> None:
+            self.notes = notes
+            self.list_calls = 0
+
+        def current_user_id(self) -> int:
+            return 10
+
+        def list_state_notes(
+            self, project_id: str, change_id: str
+        ) -> list[dict[str, object]]:
+            self.list_calls += 1
+            if isinstance(self.notes, Exception):
+                raise self.notes
+            return self.notes
+
+    def _load(self, client: object, config: dict[str, object]) -> dict[str, object]:
+        return _load_platform_state(
+            client,
+            config,
+            self._default_state(),
+            project_id="1",
+            change_id="2",
+            platform_name="GitLab",
+        )
+
+    def test_lookup_runs_and_a_valid_note_wins(self) -> None:
+        state = empty_state(
+            project_id="1", merge_request_iid="2", head_sha="stored", pipeline_id="old"
+        )
+        client = self._Client([{"id": 1, "author": {"id": 10}, "body": encode_state_note(state)}])
+
+        loaded = self._load(client, runtime_config())
+
+        self.assertEqual(client.list_calls, 1)
+        self.assertEqual(loaded["last_head_sha"], "stored")
+
+    def test_successful_lookup_without_a_valid_note_returns_the_default(self) -> None:
+        client = self._Client([])
+
+        loaded = self._load(client, runtime_config())
+
+        self.assertEqual(client.list_calls, 1)
+        self.assertEqual(loaded, self._default_state())
+
+    def test_load_error_warns_and_returns_the_default_when_open(self) -> None:
+        client = self._Client(RuntimeError("gitlab is down"))
+
+        loaded = self._load(
+            client,
+            runtime_config(
+                lambda config: config["state"].update({"fail_closed_on_load_error": False})
+            ),
+        )
+
+        self.assertEqual(client.list_calls, 1)
+        self.assertEqual(loaded, self._default_state())
+
+    def test_load_error_propagates_when_fail_closed(self) -> None:
+        client = self._Client(RuntimeError("gitlab is down"))
+
+        with self.assertRaisesRegex(RuntimeError, "gitlab is down"):
+            self._load(
+                client,
+                runtime_config(
+                    lambda config: config["state"].update({"fail_closed_on_load_error": True})
+                ),
+            )
 
 
 class GitHubPullRequestResolutionTests(unittest.TestCase):
@@ -1102,7 +1187,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 ),
                 mock.patch(
                     "ai_review.input_bundle.load_config",
-                    return_value={"state": {"backend": "none"}},
+                    return_value=runtime_config(),
                 ),
                 mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",

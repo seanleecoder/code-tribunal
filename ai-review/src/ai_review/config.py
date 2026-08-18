@@ -18,21 +18,54 @@ class ConfigError(ValueError):
 CONFIG_SCHEMA_VERSION = "review_config.v3"
 
 # Every key removed between v2 and v3, in the order the migration message names
-# them. SPEC-54 opens the list; each later spec in the v3 series appends its own
-# entries here, and a test asserts the rejection message names every one — so an
-# appended removal without an appended message line fails rather than leaving an
-# operator to discover the deletion one unknown-key error at a time.
-V3_REMOVED_CONFIG_KEYS = (
-    "severity_policy",
-    "panel.min_successful_reviewers_for_blocking",
-    "panel.quorum",
-    "critique.allow_advisory_escalation",
-    "merge_gate",
-    "posting.fallback_to_summary_comment",
-    "limits.max_posted_surface_findings",
-    "reviewers.<name>.adapter",
-    "reviewers.<name>.credential_variable",
-)
+# them, each mapped to what the operator should do instead. SPEC-54 opens the
+# list; each later spec in the v3 series appends its own entries here, and a test
+# asserts the rejection message names every one — so an appended removal without
+# an appended message line fails rather than leaving an operator to discover the
+# deletion one unknown-key error at a time.
+#
+# The guidance is not decoration: `_reject_unknown_keys` consults this mapping
+# before it reports an anonymous unknown key, so a v3 document that still carries
+# a removed key is told the key was deleted and why, rather than being left to
+# read `unknown config keys at state: ['backend']` as a typo. One data row per
+# removal, no code per removal.
+V3_REMOVED_CONFIG_KEYS = {
+    "severity_policy": "severity no longer affects any decision; delete the object",
+    "panel.min_successful_reviewers_for_blocking": (
+        "there is no blocking verdict to gate; delete the key"
+    ),
+    "panel.quorum": (
+        "the support threshold is a product invariant, not an operator setting; "
+        "delete the object"
+    ),
+    "critique.allow_advisory_escalation": (
+        "an agreeing independent critic is simply a second supporter and there is "
+        "no separate escalation path to enable; delete the key"
+    ),
+    "merge_gate": (
+        "there is no merge gate; publication health is the post job's exit "
+        "status, so delete the object"
+    ),
+    "posting.fallback_to_summary_comment": (
+        "summary fallback is unconditional; delete the key"
+    ),
+    "limits.max_posted_surface_findings": (
+        "every anchorable surfaced finding becomes a thread; the volume bound is "
+        "each reviewer's max_findings, so delete the key"
+    ),
+    "reviewers.<name>.adapter": (
+        "adapter paths are fixed by the first-party reviewer registry shipped in "
+        "the image; delete the key"
+    ),
+    "reviewers.<name>.credential_variable": (
+        "credential names are fixed by each seat's registry definition; delete "
+        "the key"
+    ),
+    "state.backend": (
+        "persistent state is always active and posting.mode selects the platform "
+        "adapter that stores it; delete the key"
+    ),
+}
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -75,7 +108,6 @@ POSTING_KEYS = {
     "stale_head_guard",
 }
 STATE_KEYS = {
-    "backend",
     "recover_from_discussion_markers",
     "checksum_required",
     "retention",
@@ -101,20 +133,13 @@ LIMIT_KEYS = {
 }
 SECURITY_KEYS = {"allow_external_fork_secrets"}
 
-# The one state backend each posting mode can use. Derived rather than configured;
-# see _validate_posting.
-STATE_BACKEND_BY_POSTING_MODE = {
-    "gitlab_discussions": "gitlab_mr_state_note",
-    "github_reviews": "github_pr_comment",
-}
-
 # Overrides that used to mean something and no longer do. Set one and the run
 # fails, naming the replacement.
 #
 # Silence would be worse here than anywhere else: GitLab project and group
 # variables are configured once and outlive every template revision that reads
 # them, so after a repin a stale override sits in the project settings looking
-# effective. AI_REVIEW_STATE_BACKEND selected a real backend until this release,
+# effective. AI_REVIEW_STATE_BACKEND selected a real backend two releases ago,
 # and the two semantic names were already rejected by name before it — dropping
 # the rejection would have turned a loud error into a no-op. The same reasoning
 # keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
@@ -131,8 +156,9 @@ STATE_BACKEND_BY_POSTING_MODE = {
 # no longer plausibly be set — not on the next version bump.
 RETIRED_ENV_OVERRIDES = {
     "AI_REVIEW_STATE_BACKEND": (
-        "the state backend follows posting.mode; set AI_REVIEW_POSTING_MODE "
-        "instead and unset this variable"
+        "persistent state has no configurable backend; posting.mode selects the "
+        "platform adapter that stores it, so set AI_REVIEW_POSTING_MODE instead "
+        "and unset this variable"
     ),
     "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
         "semantic grouping was removed in review_config.v2; unset this variable"
@@ -179,10 +205,36 @@ EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 _MINIMUM_PANEL_REVIEWERS = 3
 
 
-def _reject_unknown_keys(mapping: dict[str, Any], allowed: set[str], path: str) -> None:
-    unknown = set(mapping) - allowed
+def _reject_unknown_keys(
+    mapping: dict[str, Any],
+    allowed: set[str],
+    path: str,
+    *,
+    removal_path: str | None = None,
+) -> None:
+    """Reject keys outside ``allowed``, naming the removal when there was one.
+
+    ``removal_path`` is the dotted prefix a key is registered under in
+    ``V3_REMOVED_CONFIG_KEYS`` when it differs from the reported ``path``:
+    ``reviewers.claude`` is registered under the ``reviewers.<name>``
+    placeholder. ``path`` is empty at the document root.
+    """
+    unknown = sorted(set(mapping) - allowed)
+    lookup_prefix = path if removal_path is None else removal_path
+    for key in unknown:
+        guidance = V3_REMOVED_CONFIG_KEYS.get(f"{lookup_prefix}.{key}" if lookup_prefix else key)
+        if guidance is not None:
+            # Reported under the concrete path -- `reviewers.claude.adapter`, not
+            # the `<name>` placeholder the registry keys it by -- so the operator
+            # reads back the line they wrote.
+            reported = f"{path}.{key}" if path else key
+            raise ConfigError(f"{reported} was removed in {CONFIG_SCHEMA_VERSION}: {guidance}")
     if unknown:
-        raise ConfigError(f"unknown config keys at {path}: {sorted(unknown)}")
+        raise ConfigError(
+            f"unknown config keys at {path}: {unknown}"
+            if path
+            else f"unknown top-level config keys: {unknown}"
+        )
 
 
 def load_yaml_subset(text: str) -> dict[str, Any]:
@@ -298,8 +350,9 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
-    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. ``state.backend`` follows it
-      automatically; there is no separate state-backend override.
+    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. The same value selects the
+      platform adapter that stores persistent state; state has no backend
+      setting and no override of its own.
 
     Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
     unparseable value raises ``ConfigError``.
@@ -351,7 +404,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
     reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
     critique = config.get("critique", {}) if isinstance(config, dict) else {}
     posting = config.get("posting", {}) if isinstance(config, dict) else {}
-    state = config.get("state", {}) if isinstance(config, dict) else {}
     panel = config.get("panel", {}) if isinstance(config, dict) else {}
     return {
         "reviewers": {
@@ -378,7 +430,6 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
         "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
         "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
         "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
-        "state_backend": state.get("backend") if isinstance(state, dict) else None,
         "panel_min_successful_reviewers_for_resolution": int(
             panel.get("min_successful_reviewers_for_resolution", 0) or 0
         ),
@@ -446,6 +497,13 @@ def _validate_posting(config: dict[str, Any]) -> None:
     mode = posting.setdefault("mode", "gitlab_discussions")
     if mode not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
+
+
+def _validate_state(config: dict[str, Any]) -> None:
+    # Independent of posting. The two were validated together only while
+    # state.backend was derived from posting.mode and needed it in scope; state
+    # is always on now, and posting.mode selects its storage adapter at runtime
+    # rather than at config time.
     state = config.setdefault("state", {})
     if not isinstance(state, dict):
         raise ConfigError("state must be a mapping")
@@ -459,29 +517,10 @@ def _validate_posting(config: dict[str, Any]) -> None:
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     state.setdefault("fail_closed_on_load_error", False)
-    # state.backend is derived from posting.mode, not chosen. Each mode has exactly
-    # one usable backend, and the previous free choice made one incoherent pairing
-    # authorable: validation rejected github_reviews with a GitLab backend but
-    # accepted gitlab_discussions with github_pr_comment, which cannot work.
-    #
-    # A config may still restate the derived value — consumer configs carrying the
-    # key stay valid, and revalidating an already-resolved config is idempotent —
-    # but a value that disagrees with the mode is an error rather than a silent
-    # overwrite.
-    derived_backend = STATE_BACKEND_BY_POSTING_MODE[mode]
-    declared_backend = state.get("backend")
-    if declared_backend is not None and declared_backend != derived_backend:
-        raise ConfigError(
-            f"state.backend is derived from posting.mode: {mode} implies "
-            f"{derived_backend}, got {declared_backend!r}; remove the key"
-        )
-    state["backend"] = derived_backend
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    unknown = set(config) - TOP_LEVEL_KEYS
-    if unknown:
-        raise ConfigError(f"unknown top-level config keys: {sorted(unknown)}")
+    _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     declared_version = config.get("schema_version")
     if declared_version == "review_config.v2":
         # A version string whose accepted shape changes is not a contract. v3
@@ -501,6 +540,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     _validate_posting(config)
+    _validate_state(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict):
         raise ConfigError("reviewers must be a mapping")
@@ -520,7 +560,12 @@ def validate_config(config: dict[str, Any]) -> None:
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
             raise ConfigError(f"reviewer {name} must be a mapping")
-        _reject_unknown_keys(reviewer, REVIEWER_ALLOWED_KEYS, f"reviewers.{name}")
+        _reject_unknown_keys(
+            reviewer,
+            REVIEWER_ALLOWED_KEYS,
+            f"reviewers.{name}",
+            removal_path="reviewers.<name>",
+        )
         missing_keys = REVIEWER_REQUIRED_KEYS - set(reviewer)
         if missing_keys:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing_keys)}")

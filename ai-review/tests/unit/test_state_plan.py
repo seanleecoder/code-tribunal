@@ -10,10 +10,15 @@ that was impossible, because planning and mutation lived in one module.
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 from typing import Any, cast
 
 from ai_review.state_plan import plan_state
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import runtime_config  # noqa: E402
 
 
 def _manifest() -> dict[str, str]:
@@ -25,14 +30,16 @@ def _manifest() -> dict[str, str]:
     }
 
 
-def _config(*, min_resolution: int = 1) -> dict[str, Any]:
-    return {
-        "panel": {"min_successful_reviewers_for_resolution": min_resolution},
-        "state": {
-            "backend": "gitlab_mr_state_note",
-            "retention": {"max_records": 200, "max_state_bytes": 50000},
-        },
-    }
+def _config(
+    *, min_resolution: int = 1, retention: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A validated config — still a plain dict, still no platform client."""
+
+    def mutate(config: dict[str, Any]) -> None:
+        config["panel"]["min_successful_reviewers_for_resolution"] = min_resolution
+        config["state"]["retention"].update(retention or {})
+
+    return runtime_config(mutate)
 
 
 def _consensus(*, eligible: list[str] | None = None) -> dict[str, Any]:
@@ -209,8 +216,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, issue_id), "wontfix")
 
     def test_retention_overflow_is_reported_and_clears_the_issue_index(self) -> None:
-        config = _config()
-        config["state"]["retention"] = {"max_records": 200, "max_state_bytes": 1}
+        config = _config(retention={"max_state_bytes": 1})
         plan = _plan(config=config, inline=[_group("a" * 64)])
 
         self.assertIsNotNone(plan.outcome.overflow)

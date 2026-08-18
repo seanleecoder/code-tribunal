@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import STATE_NOTE_SPEC_RE
+from ai_review.memory import STATE_NOTE_SPEC_RE, state_note_candidates
+from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.github import STATE_MARKER, PullRequestVersion
 
 
@@ -211,8 +212,22 @@ class FakeGitHubClient:
         """Bodies of the root inline review comments, in creation order."""
         return [str(comment["body"]) for comment in self._comments if "path" in comment]
 
-    def state_comment_count(self) -> int:
-        return len(self._issue_comments)
+    # The same vocabulary the GitLab fakes expose, over the PR issue comments
+    # that hold what an MR keeps in notes. The count these replaced was over
+    # every issue comment, so it could not tell a state comment from a summary
+    # one and read as 2 whenever both were present.
+    @property
+    def state_notes(self) -> list[dict[str, Any]]:
+        candidates, _warnings, _mismatches = state_note_candidates(self._issue_comments)
+        return candidates
+
+    @property
+    def summary_notes(self) -> list[dict[str, Any]]:
+        return [
+            comment
+            for comment in self._issue_comments
+            if SUMMARY_MARKER_RE.search(str(comment.get("body", ""))) is not None
+        ]
 
     @staticmethod
     def _thread(comment: dict[str, Any]) -> dict[str, Any]:

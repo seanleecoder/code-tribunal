@@ -58,11 +58,6 @@ class StatePlan:
     outcome: PlanOutcome
 
 
-def _state_enabled(config: dict[str, Any]) -> bool:
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    return state_config.get("backend") in {"gitlab_mr_state_note", "github_pr_comment"}
-
-
 def _pipeline_id(manifest: dict[str, Any]) -> str:
     return os.environ.get("CI_PIPELINE_ID") or str(manifest.get("run_id") or "")
 
@@ -368,14 +363,15 @@ def _process_state_for_persistence(
     pipeline_id: str,
     retention: dict[str, Any],
 ) -> tuple[State, str | None]:
-    processed_state = normalize_state(state, manifest=manifest, pipeline_id=pipeline_id)
-    processed_state = compact_state(processed_state, retention)
+    compacted = compact_state(
+        normalize_state(state, manifest=manifest, pipeline_id=pipeline_id), retention
+    )
     overflow = state_overflow_reason(
-        processed_state,
+        compacted,
         max_records=int(retention.get("max_records", 200)),
         max_state_bytes=int(retention.get("max_state_bytes", 50000)),
     )
-    return cast(State, processed_state), overflow
+    return cast(State, compacted), overflow
 
 
 def plan_state(
@@ -511,8 +507,7 @@ def plan_state(
         pipeline_id=pipeline_id,
         retention=retention,
     )
-    if _state_enabled(config) and overflow is not None:
-        outcome.overflow = overflow
+    outcome.overflow = overflow
 
     return StatePlan(
         persisted_state=persisted_state,

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import encode_state_note
+from ai_review.memory import encode_state_note, state_note_candidates
+from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
@@ -29,6 +30,34 @@ class FakePostClient:
         self.updated_mr_notes: list[dict[str, Any]] = []
         self.created_positions: list[dict[str, Any]] = []
         self.created_bodies: list[str] = []
+        self.resolve_calls: list[dict[str, Any]] = []
+
+    @property
+    def state_notes(self) -> list[dict[str, Any]]:
+        """MR notes carrying the machine-owned state payload.
+
+        Every valid configuration persists state, so a posting run writes one of
+        these alongside any summary note. Tests that care about product output
+        assert on ``summary_notes`` and stay readable. Both properties recognize
+        a note the way production does -- by the marker it wrote -- so a fake can
+        never disagree with the runtime about what a note is.
+        """
+        candidates, _warnings, _mismatches = state_note_candidates(self.mr_notes)
+        return candidates
+
+    @property
+    def summary_notes(self) -> list[dict[str, Any]]:
+        return [
+            note
+            for note in self.mr_notes
+            if SUMMARY_MARKER_RE.search(str(note.get("body", ""))) is not None
+        ]
+
+    @property
+    def updated_summary_notes(self) -> list[dict[str, Any]]:
+        """Edits to reader-facing notes, excluding the state note's own rewrite."""
+        summary_ids = {note["id"] for note in self.summary_notes}
+        return [entry for entry in self.updated_mr_notes if entry["note_id"] in summary_ids]
 
     def current_user(self) -> dict[str, Any]:
         return {"id": 10, "username": "ai-review-bot"}
@@ -107,7 +136,10 @@ class FakePostClient:
 
     def create_state_note(self, project_id: str, change_id: str, body: str) -> dict[str, Any]:
         note_id = 900 + len(self.mr_notes)
-        note = {"id": note_id, "body": body}
+        # Authored by the bot, like the real platform: state-note lookup rejects
+        # notes from any other author, so a fake that omits this would make every
+        # run discard the state it just wrote.
+        note = {"id": note_id, "body": body, "author": {"id": 10}}
         self.mr_notes.append(note)
         # Individual MR notes are returned by the discussions listing too, so a
         # subsequent run can find and upsert the same summary note.
@@ -118,24 +150,17 @@ class FakePostClient:
         self, project_id: str, change_id: str, note_id: int, body: str
     ) -> dict[str, Any]:
         self.updated_mr_notes.append({"note_id": note_id, "body": body})
+        for note in self.mr_notes:
+            if note.get("id") == note_id:
+                note["body"] = body
         for discussion in self.discussions:
             for note in discussion.get("notes", []):
                 if note.get("id") == note_id:
                     note["body"] = body
         return {"id": note_id, "body": body}
 
-
-class DiffFailPostClient(FakePostClient):
-    def fetch_diff(self, project_id: str, change_id: str) -> str:
-        raise RuntimeError("diff unavailable")
-
-
-class StatePostClient(FakePostClient):
-    def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
-        super().__init__(current_head_sha)
-        self.resolve_calls: list[dict[str, Any]] = []
-        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": 10}}]
-
+    # Thread reconciliation runs on every posting run now, so the base fake owns
+    # resolve_thread rather than leaving it to the state-specific subclass.
     def resolve_thread(
         self,
         project_id: str,
@@ -145,3 +170,16 @@ class StatePostClient(FakePostClient):
     ) -> dict[str, Any]:
         self.resolve_calls.append({"discussion_id": thread_id, "resolved": resolved})
         return {"id": thread_id, "resolved": resolved}
+
+
+class DiffFailPostClient(FakePostClient):
+    def fetch_diff(self, project_id: str, change_id: str) -> str:
+        raise RuntimeError("diff unavailable")
+
+
+class StatePostClient(FakePostClient):
+    """A client that starts with a persisted state note already in place."""
+
+    def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
+        super().__init__(current_head_sha)
+        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": 10}}]

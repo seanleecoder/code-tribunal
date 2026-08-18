@@ -3,10 +3,10 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54, SPEC-55, and SPEC-56 are implemented. SPEC-57 through SPEC-61 are
-  pending implementation.
+- **Status:** SPEC-54 through SPEC-57 are implemented, which closes `review_config.v3`.
+  SPEC-58 through SPEC-61 are pending implementation.
 
-Sections below that describe SPEC-54/55/56 work state what was done, not what to do. Read them
+Sections below that describe SPEC-54/55/56/57 work state what was done, not what to do. Read them
 as record; the shipped contract is the code, the tests, and
 [`CHANGELOG.md`](../../../CHANGELOG.md).
 
@@ -42,17 +42,18 @@ deleted, as [the improvement-spec index](../README.md) requires of every complet
 [`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
 specs that follow state their dependencies in terms of them.
 
-SPEC-56 landed as its own change series; its document is still here and will be deleted in a
-follow-up, once that series is on `main`. Deleting it in the same change that introduced it
-would leave no trace, because this repository squash-merges. The SPEC-57 through SPEC-61
-documents land with this change series; their implementations follow.
+SPEC-56 and SPEC-57 each landed as their own change series; their documents are still here and
+will be deleted in a follow-up, once those series are on `main`. Deleting a document in the
+same change that implemented it would leave no trace, because this repository squash-merges.
+The SPEC-58 through SPEC-61 documents land with this change series; their implementations
+follow.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
 | SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
 | SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
 | [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
-| [SPEC-57](spec-57-always-on-state-path-pruning.md) | Always-on state path pruning | Behavior-preserving cleanup | SPEC-54/55 config version coordination |
+| [SPEC-57](spec-57-always-on-state-path-pruning.md) — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
 | [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
 | [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
 | [SPEC-60](spec-60-critique-quality-observability.md) | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
@@ -72,15 +73,15 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
    in which the consensus schema had lost fields the renderer still read through defaulted
    lookups — was avoided by shipping them as one series, and is now spent. There is no merge
    gate left for a future step to coordinate with.
-3. **Implement SPEC-56 and SPEC-57.** These may be separate pull requests. The policy
+3. ~~**Implement SPEC-56 and SPEC-57.**~~ **Done.** They shipped as separate pull requests. The policy
    contracts they coordinate with — `consensus.v2` and `review_config.v3` — have landed on
    `main` and are stable in shape, but neither has appeared in a tagged release: the newest
    release still ships `review_config.v1`. `review_config.v3` is jointly defined by SPEC-54
-   through SPEC-57 and is not closed until SPEC-57 lands. Note that SPEC-54/55 already removed
-   `merge_gate`, `posting.fallback_to_summary_comment`, and
-   `limits.max_posted_surface_findings` from `review_config.v3`; **SPEC-56 and SPEC-57 each
-   append to that same removal list rather than opening a new config version.** SPEC-57, as
-   the last config-changing spec, owns the final consolidated migration message.
+   through SPEC-57 and closed when SPEC-57 landed. SPEC-54/55 removed `merge_gate`,
+   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings`; SPEC-56
+   appended the two reviewer keys and SPEC-57 appended `state.backend`, each to that same
+   removal list rather than opening a new config version. SPEC-57, as the last
+   config-changing spec, owns the final consolidated migration message.
 4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
    tests rather than add a second suite beside them. Some of this arrived early: landing
    SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so

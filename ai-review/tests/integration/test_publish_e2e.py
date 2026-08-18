@@ -45,7 +45,7 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(post_result["created_discussions"], 1)
         self.assertEqual(post_result["summary_comment"]["action"], "none")
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes()), 0)
+        self.assertEqual(len(client.summary_notes), 0)
         # A blocker is an impact label. Publication succeeded, so the job passes.
         self.assertEqual(exit_code, 0)
 
@@ -58,14 +58,13 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(post_result["created_discussions"], 0)
         self.assertEqual(client.discussion_count(), 0)
         self.assertEqual(post_result["summary_comment"]["action"], "created")
-        self.assertEqual(len(client.summary_notes()), 1)
+        self.assertEqual(len(client.summary_notes), 1)
         self.assertEqual(exit_code, 0)
 
     def test_github_reviews_posts_inline_and_exits_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -77,14 +76,13 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
-        self.assertEqual(client.state_comment_count(), 1)
+        self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(post_result["status"]), 0)
 
     def test_github_fyi_summary_updates_on_rerun(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._fyi_batches(), config)
@@ -97,14 +95,14 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(first_post["summary_comment"]["action"], "created")
         self.assertEqual(second_post["summary_comment"]["action"], "unchanged")
         self.assertEqual(client.review_comment_count(), 0)
-        self.assertEqual(client.state_comment_count(), 2)
+        self.assertEqual(len(client.summary_notes), 1)
+        self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(second_post["status"]), 0)
 
     def test_github_rerun_with_unchanged_state_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
             config["posting"]["mode"] = "github_reviews"
-            config["state"]["backend"] = "github_pr_comment"
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -118,7 +116,7 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(second_post["created_discussions"], 0)
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.review_comment_count(), 1)
-        self.assertEqual(client.state_comment_count(), 1)
+        self.assertEqual(len(client.state_notes), 1)
 
     def test_hostile_literal_body_rerun_is_idempotent_on_both_platforms(self) -> None:
         for posting_mode in ("gitlab_discussions", "github_reviews"):
@@ -137,7 +135,6 @@ class PublishEndToEndTests(unittest.TestCase):
 
                 if posting_mode == "github_reviews":
                     config["posting"]["mode"] = posting_mode
-                    config["state"]["backend"] = "github_pr_comment"
                     manifest = dict(
                         manifest,
                         project_id="octo-org/octo-repo",
@@ -184,8 +181,8 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(second_post["updated_discussions"], 0)
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes()), 0)
-        self.assertEqual(len(client.state_notes()), 1)
+        self.assertEqual(len(client.summary_notes), 0)
+        self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(second_post["status"]), 0)
 
     def _run_e2e(
