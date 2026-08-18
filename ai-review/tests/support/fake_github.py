@@ -4,11 +4,7 @@ from typing import Any
 
 from ai_review.memory import STATE_NOTE_SPEC_RE, state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
-from ai_review.platform.github import (
-    STATE_MARKER,
-    GitHubReviewPlatform,
-    PullRequestVersion,
-)
+from ai_review.platform.github import STATE_MARKER, PullRequestVersion, build_position
 
 
 class FakeGitHubClient:
@@ -32,7 +28,6 @@ class FakeGitHubClient:
         # the state rather than acknowledge the call: a thread that reports itself
         # unresolved after a resolve is how a reopen would silently stop working.
         self.resolved_threads: dict[str, bool] = {}
-        self.resolve_calls: list[dict[str, Any]] = []
 
     def _id(self) -> int:
         self._next_id += 1
@@ -148,7 +143,6 @@ class FakeGitHubClient:
         resolved: bool = True,
     ) -> dict[str, Any]:
         self.resolved_threads[str(thread_id)] = resolved
-        self.resolve_calls.append({"thread_id": str(thread_id), "resolved": resolved})
         for thread in self.list_threads(project_id_or_path, change_id):
             if thread["id"] == str(thread_id):
                 return thread
@@ -202,9 +196,8 @@ class FakeGitHubClient:
         # Delegate rather than re-derive. The hand-written copy this replaced pinned
         # side to RIGHT and ignored `multiline`, so it could not produce an old-side
         # or multiline position at all -- a fake that cannot express a shape is a
-        # fake that silently excuses the product from handling it. The production
-        # method reads nothing off `self`.
-        return GitHubReviewPlatform.build_position(self, anchor, version, multiline=multiline)
+        # fake that silently excuses the product from handling it.
+        return build_position(anchor, version, multiline=multiline)
 
     def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
         return "start_line" in position

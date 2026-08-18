@@ -20,13 +20,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ai_review.reviewers import trusted_runtime_root
+
 from .manifest import (
     CLI_MODULES,
     PACKAGED_FIXTURES,
     RUNTIME_FILES,
     RUNTIME_MODULES,
 )
-from .paths import packaged_root
 
 # Set by ai-review/images/base.Dockerfile and by nothing else; documented in
 # docs/configuration.md as carrying no production runtime behavior. It is the one
@@ -38,7 +39,7 @@ _PACKAGED_RUNTIME_MARKER = "AI_REVIEW_PACKAGED_RUNTIME"
 
 class PackagedBaseImageTests(unittest.TestCase):
     def test_expected_runtime_files_exist(self) -> None:
-        root = packaged_root()
+        root = trusted_runtime_root()
         for relative in RUNTIME_FILES:
             with self.subTest(path=relative):
                 self.assertTrue(
@@ -54,7 +55,7 @@ class PackagedBaseImageTests(unittest.TestCase):
         image's own tree, which is what the base preflight used to do as inline
         ``test -f`` / ``test -d`` shell.
         """
-        root = packaged_root()
+        root = trusted_runtime_root()
         for relative, kind in PACKAGED_FIXTURES:
             with self.subTest(path=relative):
                 target = root / relative
@@ -92,11 +93,11 @@ class PackagedBaseImageTests(unittest.TestCase):
 
     def test_default_config_loads(self) -> None:
         """The document a consumer pipeline gets when it sets no ``AI_REVIEW_CONFIG``."""
-        from ai_review.config import load_config
+        from ai_review.config import CONFIG_SCHEMA_VERSION, load_config
 
-        config = load_config(packaged_root() / "config" / "review.yaml")
+        config = load_config(trusted_runtime_root() / "config" / "review.yaml")
 
-        self.assertEqual(config["schema_version"], "review_config.v3")
+        self.assertEqual(config["schema_version"], CONFIG_SCHEMA_VERSION)
         self.assertTrue(config["reviewers"])
 
     def test_tmp_is_writable_for_adapter_scratch_space(self) -> None:
@@ -127,11 +128,11 @@ class PackagedBaseImageTests(unittest.TestCase):
         if os.environ.get(_PACKAGED_RUNTIME_MARKER) != "1":
             self.skipTest(f"{_PACKAGED_RUNTIME_MARKER} is unset; not a packaged runtime")
 
-        blocked = packaged_root() / "smoke-should-not-be-writable"
+        blocked = trusted_runtime_root() / "smoke-should-not-be-writable"
         with self.assertRaises(OSError) as caught:
             blocked.write_text("", encoding="utf-8")
         self.assertEqual(
             caught.exception.errno,
             errno.EROFS,
-            f"expected a read-only filesystem at {packaged_root()}",
+            f"expected a read-only filesystem at {trusted_runtime_root()}",
         )

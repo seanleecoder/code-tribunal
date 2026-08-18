@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import pytest
 from ai_review.commands import collect_human_commands
@@ -78,26 +78,31 @@ def _github_fake(**kwargs: Any) -> FakeGitHubClient:
     return FakeGitHubClient(head_sha="2" * 40, diff_text=DIFF_TEXT, **kwargs)
 
 
-# (label, fake factory, project id, adapter factory). The project id differs
-# because each platform names its own; nothing in the contract depends on which.
-_FAKES = (
-    ("gitlab", _gitlab_fake, "project"),
-    ("github", _github_fake, "octo/repo"),
+class _Platform(NamedTuple):
+    """One supported platform, named once. The project id differs because each
+    platform names its own; nothing in the contract depends on which."""
+
+    label: str
+    fake: Any
+    project: str
+    adapter: Any
+
+
+# The single table a new platform is added to. Both parametrize argument lists
+# below are derived from it, so a platform cannot be wired into one and missed in
+# the other -- which is what the module docstring above promises.
+_PLATFORMS = (
+    _Platform("gitlab", _gitlab_fake, "project", lambda session: GitLabReviewPlatform(
+        "https://gitlab.example.com/api/v4", "token", session=session
+    )),
+    _Platform("github", _github_fake, "octo/repo", lambda session: GitHubReviewPlatform(
+        "https://api.github.com", "token", bot_login="bot", session=session
+    )),
 )
-_ADAPTERS = (
-    (
-        "gitlab",
-        lambda session: GitLabReviewPlatform(
-            "https://gitlab.example.com/api/v4", "token", session=session
-        ),
-    ),
-    (
-        "github",
-        lambda session: GitHubReviewPlatform(
-            "https://api.github.com", "token", bot_login="bot", session=session
-        ),
-    ),
+_FAKES = tuple(
+    pytest.param(entry.fake, entry.project, id=entry.label) for entry in _PLATFORMS
 )
+_ADAPTERS = tuple(pytest.param(entry.adapter, id=entry.label) for entry in _PLATFORMS)
 
 _ANCHOR = {
     "old_path": "a.py",
@@ -126,21 +131,21 @@ def _open_thread(platform: ReviewPlatform, project: str, body: str = "body") -> 
     return dict(platform.create_inline_comment(project, 1, body, position))
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
 def test_fake_satisfies_the_review_platform_protocol(
-    label: str, factory: Any, project: str
+    factory: Any, project: str
 ) -> None:
     assert isinstance(factory(), ReviewPlatform)
 
 
-@pytest.mark.parametrize(("label", "adapter_factory"), _ADAPTERS)
-def test_adapter_exposes_the_review_platform_protocol(label: str, adapter_factory: Any) -> None:
+@pytest.mark.parametrize("adapter_factory", _ADAPTERS)
+def test_adapter_exposes_the_review_platform_protocol(adapter_factory: Any) -> None:
     assert isinstance(adapter_factory(_NoopSession()), ReviewPlatform)
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
 def test_platform_fetches_version_diff_and_current_head(
-    label: str, factory: Any, project: str
+    factory: Any, project: str
 ) -> None:
     fake = factory()
     platform = _platform(fake)
@@ -152,9 +157,9 @@ def test_platform_fetches_version_diff_and_current_head(
     assert platform.fetch_current_head_sha(project, 1) == fake.head_sha
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
 def test_platform_builds_single_and_multiline_positions(
-    label: str, factory: Any, project: str
+    factory: Any, project: str
 ) -> None:
     """A multiline position must be retryable as a single line, and collapse cleanly.
 
@@ -175,13 +180,11 @@ def test_platform_builds_single_and_multiline_positions(
     collapsed = platform.single_line_position(ranged)
     assert not platform.can_retry_as_single_line(collapsed)
     # Collapsing drops only the range; the location it anchors to is unchanged.
-    assert {k: v for k, v in collapsed.items()} == {
-        k: v for k, v in ranged.items() if k in collapsed
-    }
+    assert collapsed == {k: v for k, v in ranged.items() if k in collapsed}
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
-def test_platform_creates_and_updates_a_thread(label: str, factory: Any, project: str) -> None:
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
+def test_platform_creates_and_updates_a_thread(factory: Any, project: str) -> None:
     platform = _platform(factory())
     thread = _open_thread(platform, project, "first body")
 
@@ -195,8 +198,8 @@ def test_platform_creates_and_updates_a_thread(label: str, factory: Any, project
     assert updated["notes"][0]["body"] == "second body"
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
-def test_platform_resolves_and_reopens_a_thread(label: str, factory: Any, project: str) -> None:
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
+def test_platform_resolves_and_reopens_a_thread(factory: Any, project: str) -> None:
     """Reopen is the other direction of the same call, and it is load-bearing.
 
     A human `wontfix` resolves a thread and a later reappearance reopens it, so a
@@ -216,9 +219,9 @@ def test_platform_resolves_and_reopens_a_thread(label: str, factory: Any, projec
     assert reopened["resolved"] is False
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
 def test_platform_creates_and_updates_the_owned_state_note(
-    label: str, factory: Any, project: str
+    factory: Any, project: str
 ) -> None:
     """One machine-owned note per change, updated in place rather than appended.
 
@@ -241,9 +244,9 @@ def test_platform_creates_and_updates_the_owned_state_note(
     assert second_body in str(notes[0]["body"])
 
 
-@pytest.mark.parametrize(("label", "adapter_factory"), _ADAPTERS)
+@pytest.mark.parametrize("adapter_factory", _ADAPTERS)
 def test_adapter_maps_platform_failures_to_review_platform_error(
-    label: str, adapter_factory: Any
+    adapter_factory: Any
 ) -> None:
     """Posting handles one error type, so neither adapter may leak its own.
 
@@ -257,9 +260,9 @@ def test_adapter_maps_platform_failures_to_review_platform_error(
         platform.fetch_diff("project", 1)
 
 
-@pytest.mark.parametrize(("label", "factory", "project"), _FAKES)
+@pytest.mark.parametrize(("factory", "project"), _FAKES)
 def test_platform_preserves_author_identity_for_state_and_authorization(
-    label: str, factory: Any, project: str
+    factory: Any, project: str
 ) -> None:
     """Two decisions read identity, so both halves of it must survive the boundary.
 

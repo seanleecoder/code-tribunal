@@ -82,10 +82,12 @@ jobs:
           # --read-only --tmpfs /tmp is part of what is under test: the suite asserts
           # that the runtime root is read-only and the temp mount is writable, which is
           # the arrangement every review job runs under.
+          #
+          # compileall runs in the same container rather than a second one with the
+          # same flags: the build already compiled this tree, so this only re-proves
+          # it under --read-only, which does not need a container start of its own.
           docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m ai_review_smoke base
-          docker run --rm --workdir /tmp --read-only --tmpfs /tmp "$AI_REVIEW_BASE_TAG" \
-            python -m compileall -q /opt/ai-review/src
+            sh -euc 'python -m ai_review_smoke base && python -m compileall -q /opt/ai-review/src'
           # Run this as early as possible because the complete checkout validator
           # intentionally requires a pristine workspace, including ignored files.
           # The default checkout ref must resolve to GITHUB_SHA; update the expected

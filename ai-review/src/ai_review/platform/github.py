@@ -30,6 +30,32 @@ def _github_side(anchor: Anchor) -> str:
     return "LEFT" if anchor.get("side") == "old" else "RIGHT"
 
 
+def build_position(
+    anchor: Anchor, version: PullRequestVersion, *, multiline: bool = False
+) -> Position:
+    """Derive a review-comment position from an anchor.
+
+    Free-standing because it reads nothing off the platform, which lets the fakes
+    call the real derivation instead of keeping a second copy that can express
+    fewer shapes than the product does. The GitLab port is arranged the same way.
+    """
+    start = anchor["start"]
+    end = anchor["end"]
+    line_key = "old_line" if anchor.get("side") == "old" else "new_line"
+    position: Position = {
+        "commit_id": version.head_sha,
+        "path": anchor.get("old_path")
+        if anchor.get("side") == "old"
+        else anchor.get("new_path"),
+        "line": end.get(line_key) or start.get(line_key),
+        "side": _github_side(anchor),
+    }
+    if multiline and start != end:
+        position["start_line"] = start.get(line_key)
+        position["start_side"] = _github_side(anchor)
+    return position
+
+
 class GitHubReviewPlatform:
     """GitHub implementation of the ReviewPlatform port.
 
@@ -579,21 +605,7 @@ class GitHubReviewPlatform:
     def build_position(
         self, anchor: Anchor, version: PullRequestVersion, *, multiline: bool = False
     ) -> Position:
-        start = anchor["start"]
-        end = anchor["end"]
-        line_key = "old_line" if anchor.get("side") == "old" else "new_line"
-        position: Position = {
-            "commit_id": version.head_sha,
-            "path": anchor.get("old_path")
-            if anchor.get("side") == "old"
-            else anchor.get("new_path"),
-            "line": end.get(line_key) or start.get(line_key),
-            "side": _github_side(anchor),
-        }
-        if multiline and start != end:
-            position["start_line"] = start.get(line_key)
-            position["start_side"] = _github_side(anchor)
-        return position
+        return build_position(anchor, version, multiline=multiline)
 
     def can_retry_as_single_line(self, position: Position) -> bool:
         return "start_line" in position

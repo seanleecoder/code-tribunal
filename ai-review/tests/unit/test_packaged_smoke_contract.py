@@ -15,6 +15,7 @@ reason or fail for one. ``make packaged-smoke`` is the command for running them.
 from __future__ import annotations
 
 import ast
+import functools
 import sys
 import unittest
 from pathlib import Path
@@ -43,30 +44,14 @@ class PackagedSmokeManifestTests(unittest.TestCase):
                 )
                 self.assertEqual(present_case_ids(scope), smoke_manifest.MANIFEST[scope])
 
-    def test_scopes_manifest_and_case_modules_agree(self) -> None:
-        """Three declarations name the scopes; a new one must update all of them."""
-        self.assertEqual(set(smoke_manifest.SCOPES), set(smoke_manifest.MANIFEST))
-        self.assertEqual(set(smoke_manifest.SCOPES), set(smoke_manifest.SCOPE_CASE_MODULES))
-
     def test_every_case_module_belongs_to_exactly_one_scope(self) -> None:
-        """A case module nobody registered would never run, and nothing would say so."""
-        registered = {
-            module
-            for modules in smoke_manifest.SCOPE_CASE_MODULES.values()
-            for module in modules
-        }
-        on_disk = {
-            f"ai_review_smoke.{path.stem}"
-            for path in _SMOKE_ROOT.glob("*_cases.py")
-        }
+        """A case module nobody declared would never run, and nothing would say so."""
+        per_scope = [smoke_manifest.scope_case_modules(scope) for scope in smoke_manifest.SCOPES]
+        declared = {module for modules in per_scope for module in modules}
+        on_disk = {f"ai_review_smoke.{path.stem}" for path in _SMOKE_ROOT.glob("*_cases.py")}
 
-        self.assertEqual(registered, on_disk)
-        assigned = [
-            module
-            for modules in smoke_manifest.SCOPE_CASE_MODULES.values()
-            for module in modules
-        ]
-        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertEqual(declared, on_disk)
+        self.assertEqual(sum(len(modules) for modules in per_scope), len(declared))
 
     def test_unknown_scope_is_refused(self) -> None:
         with self.assertRaises(SmokeManifestError):
@@ -86,12 +71,10 @@ class PackagedSmokeManifestTests(unittest.TestCase):
         The previous inline loop named three CLIs and silently omitted cursor-agent
         and the pinned ripgrep, both of which the adapters resolve at review time.
         """
-        named = {command[0] for command in smoke_manifest.PINNED_CLI_VERSION_COMMANDS}
-
-        self.assertEqual(named, {"claude", "codex", "opencode", "cursor-agent", "rg"})
-        for command in smoke_manifest.PINNED_CLI_VERSION_COMMANDS:
-            with self.subTest(cli=command[0]):
-                self.assertEqual(command[1], "--version")
+        self.assertEqual(
+            set(smoke_manifest.PINNED_CLIS),
+            {"claude", "codex", "opencode", "cursor-agent", "rg"},
+        )
 
 
 class PackagedSmokeShippingConstraintTests(unittest.TestCase):
@@ -122,15 +105,19 @@ class PackagedSmokeShippingConstraintTests(unittest.TestCase):
                 self.assertFalse(unexpected, f"{source.name} imports {sorted(unexpected)}")
 
 
-def _import_roots(source: Path) -> set[str]:
-    """Top-level package names ``source`` imports, absolute imports only."""
+@functools.cache
+def _import_roots(source: Path) -> frozenset[str]:
+    """Top-level package names ``source`` imports, absolute imports only.
+
+    Cached because both shipping-constraint cases scan the same handful of files.
+    """
     roots: set[str] = set()
     for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             roots.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             roots.add(node.module.split(".")[0])
-    return roots
+    return frozenset(roots)
 
 
 if __name__ == "__main__":

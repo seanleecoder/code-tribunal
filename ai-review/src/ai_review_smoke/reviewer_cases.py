@@ -24,12 +24,21 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from .manifest import PINNED_CLI_VERSION_COMMANDS
-from .paths import packaged_root
+from ai_review.reviewers import trusted_runtime_root
+
+from .manifest import PACKAGED_FIXTURES, PINNED_CLIS
 
 # Generous relative to a mock run, which does no network I/O, but bounded so a
 # hung CLI fails the preflight instead of the job's own wall clock.
 _STEP_TIMEOUT_SECONDS = 300
+
+
+def _fixture(kind: str) -> str:
+    """The single declared packaged fixture of ``kind``, relative to the root."""
+    paths = [relative for relative, entry_kind in PACKAGED_FIXTURES if entry_kind == kind]
+    if len(paths) != 1:
+        raise AssertionError(f"expected exactly one packaged {kind} fixture, got {paths}")
+    return paths[0]
 
 
 class PackagedReviewerImageTests(unittest.TestCase):
@@ -45,7 +54,7 @@ class PackagedReviewerImageTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         from ai_review.reviewers import REVIEWER_IDS
 
-        root = packaged_root()
+        root = trusted_runtime_root()
         cls.seats = tuple(sorted(REVIEWER_IDS))
         cls._workspace = Path(tempfile.mkdtemp(prefix="ai-review-packaged-smoke."))
         input_dir = cls._workspace / "inputs"
@@ -78,10 +87,13 @@ class PackagedReviewerImageTests(unittest.TestCase):
                 "local",
                 "--config",
                 cls._env["AI_REVIEW_CONFIG"],
+                # Resolved from the same declaration the base scope asserts the
+                # presence of, so the manifest and the run cannot disagree about
+                # which fixtures the preflight actually reads.
                 "--diff",
-                str(root / "tests" / "fixtures" / "diffs" / "simple.diff"),
+                str(root / _fixture("file")),
                 "--repo",
-                str(root / "tests" / "fixtures" / "repos" / "simple"),
+                str(root / _fixture("directory")),
                 "--out",
                 str(input_dir),
             ]
@@ -141,7 +153,7 @@ class PackagedReviewerImageTests(unittest.TestCase):
         """A lost execute bit is invisible until a review job tries to spawn one."""
         from ai_review.reviewers import REVIEWERS, resolve_adapter_path
 
-        scripts = [packaged_root() / "adapters" / "run_reviewer.sh"]
+        scripts = [trusted_runtime_root() / "adapters" / "run_reviewer.sh"]
         scripts.extend(resolve_adapter_path(definition) for definition in REVIEWERS.values())
         for script in scripts:
             with self.subTest(script=script.name):
@@ -149,17 +161,16 @@ class PackagedReviewerImageTests(unittest.TestCase):
                 self.assertTrue(os.access(script, os.X_OK), f"{script} is not executable")
 
     def test_pinned_clis_report_a_version(self) -> None:
-        for command in PINNED_CLI_VERSION_COMMANDS:
-            with self.subTest(cli=command[0]):
+        for cli in PINNED_CLIS:
+            with self.subTest(cli=cli):
                 self.assertIsNotNone(
-                    shutil.which(command[0]),
-                    f"{command[0]} does not resolve on the image PATH",
+                    shutil.which(cli), f"{cli} does not resolve on the image PATH"
                 )
-                completed = self._run(list(command))
+                completed = self._run([cli, "--version"])
                 self.assertEqual(
                     completed.returncode,
                     0,
-                    f"{' '.join(command)} failed:\n{completed.stdout}\n{completed.stderr}",
+                    f"{cli} --version failed:\n{completed.stdout}\n{completed.stderr}",
                 )
 
     def test_local_mock_review_validates_every_seats_batch(self) -> None:

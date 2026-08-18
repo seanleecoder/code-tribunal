@@ -19,6 +19,8 @@ Two kinds of manifest live here, and both are identity checks rather than counts
 
 from __future__ import annotations
 
+from ai_review.reviewers import REVIEWERS
+
 # Every module in the shipped ``ai_review`` package. The checkout contract test
 # asserts this equals what the package actually contains, in both directions:
 # a module added without editing this list fails there, and a module named here
@@ -75,18 +77,22 @@ CLI_MODULES: tuple[str, ...] = (
 # Runtime paths relative to the packaged root (``/opt/ai-review``). Files an
 # adapter, a prompt render, or a config load reaches for at review time; a
 # missing one is an image packaging bug that no checkout test can see.
-RUNTIME_FILES: tuple[str, ...] = (
-    "adapters/claude.sh",
-    "adapters/codex.sh",
-    "adapters/common.sh",
-    "adapters/cursor.sh",
-    "adapters/opencode.sh",
-    "adapters/run_reviewer.sh",
-    "adapters/validate_output.py",
-    "config/review.yaml",
-    "prompts/critique.md",
-    "prompts/review.md",
-    "rules/README.md",
+# The per-seat adapter scripts are the registry's own ``adapter_path`` values
+# rather than a copy of them, so a seat added to ``REVIEWERS`` is required to ship
+# here without anyone remembering to extend this list.
+RUNTIME_FILES: tuple[str, ...] = tuple(
+    sorted(
+        {definition.adapter_path for definition in REVIEWERS.values()}
+        | {
+            "adapters/common.sh",
+            "adapters/run_reviewer.sh",
+            "adapters/validate_output.py",
+            "config/review.yaml",
+            "prompts/critique.md",
+            "prompts/review.md",
+            "rules/README.md",
+        }
+    )
 )
 
 # The fixture paths the reviewer preflight resolves ``--diff`` and ``--repo``
@@ -98,13 +104,14 @@ PACKAGED_FIXTURES: tuple[tuple[str, str], ...] = (
 )
 
 # Pinned CLIs the reviewer image installs. Present in the reviewer tag only, so
-# these run under the reviewer scope.
-PINNED_CLI_VERSION_COMMANDS: tuple[tuple[str, ...], ...] = (
-    ("claude", "--version"),
-    ("codex", "--version"),
-    ("opencode", "--version"),
-    ("cursor-agent", "--version"),
-    ("rg", "--version"),
+# these run under the reviewer scope. Each is probed with ``--version``; that was
+# a second column here until it was the same string in every row.
+PINNED_CLIS: tuple[str, ...] = (
+    "claude",
+    "codex",
+    "opencode",
+    "cursor-agent",
+    "rg",
 )
 
 _BASE_CASES = "ai_review_smoke.base_cases.PackagedBaseImageTests"
@@ -138,11 +145,12 @@ MANIFEST: dict[str, frozenset[str]] = {
     ),
 }
 
-SCOPES: tuple[str, ...] = ("base", "reviewer")
+# Derived, not declared: every test ID already carries its scope (the key it is
+# filed under) and its module (everything before the class), so a second and third
+# table naming the same things could only ever drift from this one.
+SCOPES: tuple[str, ...] = tuple(MANIFEST)
 
-# Where each scope's cases live, so the loader and the checkout contract test
-# agree on which modules to introspect without rediscovering them.
-SCOPE_CASE_MODULES: dict[str, tuple[str, ...]] = {
-    "base": ("ai_review_smoke.base_cases",),
-    "reviewer": ("ai_review_smoke.reviewer_cases",),
-}
+
+def scope_case_modules(scope: str) -> frozenset[str]:
+    """The modules ``scope``'s declared IDs live in, read back off the IDs."""
+    return frozenset(test_id.rsplit(".", 2)[0] for test_id in MANIFEST[scope])

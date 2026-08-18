@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib
 import unittest
 
-from .manifest import MANIFEST, SCOPE_CASE_MODULES
+from .manifest import MANIFEST, scope_case_modules
 
 
 class SmokeManifestError(AssertionError):
@@ -34,11 +34,6 @@ def _resolve(test_id: str) -> unittest.TestCase:
     return case_class(method_name)
 
 
-def declared_case_ids(scope: str) -> frozenset[str]:
-    """The IDs :data:`~ai_review_smoke.manifest.MANIFEST` promises for ``scope``."""
-    return MANIFEST[scope]
-
-
 def present_case_ids(scope: str) -> frozenset[str]:
     """The IDs ``scope``'s case modules actually define.
 
@@ -47,7 +42,7 @@ def present_case_ids(scope: str) -> frozenset[str]:
     without editing the manifest fails because it is present and undeclared.
     """
     found: set[str] = set()
-    for module_name in SCOPE_CASE_MODULES[scope]:
+    for module_name in sorted(scope_case_modules(scope)):
         module = importlib.import_module(module_name)
         for attribute in vars(module).values():
             if not (isinstance(attribute, type) and issubclass(attribute, unittest.TestCase)):
@@ -64,7 +59,7 @@ def build_suite(scope: str) -> unittest.TestSuite:
     """Return the suite for ``scope`` after proving it equals its manifest."""
     if scope not in MANIFEST:
         raise SmokeManifestError(f"unknown packaged smoke scope: {scope}")
-    declared = declared_case_ids(scope)
+    declared = MANIFEST[scope]
     cases = [_resolve(test_id) for test_id in sorted(declared)]
     loaded = frozenset(case.id() for case in cases)
     present = present_case_ids(scope)

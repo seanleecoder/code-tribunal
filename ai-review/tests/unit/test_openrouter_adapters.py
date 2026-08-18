@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1430,9 +1431,8 @@ PY
         """Drive one seat down the model_error path with a real CLI on PATH.
 
         `reviewer` stays a parameter because the fake CLI and the seat's
-        require-real control are seat-specific, but only the seats a case actually
-        uses are set up: per-seat branches for seats nobody drives would be dead
-        code that looks like coverage.
+        require-real control are seat-specific; the control itself comes off the
+        registry, so this works for any seat without a per-seat branch.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1453,8 +1453,7 @@ PY
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            if reviewer == "opencode":
-                os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
+            os.environ[REVIEWERS[reviewer].require_real_control] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             for key in _REVIEWER_OVERRIDE_KEYS:
