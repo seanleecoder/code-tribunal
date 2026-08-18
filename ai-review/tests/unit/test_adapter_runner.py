@@ -14,16 +14,12 @@ from unittest import mock
 
 from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import (
-    _ANTHROPIC_OPENROUTER_BASE_URL,
-    _OPENROUTER_BASE_URL,
     _SHELL_MOCK_ALLOW_REFUSAL,
-    _build_adapter_env,
     _effective_adapter_timeout_seconds,
     _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
-from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -39,91 +35,21 @@ _OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencod
 _CONFIG_TAIL = CONFIG_TAIL
 
 
-class AdapterEndpointValidationTests(unittest.TestCase):
-    def test_cursor_adapter_env_excludes_provider_endpoint_envs(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
-                "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
-                "OPENROUTER_API_KEY": "openrouter-secret",
-                "CURSOR_API_KEY": "cursor-secret",
-            },
-            clear=False,
-        ):
-            env = _build_adapter_env(
-                reviewer="cursor",
-                stage="review",
-                model="auto",
-                input_dir=Path("inputs"),
-                output_dir=Path("out"),
-                reviewer_config={"timeout_seconds": 900},
-                prompt_tmp=Path("prompt.md"),
-                reviewer_definition=REVIEWERS["cursor"],
-            )
+class AdapterModelIdValidationTests(unittest.TestCase):
+    """Model-ID format checking, run once: it is seat- and stage-independent.
 
-        self.assertEqual(env["CURSOR_API_KEY"], "cursor-secret")
-        self.assertNotIn("OPENROUTER_API_KEY", env)
-        self.assertNotIn("OPENROUTER_BASE_URL", env)
-        self.assertNotIn("ANTHROPIC_BASE_URL", env)
+    `_model_id_validation_error()` is a pure format check on the resolved model
+    string, applied before the runner resolves an adapter path.
 
-    def _endpoint_env(self, reviewer: str) -> dict[str, str]:
-        return {
-            key: value
-            for key, value in _build_adapter_env(
-                reviewer=reviewer,
-                stage="review",
-                model="anthropic/claude-haiku-4.5",
-                input_dir=Path("inputs"),
-                output_dir=Path("out"),
-                reviewer_config={"timeout_seconds": 900},
-                prompt_tmp=Path("prompt.md"),
-                reviewer_definition=REVIEWERS[reviewer],
-            ).items()
-            if key.endswith("BASE_URL")
-        }
-
-    def test_endpoint_is_injected_per_endpoint_kind_for_every_seat(self) -> None:
-        """The endpoint is an image-owned constant, not a forwarded input.
-
-        Each endpoint_kind has exactly one accepted host, so the runner supplies
-        it and no caller has to know the URL. This is what makes the image
-        preflight and `make review-local` work from a clean shell.
-        """
-        expected = {
-            "claude": {"ANTHROPIC_BASE_URL": _ANTHROPIC_OPENROUTER_BASE_URL},
-            "codex": {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
-            "opencode": {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
-            "cursor": {},
-        }
-        self.assertEqual(set(expected), set(REVIEWERS))
-
-        with mock.patch.dict(os.environ, {}, clear=True):
-            for reviewer, endpoints in expected.items():
-                with self.subTest(reviewer=reviewer):
-                    self.assertEqual(self._endpoint_env(reviewer), endpoints)
-
-    def test_injected_endpoint_overrides_hostile_ambient_value(self) -> None:
-        """An ambient lookalike host cannot influence egress.
-
-        These are provider-native variable names an unrelated developer or CI
-        shell may legitimately export, so they are overridden rather than
-        rejected — the boundary does not depend on the caller's environment.
-        """
-        hostile = {
-            "ANTHROPIC_BASE_URL": "https://openrouter.ai.evil.com/api",
-            "OPENROUTER_BASE_URL": "https://openrouter.ai.evil.com/api/v1",
-        }
-        with mock.patch.dict(os.environ, hostile, clear=False):
-            self.assertEqual(
-                self._endpoint_env("claude"),
-                {"ANTHROPIC_BASE_URL": _ANTHROPIC_OPENROUTER_BASE_URL},
-            )
-            self.assertEqual(
-                self._endpoint_env("codex"),
-                {"OPENROUTER_BASE_URL": _OPENROUTER_BASE_URL},
-            )
-            self.assertEqual(self._endpoint_env("cursor"), {})
+    Credential forwarding and endpoint injection used to be asserted here too, over a
+    hardcoded per-seat expectation table. Both are fields of the seat's
+    `ReviewerDefinition`, so the registry-driven cases in `test_reviewers.py` are the
+    single home for them -- `test_adapter_environment_copies_exact_registry_credentials`
+    and `test_endpoint_is_injected_from_the_registry_endpoint_kind`, the latter
+    covering the clean and hostile-ambient shells in one loop and failing when a new
+    `endpoint_kind` appears without declaring what it injects. A second copy here
+    could only drift.
+    """
 
     def test_model_id_requires_full_match(self) -> None:
         error = _model_id_validation_error("openai/gpt-5.6-luna\n")

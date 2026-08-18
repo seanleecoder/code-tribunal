@@ -643,8 +643,15 @@ class GitLabCiTemplateTests(unittest.TestCase):
             r"\"\$AI_REVIEW_BASE_TAG\".*?python -c",
         )
 
+        # Verification belongs to build-preflight and must never reappear in
+        # publish, which only loads, pushes, and attests an already-preflighted
+        # image. The pinned-CLI versions, the mock review, the schema validation,
+        # and the consensus run moved out of this loop and into the packaged smoke
+        # suite (SPEC-58); what the workflow still owns is the by-name invocation
+        # of that suite, so that is what is named here.
         for preflight in (
-            "python -m unittest discover",
+            "python -m ai_review_smoke base",
+            "python -m ai_review_smoke reviewer",
             "python -m compileall",
             "--user 65532:65532",
             'workdir /runner-checkout',
@@ -654,15 +661,22 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "checkout owner and container uid to differ",
             "preflight negative control expected dubious ownership",
             "from ai_review.input_bundle import _github_checkout_head",
-            "claude --version",
-            "codex --version",
-            "opencode --version",
-            "AI_REVIEW_LOCAL_MOCK=1",
-            'run_reviewer.sh "$reviewer" review',
-            "consensus.schema.json",
         ):
             self.assertIn(preflight, build_preflight)
             self.assertNotIn(preflight, publish)
+
+        # The preflight must not rerun the checkout suite against a bind mount, and
+        # must not reintroduce the inline shell the packaged suite absorbed: a second
+        # copy would drift from the suite it duplicates without failing anything.
+        for absorbed in (
+            "python -m unittest discover",
+            "/opt/ai-review/tests:ro",
+            "MIN_EXECUTED_TESTS",
+            "test -f /opt/ai-review/tests/fixtures/diffs/simple.diff",
+            "for module in input_bundle consensus post schema",
+            'run_reviewer.sh "$reviewer" review',
+        ):
+            self.assertNotIn(absorbed, text)
 
         for forbidden_publish_command in (
             "docker build",

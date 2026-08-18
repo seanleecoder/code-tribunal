@@ -14,8 +14,10 @@ from pathlib import Path
 
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.reviewers import REVIEWERS
-from ai_review.schema import load_json_file, write_canonical_json
+from ai_review.schema import load_json_file
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.adapter_inputs import write_adapter_input_bundle  # noqa: E402
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
@@ -73,137 +75,21 @@ _ENV_KEYS = [
 ]
 
 
-class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
-    def _write_inputs(self, input_dir: Path) -> None:
-        input_dir.mkdir(parents=True, exist_ok=True)
-        (input_dir / "mr.diff").write_text("", encoding="utf-8")
-        (input_dir / "config.review.yaml").write_text("reviewers: {}\n", encoding="utf-8")
-        (input_dir / "rules").mkdir()
-        (input_dir / "rules" / "rule.md").write_text("bundle rule\n", encoding="utf-8")
-        (input_dir / "prompts").mkdir()
-        (input_dir / "prompts" / "review.md").write_text("bundle prompt\n", encoding="utf-8")
-        (input_dir / ".opencode").mkdir()
-        (input_dir / ".opencode" / "agent.md").write_text("bundle agent\n", encoding="utf-8")
-        repo_snapshot = input_dir / "repo_snapshot"
-        repo_snapshot.mkdir()
-        (repo_snapshot / "src").mkdir()
-        (repo_snapshot / "src" / "reviewed.py").write_text("print('review me')\n", encoding="utf-8")
-        (repo_snapshot / "README.md").write_text("# Reviewed project\n", encoding="utf-8")
-        (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
-        (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
-        (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
-        (repo_snapshot / ".cursorrules").write_text("cursor project rules\n", encoding="utf-8")
-        (repo_snapshot / ".cursorignore").write_text("cursor ignore\n", encoding="utf-8")
-        (repo_snapshot / "CLAUDE.md").write_text("claude project rules\n", encoding="utf-8")
-        (repo_snapshot / ".opencode").mkdir()
-        (repo_snapshot / ".opencode" / "plugin.js").write_text(
-            "module.exports = {}\n", encoding="utf-8"
-        )
-        (repo_snapshot / ".cursor").mkdir()
-        (repo_snapshot / ".cursor" / "rules.md").write_text("cursor rules\n", encoding="utf-8")
-        (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
-        (repo_snapshot / ".codex").mkdir()
-        (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
-        (repo_snapshot / "nested").mkdir()
-        (repo_snapshot / "nested" / "AGENTS.md").write_text(
-            "nested agent instructions\n",
-            encoding="utf-8",
-        )
-        (repo_snapshot / "nested" / ".opencode").mkdir()
-        (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
-            "nested agent\n",
-            encoding="utf-8",
-        )
-        (repo_snapshot / "nested" / ".cursor").mkdir()
-        (repo_snapshot / "nested" / ".cursor" / "rules.md").write_text(
-            "nested cursor rules\n",
-            encoding="utf-8",
-        )
-        write_canonical_json(
-            input_dir / "manifest.json",
-            {
-                "schema_version": "input_manifest.v1",
-                "run_id": "local-test",
-                "project_id": "local",
-                "project_path": "local/project",
-                "merge_request_iid": "1",
-                "source_branch": "s",
-                "target_branch": "t",
-                "base_sha": "0" * 40,
-                "start_sha": "0" * 40,
-                "head_sha": "1" * 40,
-                "diff_sha256": "0" * 64,
-                "repo_snapshot_sha256": "0" * 64,
-                "config_sha256": "0" * 64,
-                "rules_sha256": "0" * 64,
-                "created_at": "2026-06-29T00:00:00Z",
-            },
-        )
-        write_canonical_json(
-            input_dir / "prior_decisions.json",
-            {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
-        )
+class ProviderAdapterBehaviorTests(unittest.TestCase):
+    """Behavior that genuinely differs between the four reviewer CLIs.
 
-    def _run_mocked(self, reviewer: str) -> dict[str, object]:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            input_dir = root / "inputs"
-            output_dir = root / "out"
-            self._write_inputs(input_dir)
-            previous = {key: os.environ.get(key) for key in _ENV_KEYS}
-            os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
-            os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
-            os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
-            os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
-            os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = "true"
-            if reviewer == "cursor":
-                os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-            # A clean shell: no credentials, no REQUIRE_REAL control, and no
-            # provider endpoint. This is the environment the reviewer-image
-            # preflight and `make review-local` actually run in, so every seat
-            # must reach the mock path without a caller supplying an endpoint.
-            for reviewer_definition in REVIEWERS.values():
-                os.environ.pop(reviewer_definition.require_real_control, None)
-                for credential in reviewer_definition.credential_variables:
-                    os.environ.pop(credential, None)
-            os.environ.pop("ANTHROPIC_BASE_URL", None)
-            os.environ.pop("OPENROUTER_BASE_URL", None)
-            try:
-                self.assertEqual(run_adapter(reviewer, "review"), 0)
-                return load_json_file(output_dir / "findings" / f"{reviewer}.json")
-            finally:
-                for key, value in previous.items():
-                    if value is None:
-                        os.environ.pop(key, None)
-                    else:
-                        os.environ[key] = value
+    Pinned-CLI runtime resolution, Claude's Anthropic-compatible OpenRouter route,
+    Codex config and effort flags, OpenCode's server/client and trusted ripgrep,
+    and Cursor's ask mode and disposable HOME. Behavior the shared runner
+    implements once for every seat lives in `test_reviewers.py` (per seat or per
+    stage) and `test_adapter_runner.py` (once), not restated here per provider.
+    """
 
-    def test_claude_mock_fallback_produces_valid_batch(self) -> None:
-        """The claude seat runs from a clean shell, with no endpoint supplied.
-
-        Its absence here is what let a claude-only endpoint requirement ship
-        green: the reviewer-image preflight loops over claude/codex/opencode and
-        `make review-local` defaults to claude, and neither exports a provider
-        endpoint. Both broke while the suite stayed green.
-        """
-        batch = self._run_mocked("claude")
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["reviewer"], "claude")
-
-    def test_codex_mock_fallback_produces_valid_batch(self) -> None:
-        batch = self._run_mocked("codex")
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["reviewer"], "codex")
-
-    def test_opencode_mock_fallback_produces_valid_batch(self) -> None:
-        batch = self._run_mocked("opencode")
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["reviewer"], "opencode")
-
-    def test_cursor_mock_fallback_produces_valid_batch_when_enabled(self) -> None:
-        batch = self._run_mocked("cursor")
-        self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["reviewer"], "cursor")
+    # The four per-seat copies of "the mock fallback produces a valid batch from a
+    # clean shell" are gone. That property is per seat and stage-independent, so it
+    # is driven from the registry in test_reviewers.py rather than restated once per
+    # provider here; a fifth seat is then covered without a fifth copy. What stays
+    # in this suite is behavior that genuinely differs between the CLIs.
 
     def test_every_adapter_reaches_the_shared_mock_allow_refusal(self) -> None:
         """One copy of the refusal, and every seat provably sources it.
@@ -525,43 +411,52 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
             self.assertTrue(decoy_ran.exists(), result.stderr)
 
     def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
-        adapters = {
-            "claude": "claude.sh",
-            "codex": "codex.sh",
-            "opencode": "opencode.sh",
-            "cursor": "cursor.sh",
-        }
-        for reviewer, script_name in adapters.items():
-            with self.subTest(reviewer=reviewer):
-                completed = subprocess.run(
-                    ["/bin/sh", str(_ADAPTERS / script_name)],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env={
-                        # Empty PATH so no host CLI can satisfy the adapter;
-                        # mock fallback must still refuse without the allow flag.
-                        "PATH": "",
-                        "AI_REVIEW_MODEL": "provider/test-model",
-                        "AI_REVIEW_REVIEWER": reviewer,
-                        "AI_REVIEW_STAGE": "review",
-                    },
-                )
-                self.assertEqual(completed.returncode, 2)
-                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+        """One representative seat: the refusal has exactly one implementation.
+
+        Running this over all four adapters multiplied the case without adding
+        signal -- the refusal lives only in `common.sh`, and
+        `test_every_adapter_reaches_the_shared_mock_allow_refusal` above is what
+        proves every seat reaches it and that no seat carries a second copy. That
+        structural pair covers a fifth seat too; a four-way loop would not.
+        """
+        completed = subprocess.run(
+            ["/bin/sh", str(_ADAPTERS / "claude.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                # Empty PATH so no host CLI can satisfy the adapter;
+                # mock fallback must still refuse without the allow flag.
+                "PATH": "",
+                "AI_REVIEW_MODEL": "provider/test-model",
+                "AI_REVIEW_REVIEWER": "claude",
+                "AI_REVIEW_STAGE": "review",
+            },
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
 
     def test_run_reviewer_shell_mock_refusal_is_config_error(self) -> None:
-        """End-to-end: run_reviewer.sh → real adapter shell → config_error."""
-        for reviewer in ("claude", "codex", "opencode", "cursor"):
-            with (
-                self.subTest(reviewer=reviewer),
-                tempfile.TemporaryDirectory() as tmp,
-            ):
-                root = Path(tmp)
-                input_dir = root / "inputs"
-                output_dir = root / "out"
-                self._write_inputs(input_dir)
-                env = {
+        """End-to-end: run_reviewer.sh → real adapter shell → config_error.
+
+        What this covers is the *runner's* translation of a shell refusal exit into
+        a config_error status and empty batch, which `adapter_runner.py` does once
+        for every seat and stage. One representative seat is the whole property; the
+        per-seat half -- that each adapter reaches the refusal at all -- is asserted
+        structurally above.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            output_dir = root / "out"
+            write_adapter_input_bundle(input_dir)
+            completed = subprocess.run(
+                [str(_ADAPTERS / "run_reviewer.sh"), "claude", "review"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
                     "PYTHON": sys.executable,
                     "PYTHONPATH": str(_SRC),
                     # Empty PATH: real CLIs are absent; shells refuse mock
@@ -572,28 +467,21 @@ class OpenRouterAdapterMockFallbackTests(unittest.TestCase):
                     "AI_REVIEW_OUTPUT_DIR": str(output_dir),
                     "AI_REVIEW_CONFIG": str(_REPO_CONFIG),
                     "AI_REVIEW_STAGE": "review",
-                    "AI_REVIEW_REVIEWER": reviewer,
-                }
-                if reviewer == "cursor":
-                    env["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-                completed = subprocess.run(
-                    [str(_ADAPTERS / "run_reviewer.sh"), reviewer, "review"],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                )
-                self.assertEqual(
-                    completed.returncode,
-                    _EXIT_ERROR,
-                    msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
-                )
-                self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
-                status = load_json_file(output_dir / "status" / f"{reviewer}.json")
-                self.assertEqual(status["status"], "config_error")
-                self.assertEqual(status["error_class"], "ConfigError")
-                batch = load_json_file(output_dir / "findings" / f"{reviewer}.json")
-                self.assertEqual(batch["adapter_status"], "config_error")
+                    "AI_REVIEW_REVIEWER": "claude",
+                },
+            )
+
+            self.assertEqual(
+                completed.returncode,
+                _EXIT_ERROR,
+                msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
+            )
+            self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+            status = load_json_file(output_dir / "status" / "claude.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["error_class"], "ConfigError")
+            batch = load_json_file(output_dir / "findings" / "claude.json")
+            self.assertEqual(batch["adapter_status"], "config_error")
 
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name
@@ -767,7 +655,7 @@ PY
             bin_dir = root / "bin"
             bin_dir.mkdir()
             raw_out = output_dir / ".tmp" / f"{reviewer}-{stage}.raw.json"
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             if prepare_snapshot is not None:
                 prepare_snapshot(input_dir / "repo_snapshot")
             self._write_fake_cli(bin_dir, cli_name)
@@ -927,7 +815,7 @@ PY
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, "cursor-agent")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -1082,7 +970,7 @@ PY
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             # Symlinked agent config must be stripped too, not just regular files:
             # a symlink named CLAUDE.md/AGENTS.md would otherwise be followed.
             snapshot = input_dir / "repo_snapshot"
@@ -1177,7 +1065,7 @@ PY
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, "claude")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -1213,7 +1101,7 @@ PY
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, "claude")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -1539,6 +1427,13 @@ PY
         *,
         extra_env: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        """Drive one seat down the model_error path with a real CLI on PATH.
+
+        `reviewer` stays a parameter because the fake CLI and the seat's
+        require-real control are seat-specific, but only the seats a case actually
+        uses are set up: per-seat branches for seats nobody drives would be dead
+        code that looks like coverage.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -1547,7 +1442,7 @@ PY
             config_dir = root / "ai-review" / "config"
             config_dir.mkdir(parents=True)
             bin_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, reviewer)
             config_text = _REPO_CONFIG.read_text(encoding="utf-8")
             config_path = config_dir / "review.yaml"
@@ -1558,14 +1453,8 @@ PY
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
             os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            if reviewer == "claude":
-                os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             if reviewer == "opencode":
                 os.environ["AI_REVIEW_REQUIRE_REAL_OPENCODE"] = "1"
-            if reviewer == "cursor":
-                os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-                os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
-                os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             for key in _REVIEWER_OVERRIDE_KEYS:
@@ -1642,7 +1531,7 @@ PY
             prompt = root / "prompt.md"
             bin_dir.mkdir()
             output_dir.mkdir()
-            self._write_inputs(input_dir)
+            write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, "claude")
             prompt.write_text("prompt", encoding="utf-8")
 
@@ -1721,15 +1610,20 @@ PY
         self.assertIn("--model openai/gpt-5.6-luna:free", cli_args)
 
     def test_invalid_model_format_is_model_error_without_cli_invocation(self) -> None:
-        # A model override with shell/JSON-unsafe characters (quote + space) must be
-        # rejected before the adapter — and the opencode config JSON — ever runs.
-        for reviewer in ("codex", "opencode", "claude", "cursor"):
-            with self.subTest(reviewer=reviewer):
-                batch = self._run_invalid_cli_config(
-                    reviewer,
-                    extra_env={f"AI_REVIEW_{reviewer.upper()}_MODEL": 'evil" model'},
-                )
-                self.assertEqual(batch["adapter_status"], "model_error")
+        """A shell/JSON-unsafe model override is refused before anything spawns.
+
+        `_model_id_validation_error()` is a pure format check on the resolved model
+        string, applied by the shared runner before it resolves an adapter path, so
+        it is seat- and stage-independent: opencode is the representative because it
+        is the seat where an accepted bad value would also reach a generated config
+        JSON. `test_adapter_runner.py` covers the pure check and the
+        rejected-before-invocation ordering directly.
+        """
+        batch = self._run_invalid_cli_config(
+            "opencode", extra_env={"AI_REVIEW_OPENCODE_MODEL": 'evil" model'}
+        )
+
+        self.assertEqual(batch["adapter_status"], "model_error")
 
 
 if __name__ == "__main__":

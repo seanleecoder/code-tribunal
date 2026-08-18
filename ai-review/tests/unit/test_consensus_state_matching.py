@@ -130,7 +130,7 @@ def _record(
     }
 
 
-# Shared with test_consensus_policy and test_phase5_consensus, which already take
+# Shared with test_consensus_policy and test_critique_reduction, which already take
 # _batch/_config/_finding/_manifest/_record from here. `_critique_config` stays
 # per-module: the policy suite needs a fourth enabled seat for its majority-noise
 # denominator cases, and the two shapes are a real difference rather than drift.
