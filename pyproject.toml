@@ -26,8 +26,11 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # Every module already satisfies strict, so the list was not holding a boundary;
 # it was a snapshot of a migration that had already finished. Deleting it removes
 # the drift entirely instead of adding a check to police it.
+# ai_review_smoke is the packaged-runtime smoke suite that ships in the images
+# (SPEC-58). It is checked here, under the same strictness as the runtime package,
+# because a mistake in it fails an image publication rather than a test run.
 [tool.mypy]
 python_version = "3.12"
-packages = ["ai_review"]
+packages = ["ai_review", "ai_review_smoke"]
 mypy_path = "ai-review/src"
 strict = true

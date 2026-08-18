@@ -4,7 +4,7 @@ from typing import Any
 
 from ai_review.memory import STATE_NOTE_SPEC_RE, state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
-from ai_review.platform.github import STATE_MARKER, PullRequestVersion
+from ai_review.platform.github import STATE_MARKER, PullRequestVersion, build_position
 
 
 class FakeGitHubClient:
@@ -24,6 +24,10 @@ class FakeGitHubClient:
         self._comments: list[dict[str, Any]] = []
         self._issue_comments: list[dict[str, Any]] = []
         self._next_id = 1000
+        # GitHub resolves review threads through GraphQL, so the fake has to model
+        # the state rather than acknowledge the call: a thread that reports itself
+        # unresolved after a resolve is how a reopen would silently stop working.
+        self.resolved_threads: dict[str, bool] = {}
 
     def _id(self) -> int:
         self._next_id += 1
@@ -138,7 +142,11 @@ class FakeGitHubClient:
         thread_id: str,
         resolved: bool = True,
     ) -> dict[str, Any]:
-        return {"id": thread_id, "resolved": resolved, "notes": []}
+        self.resolved_threads[str(thread_id)] = resolved
+        for thread in self.list_threads(project_id_or_path, change_id):
+            if thread["id"] == str(thread_id):
+                return thread
+        return {"id": str(thread_id), "resolved": resolved, "notes": []}
 
     def list_state_notes(
         self, project_id_or_path: str | int, change_id: str | int
@@ -185,13 +193,11 @@ class FakeGitHubClient:
     def build_position(
         self, anchor: dict[str, Any], version: PullRequestVersion, *, multiline: bool = False
     ) -> dict[str, Any]:
-        start = anchor["start"]
-        return {
-            "commit_id": version.head_sha,
-            "path": anchor["new_path"],
-            "line": start["new_line"],
-            "side": "RIGHT",
-        }
+        # Delegate rather than re-derive. The hand-written copy this replaced pinned
+        # side to RIGHT and ignored `multiline`, so it could not produce an old-side
+        # or multiline position at all -- a fake that cannot express a shape is a
+        # fake that silently excuses the product from handling it.
+        return build_position(anchor, version, multiline=multiline)
 
     def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
         return "start_line" in position
@@ -229,8 +235,8 @@ class FakeGitHubClient:
             if SUMMARY_MARKER_RE.search(str(comment.get("body", ""))) is not None
         ]
 
-    @staticmethod
-    def _thread(comment: dict[str, Any]) -> dict[str, Any]:
+    def _thread(self, comment: dict[str, Any]) -> dict[str, Any]:
+        resolved = self.resolved_threads.get(str(comment["id"]), False)
         note = {
             "id": comment["id"],
             "body": comment["body"],
@@ -242,12 +248,12 @@ class FakeGitHubClient:
                 "head_sha": comment["commit_id"],
             },
             "author": {"id": comment["user"]["id"], "username": comment["user"]["login"]},
-            "resolved": False,
+            "resolved": resolved,
         }
         return {
             "id": str(comment["id"]),
             "notes": [note],
-            "resolved": False,
+            "resolved": resolved,
             "position": note["position"],
         }
 
@@ -263,8 +269,7 @@ class FakeGitHubClient:
         user = raw_user if isinstance(raw_user, dict) else {}
         return {**comment, "author": {"id": user.get("id"), "username": user.get("login")}}
 
-    @classmethod
-    def _issue_thread(cls, comment: dict[str, Any]) -> dict[str, Any]:
-        note = cls._normalize_issue_comment(comment)
+    def _issue_thread(self, comment: dict[str, Any]) -> dict[str, Any]:
+        note = self._normalize_issue_comment(comment)
         note.setdefault("resolved", False)
         return {"id": str(comment["id"]), "notes": [note], "resolved": False}

@@ -27,11 +27,11 @@ COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
 COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
-# Only the fixtures ship, and they are required: the reviewer preflight runs
-# `docker run --read-only` with no mount and resolves --diff/--repo from here.
-# Test *code* is staged in at verification time instead, so a production image that
-# processes untrusted diffs and model output carries none of it, and a change to test
-# code no longer alters image identity. Fixtures are the exception — they are a
+# Only the fixtures ship from the test tree, and they are required: the reviewer
+# preflight runs `docker run --read-only` with no mount and resolves --diff/--repo
+# from here, and the packaged smoke suite asserts these exact paths. The checkout
+# suite's test_*.py modules are never copied, so a production image that processes
+# untrusted diffs and model output carries no product test code. Fixtures are a
 # shipped layer, so changing one does change the image digest and is part of the
 # release binding.
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
@@ -42,6 +42,18 @@ COPY scripts/smoke_opencode_structured_output.py /opt/scripts/smoke_opencode_str
 COPY scripts/smoke_opencode_structured_output.sh /opt/scripts/smoke_opencode_structured_output.sh
 COPY README.md /opt/README.md
 COPY ai-review/README.md /opt/ai-review/README.md
+
+# The curated packaged-runtime smoke suite, and the single deliberate exception to
+# "runtime images carry no test code". It is stdlib-only, imports nothing from the
+# checkout suite, and never runs during this build — only at preflight, so smoke
+# test changes still do not alter image identity. The COPY is deliberately this
+# narrow: it is what restores the build-time guarantee the removed executed-test
+# floor was compensating for (a renamed or deleted suite fails the build here
+# instead of passing vacuously against an empty bind mount), while a revert to
+# copying the whole test tree still fails the distribution contract. It is the
+# last COPY because it is the layer most likely to change on its own, and every
+# preceding one stays cached when it does.
+COPY ai-review/src/ai_review_smoke /opt/ai-review/src/ai_review_smoke
 
 RUN chmod +x /opt/ai-review/adapters/*.sh \
     && python -m compileall -q /opt/ai-review/src

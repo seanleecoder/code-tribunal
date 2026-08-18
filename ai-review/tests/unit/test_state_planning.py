@@ -349,7 +349,7 @@ class StatePlanningTests(PostCase):
         self.assertEqual(context.human_commands, {group["issue_id"]: "resolve"})
         self.assertEqual(result["warnings"], [])
 
-    def test_post_inline_returns_phase_outputs_for_direct_seam_testing(self) -> None:
+    def test_post_inline_returns_the_outputs_finalize_state_consumes(self) -> None:
         consensus = self._consensus()
         manifest = self._manifest("head")
         group = consensus["groups"][0]

@@ -598,14 +598,13 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
 
     def test_script_imports_only_the_standard_library(self) -> None:
-        """The script runs inside the base image and must stay stdlib-only.
+        """The script ships inside the base image and must stay stdlib-only.
 
-        ai-review/images/base.Dockerfile ships it to /opt/scripts, and
-        .github/workflows/publish-ai-review-images.yml mounts the repository
-        tests read-only and runs unittest discover there. This test file resolves
-        parents[3]/"scripts" -> /opt/scripts and exec_modules the script at
-        *module* level, so a repository-only import fails at collection inside
-        the image, where no skipUnless can rescue it.
+        ai-review/images/base.Dockerfile copies it to /opt/scripts, where the only
+        third-party packages present are the ones the pipeline itself needs, so a
+        repository-only import would make the shipped copy unrunnable. Asserted from
+        the checkout because that is where the constraint can be caught before an
+        image is built.
 
         scripts/release_common.py is the canonical implementation of the workflow
         parity comparison for repository-only callers, but it is not shipped and

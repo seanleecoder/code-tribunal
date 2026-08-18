@@ -10,13 +10,12 @@ import yaml
 
 _PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_trust.py"
 
-# The runtime image mounts ai-review/tests and runs `unittest discover` over it,
-# but copies only the handful of scripts it actually executes — the auditor is
-# not one of them, by the same reasoning that moved it out of the ai_review
-# package. So this module must skip there rather than fail to import, matching
-# test_release_tools.py and test_docs_contract.py. Nothing is lost: the cases
-# below are plain functions, which `unittest discover` never collected anyway;
-# pytest runs all of them under `make quality`, where scripts/ is present.
+# The image copies only the handful of scripts it actually executes — the auditor
+# is not one of them, by the same reasoning that moved it out of the ai_review
+# package. A sparse checkout or archive export can likewise arrive without
+# scripts/, so this module skips rather than failing to import, matching
+# test_release_tools.py and test_docs_contract.py. pytest runs every case below
+# under `make quality`, where scripts/ is present.
 if not _PIPELINE_TRUST.is_file():
     raise unittest.SkipTest("repository-only trust auditor is absent from the runtime image")
 

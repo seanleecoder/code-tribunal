@@ -859,6 +859,36 @@ class PostTests(PostCase):
         self.assertEqual(client.summary_notes, [])
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_with_no_findings_writes_state_and_mutates_nothing_else(self) -> None:
+        """The most common run: a clean change, and the pipeline must stay quiet.
+
+        Quiet means no thread and no summary note -- a "nothing found" comment on
+        every clean merge request is noise the product does not post. State is still
+        written, because a later run has to tell "nothing found" apart from "never
+        ran" in order to resolve a finding that has since disappeared.
+        """
+        client = FakePostClient("head")
+        consensus = self._consensus()
+        consensus["groups"] = []
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            consensus,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_discussions"], 0)
+        self.assertEqual(result["posted_discussions"], [])
+        self.assertEqual(result["summary_comment"]["action"], "none")
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(client.created, 0)
+        self.assertEqual(client.updated, 0)
+        self.assertEqual(client.summary_notes, [])
+        self.assertEqual(len(client.state_notes), 1)
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_creates_a_thread_for_every_anchorable_surface_group(self) -> None:
         # There is no surfaced-thread cap: a run with more surface findings than
         # the old default of 25 posts all of them and diverts none to the summary.
