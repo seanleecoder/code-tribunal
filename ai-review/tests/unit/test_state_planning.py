@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import copy
+import re
 import sys
 import unittest
 from pathlib import Path
 from typing import Any
 
 from ai_review.commands import collect_human_commands
-from ai_review.memory import decode_state_note_body
+from ai_review.memory import decode_state_note_body, encode_state_note
 from ai_review.notes import (
     index_ai_review_discussions,
 )
@@ -16,6 +17,7 @@ from ai_review.platform.gitlab import (
     MergeRequestVersion,
 )
 from ai_review.posting import (
+    PostContext,
     _initial_post_result,
     finalize_state,
     load_persisted_state,
@@ -26,6 +28,7 @@ from ai_review.posting import (
 )
 from ai_review.render import render_body
 from ai_review.state_plan import _desired_discussion_resolved, plan_state
+from ai_review.types import PostResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.fake_github import FakeGitHubClient  # noqa: E402
@@ -50,21 +53,41 @@ class StatePlanningTests(PostCase):
         with self.assertRaisesRegex(RuntimeError, "current_user"):
             load_persisted_state(
                 BrokenUserClient("head"),
-                {"state": {"backend": "gitlab_mr_state_note", "checksum_required": True}},
+                self._config(),
                 self._manifest("head"),
             )
 
-    def test_post_consensus_recovery_fails_closed_when_current_user_unavailable(self) -> None:
+    def test_post_consensus_fails_closed_when_current_user_unavailable(self) -> None:
+        """State-note lookup is the first thing that needs the bot identity.
+
+        It used to be marker recovery, because a state-disabled config skipped
+        the note lookup entirely. Every valid config now loads persisted state,
+        so an unusable identity is caught one step earlier — before either
+        author check can silently accept a stranger's note or marker.
+        """
+
         class BrokenUserClient(FakePostClient):
             def current_user(self) -> dict[str, Any]:
                 raise RuntimeError("user lookup failed")
 
-        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
+        with self.assertRaisesRegex(RuntimeError, "persisted state requires current_user"):
             post_consensus(
                 BrokenUserClient("head"),
                 self._config(),
                 self._manifest("head"),
                 self._consensus(),
+            )
+
+    def test_recover_state_from_discussions_fails_closed_without_current_user(self) -> None:
+        class BrokenUserClient(FakePostClient):
+            def current_user(self) -> dict[str, Any]:
+                raise RuntimeError("user lookup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
+            recover_state_from_discussions(
+                BrokenUserClient("head"),
+                self._manifest("head"),
+                [],
             )
 
     def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
@@ -162,7 +185,7 @@ class StatePlanningTests(PostCase):
         state = self._state_with_records([record_one, record_two])
 
         plan = plan_state(
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             state,
@@ -195,7 +218,7 @@ class StatePlanningTests(PostCase):
         state = self._state_with_records([current_record, stale_record])
 
         plan = plan_state(
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             state,
@@ -226,7 +249,7 @@ class StatePlanningTests(PostCase):
         previous_record["status"] = "stale_unverified"
 
         plan = plan_state(
-            self._state_config(),
+            self._config(),
             self._manifest("head"),
             consensus,
             self._state_with_records([previous_record]),
@@ -245,7 +268,7 @@ class StatePlanningTests(PostCase):
         consensus["groups"] = []
         previous_record = self._state_record(group, discussion_id="existing-discussion")
         previous_record["status"] = "stale_unverified"
-        config = self._state_config()
+        config = self._config()
         config["panel"]["min_successful_reviewers_for_resolution"] = 2
 
         plan = plan_state(
@@ -267,7 +290,7 @@ class StatePlanningTests(PostCase):
         consensus = self._consensus()
         group = copy.deepcopy(consensus["groups"][0])
         state = self._state_with_records([])
-        config = self._state_config()
+        config = self._config()
         config["state"]["retention"]["max_records"] = 0
 
         plan = plan_state(
@@ -312,7 +335,7 @@ class StatePlanningTests(PostCase):
 
         context = prepare_post_context(
             client,
-            self._state_config(),
+            self._config(),
             manifest,
             result,
             dry_run=False,
@@ -337,7 +360,7 @@ class StatePlanningTests(PostCase):
             current_head_sha="head",
         )
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             self._state_with_records([]),
@@ -386,7 +409,7 @@ class StatePlanningTests(PostCase):
             current_head_sha="head",
         )
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             persisted_state,
@@ -398,7 +421,6 @@ class StatePlanningTests(PostCase):
 
         finalized = finalize_state(
             client,
-            self._state_config(),
             manifest,
             consensus,
             result,
@@ -443,7 +465,7 @@ class StatePlanningTests(PostCase):
             current_head_sha="head",
         )
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             persisted_state,
@@ -455,7 +477,6 @@ class StatePlanningTests(PostCase):
 
         finalized = finalize_state(
             client,
-            self._state_config(),
             manifest,
             consensus,
             result,
@@ -489,7 +510,7 @@ class StatePlanningTests(PostCase):
 
         client.resolve_thread = raising_resolve  # type: ignore
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             persisted_state,
@@ -507,7 +528,6 @@ class StatePlanningTests(PostCase):
 
         finalize_state(
             client,
-            self._state_config(),
             manifest,
             consensus,
             result,
@@ -546,7 +566,7 @@ class StatePlanningTests(PostCase):
             current_head_sha="head",
         )
         state_plan = plan_state(
-            self._state_config(),
+            self._config(),
             manifest,
             consensus,
             persisted_state,
@@ -558,7 +578,6 @@ class StatePlanningTests(PostCase):
 
         finalized = finalize_state(
             client,
-            self._state_config(),
             manifest,
             consensus,
             result,
@@ -736,6 +755,218 @@ class StatePlanningTests(PostCase):
         self.assertIsNone(
             _desired_discussion_resolved(reopened_record, {base_record["issue_id"]: "open"})
         )
+
+
+class AlwaysOnStateTests(PostCase):
+    """Every configuration `load_config` accepts follows one state path.
+
+    There is no state-disabled product mode to fall back to, so the cases that
+    used to reach one — no persisted note, a corrupt note, a note from the wrong
+    author — all land on marker recovery or a normalized empty state instead.
+    """
+
+    def _corrupt_note(self) -> dict[str, Any]:
+        return {
+            "id": 1,
+            "author": {"id": 10},
+            "body": (
+                "AI review state. Machine-owned; do not edit.\n"
+                "<!-- ai-review-state:v1 bm90LWpzb24 state_hash="
+                + "0" * 64
+                + " -->"
+            ),
+        }
+
+    def test_gitlab_run_without_prior_state_writes_state_after_posting(self) -> None:
+        client = FakePostClient("head")
+
+        result = post_consensus(
+            client,
+            self._config(),
+            self._manifest("head"),
+            self._consensus(),
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(len(client.state_notes), 1)
+        written = decode_state_note_body(client.state_notes[0]["body"])
+        self.assertEqual(len(written["records"]), 1)
+        self.assertEqual(written["records"][0]["discussion_id"], "discussion")
+
+    def test_github_run_without_prior_state_writes_state_after_posting(self) -> None:
+        manifest = dict(self._manifest("head"), project_id="octo/repo", merge_request_iid="17")
+        client = FakeGitHubClient(head_sha="head", diff_text="")
+
+        result = post_consensus(
+            client,
+            self._config(mode="github_reviews"),
+            manifest,
+            self._consensus(),
+            diff_text="",
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_discussions"], 1)
+        # One PR comment, holding the state the GitLab run puts in an MR note.
+        self.assertEqual(len(client.state_notes), 1)
+
+    def _context_for(
+        self, *, notes: list[dict[str, Any]], recovery: bool
+    ) -> tuple[PostContext, PostResult]:
+        """Prepare a post context over one marked discussion and the given notes."""
+        consensus = self._consensus()
+        client = FakePostClient("head")
+        client.mr_notes = notes
+        client.discussions = [
+            self._existing_discussion(consensus["groups"][0], position=self._position())
+        ]
+        result = _initial_post_result(
+            consensus=consensus,
+            manifest=self._manifest("head"),
+            current_head_sha="head",
+        )
+        context = prepare_post_context(
+            client,
+            self._config(state={"recover_from_discussion_markers": recovery}),
+            self._manifest("head"),
+            result,
+            dry_run=False,
+            diff_text="",
+        )
+        return context, result
+
+    @staticmethod
+    def _recovered_ids(context: PostContext) -> list[str]:
+        return [record["discussion_id"] for record in context.persisted_state["records"]]
+
+    def test_absent_note_with_recovery_enabled_uses_trusted_markers(self) -> None:
+        context, _result = self._context_for(notes=[], recovery=True)
+
+        self.assertEqual(self._recovered_ids(context), ["existing-discussion"])
+
+    def test_absent_note_with_recovery_disabled_uses_normalized_empty_state(self) -> None:
+        context, _result = self._context_for(notes=[], recovery=False)
+
+        # A concrete State, not None: absence is resolved before the caller sees it.
+        self.assertEqual(context.persisted_state["records"], [])
+        self.assertEqual(context.persisted_state["project_id"], "1")
+
+    def test_unusable_note_warns_then_follows_the_recovery_policy(self) -> None:
+        """Corrupt, wrong-author, and checksum-failure notes share one path.
+
+        Each yields "no valid persisted note" plus warnings; the configured
+        marker-recovery policy then decides what state the run starts from.
+        """
+        good_state = self._state_with_records(
+            [self._state_record(self._consensus()["groups"][0])]
+        )
+        cases = {
+            "corrupt": (self._corrupt_note(), "corrupt state note"),
+            "wrong-author": (
+                {
+                    "id": 1,
+                    "author": {"id": 99},
+                    "body": encode_state_note(good_state),
+                },
+                "non-bot author",
+            ),
+            "checksum-failure": (
+                {
+                    "id": 1,
+                    "author": {"id": 10},
+                    # Well-formed marker, payload intact, declared hash wrong.
+                    "body": re.sub(
+                        r"state_hash=[0-9a-f]{64}",
+                        "state_hash=" + "f" * 64,
+                        encode_state_note(good_state),
+                    ),
+                },
+                "state_hash mismatch",
+            ),
+        }
+        for name, (note, expected_warning) in cases.items():
+            for recovery in (True, False):
+                with self.subTest(case=name, recovery=recovery):
+                    context, result = self._context_for(notes=[note], recovery=recovery)
+
+                    self.assertTrue(
+                        any(expected_warning in warning for warning in result["warnings"]),
+                        result["warnings"],
+                    )
+                    self.assertEqual(
+                        self._recovered_ids(context),
+                        ["existing-discussion"] if recovery else [],
+                    )
+
+    def test_dry_run_performs_no_state_mutation(self) -> None:
+        client = FakePostClient("head")
+
+        result = post_consensus(
+            client,
+            self._config(),
+            self._manifest("head"),
+            self._consensus(),
+            dry_run=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(client.mr_notes, [])
+        self.assertEqual(client.updated_mr_notes, [])
+        self.assertEqual(client.resolve_calls, [])
+
+    def test_state_overflow_after_mutations_reports_partial_failure(self) -> None:
+        """The post-mutation overflow check has no enablement gate either.
+
+        Retention is sized so planning fits and the mutated records do not, which
+        is the only way to reach the second check with the first one passing.
+        """
+        consensus = self._consensus()
+        group = consensus["groups"][0]
+        client = FakePostClient("head")
+        planned_bytes = len(
+            encode_state_note(
+                plan_state(
+                    self._config(),
+                    self._manifest("head"),
+                    consensus,
+                    self._state_with_records([]),
+                    [group],
+                    [],
+                    [],
+                    {},
+                ).planned_state
+            )
+        )
+
+        result = post_consensus(
+            client,
+            self._config(state={"retention": {"max_state_bytes": planned_bytes}}),
+            self._manifest("head"),
+            consensus,
+        )
+
+        self.assertEqual(result["status"], "partial_failed")
+        self.assertTrue(
+            any("state overflow after mutations" in item for item in result["warnings"]),
+            result["warnings"],
+        )
+        self.assertEqual(client.state_notes, [])
+
+
+class StateSourceStructureTests(unittest.TestCase):
+    """A structural guard: the disabled-state branch cannot creep back in."""
+
+    def test_no_state_enablement_symbol_or_backend_branch_remains(self) -> None:
+        source_root = Path(__file__).resolve().parents[2] / "src" / "ai_review"
+        offenders: list[str] = []
+        for path in sorted(source_root.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if "_state_enabled" in line or 'state_config.get("backend")' in line:
+                    offenders.append(f"{path.name}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

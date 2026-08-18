@@ -11,18 +11,6 @@ documents were deleted rather than archived — `git log` holds them, and a
 completed spec is a description of work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-SPEC-54 and SPEC-55 are a temporary exception: they are implemented on their feature branch,
-but their documents remain indexed until that branch is squash-merged so the requirements first
-become reachable in `main` history. Remove these entries and documents in a follow-up change on
-`main`.
-
-## Implemented specifications pending merge to `main`
-
-| Spec | Status | Summary |
-|---|---|---|
-| [SPEC-54](cleanup-consolidation/spec-54-independent-support-informational-findings.md) | Implemented; pending merge to `main` | Replace merge-policy decisions with one independent-support rule for informational findings. |
-| [SPEC-55](cleanup-consolidation/spec-55-publish-only-pipeline-no-merge-gate.md) | Implemented; pending merge to `main` | Remove the merge gate and publish every supported, anchorable finding as a discussion thread. |
-
 ## Open specifications
 
 | Spec | Status | Summary |
@@ -37,6 +25,7 @@ become reachable in `main` history. Remove these entries and documents in a foll
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 | Its title decision — a deterministic, data-free session title — remains in force. |
 | [SPEC-53](spec-53-stringified-structured-output.md) | Proposed (post-1.0) | Normalize provider-stringified structured output once at the shared runner boundary. PR #116 shipped the narrow per-item case in 1.0.2; the remaining shapes still cost a finding or a whole seat, always failing closed. |
+| [SPEC-58 to SPEC-61](cleanup-consolidation/README.md) | Pending; documents not yet added | The remainder of the [cleanup and consolidation package](cleanup-consolidation/README.md). SPEC-54 through SPEC-57 are implemented, so `review_config.v3` is closed: the last config-changing spec has landed and no further removals are queued for it. |
 
 ## What to do next
 

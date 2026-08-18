@@ -951,8 +951,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         critique = _workflow_job(text, "critique")
 
         self.assertIn("AI_REVIEW_POSTING_MODE: github_reviews", text)
-        # The state backend is derived from posting.mode; the template must not
-        # restate it, or the two could be scoped to different jobs.
+        # posting.mode also selects the state-storage adapter; there is no
+        # second variable for the template to scope to a different job.
         self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         self.assertIn("AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]", text)
         self.assertRegex(review, r"(?m)^    timeout-minutes: 40$")

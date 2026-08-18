@@ -190,6 +190,15 @@ not when they happen to choose similar phrasing.
 | `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
 | `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
+
+Persistent cross-run state is always active and has no backend setting.
+`posting.mode` selects the adapter that stores it — a GitLab MR state note or a
+GitHub PR comment — and a document that still carries `state.backend` is
+rejected with removal guidance. The `state` keys below control marker recovery,
+integrity, load-error policy, and retention.
+
+| Key | Type/default | Meaning |
+|---|---|---|
 | `state.recover_from_discussion_markers` | boolean, `true` | Reconstruct limited state if the state object is missing/corrupt. |
 | `state.checksum_required` | boolean, `true` | Require checksum integrity on encoded state. |
 | `state.fail_closed_on_load_error` | boolean, `false` | Fail prepare instead of starting with empty state after a load error. Enforcing installs should set `true`. |
@@ -284,7 +293,7 @@ rejected. Native Anthropic routing is not supported.
 | `AI_REVIEW_OPENCODE_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_CURSOR_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in `review_config.v3` with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
-| `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; the state backend follows `posting.mode`. Set `AI_REVIEW_POSTING_MODE` instead. |
+| `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in `review_config.v2` with semantic grouping itself. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |

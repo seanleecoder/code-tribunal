@@ -422,16 +422,22 @@ def _load_platform_state(
     *,
     project_id: str,
     change_id: str,
-    backend_name: str,
+    platform_name: str,
 ) -> dict[str, Any]:
+    """Load the persisted state note, or fall back to ``default_state``.
+
+    Lookup is unconditional — every valid configuration stores state — so the
+    only policy left is what a failure means: ``fail_closed_on_load_error``
+    decides whether prepare dies or starts from the supplied empty state. A
+    successful lookup that finds no valid note is not a failure and returns the
+    same default.
+    """
     state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    if state_config.get("backend") not in {"gitlab_mr_state_note", "github_pr_comment"}:
-        return default_state
     try:
         bot_author_id = client.current_user_id()
         if bot_author_id is None:
             raise BundleError(
-                f"state backend requires {backend_name} current_user lookup "
+                f"persisted state requires {platform_name} current_user lookup "
                 "to verify state-note author"
             )
         notes = client.list_state_notes(project_id, change_id)
@@ -714,7 +720,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         state,
         project_id=repo,
         change_id=pr_number,
-        backend_name="GitHub",
+        platform_name="GitHub",
     )
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
     write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
@@ -816,7 +822,7 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         state,
         project_id=str(project_id),
         change_id=str(mr_iid),
-        backend_name="GitLab",
+        platform_name="GitLab",
     )
     write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
     write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))

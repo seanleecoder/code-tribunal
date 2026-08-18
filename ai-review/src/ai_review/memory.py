@@ -139,7 +139,14 @@ def normalize_state(
     manifest: dict[str, Any],
     pipeline_id: str = "",
     state_note_id: int | None = None,
-) -> dict[str, Any]:
+) -> State:
+    """Coerce any state-shaped mapping -- or ``None`` -- into a complete ``State``.
+
+    ``None`` yields the same document ``empty_state`` builds from the manifest,
+    which is why callers with nothing loaded normalize rather than branching.
+    Returning ``State`` rather than a bare dict keeps the cast at this one
+    boundary instead of at every call site.
+    """
     base = state if isinstance(state, dict) else {}
     normalized = {
         "state_schema_version": 1,
@@ -167,10 +174,10 @@ def normalize_state(
     }
     if isinstance(base.get("run_history"), list):
         normalized["run_history"] = base["run_history"]
-    return attach_state_hash(normalized)
+    return cast(State, attach_state_hash(normalized))
 
 
-def encode_state_note(state: dict[str, Any]) -> str:
+def encode_state_note(state: Mapping[str, Any]) -> str:
     hashed = attach_state_hash({key: value for key, value in state.items() if key != "state_hash"})
     payload = canonical_json_text(hashed)
     wrapper_hash = sha256_hex(payload)
@@ -328,7 +335,9 @@ def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"records": aliases.get("records", [])}
 
 
-def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None) -> dict[str, Any]:
+def compact_state(
+    state: Mapping[str, Any], retention: dict[str, Any] | None = None
+) -> dict[str, Any]:
     retention = retention or {}
     keep_resolved_records = int(retention.get("keep_resolved_records", 5))
     keep_stale_records = int(retention.get("keep_stale_records", 2))
@@ -373,7 +382,7 @@ def compact_state(state: dict[str, Any], retention: dict[str, Any] | None = None
 
 
 def state_overflow_reason(
-    state: dict[str, Any],
+    state: Mapping[str, Any],
     *,
     max_records: int,
     max_state_bytes: int,

@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from ai_review.memory import state_note_candidates
+from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
@@ -193,13 +195,21 @@ class FakeGitLabClient:
             if not str(discussion.get("id")).startswith("note-")
         )
 
+    # Same names, same call shape, and the same production predicates as
+    # FakePostClient.state_notes/summary_notes -- a test moved between the two
+    # fakes keeps meaning what it said.
+    @property
     def summary_notes(self) -> list[dict[str, Any]]:
         return [
-            note for note in self.mr_notes if "ai-review-summary:v1" in str(note.get("body", ""))
+            note
+            for note in self.mr_notes
+            if SUMMARY_MARKER_RE.search(str(note.get("body", ""))) is not None
         ]
 
+    @property
     def state_notes(self) -> list[dict[str, Any]]:
-        return [note for note in self.mr_notes if "ai-review-state:v1" in str(note.get("body", ""))]
+        candidates, _warnings, _mismatches = state_note_candidates(self.mr_notes)
+        return candidates
 
     def _allocate_note_id(self) -> int:
         note_id = self._next_note_id
