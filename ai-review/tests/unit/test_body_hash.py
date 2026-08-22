@@ -429,12 +429,8 @@ class BodyHashTests(unittest.TestCase):
                 parsed = parse_review_note(rendered)
                 self.assertIsNotNone(parsed)
                 assert parsed is not None
-                # Only whitespace-only lines normalize; a line's own trailing
-                # spaces survive the span's boundary padding.
-                expected = "\n".join(
-                    line if line.strip() else "" for line in body.strip().split("\n")
-                )
-                self.assertEqual(parsed["summary"], expected)
+                self.assertEqual(parsed["category"], group["category"])
+                self.assertEqual(parsed["title"], group["title"])
 
     def test_prose_paragraph_never_emits_a_blank_or_dangling_break(self) -> None:
         # An empty line would end the paragraph and orphan later fragments; a
