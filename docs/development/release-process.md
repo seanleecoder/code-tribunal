@@ -17,6 +17,12 @@ The active release version also determines the required notes file:
 
 ## Release sequence
 
+Before step 1, clear the repository's carried debt: act on every
+[temporary compatibility register](temporary-compatibility.md) row whose target
+has arrived — deleting the path, or moving the target with a recorded rationale —
+and remove completed spec files from the active
+[`docs/improvement-specs/`](../improvement-specs/README.md) directory.
+
 1. Land behavior, schema, migration, release tooling, and documentation changes
    on reviewed runtime source commit `R`. Keep
    `release/release-inputs.json` at `status: draft` until live evidence passes.

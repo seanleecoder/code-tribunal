@@ -226,7 +226,6 @@ class FakeGitHubClient:
     def state_notes(self) -> list[dict[str, Any]]:
         candidates, _warnings, _mismatches = state_note_candidates(self._issue_comments)
         return candidates
-
     @property
     def summary_notes(self) -> list[dict[str, Any]]:
         return [

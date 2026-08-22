@@ -29,6 +29,7 @@ CONFIG_SCHEMA_VERSION = "review_config.v3"
 # a removed key is told the key was deleted and why, rather than being left to
 # read `unknown config keys at state: ['backend']` as a typo. One data row per
 # removal, no code per removal.
+# COMPAT-002: review_config.v2-to-v3 targeted migration diagnostics.
 V3_REMOVED_CONFIG_KEYS = {
     "severity_policy": "severity no longer affects any decision; delete the object",
     "panel.min_successful_reviewers_for_blocking": (
@@ -155,6 +156,7 @@ SECURITY_KEYS = {"allow_external_fork_secrets"}
 # The entries cost one dict lookup per run. Revisit only when the variables can
 # no longer plausibly be set — not on the next version bump.
 RETIRED_ENV_OVERRIDES = {
+    # COMPAT-001: review_config.v2 and v3 environment tombstones.
     "AI_REVIEW_STATE_BACKEND": (
         "persistent state has no configurable backend; posting.mode selects the "
         "platform adapter that stores it, so set AI_REVIEW_POSTING_MODE instead "
@@ -523,6 +525,7 @@ def validate_config(config: dict[str, Any]) -> None:
     _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     declared_version = config.get("schema_version")
     if declared_version == "review_config.v2":
+        # COMPAT-002: targeted v2-to-v3 diagnostic.
         # A version string whose accepted shape changes is not a contract. v3
         # names the shape without the keys that only tuned merge behavior, so a
         # document can be checked against the runtime that will read it instead

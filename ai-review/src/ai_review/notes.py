@@ -29,7 +29,7 @@ REVIEW_HEADER_SUFFIX = "**"
 # heading and is carried alongside `Support:` for one release: this parser runs on
 # the marker-recovery path taken when the persisted state note is missing, so it
 # must still decompose thread bodies written by the previous version. Removal is
-# tracked as a temporary-compatibility entry, not left to be noticed later.
+# tracked as COMPAT-004.
 REVIEW_SECTION_BOUNDARIES = frozenset(
     {"Evidence:", "Dissent:", "Suggestion:", "Support:", "Consensus:"}
 )

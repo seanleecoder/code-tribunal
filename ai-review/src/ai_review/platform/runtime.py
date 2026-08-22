@@ -56,6 +56,7 @@ def create_runtime_platform(
 
     token = runtime_env.get("GITLAB_TOKEN")
     if not token and not allow_dry_run_defaults:
+        # COMPAT-003: named split-token migration diagnostic.
         raise PlatformRuntimeError(
             "gitlab_discussions requires GITLAB_TOKEN "
             "(GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN are no longer accepted)"

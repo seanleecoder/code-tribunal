@@ -5,9 +5,9 @@ They are not current product documentation: where a spec conflicts with code,
 schemas, tests, canonical templates, or the task-oriented docs, the
 executable contract wins.
 
-**Completed specifications are not kept here.** SPEC-01 through SPEC-40, plus
-SPEC-44, SPEC-50, and SPEC-51, are implemented on `main`. Their requirement
-documents were deleted rather than archived — `git log` holds them, and a
+**Completed specifications are not kept here.** Any spec absent from the table
+below is implemented, superseded, or obsolete. Its requirement
+document was deleted rather than archived — `git log` holds them, and a
 completed spec is a description of work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
@@ -25,8 +25,7 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 | Its title decision — a deterministic, data-free session title — remains in force. |
 | [SPEC-53](spec-53-stringified-structured-output.md) | Proposed (post-1.0) | Normalize provider-stringified structured output once at the shared runner boundary. PR #116 shipped the narrow per-item case in 1.0.2; the remaining shapes still cost a finding or a whole seat, always failing closed. |
-| [SPEC-58](cleanup-consolidation/spec-58-contract-oriented-test-consolidation.md) | Ready; implementation pending | Contract-oriented test consolidation, in the [cleanup and consolidation package](cleanup-consolidation/README.md). SPEC-54 through SPEC-57 are implemented, so `review_config.v3` is closed and the seams it reorganizes tests around have stopped moving. |
-| [SPEC-59 to SPEC-61](cleanup-consolidation/README.md) | Pending; documents not yet added | The remainder of the [cleanup and consolidation package](cleanup-consolidation/README.md): product invariants and complexity control, critique-quality observability, and the candidate-image four-seat panel canary. |
+| [SPEC-60 to SPEC-61](cleanup-consolidation/README.md) | Pending; documents not yet added | The remainder of the [cleanup and consolidation package](cleanup-consolidation/README.md): critique-quality observability and the candidate-image four-seat panel canary. |
 
 ## What to do next
 
