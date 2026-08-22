@@ -20,6 +20,7 @@ from ai_review.adapter_process import (
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
+from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -848,6 +849,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_local_mock_without_allow_flag_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            manifest["effective_config_sha256"] = "2" * 64
+            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_adapter(
                 paths["adapter_dir"],
@@ -873,7 +877,33 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["effective_config_sha256"], "2" * 64)
             self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
+
+    def test_failure_after_config_resolution_uses_resolved_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            manifest["effective_config_sha256"] = "2" * 64
+            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            self._set_env(paths, config_path)
+            self._adapter_path_patch.stop()
+            del self._adapter_path_patch
+
+            with mock.patch(
+                "ai_review.adapter_runner.resolve_adapter_path",
+                side_effect=ReviewerRegistryError("adapter unavailable"),
+            ):
+                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertNotEqual(status["effective_config_sha256"], "2" * 64)
+            self.assertEqual(
+                status["effective_config_sha256"], batch["effective_config_sha256"]
+            )
 
     def test_shell_mock_allow_refusal_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

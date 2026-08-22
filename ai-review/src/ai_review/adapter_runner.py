@@ -63,6 +63,62 @@ def run_adapter(reviewer: str, stage: str) -> int:
     run_id = _manifest_run_id(input_dir)
     config_digest = _manifest_effective_config_sha256(input_dir)
 
+    def _fail(
+        status: str,
+        *,
+        digest: str,
+        model: str,
+        error_class: str | None = None,
+        error_message: str | None = None,
+        exit_code: int = _EXIT_ERROR,
+    ) -> int:
+        """Write a digest-bound empty batch and matching failure status."""
+        _write_empty(
+            output_dir,
+            output_file,
+            reviewer,
+            stage,
+            status,
+            run_id,
+            model,
+            started_at,
+            effective_config_sha256=digest,
+        )
+        _write_status(
+            output_dir,
+            reviewer,
+            stage,
+            status,
+            started_at,
+            started_monotonic,
+            output_file,
+            error_class=error_class,
+            error_message=error_message,
+            run_id=run_id,
+            effective_config_sha256=digest,
+            raw_finding_count=0,
+            accepted_finding_count=0,
+            dropped_finding_count=0,
+            usable_for_resolution=False,
+        )
+        return exit_code
+
+    def _fail_status_only(status: str, *, error_class: str, error_message: str) -> int:
+        """Write a status without a batch when no config digest can be resolved."""
+        _write_status(
+            output_dir,
+            reviewer,
+            stage,
+            status,
+            started_at,
+            started_monotonic,
+            output_file,
+            error_class=error_class,
+            error_message=error_message,
+            run_id=run_id,
+        )
+        return _EXIT_ERROR
+
     try:
         if mock_error := _local_mock_unauthorized():
             raise ConfigError(mock_error)
@@ -79,94 +135,20 @@ def run_adapter(reviewer: str, stage: str) -> int:
             raise ConfigError(f"unknown reviewer: {reviewer}")
         model = str(reviewer_config.get("model", "unknown-model"))
         if reviewer_config.get("enabled") is not True:
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
-                "skipped",
-                run_id,
-                model,
-                started_at,
-                effective_config_sha256=config_digest,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "skipped",
-                started_at,
-                started_monotonic,
-                output_file,
-                run_id=run_id,
-                effective_config_sha256=config_digest,
-                raw_finding_count=0,
-                accepted_finding_count=0,
-                dropped_finding_count=0,
-                usable_for_resolution=False,
-            )
-            return 0
+            return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
         critique_config = config.get("critique", {})
         if stage == "critique" and critique_config.get("enabled") is not True:
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
-                "skipped",
-                run_id,
-                model,
-                started_at,
-                effective_config_sha256=config_digest,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "skipped",
-                started_at,
-                started_monotonic,
-                output_file,
-                run_id=run_id,
-                effective_config_sha256=config_digest,
-                raw_finding_count=0,
-                accepted_finding_count=0,
-                dropped_finding_count=0,
-                usable_for_resolution=False,
-            )
-            return 0
+            return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
         if (validation_error := _model_id_validation_error(model)) is not None:
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
+            return _fail(
                 "model_error",
-                run_id,
-                model,
-                started_at,
-                effective_config_sha256=config_digest,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                "model_error",
-                started_at,
-                started_monotonic,
-                output_file,
+                digest=config_digest,
+                model=model,
                 error_class="ReviewerConfigValidation",
                 error_message=validation_error,
-                run_id=run_id,
-                effective_config_sha256=config_digest,
-                raw_finding_count=0,
-                accepted_finding_count=0,
-                dropped_finding_count=0,
-                usable_for_resolution=False,
             )
-            return _EXIT_ERROR
 
         try:
             adapter_path = resolve_adapter_path(reviewer_definition)
@@ -227,35 +209,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
             else:
                 exit_status = "model_error"
                 error_class = "AdapterExit"
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
+            return _fail(
                 exit_status,
-                run_id,
-                model,
-                started_at,
-                effective_config_sha256=config_digest,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                exit_status,
-                started_at,
-                started_monotonic,
-                output_file,
+                digest=config_digest,
+                model=model,
                 error_class=error_class,
                 error_message=stderr_text,
-                run_id=run_id,
-                effective_config_sha256=config_digest,
-                raw_finding_count=0,
-                accepted_finding_count=0,
-                dropped_finding_count=0,
-                usable_for_resolution=False,
             )
-            return _EXIT_ERROR
 
         try:
             raw = _load_adapter_json(result.stdout, stage=stage)
@@ -287,35 +247,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
         except Exception as exc:
             status = "model_error" if isinstance(exc, AdapterModelError) else "schema_error"
             _write_parse_debug(output_dir, reviewer, stage, result.stdout, result.stderr)
-            _write_empty(
-                output_dir,
-                output_file,
-                reviewer,
-                stage,
+            return _fail(
                 status,
-                run_id,
-                model,
-                started_at,
-                effective_config_sha256=config_digest,
-            )
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                status,
-                started_at,
-                started_monotonic,
-                output_file,
+                digest=config_digest,
+                model=model,
                 error_class=exc.__class__.__name__,
                 error_message=str(exc),
-                run_id=run_id,
-                effective_config_sha256=config_digest,
-                raw_finding_count=0,
-                accepted_finding_count=0,
-                dropped_finding_count=0,
-                usable_for_resolution=False,
             )
-            return _EXIT_ERROR
 
         write_canonical_json(output_dir / output_file, finalized)
         _write_status(
@@ -358,19 +296,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     exc.stderr or "",
                     kind="timeout",
                 )
-                _write_status(
-                    output_dir,
-                    reviewer,
-                    stage,
+                return _fail_status_only(
                     "timeout",
-                    started_at,
-                    started_monotonic,
-                    output_file,
                     error_class="TimeoutExpired",
                     error_message=str(exc),
-                    run_id=run_id,
                 )
-                return _EXIT_ERROR
         # Archive whatever the reviewer emitted before the kill so a timeout is
         # debuggable even when live mirroring was off (the default) — otherwise a
         # stuck reviewer leaves no trace of what it was doing.
@@ -382,35 +312,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
             exc.stderr or "",
             kind="timeout",
         )
-        _write_empty(
-            output_dir,
-            output_file,
-            reviewer,
-            stage,
+        return _fail(
             "timeout",
-            run_id,
-            model,
-            started_at,
-            effective_config_sha256=digest,
-        )
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            "timeout",
-            started_at,
-            started_monotonic,
-            output_file,
+            digest=digest,
+            model=model,
             error_class="TimeoutExpired",
             error_message=str(exc),
-            run_id=run_id,
-            effective_config_sha256=digest,
-            raw_finding_count=0,
-            accepted_finding_count=0,
-            dropped_finding_count=0,
-            usable_for_resolution=False,
         )
-        return _EXIT_ERROR
     except Exception as exc:
         try:
             digest = config_digest if config_digest is not None else _resolve_config_digest(
@@ -419,48 +327,18 @@ def run_adapter(reviewer: str, stage: str) -> int:
         except ConfigError:
             # Last resort: cannot stamp a digest; still emit a config_error status
             # without a finding batch so consensus does not consume a placeholder.
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
+            return _fail_status_only(
                 "config_error" if isinstance(exc, ConfigError) else "internal_error",
-                started_at,
-                started_monotonic,
-                output_file,
                 error_class=exc.__class__.__name__,
                 error_message=str(exc),
-                run_id=run_id,
             )
-            return _EXIT_ERROR
-        _write_empty(
-            output_dir,
-            output_file,
-            reviewer,
-            stage,
+        return _fail(
             "config_error" if isinstance(exc, ConfigError) else "internal_error",
-            run_id,
-            "unknown-model",
-            started_at,
-            effective_config_sha256=digest,
-        )
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            "config_error" if isinstance(exc, ConfigError) else "internal_error",
-            started_at,
-            started_monotonic,
-            output_file,
+            digest=digest,
+            model="unknown-model",
             error_class=exc.__class__.__name__,
             error_message=str(exc),
-            run_id=run_id,
-            effective_config_sha256=digest,
-            raw_finding_count=0,
-            accepted_finding_count=0,
-            dropped_finding_count=0,
-            usable_for_resolution=False,
         )
-        return _EXIT_ERROR
 
 
 def cli(argv: list[str] | None = None) -> int:
