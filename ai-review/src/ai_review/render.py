@@ -163,16 +163,6 @@ def _literal_block_parts(
     return fence, sanitized, fence
 
 
-def literal_block(value: str, *, required: bool = False) -> str | None:
-    """Render multiline data in a renderer-owned ``text`` fence."""
-
-    parts = _literal_block_parts(value, required=required)
-    if parts is None or isinstance(parts, str):
-        return parts
-    opening, content, closing = parts
-    return f"{opening}text\n{content}\n{closing}"
-
-
 # A prose paragraph joins its per-line code spans with a CommonMark backslash
 # hard break.  The break belongs to the renderer and always sits outside the
 # closing delimiter, so a model line that itself ends in a backslash stays
@@ -303,32 +293,6 @@ def _prose_fragment(
 
 def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
     return _FRAGMENT_SEPARATOR.join(fragment.text for fragment in fragments)
-
-
-def details_fragment(
-    summary_text: str,
-    fragments: Sequence[RenderFragment],
-) -> RenderFragment:
-    """Compose the pre-landed v4 disclosure primitive as an atomic fragment.
-
-    This helper lives in the v3 renderer so SPEC-45 can add its disclosure
-    section without another fragment API change; v3 ``render_body`` does not
-    call it. ``summary_text`` is supplied by the renderer, not model output,
-    and the typed fragment sequence must already carry its own literal
-    delimiters. The compositor never interpolates raw model text into the
-    disclosure structure. Escaping the summary defensively keeps an accidental
-    closing tag inert as well.
-    """
-
-    escaped_summary = (
-        summary_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
-    content = _compose_fragments(fragments)
-    text = f"<details>\n<summary>{escaped_summary}</summary>\n\n"
-    if content:
-        text += content + "\n"
-    text += "</details>"
-    return RenderFragment(text=text, kind="text")
 
 
 def _partial_block(fragment: RenderFragment, available: int) -> str | None:

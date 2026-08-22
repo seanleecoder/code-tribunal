@@ -11,12 +11,6 @@ from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .schema import now_iso
 from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
-STATE_MATCHING_STRATEGY = (
-    "Persisted state matching is intentionally limited to deterministic issue IDs, "
-    "source finding aliases, context/title fingerprints, anchors, and symbols. "
-    "Consensus-only semantic text similarity is not a state recovery fallback."
-)
-
 MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "exact_issue_id",
     "source_finding_id",
@@ -237,9 +231,6 @@ def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -
     if isinstance(note.get("id"), int):
         state = dict(state)
         state["state_note_id"] = note["id"]
-        state = attach_state_hash(
-            {key: value for key, value in state.items() if key != "state_hash"}
-        )
     return state
 
 

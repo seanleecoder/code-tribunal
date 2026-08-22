@@ -40,8 +40,7 @@ def _ranges_overlap(a: dict[str, Any], b: dict[str, Any], *, tolerance: int = 3)
 # comparison over word and 3-word shingles used to live here, disabled by default
 # and outside the 1.0 compatibility guarantee; grouping now rests entirely on
 # identity that survives rewording — anchors, context hashes, fingerprints, and
-# symbols — matching ai_review.memory.STATE_MATCHING_STRATEGY, which always
-# refused text similarity as a state-recovery signal.
+# symbols. State recovery likewise refuses text similarity.
 
 DuplicateLink = tuple[str, str]
 

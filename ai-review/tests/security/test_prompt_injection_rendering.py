@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ai_review.render import RenderFragment, details_fragment, literal_block, render_body
+from ai_review.render import render_body
 
 
 class PromptInjectionRenderingTests(unittest.TestCase):
@@ -127,24 +127,6 @@ class PromptInjectionRenderingTests(unittest.TestCase):
                 line == "\\" or (line.startswith("`") and line.rstrip("\\").endswith("`")),
                 f"prose line escaped its code span: {line!r}",
             )
-
-    def test_renderer_owned_details_block_keeps_fenced_model_text_literal(self) -> None:
-        model_text = "</summary>\n</details>\n```python\nprint('still data')\n````"
-        literal = literal_block(model_text, required=True)
-        self.assertIsNotNone(literal)
-        assert literal is not None
-
-        rendered = details_fragment(
-            "Show hostile model text",
-            [RenderFragment(text=literal, kind="text")],
-        ).text
-
-        self.assertIn("</summary>\n\n", rendered)
-        self.assertIn("```text\n</summary>\n</details>", rendered)
-        self.assertTrue(rendered.endswith("\n</details>"))
-        self.assertEqual(rendered.rfind("</details>"), len(rendered) - len("</details>"))
-        self.assertNotIn("<summary><", rendered)
-
 
 if __name__ == "__main__":
     unittest.main()

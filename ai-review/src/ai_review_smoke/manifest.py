@@ -86,7 +86,6 @@ RUNTIME_FILES: tuple[str, ...] = tuple(
         | {
             "adapters/common.sh",
             "adapters/run_reviewer.sh",
-            "adapters/validate_output.py",
             "config/review.yaml",
             "prompts/critique.md",
             "prompts/review.md",
