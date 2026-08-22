@@ -47,12 +47,6 @@ class _ObsoleteCritique(TypedDict, total=False):
     severity_adjustment: domain_types.Severity | None
 
 
-# Negative control for scalar alignment. Deliberately wrong in exactly two
-# fields — `run_id` is a string in the schema and `created_discussions` an
-# integer — with every other field, the required/optional split, and the closed
-# object shape correct, so the assertion it trips can only be the scalar-type
-# comparison. It moved here from the deleted gate result; a checker with no
-# proof that it detects a mismatch is not a checker.
 class _WrongScalarPostResult(TypedDict):
     schema_version: Literal["post_result.v1"]
     run_id: int
@@ -310,73 +304,82 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
                 with self.subTest(clause=index, branch=branch):
                     self.assertEqual(named - live_fields, set())
 
-    def test_obsolete_critique_keys_fail_alignment(self) -> None:
-        schema = load_schema("critique_batch.schema.json")
-        critique_schema = schema["properties"]["critiques"]["items"]
-        with self.assertRaises(AssertionError):
-            _assert_typed_dict_matches_schema(_ObsoleteCritique, critique_schema, schema)
-
-    def test_wrong_scalar_types_fail_alignment(self) -> None:
-        schema = load_schema("post_result.schema.json")
-        with self.assertRaises(AssertionError):
-            _assert_typed_dict_matches_schema(_WrongScalarPostResult, schema, schema)
-
-    def test_wrong_array_item_scalar_fails_alignment(self) -> None:
-        schema: dict[str, object] = {
-            "type": "array",
-            "items": {"type": "string"},
-        }
-        with self.assertRaises(AssertionError):
-            _assert_annotation_matches_schema(list[int], schema, schema, "values")
-
-    def test_wrong_dictionary_value_scalar_fails_alignment(self) -> None:
-        schema: dict[str, object] = {
+    def test_schema_alignment_comparator_branches(self) -> None:
+        critique_root = load_schema("critique_batch.schema.json")
+        critique_schema = critique_root["properties"]["critiques"]["items"]
+        post_schema = load_schema("post_result.schema.json")
+        string_array = {"type": "array", "items": {"type": "string"}}
+        string_dictionary = {
             "type": "object",
             "additionalProperties": {"type": "string"},
         }
-        with self.assertRaises(AssertionError):
-            _assert_annotation_matches_schema(dict[str, int], schema, schema, "values")
+        nested_collection = {"type": "array", "items": string_dictionary}
+        itemless_array = {"type": "array"}
+        open_object = {"type": "object"}
+        explicit_open_object = {"type": "object", "additionalProperties": True}
+        composition = {"anyOf": [{"type": "string"}, {"type": "integer"}]}
 
-    def test_nested_array_and_dictionary_scalars_align(self) -> None:
-        schema: dict[str, object] = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": {"type": "string"},
-            },
-        }
-        _assert_annotation_matches_schema(
-            list[dict[str, str]], schema, schema, "values"
+        cases: tuple[
+            tuple[str, object, dict[str, object], dict[str, object], str | None], ...
+        ] = (
+            ("obsolete critique keys", _ObsoleteCritique, critique_schema, critique_root, ""),
+            ("wrong scalar types", _WrongScalarPostResult, post_schema, post_schema, ""),
+            ("wrong array item scalar", list[int], string_array, string_array, ""),
+            (
+                "wrong dictionary value scalar",
+                dict[str, int],
+                string_dictionary,
+                string_dictionary,
+                "",
+            ),
+            (
+                "nested array and dictionary scalars",
+                list[dict[str, str]],
+                nested_collection,
+                nested_collection,
+                None,
+            ),
+            (
+                "array without items",
+                list[str],
+                itemless_array,
+                itemless_array,
+                "values: array schema must declare object-valued items",
+            ),
+            (
+                "open object rejects narrow dictionary",
+                dict[str, str],
+                open_object,
+                open_object,
+                "open object values must cover the full JsonValue domain",
+            ),
+            (
+                "open object accepts JsonValue dictionary",
+                domain_types.JsonObject,
+                explicit_open_object,
+                explicit_open_object,
+                None,
+            ),
+            (
+                "unsupported schema composition", str | int, composition, composition,
+                "values: unsupported schema composition: anyOf",
+            ),
         )
 
-    def test_array_without_items_has_clear_failure(self) -> None:
-        schema: dict[str, object] = {"type": "array"}
-        with self.assertRaisesRegex(
-            AssertionError, "values: array schema must declare object-valued items"
-        ):
-            _assert_annotation_matches_schema(list[str], schema, schema, "values")
-
-    def test_open_object_rejects_narrow_dictionary_values(self) -> None:
-        schema: dict[str, object] = {"type": "object"}
-        with self.assertRaisesRegex(
-            AssertionError, "open object values must cover the full JsonValue domain"
-        ):
-            _assert_annotation_matches_schema(dict[str, str], schema, schema, "values")
-
-    def test_open_object_accepts_json_value_dictionary(self) -> None:
-        schema: dict[str, object] = {"type": "object", "additionalProperties": True}
-        _assert_annotation_matches_schema(
-            domain_types.JsonObject, schema, schema, "values"
-        )
-
-    def test_unsupported_schema_composition_has_clear_failure(self) -> None:
-        schema: dict[str, object] = {
-            "anyOf": [{"type": "string"}, {"type": "integer"}]
-        }
-        with self.assertRaisesRegex(
-            AssertionError, "values: unsupported schema composition: anyOf"
-        ):
-            _assert_annotation_matches_schema(str | int, schema, schema, "values")
+        for name, annotation, schema, root, expected_error in cases:
+            with self.subTest(name=name):
+                if expected_error is None:
+                    _assert_annotation_matches_schema(annotation, schema, root, "values")
+                elif expected_error:
+                    with self.assertRaisesRegex(AssertionError, expected_error):
+                        _assert_annotation_matches_schema(
+                            annotation, schema, root, "values"
+                        )
+                else:
+                    with self.assertRaises(AssertionError):
+                        _assert_annotation_matches_schema(
+                            annotation, schema, root, "values"
+                        )
 
 
 if __name__ == "__main__":
