@@ -1,9 +1,4 @@
-"""Summary-comment body rendering.
-
-Pure and platform-free. Named after the existing prompt_render convention.
-render.py itself is deliberately untouched, which keeps the rendering golden
-fixtures out of this extraction's blast radius.
-"""
+"""Pure, platform-free summary-comment body rendering."""
 
 from __future__ import annotations
 

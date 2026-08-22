@@ -47,63 +47,22 @@ def _is_review_header_candidate(line: str) -> bool:
 
 
 def _parse_review_header(line: str) -> str | None:
-    """Return the category from a ``**AI review: <SEVERITY> <category>**`` line.
+    """Parse a stripped header with a linear scan over unauthenticated text.
 
-    Scanned rather than matched. The equivalent pattern
-    ``^\\*\\*AI review:\\s+\\S+\\s+(.+?)\\s*\\*\\*$`` puts ``\\s+``, a lazy
-    ``.+?``, and ``\\s*`` in front of an anchored ``\\*\\*$``, which backtracks
-    **cubically**: a 1,616-character line of interior spaces took 1.9 seconds.
-    This runs on every line of an unauthenticated note — see ``_unwrap_span``
-    for why the input is attacker-controlled — and ``line.strip()`` does not
-    help, because interior whitespace survives it. Do not restore the regex.
-
-    ``line`` must be a single already-stripped line; the one call site passes
-    ``line.strip()`` over ``splitlines()`` output. That precondition is what
-    makes the ``endswith`` test equivalent to the pattern's ``\\*\\*$``, which
-    would also have matched before one trailing newline.
-
-    One deliberate difference from that pattern: a whitespace-only category —
-    ``**AI review: MAJOR  **``, two or more spaces — matched it and yielded
-    ``""``, and is refused here. Recovering it would invent a category the note
-    does not carry, and ``normalize_record`` turns an empty one into ``other``,
-    which is the input most likely to match the *wrong* group. Refusing costs
-    only the two ``_same_category``-gated fallback tiers, and only for a
-    hand-edited note: ``category`` is a validated enum, so the renderer cannot
-    emit this shape — an empty category would produce a single space, which
-    both this parser and the pattern reject. The differential test asserts the
-    difference as a property rather than a list of cases.
-
-    That refusal is only meaningful because ``parse_review_note`` stops at the
-    first header-*shaped* line rather than the first line that parses. Scanning
-    on would not refuse the note at all: it would hand the choice to the next
-    header-shaped line, and in a v2 note the body is unfenced model text, so
-    the model could supply one. Do not turn that break back into a continue.
+    Whitespace-only categories are refused. ``parse_review_note`` must stop at
+    the first header-shaped line so an invalid header cannot delegate matching
+    to model-authored text later in the note.
     """
 
     if not _is_review_header_candidate(line):
         return None
     inner = line[len(REVIEW_HEADER_PREFIX) : -len(REVIEW_HEADER_SUFFIX)]
-    # The separator after the colon is mandatory, as the pattern's first
-    # ``\s+`` was: ``**AI review:MAJOR correctness**`` is not a header the
-    # renderer can emit, and accepting it would feed a hand-edited note's title
-    # and category into state matching instead of ignoring the note. The
-    # ``[:1]`` slice covers an empty ``inner`` without a separate length check.
+    # The separator after the colon is mandatory; ``[:1]`` also covers empty input.
     if not inner[:1].isspace():
         return None
-    # ``split(None, 1)`` collapses the leading and separating whitespace runs
-    # the pattern spelled ``\s+``; the category then keeps its own internal
-    # spaces and drops the trailing run that preceded the closing ``**``.
-    # ``str.split(None)`` and ``\s`` agree on every whitespace character.
     parts = inner.split(None, 1)
     if len(parts) != 2:
-        # A single part means there was no category, or only whitespace where
-        # one belonged. This is where the deliberate difference described above
-        # takes effect: the replaced pattern recovered ``""`` from
-        # ``**AI review: MAJOR  **``; refusing avoids inventing a category.
         return None
-    # ``split(None, 1)`` also discards a trailing whitespace run, so a second
-    # part always carries non-whitespace and ``category`` is never empty here.
-    # The fallback is belt and braces against a future change to the split.
     category = parts[1].strip()
     return category or None
 

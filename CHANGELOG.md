@@ -9,6 +9,16 @@ versioning.
 
 ### Changed
 
+- Oversized review bodies now retain only complete priority-ordered fragments
+  before the truncation notice; no model-authored prose or fenced block is cut
+  partway through.
+- Historical release inputs now come directly from
+  `vX.Y.Z:release/release-inputs.json`; redundant checked-in snapshots are no
+  longer created.
+- Removed unused packaged and internal surfaces, including
+  `adapters/validate_output.py`, the prompt-render CLI, and pre-landed rendering
+  helpers.
+
 - **Breaking: findings are informational and surface on independent support.**
   A grouped finding surfaces when at least two unique reviewer identities support
   it across direct review and critique. Severity, including `blocker`, is an

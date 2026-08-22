@@ -9,16 +9,7 @@ from .canonical import canonical_json, normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-# v4 drops the merge-blocking and human-acknowledgement footer lines and reports
-# independent support instead, under a `Support:` heading. The version string is a
-# body-hash input, so a deliberate format change stays distinguishable from drift
-# — at the cost of one run in which every pre-existing thread is updated rather
-# than skipped as unchanged. Thread identity lives in issue_id and the alias
-# chain, so that churn is cosmetic.
-#
-# The footer rename and the merge-gate removal ship as one series with the
-# support-count change, so the version moves exactly once. Do not bump again for
-# either half.
+# The version is a body-hash input; bumping it refreshes every existing thread once.
 RENDER_BODY_VERSION = "render-body.v4"
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {

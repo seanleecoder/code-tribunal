@@ -2,9 +2,7 @@
 
 Pure and dependency-free on purpose: both pre-critique group construction and
 post-critique application assign ``decision`` through ``apply_group_decision``,
-so the policy has exactly one author instead of the four it used to have (a
-pre-critique quorum function, a post-critique recompute function, the ambiguous
-state-match override, and the majority-noise drop).
+so the policy has exactly one author.
 
 A finding is informational. Severity communicates estimated impact and has no
 bearing on whether a group surfaces.

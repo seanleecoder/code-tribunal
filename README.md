@@ -47,25 +47,14 @@ internal container implementation, not a supported Python package or API.
   supported peer reviewer. It stays **off in the shipped default roster** so that
   second egress path is always an explicit choice; select it by naming it in
   `AI_REVIEW_REVIEWERS` and supplying `CURSOR_API_KEY`.
-- **Known defect on GitHub:** a pull request that **adds or deletes a file** can
-  lose findings and fail the review — anchor resolution rejects the `/dev/null`
-  path GitHub uses for added files, so affected findings are dropped and the
-  review can stop before it publishes anything. GitLab is unaffected. Land file
-  additions separately, or re-run once they merge. **Present in the shipped
-  1.0.0 runtime; a fix is queued for 1.0.1 and is not released yet.** See
-  [`release/1.0.0.md`](release/1.0.0.md) and
-  [troubleshooting](docs/TROUBLESHOOTING.md).
 - The trusted image pin is **not enforced inside the pipeline**: a consumer CI
   config can substitute the reviewer images. Containment relies on protected
   credentials being withheld from untrusted refs and on running
   `scripts/pipeline_trust.py` against your consumer config.
-- The 1.0 live-evidence matrix passed against runtime source `88bc941` and its
-  attested image pair, and `v1.0.0` was released. Each row is a **scoped** pass
-  with its own recorded limits, and some paths remain regression-covered only.
-  Release 1.0.1 uses the checked-in draft release-inputs artifact and needs new
-  source/image-bound evidence — read
-  [documentation history](docs/history/README.md) before making a maturity or
-  security claim.
+- Release identity and evidence scope come from the current
+  [release inputs](release/release-inputs.json) under the
+  [release process](docs/development/release-process.md). Read those authorities
+  before making a maturity or security claim.
 
 ## Five-minute start
 

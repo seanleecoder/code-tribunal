@@ -10,7 +10,7 @@ Two kinds of manifest live here, and both are identity checks rather than counts
   longer subclasses ``TestCase``, a decorator that swallowed it -- and would
   still exit 0 while publishing an image that quietly lost a check.
 * :data:`RUNTIME_MODULES`, :data:`RUNTIME_FILES`, :data:`PACKAGED_FIXTURES`, and
-  :data:`PINNED_CLI_VERSION_COMMANDS` name what the image must contain. These
+  :data:`PINNED_CLIS` name what the image must contain. These
   used to live in workflow shell (``for module in input_bundle consensus post
   schema``), where a deleted module broke image publication and nothing in the
   product suite could see it. The checkout suite asserts these lists against the

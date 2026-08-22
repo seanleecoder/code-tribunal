@@ -5,7 +5,7 @@ Status: waived
 Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
 Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
 Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
-Release-evidence-waived: github_platform.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.
+Release-evidence-waived: platform/github.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.
 
 > **Reading this record:** the historical live probes below are partial. For
 > 1.0.2 the row is explicitly waived under the current source/image binding and

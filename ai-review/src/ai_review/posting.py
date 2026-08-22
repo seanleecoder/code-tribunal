@@ -4,10 +4,7 @@ Everything here touches a ReviewPlatform client. Pure planning lives in
 state_plan, and pure summary rendering in summary_render; this module is
 the one explicit network-mutation layer.
 
-The in-place mutation contract is preserved exactly: post_inline and
-finalize_state mutate the shared PostResult dict and
-StatePlan.planned_records in place. Converting either to returned deltas
-would be a redesign, not a move.
+``post_inline`` and ``finalize_state`` mutate their shared result and state in place.
 """
 
 from __future__ import annotations

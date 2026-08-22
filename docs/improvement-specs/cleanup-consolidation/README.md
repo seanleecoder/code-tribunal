@@ -84,10 +84,9 @@ Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live
 4. ~~**Implement SPEC-58 after the production seams stop moving.**~~ **Done.** It deleted the
    replaced tests rather than adding a suite beside them: the per-provider copies of shared
    runner behavior, the duplicated endpoint and credential tables, and the image-time rerun of
-   the checkout suite with its executed-test floor. The re-survey this step called for found
-   section 2 already satisfied — landing SPEC-55 had collapsed the duplicated reducer-policy
-   tests — so nothing was deleted for it; the reducer work was limited to renaming the suite
-   that was still named after a spec phase.
+   the checkout suite with its executed-test floor. The re-survey found the reducer-policy
+   suites were still duplicated; consolidating them remains a separate cleanup rather than
+   part of SPEC-58.
 5. **Implement SPEC-60 and SPEC-61 as follow-ups.** ADR-0003 now records the product
    boundary. SPEC-60 and SPEC-61 are not prerequisites for the cleanup. SPEC-60 is
    observational and must not change surfacing decisions; its
