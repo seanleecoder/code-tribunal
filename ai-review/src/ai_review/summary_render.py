@@ -8,7 +8,6 @@ fixtures out of this extraction's blast radius.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any, overload
 
 from .canonical import sha256_hex
@@ -63,34 +62,30 @@ def _sort_groups(groups: list[Any]) -> list[Any]:
     )
 
 
-@dataclass
 class SummarySectionDescriptor:
-    header_factory: Callable[[int], str]
-    entries: Sequence[str]
-    trailer_factory: Callable[[int], list[str]]
-    drop_priority: int
-    retained_count: int | None = None
-    entry_prefix_lengths: tuple[int, ...] = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self.entries = tuple(self.entries)
-        if self.retained_count is None:
-            self.retained_count = len(self.entries)
+    def __init__(
+        self,
+        header_factory: Callable[[int], str],
+        entries: Sequence[str],
+        trailer_factory: Callable[[int], list[str]],
+        drop_priority: int,
+        retained_count: int | None = None,
+    ) -> None:
+        self.header_factory = header_factory
+        self.entries = tuple(entries)
+        self.trailer_factory = trailer_factory
+        self.drop_priority = drop_priority
+        self.retained_count = len(self.entries) if retained_count is None else retained_count
         if not 0 <= self.retained_count <= len(self.entries):
             raise ValueError(
                 "summary section retained_count must be between zero and the entry count"
             )
-        prefix_lengths = [0]
-        for entry in self.entries:
-            prefix_lengths.append(prefix_lengths[-1] + len(entry))
-        self.entry_prefix_lengths = tuple(prefix_lengths)
 
 
 def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
     rendered_sections = ["**AI review summary**"]
     for section in sections:
         total = len(section.entries)
-        assert section.retained_count is not None
         section_lines = [
             section.header_factory(section.retained_count),
             *section.entries[: section.retained_count],
@@ -106,32 +101,13 @@ def _drop_lowest_priority_trailing_entry(
     candidates = [
         (index, section)
         for index, section in enumerate(sections)
-        if section.retained_count is not None and section.retained_count > 0
+        if section.retained_count > 0
     ]
     if not candidates:
         return False
     _, section = min(candidates, key=lambda candidate: (candidate[1].drop_priority, -candidate[0]))
-    assert section.retained_count is not None
     section.retained_count -= 1
     return True
-
-
-def _summary_section_length(
-    section: SummarySectionDescriptor,
-) -> int:
-    """Return one section's exact length without composing the full summary."""
-
-    total = len(section.entries)
-    assert section.retained_count is not None
-    trailers = section.trailer_factory(total - section.retained_count)
-    line_count = 1 + section.retained_count + len(trailers)
-    return (
-        len(section.header_factory(section.retained_count))
-        + section.entry_prefix_lengths[section.retained_count]
-        + sum(len(trailer) for trailer in trailers)
-        + line_count
-        - 1
-    )
 
 
 def render_summary_body(
@@ -198,37 +174,9 @@ def render_summary_body(
             )
         )
 
-    section_lengths = [_summary_section_length(section) for section in sections]
-
-    def rendered_size() -> int:
-        return (
-            len("**AI review summary**")
-            + sum(2 + section_length for section_length in section_lengths)
-            + len("\n\n")
-            + len(placeholder_marker)
-        )
-
-    def drop_entry() -> bool:
-        previous_counts = [section.retained_count for section in sections]
-        if not _drop_lowest_priority_trailing_entry(sections):
-            return False
-        for index, (previous, section) in enumerate(
-            zip(previous_counts, sections, strict=True)
-        ):
-            if previous != section.retained_count:
-                section_lengths[index] = _summary_section_length(section)
-                break
-        return True
-
-    while rendered_size() > max_comment_size:
-        if not drop_entry():
-            raise ValueError("platform comment limit is too small for summary marker")
-
     body_without_marker = _compose_summary_sections(sections)
-    # The composed string is the source of truth. If layout and size arithmetic
-    # ever drift, keep dropping whole trailing entries until the real payload fits.
     while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
-        if not drop_entry():
+        if not _drop_lowest_priority_trailing_entry(sections):
             raise ValueError("platform comment limit is too small for summary marker")
         body_without_marker = _compose_summary_sections(sections)
 
