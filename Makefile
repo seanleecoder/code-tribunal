@@ -15,10 +15,8 @@ PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 quality: docs-check lint test-strict typecheck supply-chain release-inputs workflow-parity compile
 
-# The single gate on canonical-template -> installed-copy parity. Previously the
-# same byte comparison ran in check_supply_chain_pins.py, in
-# check_release_inputs.py, and in test_ci_template.py, none of which could
-# repair the drift they reported.
+# The single gate on canonical-template -> installed-copy parity;
+# `make sync-workflows` repairs the drift it reports.
 workflow-parity:
 	$(MAKE) --no-print-directory CHECK=1 sync-workflows
 
@@ -69,8 +67,7 @@ supply-chain:
 release-inputs:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_release_inputs.py
 
-# Generation counterpart to the parity checks in `supply-chain` and
-# `release-inputs`. Pass CHECK=1 to verify without writing.
+# Pass CHECK=1 to verify without writing.
 sync-workflows:
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/sync_workflows.py $(if $(CHECK),--check,)
 

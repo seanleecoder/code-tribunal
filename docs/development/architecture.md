@@ -27,10 +27,21 @@ Cross-stage run IDs and effective-config digests detect accidental or hostile
 artifact mixing within the trusted pipeline contract; they are not signatures
 against an artifact writer that already controls the trusted job.
 
+## Compatibility boundary
+
+The supported public surface is versioned configuration, versioned input/output
+artifacts, published container and template behavior, documented operator
+commands, and current thread/state behavior. Private Python helpers and internal
+module paths, logger names and exact log prose, fixture internals, undocumented
+environment variables, and orchestration artifacts removed within a release
+migration are not compatibility surfaces. Refactor or delete those private seams
+instead of preserving wrappers for them.
+
 ## Module ownership
 
-Guidance, not a checked contract — there are deliberately no line-count
-assertions. What *is* enforced lives in
+Dependencies point from platform transport into orchestration and then into pure
+planning and policy modules. Guidance, not a checked contract — there are
+deliberately no line-count assertions. What *is* enforced lives in
 `ai-review/tests/unit/test_import_boundaries.py`: the pure modules cannot import
 a platform client or `requests`, and `consensus_errors` cannot import anything
 from the package at all.

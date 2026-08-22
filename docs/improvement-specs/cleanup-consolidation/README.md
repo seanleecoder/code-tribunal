@@ -3,11 +3,11 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 through SPEC-58 are implemented; SPEC-57 closed `review_config.v3`.
-  SPEC-59 through SPEC-61 are pending implementation.
+- **Status:** SPEC-54 through SPEC-59 are implemented; SPEC-57 closed `review_config.v3`.
+  SPEC-60 and SPEC-61 are pending implementation.
 
-Sections below that describe SPEC-54/55/56/57/58 work state what was done, not what to do. Read
-them as record; the shipped contract is the code, the tests, and
+Sections below that describe SPEC-54 through SPEC-59 work state what was done, not what to
+do. Read them as record; the shipped contract is the code, the tests, and
 [`CHANGELOG.md`](../../../CHANGELOG.md).
 
 ## Purpose
@@ -42,9 +42,8 @@ deleted, as [the improvement-spec index](../README.md) requires of every complet
 [`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
 specs that follow state their dependencies in terms of them.
 
-SPEC-56, SPEC-57, and SPEC-58 each landed as their own change series. Their requirement
-documents are deleted in this follow-up now that those histories are reachable from `main`.
-The SPEC-59 document lands with this change series; its implementation follows. SPEC-60 and
+SPEC-56 through SPEC-59 each landed as their own change series, and their requirement
+documents are deleted now that those histories are reachable from `main`. SPEC-60 and
 SPEC-61 stay plain text because their documents land separately.
 
 | Spec | Title | Type | Depends on |
@@ -54,7 +53,7 @@ SPEC-61 stay plain text because their documents land separately.
 | SPEC-56 — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
 | SPEC-57 — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
 | SPEC-58 — **implemented** | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
-| [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
+| SPEC-59 — **implemented** | Product invariants and lightweight complexity control | Governance | None |
 | SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
 | SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
 
@@ -62,10 +61,11 @@ SPEC-61 stay plain text because their documents land separately.
 
 Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live roadmap.
 
-1. ~~**Land SPEC-59 first or in parallel.**~~ **Superseded.** SPEC-59 did not land first.
-   SPEC-54/55 changed the contracts before the product boundary was recorded, so SPEC-59 now
-   describes a boundary that already moved and must be rebased against the shipped
-   informational contract before it is implemented.
+1. ~~**Land SPEC-59 first or in parallel.**~~ **Done, out of order.** SPEC-54/55 changed
+   the contracts before the product boundary was recorded, so
+   [ADR-0003](../../decisions/0003-product-invariants-and-complexity-envelope.md) records
+   the shipped informational contract rather than the pre-cleanup boundary this step
+   assumed.
 2. ~~**Implement SPEC-54 and SPEC-55 as one coordinated change series.**~~ **Done.** They
    shipped together: SPEC-54 defined `consensus.v2` and SPEC-55 the renderer and the
    publish-only pipeline over it. The hazard this step warned about — an intermediate state
@@ -88,9 +88,9 @@ Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live
    section 2 already satisfied — landing SPEC-55 had collapsed the duplicated reducer-policy
    tests — so nothing was deleted for it; the reducer work was limited to renaming the suite
    that was still named after a spec phase.
-5. **Implement SPEC-59, SPEC-60, and SPEC-61 as follow-ups.** SPEC-59 records the product
-   boundary that the shipped informational contract now establishes. SPEC-60 and SPEC-61 are
-   not prerequisites for the cleanup. SPEC-60 is observational and must not change surfacing decisions; its
+5. **Implement SPEC-60 and SPEC-61 as follow-ups.** ADR-0003 now records the product
+   boundary. SPEC-60 and SPEC-61 are not prerequisites for the cleanup. SPEC-60 is
+   observational and must not change surfacing decisions; its
    prohibitions on changing the `post` exit status and on restoring a merge gate describe the
    contract SPEC-55 established. SPEC-61 is required before promoting or repinning a
    candidate image that changes reviewer-path behavior, but it is not a general pull-request
@@ -117,8 +117,10 @@ Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live
 - Do not add line-count, file-count, or test-count quality gates.
 - Do not add exact-prose documentation tests.
 - A new abstraction must either remove duplicated behavior immediately or establish a
-  product boundary named in SPEC-59. Do not add framework layers for hypothetical future
-  adapters, stages, platforms, or state backends.
+  product boundary named in
+  [ADR-0003](../../decisions/0003-product-invariants-and-complexity-envelope.md). Do not
+  add framework layers for hypothetical future adapters, stages, platforms, or state
+  backends.
 - Run `make quality`, update workflow parity, regenerate golden artifacts where required,
   and execute the spec-specific negative tests before declaring a spec complete.
 
