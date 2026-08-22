@@ -258,6 +258,16 @@ def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
     return _FRAGMENT_SEPARATOR.join(fragment.text for fragment in fragments)
 
 
+def _section_fragment(
+    label: str, entries: Sequence[RenderFragment]
+) -> RenderFragment:
+    """Keep a section label coupled to all of its renderer-owned entries."""
+
+    return _text_fragment(
+        _compose_fragments([_text_fragment(label), *entries])
+    )
+
+
 def _fit_fragments(fragments: Sequence[RenderFragment], budget: int) -> list[str]:
     """Fit whole fragments greedily, skipping any atom that does not fit."""
     surviving: list[str] = []
@@ -435,19 +445,18 @@ def render_body(
             if fragment is not None:
                 dissent_fragments.append(fragment)
 
-    # Dissent is considered before evidence and suggestion deliberately. An
-    # oversized atomic fragment is omitted, but it does not suppress smaller
-    # later fragments that can still carry useful review context.
+    # Dissent is considered before evidence and suggestion deliberately. Each
+    # section is atomic so truncation cannot retain its label after dropping
+    # every entry. An oversized section is omitted, but it does not suppress
+    # smaller later fragments that can still carry useful review context.
     # Reserving dissent next to the footer instead would put unbounded model
     # text in the never-truncated suffix, where a long enough rationale makes
     # `limit_body_before_marker` raise rather than shorten.
     if dissent_fragments:
-        variable_fragments.append(_text_fragment("Dissent:"))
-        variable_fragments.extend(dissent_fragments)
+        variable_fragments.append(_section_fragment("Dissent:", dissent_fragments))
 
     if evidence_fragments:
-        variable_fragments.append(_text_fragment("Evidence:"))
-        variable_fragments.extend(evidence_fragments)
+        variable_fragments.append(_section_fragment("Evidence:", evidence_fragments))
 
     suggestion = group.get("suggestion")
     if isinstance(suggestion, str):

@@ -237,8 +237,30 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("`The guard is already applied by the caller.`", body)
         self.assertNotIn("evidence " * 100, body)
         self.assertIn("Support:", body)
-        # Ordering is the mechanism, so pin it: dissent precedes evidence.
-        self.assertLess(body.index("Dissent:"), body.index("Evidence:"))
+        self.assertNotIn("Evidence:", body)
+
+    def test_oversized_section_entries_do_not_leave_orphan_headers(self) -> None:
+        group = self._group()
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "d" * 70_000,
+                "adjusted_severity": None,
+            }
+        ]
+        group["evidence_by_reviewer"] = {"claude": "e" * 70_000}
+        group["suggestion"] = "return early"
+
+        body, _body_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
+
+        self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
+        self.assertNotIn("Dissent:", body)
+        self.assertNotIn("Evidence:", body)
+        self.assertNotIn("cursor disputes:", body)
+        self.assertIn("Suggestion:\n```text\nreturn early\n```", body)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
 
     def test_renders_dissent_with_optional_severity_for_blocker_group(self) -> None:
         group = self._group()
