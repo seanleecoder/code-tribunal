@@ -294,6 +294,46 @@ versioning.
 
 ### Changed
 
+- **The published images run a curated packaged smoke suite instead of rerunning
+  the checkout test suite (SPEC-58).** The base-image preflight used to bind-mount
+  `ai-review/tests` over `/opt/ai-review/tests`, run `unittest discover` against
+  it, and guard the result with a `MIN_EXECUTED_TESTS=400` floor. That coupled
+  image publication to checkout test layout and proved nothing the checkout job had
+  not already proved. Both the mount and the floor are gone.
+
+  What replaces them is `ai_review_smoke`, a stdlib-only suite that ships in the
+  image under a narrow `COPY` and is invoked **by module name** —
+  `python -m ai_review_smoke base` on the base tag and
+  `python -m ai_review_smoke reviewer` on the reviewer tag. Shipping it is a
+  deliberate, bounded exception to "runtime images carry no product test code": it
+  imports no pytest and no checkout test module, adds no dependency the runtime
+  does not already install, and never runs during the build, so smoke test changes
+  still do not alter image identity.
+
+  The vacuous-pass property the floor was compensating for is preserved
+  structurally rather than numerically. `COPY` fails at build time on a missing
+  path, so a renamed or deleted suite fails the build; an absent module raises
+  `ModuleNotFoundError` and exits non-zero; and the suite refuses to run unless the
+  test IDs it loaded equal the manifest it declares, so a renamed method or a class
+  that stopped subclassing `TestCase` fails naming the missing case instead of
+  quietly reducing coverage. Test count remains forbidden as a quality signal.
+
+  Two properties are genuine additions, not reorganizations: the critique stage,
+  which no preflight exercised, and the cursor seat, which ships in the reviewer
+  image but was absent from the `for reviewer in claude codex opencode` loop. The
+  inline fixture-presence assertions and the `--help` module loop are absorbed into
+  the suite's own manifests. `compileall`, the non-owner-uid ownership preflight,
+  and the two OpenCode smoke scripts stay separate workflow steps. Packaged
+  fixtures still ship at `/opt/ai-review/tests/fixtures`, which both preflights
+  resolve with no mount.
+
+- **`make test` fails with an actionable message when pytest is missing, and the
+  `test-fallback` target is removed.** The fallback ran `unittest discover` over a
+  suite that is substantially pytest-style bare functions, so it reported success
+  over a silently collected subset. `make packaged-smoke` is the new explicit
+  target for the packaged-runtime suite; pytest remains the documented local and CI
+  test command.
+
 - `critique_timeout_seconds` now defaults to a flat 900 seconds when a reviewer
   omits it. It previously fell back to that reviewer's `timeout_seconds` capped
   at 900, so a seat with `timeout_seconds: 1800` silently got 900 for critique

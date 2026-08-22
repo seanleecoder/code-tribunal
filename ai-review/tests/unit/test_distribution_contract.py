@@ -4,6 +4,7 @@ import re
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
@@ -11,7 +12,7 @@ _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 
 
 class RuntimeDistributionContractTests(unittest.TestCase):
-    """Assertions that also run under the image's unittest preflight."""
+    """Layout assertions about the shipped package that need no repository files."""
 
     def test_internal_python_tree_does_not_claim_typed_distribution(self) -> None:
         package_root = _AI_REVIEW_ROOT / "src" / "ai_review"
@@ -86,15 +87,24 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         )
         self.assertNotIn("COPY ai-review/src /opt/ai-review/src", dockerfile)
 
-    def test_container_ships_fixtures_but_no_test_code(self) -> None:
-        """Runtime images carry test fixtures only, never the suite.
+    def test_container_ships_fixtures_and_only_the_packaged_smoke_suite(self) -> None:
+        """The product test suite never ships; exactly one test-shaped thing does.
 
-        The fixtures are required: the reviewer preflight runs `docker run
-        --read-only` with no mount and resolves `--diff`/`--repo` from
-        `/opt/ai-review/tests/fixtures`. The test code is staged in by CI at
-        verification time instead, so a production image that processes untrusted
-        diffs and model output carries no test code. Without this contract, a revert
-        to copying the whole tree would pass silently.
+        Two things the image needs are not the checkout suite. The fixtures are
+        required: the reviewer preflight runs `docker run --read-only` with no mount
+        and resolves `--diff`/`--repo` from `/opt/ai-review/tests/fixtures`. The
+        packaged smoke suite is required too, and shipping it is the deliberate,
+        narrow exception (SPEC-58) that restores the build-time guarantee the removed
+        executed-test floor was compensating for -- `COPY` fails on a missing path, so
+        a renamed or deleted suite fails the build instead of passing vacuously.
+
+        Everything else about the original contract stands, and this test is what
+        keeps the exception narrow rather than letting it be read as permission. The
+        rationale is that a production image processing untrusted diffs and model
+        output carries no product test code, so the allowance is enumerated: exactly
+        the one packaged-suite path, nothing under `ai-review/tests` beyond fixtures,
+        and no `test_*.py` module from the checkout suite. A revert to copying the
+        whole tree still fails here.
         """
         dockerfile = (
             _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
@@ -103,44 +113,111 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertIn(
             "COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures", dockerfile
         )
+        self.assertIn(
+            "COPY ai-review/src/ai_review_smoke /opt/ai-review/src/ai_review_smoke",
+            dockerfile,
+        )
         self.assertNotIn("COPY ai-review/tests /opt/ai-review/tests", dockerfile)
+
+        # Enumerate what may be copied out of the test tree, so a new COPY has to be
+        # justified here rather than inherited from a substring that happens not to
+        # match one of the assertions above.
+        copied_from_tests = re.findall(r"(?m)^COPY\s+(ai-review/tests\S*)\s", dockerfile)
+        self.assertEqual(copied_from_tests, ["ai-review/tests/fixtures"])
+
+        # The smoke suite is the only permitted `src/` copy besides the runtime
+        # package, and it is a whole-package copy of stdlib-only code, not a route
+        # for pulling in checkout test modules.
+        copied_from_src = re.findall(r"(?m)^COPY\s+(ai-review/src/\S*)\s", dockerfile)
+        self.assertEqual(
+            sorted(copied_from_src),
+            ["ai-review/src/ai_review", "ai-review/src/ai_review_smoke"],
+        )
+
         # The suite must not run inside the image build either: that is what coupled
         # test-code changes to image identity, and on GitLab it was the only thing
-        # gating the push.
+        # gating the push. The packaged suite runs at preflight, never here.
         self.assertNotIn("unittest discover", dockerfile)
+        self.assertNotIn("ai_review_smoke base", dockerfile)
+        self.assertNotIn("ai_review_smoke reviewer", dockerfile)
 
-    def test_ci_stages_the_suite_into_the_images_own_tests_path(self) -> None:
-        """The publish preflight must overlay `/opt/ai-review/tests`, not run elsewhere.
+    def test_preflight_invokes_the_packaged_smoke_suite_by_module_name(self) -> None:
+        """Both tags run the image's own suite, by name, with no mount.
 
-        The suite resolves `config/` and `schemas/` relative to its own location, so
-        running it from a checkout path would validate the checkout's config rather
-        than the image's. The read-only bind mount replaces the path, so a fixture
-        deleted in the checkout cannot linger from the image layer.
+        Invocation by module name is load-bearing rather than stylistic: discovery
+        against a bind mount could pass having collected nothing, because `docker run
+        -v` silently creates an empty directory when the host path is missing or
+        renamed and `unittest discover` exits 0 on zero collection. `python -m` on an
+        absent package raises `ModuleNotFoundError` and exits non-zero instead.
+
+        Both scopes must appear. The properties split across the two tags -- the
+        reviewer cases need the pinned CLIs only the reviewer image has -- so a single
+        run against one tag would silently cover half of them.
         """
         workflow = self._publish_workflow()
+
+        self.assertIn("python -m ai_review_smoke base", workflow)
+        self.assertIn("python -m ai_review_smoke reviewer", workflow)
+        # The checkout suite is no longer rerun in the image, and nothing mounts it.
+        self.assertNotIn("unittest discover", workflow)
+        self.assertNotIn("/opt/ai-review/tests:ro", workflow)
+
+    def test_a_vacuous_preflight_pass_cannot_publish_an_image(self) -> None:
+        """The same property the executed-test floor held, held structurally.
+
+        A test *count* was only ever a proxy, and a bad one: it could not tell a
+        suite that ran everything from one that had quietly lost a case, and it made
+        the number itself a maintenance burden. Three structural facts replace it,
+        and this asserts all three because any one alone leaves a vacuous pass open:
+
+        1. `COPY` fails at build time on a missing path, so renaming or deleting the
+           suite fails the build rather than reaching the preflight at all;
+        2. the preflight invokes the suite by module name, so an absent package exits
+           non-zero (asserted in the case above);
+        3. the suite refuses to run unless the test IDs it loaded equal the manifest
+           it declares -- exercised here against the real loader, since a workflow
+           string cannot show that the guard actually fires.
+
+        The count and its `ran - skipped` arithmetic must be gone, not merely
+        unused: leaving them would keep a number in the tree that no longer gates
+        anything while reading as though it did.
+        """
+        workflow = self._publish_workflow()
+        dockerfile = (
+            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
+        ).read_text(encoding="utf-8")
 
         self.assertIn(
-            '-v "$GITHUB_WORKSPACE/ai-review/tests:/opt/ai-review/tests:ro"', workflow
+            "COPY ai-review/src/ai_review_smoke /opt/ai-review/src/ai_review_smoke",
+            dockerfile,
         )
-        self.assertIn("python -m unittest discover -s /opt/ai-review/tests", workflow)
+        self.assertNotIn("MIN_EXECUTED_TESTS", workflow)
+        self.assertNotIn("executed=$((ran - skipped))", workflow)
 
-    def test_preflight_requires_the_mounted_suite_to_actually_run(self) -> None:
-        """A vacuous pass must not publish an image.
+        from ai_review_smoke import manifest as smoke_manifest
+        from ai_review_smoke.loader import SmokeManifestError, build_suite
 
-        `unittest discover` exits 0 when it collects nothing, and `docker run -v`
-        creates an empty directory when the host path is missing or renamed. The
-        removed in-image `COPY` + `RUN` could not fail that way, so the floor restores
-        the property.
-        """
-        workflow = self._publish_workflow()
+        for scope in smoke_manifest.SCOPES:
+            with self.subTest(scope=scope):
+                # The honest arrangement loads.
+                self.assertTrue(build_suite(scope).countTestCases())
 
-        # Parse the floor rather than duplicate it, so the number lives in one place.
-        floor = re.search(r"MIN_EXECUTED_TESTS=(\d+)", workflow)
-        self.assertIsNotNone(floor, "workflow must define an executed-test floor")
-        self.assertGreater(int(floor.group(1)), 0)
-        # It must be an EXECUTION floor: unittest counts skips in "Ran N".
-        self.assertIn("executed=$((ran - skipped))", workflow)
-        self.assertIn('if [ "$executed" -lt "$MIN_EXECUTED_TESTS" ]', workflow)
+                # A case that stopped matching collection -- renamed, or on a class
+                # that no longer subclasses TestCase -- must name itself, not pass.
+                declared = smoke_manifest.MANIFEST[scope]
+                dropped = sorted(declared)[0]
+                with mock.patch.dict(
+                    smoke_manifest.MANIFEST, {scope: declared - {dropped}}
+                ), self.assertRaisesRegex(SmokeManifestError, "do not match its manifest"):
+                    build_suite(scope)
+
+                # And a case added without editing the manifest must fail too, so the
+                # manifest cannot silently fall behind the suite.
+                missing = f"{next(iter(declared)).rsplit('.', 1)[0]}.test_not_defined_anywhere"
+                with mock.patch.dict(
+                    smoke_manifest.MANIFEST, {scope: declared | {missing}}
+                ), self.assertRaises(SmokeManifestError):
+                    build_suite(scope)
 
     # Two cases lived here covering the release hash groups: that fixture
     # enumeration used `git ls-files` rather than an unfiltered walk, and that the
@@ -148,17 +225,37 @@ class RepositoryDistributionContractTests(unittest.TestCase):
     # into HASH_GROUPS at import. Both went with the hash groups themselves --
     # `runtime_source` already commits to those bytes.
 
-    def test_preflights_verify_the_images_own_fixtures_before_overlaying(self) -> None:
-        """The overlay hides the shipped fixtures, so assert them first.
+    def test_packaged_smoke_suite_verifies_the_images_own_fixtures(self) -> None:
+        """The fixtures still ship, and the suite still asserts the exact paths.
 
-        The read-only mount shadows `/opt/ai-review/tests`, so the preflight would not
-        otherwise notice a fixture missing from the image.
-        The reviewer preflight depends on exactly these paths and runs with no mount.
+        The overlay this used to guard against is gone with the bind mount, but the
+        property it protected is not: the reviewer preflight resolves `--diff` and
+        `--repo` from `/opt/ai-review/tests/fixtures` with no mount, so a fixture
+        missing from the image breaks image publication and nothing in the checkout
+        suite can see it. The assertion moved from inline `test -f` / `test -d` shell
+        into the packaged suite's manifest, so this pins it there instead.
         """
-        workflow = self._publish_workflow()
+        from ai_review_smoke import manifest as smoke_manifest
 
-        self.assertIn("test -f /opt/ai-review/tests/fixtures/diffs/simple.diff", workflow)
-        self.assertIn("test -d /opt/ai-review/tests/fixtures/repos/simple", workflow)
+        self.assertEqual(
+            smoke_manifest.PACKAGED_FIXTURES,
+            (
+                ("tests/fixtures/diffs/simple.diff", "file"),
+                ("tests/fixtures/repos/simple", "directory"),
+            ),
+        )
+        self.assertIn(
+            "ai_review_smoke.base_cases.PackagedBaseImageTests"
+            ".test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them",
+            smoke_manifest.MANIFEST["base"],
+        )
+        for relative, kind in smoke_manifest.PACKAGED_FIXTURES:
+            target = _AI_REVIEW_ROOT / relative
+            with self.subTest(path=relative):
+                self.assertTrue(
+                    target.is_file() if kind == "file" else target.is_dir(),
+                    f"{relative} must exist to be shipped into the image",
+                )
 
     def test_generated_artifacts_are_excluded_from_git_and_container_contexts(self) -> None:
         required = {"build/", "dist/", "*.egg-info/", "__pycache__/", ".coverage"}
@@ -168,26 +265,32 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertLessEqual(required, set(gitignore))
         self.assertLessEqual(required, set(dockerignore))
 
-    def test_base_image_smoke_loop_names_only_modules_that_exist(self) -> None:
-        """The publish workflow runs `--help` over a hardcoded module list.
+    def test_packaged_smoke_runtime_module_manifest_matches_the_package(self) -> None:
+        """The module list the base preflight imports lives in the suite, not in shell.
 
-        Deleting a module without editing that list breaks **image publication**,
-        not the review pipeline, so nothing else in this suite would catch it.
+        It used to be `for module in input_bundle consensus post schema` inline in the
+        workflow: deleting a module without editing that list breaks **image
+        publication**, not the review pipeline, so nothing else in this suite would
+        catch it. The list moved into the packaged suite's manifest and grew to the
+        whole package, and this asserts the equivalence in both directions -- a module
+        added without declaring it fails here, and a module declared after deletion
+        fails the in-image import case.
         """
-        workflow = _PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-        match = re.search(r"for module in ([^;]+); do", workflow)
-        self.assertIsNotNone(match, "base-image smoke module loop not found")
-        assert match is not None
+        from ai_review_smoke import manifest as smoke_manifest
 
-        modules = match.group(1).split()
-        self.assertIn("post", modules)
         package_root = _AI_REVIEW_ROOT / "src" / "ai_review"
-        for module in modules:
-            with self.subTest(module=module):
-                self.assertTrue(
-                    (package_root / f"{module}.py").exists(),
-                    f"publish workflow smoke-tests ai_review.{module}, which does not exist",
-                )
+        actual: set[str] = set()
+        for source in package_root.rglob("*.py"):
+            parts = list(source.relative_to(package_root.parent).with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts.pop()
+            actual.add(".".join(parts))
+
+        self.assertEqual(set(smoke_manifest.RUNTIME_MODULES), actual)
+        self.assertIn("ai_review.post", smoke_manifest.RUNTIME_MODULES)
+        self.assertLessEqual(
+            set(smoke_manifest.CLI_MODULES), set(smoke_manifest.RUNTIME_MODULES)
+        )
 
     def test_no_merge_gate_remains_in_the_runtime_or_its_schemas(self) -> None:
         """The gate is deleted, not disabled. Nothing may still name it.

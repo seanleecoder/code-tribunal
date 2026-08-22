@@ -1,3 +1,11 @@
+"""How critique verdicts reduce a grouped finding to a decision.
+
+Duplicate/dispute/noise/agree collapse, supporter and contributor attribution,
+self-critique exclusion, majority-noise suppression, and the opt-in one-level
+severity downgrade -- all asserted through the public ``build_consensus()`` rather
+than by reassembling its result from private reducer helpers.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -30,7 +38,7 @@ def _critique_config(
     return config
 
 
-class Phase5ConsensusTests(unittest.TestCase):
+class CritiqueReductionTests(unittest.TestCase):
     def test_group_propagates_representative_suggestion_and_ordered_evidence(self) -> None:
         first = _finding("claude", "1" * 64, "major")
         first["evidence"] = [" first fact ", "", " \t\n"]

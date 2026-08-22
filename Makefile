@@ -5,10 +5,11 @@ REVIEWER ?= claude
 DIFF ?= $(AI_REVIEW_ROOT)/tests/fixtures/diffs/simple.diff
 REPO ?= $(AI_REVIEW_ROOT)/tests/fixtures/repos/simple
 LOCAL_OUT ?= .ai-review-local
+SCOPE ?= base
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
-.PHONY: quality test test-strict test-fallback lint typecheck compile supply-chain \
+.PHONY: quality test test-strict packaged-smoke lint typecheck compile supply-chain \
 	release-inputs docs-check sync-workflows workflow-parity \
 	update-golden review-local consensus-local validate-local
 
@@ -24,19 +25,34 @@ workflow-parity:
 docs-check:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py
 
+# pytest is the documented local and CI test command, and the only one. The
+# previous unittest fallback could not collect the suite: a large part of it is
+# pytest-style bare functions (tests/contract, tests/integration) that
+# `unittest discover` silently skips, so the fallback reported success over a
+# subset. Fail with the fix instead of running something weaker.
 test:
 	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory test-strict; \
 	else \
-		echo "pytest is unavailable; running the documented local unittest fallback"; \
-		$(MAKE) --no-print-directory test-fallback; \
+		echo "pytest is unavailable, and there is no substitute: parts of the suite are" >&2; \
+		echo "pytest-style functions that unittest cannot collect. Install the pinned" >&2; \
+		echo "development dependencies and re-run:" >&2; \
+		echo "" >&2; \
+		echo "    $(PYTHON) -m pip install -r requirements-dev.txt" >&2; \
+		exit 1; \
 	fi
 
 test-strict:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(PYTEST_ARGS)
 
-test-fallback:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m unittest discover -s $(AI_REVIEW_ROOT)/tests -p 'test_*.py'
+# The curated packaged-runtime smoke suite that ships in the images, run by module
+# name exactly as the image preflight invokes it. Not part of `make quality`: the
+# checkout pytest suite above is the authoritative product test suite, and this
+# asserts properties of the packaged runtime instead. SCOPE selects which image
+# tag's properties to run (base or reviewer); the reviewer scope needs the pinned
+# CLIs, so it is fully green only inside the reviewer image.
+packaged-smoke:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review_smoke $(SCOPE)
 
 lint:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(RUFF_PATHS)

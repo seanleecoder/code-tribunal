@@ -3,11 +3,11 @@
 - **Repository:** `seanleecoder/code-tribunal`
 - **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
 - **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 through SPEC-57 are implemented, which closes `review_config.v3`.
-  SPEC-58 through SPEC-61 are pending implementation.
+- **Status:** SPEC-54 through SPEC-58 are implemented; SPEC-57 closed `review_config.v3`.
+  SPEC-59 through SPEC-61 are pending implementation.
 
-Sections below that describe SPEC-54/55/56/57 work state what was done, not what to do. Read them
-as record; the shipped contract is the code, the tests, and
+Sections below that describe SPEC-54/55/56/57/58 work state what was done, not what to do. Read
+them as record; the shipped contract is the code, the tests, and
 [`CHANGELOG.md`](../../../CHANGELOG.md).
 
 ## Purpose
@@ -42,26 +42,25 @@ deleted, as [the improvement-spec index](../README.md) requires of every complet
 [`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
 specs that follow state their dependencies in terms of them.
 
-SPEC-56 and SPEC-57 each landed as their own change series; their documents are still here and
-will be deleted in a follow-up, once those series are on `main`. Deleting a document in the
-same change that implemented it would leave no trace, because this repository squash-merges.
-The SPEC-59 document lands with this change series; its implementation follows. The remaining
-specs stay plain text because their documents land separately.
+SPEC-56, SPEC-57, and SPEC-58 each landed as their own change series. Their requirement
+documents are deleted in this follow-up now that those histories are reachable from `main`.
+The SPEC-59 document lands with this change series; its implementation follows. SPEC-60 and
+SPEC-61 stay plain text because their documents land separately.
 
 | Spec | Title | Type | Depends on |
 |---|---|---|---|
 | SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
 | SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
-| [SPEC-56](spec-56-first-party-reviewer-registry.md) — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
-| [SPEC-57](spec-57-always-on-state-path-pruning.md) — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
-| [SPEC-58](spec-58-contract-oriented-test-consolidation.md) | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
+| SPEC-56 — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
+| SPEC-57 — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
+| SPEC-58 — **implemented** | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
 | [SPEC-59](spec-59-product-invariants-and-complexity-control.md) | Product invariants and lightweight complexity control | Governance | May land first |
 | SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
 | SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
 
 ## Required implementation order
 
-Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadmap.
+Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live roadmap.
 
 1. ~~**Land SPEC-59 first or in parallel.**~~ **Superseded.** SPEC-59 did not land first.
    SPEC-54/55 changed the contracts before the product boundary was recorded, so SPEC-59 now
@@ -82,12 +81,16 @@ Steps 1 and 2 are done. They are kept as record; steps 3 to 5 are the live roadm
    appended the two reviewer keys and SPEC-57 appended `state.backend`, each to that same
    removal list rather than opening a new config version. SPEC-57, as the last
    config-changing spec, owns the final consolidated migration message.
-4. **Implement SPEC-58 after the production seams stop moving.** It must delete obsolete
-   tests rather than add a second suite beside them. Some of this arrived early: landing
-   SPEC-55 collapsed the duplicated reducer-policy tests it names in its section 2, so
-   SPEC-58 should re-survey rather than assume that duplication is still present.
-5. **Implement SPEC-60 and SPEC-61 as follow-ups.** Neither is a prerequisite for the
-   cleanup. SPEC-60 is observational and must not change surfacing decisions; its
+4. ~~**Implement SPEC-58 after the production seams stop moving.**~~ **Done.** It deleted the
+   replaced tests rather than adding a suite beside them: the per-provider copies of shared
+   runner behavior, the duplicated endpoint and credential tables, and the image-time rerun of
+   the checkout suite with its executed-test floor. The re-survey this step called for found
+   section 2 already satisfied — landing SPEC-55 had collapsed the duplicated reducer-policy
+   tests — so nothing was deleted for it; the reducer work was limited to renaming the suite
+   that was still named after a spec phase.
+5. **Implement SPEC-59, SPEC-60, and SPEC-61 as follow-ups.** SPEC-59 records the product
+   boundary that the shipped informational contract now establishes. SPEC-60 and SPEC-61 are
+   not prerequisites for the cleanup. SPEC-60 is observational and must not change surfacing decisions; its
    prohibitions on changing the `post` exit status and on restoring a merge gate describe the
    contract SPEC-55 established. SPEC-61 is required before promoting or repinning a
    candidate image that changes reviewer-path behavior, but it is not a general pull-request
