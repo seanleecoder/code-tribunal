@@ -318,47 +318,12 @@ def _require_effective_config_integrity(config: dict[str, Any], manifest: dict[s
     return current_digest
 
 
-def require_critique_provenance(
-    raw: dict[str, Any],
-    *,
-    critic: str,
-    run_id: str,
-    config_digest: str,
-) -> None:
-    """Validate critique artifact provenance for a finalized critique batch.
-
-    Consensus consumes adapter-finalized artifacts only (no identity repair here).
-    Filename stem must equal the batch ``critic`` exactly. Blank or
-    whitespace-only payload critics are rejected the same as a wrong name
-    (a space-only critic is not treated as absent for silent repair).
-
-    Digest matching is intentionally success-only (same policy as finding batches):
-    non-success critique seats may carry a degraded stamp and only degrade the
-    panel.
-    """
-    if not isinstance(raw, dict):
-        raise ConsensusIntegrityError(f"critique batch is not an object for critic={critic}")
-    if raw.get("run_id") != run_id:
-        raise ConsensusIntegrityError(
-            f"critique batch run_id mismatch for critic={critic}"
-        )
-    if raw.get("critic") != critic:
-        raise ConsensusIntegrityError(
-            f"critique batch critic mismatches filename for critic={critic}"
-        )
-    status = str(raw.get("adapter_status") or "success")
-    if status == "success" and raw.get("effective_config_sha256") != config_digest:
-        raise ConsensusIntegrityError(
-            f"critique batch effective_config_sha256 mismatch for critic={critic}"
-        )
-
-
 def validate_consensus_inputs(
     *,
     config: dict[str, Any],
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
-    critique_batches: list[dict[str, Any]],
+    critique_batches: list[tuple[str, dict[str, Any]]],
 ) -> None:
     """Validate finding/critique batches against prepare run and effective config."""
     try:
@@ -416,11 +381,15 @@ def validate_consensus_inputs(
                     if isinstance(finding, dict) and finding.get("source_finding_id"):
                         known_finding_ids.add(str(finding["source_finding_id"]))
 
-        for batch in critique_batches:
+        for filename_critic, batch in critique_batches:
             validate_instance(batch, "critique_batch.schema.json")
             critic = str(batch.get("critic") or "").strip()
             if not critic:
                 raise ConsensusIntegrityError("critique batch missing critic")
+            if batch.get("critic") != filename_critic:
+                raise ConsensusIntegrityError(
+                    f"critique batch critic mismatches filename for critic={filename_critic}"
+                )
             if critic in seen_critics:
                 raise ConsensusIntegrityError(f"duplicate critique batch for critic={critic}")
             seen_critics.add(critic)
@@ -472,8 +441,6 @@ def cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = load_config(args.config)
     inputs = Path(args.inputs)
-    config_digest = effective_config_digest(config)
-
     try:
         manifest = load_json_file(inputs / "manifest.json")
         if not isinstance(manifest, dict):
@@ -491,7 +458,7 @@ def cli(argv: list[str] | None = None) -> int:
             if aliases_path.exists():
                 state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
 
-        critique_batches = []
+        critique_inputs: list[tuple[str, dict[str, Any]]] = []
         if _critique_enabled(config):
             for path in sorted(Path(args.critiques_dir).glob("*.json")):
                 raw = load_json_file(path)
@@ -499,22 +466,15 @@ def cli(argv: list[str] | None = None) -> int:
                     raise ConsensusIntegrityError(
                         f"critique batch is not an object for critic={path.stem}"
                     )
-                # Finalized-only: schema before provenance; no finalize/repair.
-                validate_instance(raw, "critique_batch.schema.json")
-                require_critique_provenance(
-                    raw,
-                    critic=path.stem,
-                    run_id=run_id,
-                    config_digest=config_digest,
-                )
-                critique_batches.append(raw)
+                critique_inputs.append((path.stem, raw))
 
         validate_consensus_inputs(
             config=config,
             manifest=manifest,
             finding_batches=batches,
-            critique_batches=critique_batches,
+            critique_batches=critique_inputs,
         )
+        critique_batches = [batch for _filename_critic, batch in critique_inputs]
         consensus = build_consensus(
             manifest, batches, config, state=state, critique_batches=critique_batches
         )

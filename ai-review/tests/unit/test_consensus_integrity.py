@@ -13,7 +13,6 @@ from ai_review.config import effective_config_digest, load_config
 from ai_review.consensus import (
     ConsensusIntegrityError,
     cli,
-    require_critique_provenance,
     validate_consensus_inputs,
 )
 from ai_review.schema import empty_critique_batch, empty_finding_batch, write_canonical_json
@@ -134,7 +133,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     config=config,
                     manifest=manifest,
                     finding_batches=[batch],
-                    critique_batches=[critique],
+                    critique_batches=[("claude", critique)],
                 )
             self.assertIn("critique target unknown", str(ctx.exception))
 
@@ -446,25 +445,23 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     config=config,
                     manifest=manifest,
                     finding_batches=[batch],
-                    critique_batches=[critique, copy.deepcopy(critique)],
+                    critique_batches=[
+                        ("claude", critique),
+                        ("claude", copy.deepcopy(critique)),
+                    ],
                 )
             self.assertIn("duplicate critique batch", str(ctx.exception))
 
-            for bad_critic in ("", " ", "codex"):
-                with self.subTest(critic=bad_critic):
-                    with self.assertRaises(ConsensusIntegrityError) as ctx:
-                        require_critique_provenance(
-                            {
-                                "run_id": "run-1",
-                                "critic": bad_critic,
-                                "adapter_status": "success",
-                                "effective_config_sha256": digest,
-                            },
-                            critic="claude",
-                            run_id="run-1",
-                            config_digest=digest,
-                        )
-                    self.assertIn("mismatches filename", str(ctx.exception))
+            mismatched = copy.deepcopy(critique)
+            mismatched["critic"] = "codex"
+            with self.assertRaises(ConsensusIntegrityError) as ctx:
+                validate_consensus_inputs(
+                    config=config,
+                    manifest=manifest,
+                    finding_batches=[batch],
+                    critique_batches=[("claude", mismatched)],
+                )
+            self.assertIn("mismatches filename", str(ctx.exception))
 
     def test_cli_rejects_success_critique_from_disabled_critic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
