@@ -285,9 +285,9 @@ versioning.
 
   Current tooling rejects v1 outright, naming this migration. The version is
   checked before the exact key set, so a v1 artifact is told it speaks a retired
-  dialect rather than reported as carrying a stray key. Historical snapshots under
-  `release/history/` keep v1 and stay byte-identical: validate one from its own
-  release tag, with the validator that shipped beside it.
+  dialect rather than reported as carrying a stray key. Historical v1 inputs remain
+  available as `release/release-inputs.json` in their release tags and are validated
+  with the tooling that shipped beside them.
 
   Evidence-record freshness, waiver registration, and image-digest binding are
   unchanged.

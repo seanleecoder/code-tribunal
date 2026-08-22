@@ -64,8 +64,7 @@ def _is_released_note(path: Path) -> bool:
     test_release_tools.test_released_notes_remain_tag_identical for the byte check
     that carries the real guarantee.
 
-    Scoped to release/<version>.md. release/TEMPLATE.md and
-    release/history/README.md are current documents and stay checked.
+    Scoped to release/<version>.md. release/TEMPLATE.md stays checked.
     """
     if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
         return False
