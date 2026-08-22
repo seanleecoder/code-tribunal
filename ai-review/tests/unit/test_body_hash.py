@@ -372,6 +372,35 @@ class BodyHashTests(unittest.TestCase):
                 self.assertIsNotNone(parse_marker(first))
                 self.assertNotIn("Body:", first)
 
+    def test_oversized_body_does_not_suppress_smaller_later_fragments(self) -> None:
+        group = self._group()
+        group["body"] = "x" * 70_000
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "The caller already applies the guard.",
+                "adjusted_severity": None,
+            }
+        ]
+        group["evidence_by_reviewer"] = {"claude": "The caller checks emptiness."}
+        group["suggestion"] = "return early"
+
+        body, _body_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
+
+        self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
+        self.assertNotIn("Body:", body)
+        self.assertIn("Dissent:", body)
+        self.assertIn("`The caller already applies the guard.`", body)
+        self.assertIn("Evidence:", body)
+        self.assertIn("`The caller checks emptiness.`", body)
+        self.assertIn("Suggestion:\n```text\nreturn early\n```", body)
+        self.assertEqual(body.count("```"), 2)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
+        self.assertIn("Support:", body)
+        self.assertIsNotNone(parse_marker(body))
+
     def test_truncation_drops_whole_literal_span_instead_of_splitting_it(self) -> None:
         group = self._group()
         group["title"] = "T" * 240
@@ -496,6 +525,14 @@ class BodyHashTests(unittest.TestCase):
         self.assertEqual(
             _limit_fragments([RenderFragment("x" * 100)], 50),
             PLATFORM_TRUNCATION_NOTICE,
+        )
+
+    def test_oversized_fragment_does_not_suppress_smaller_later_fragment(self) -> None:
+        self.assertEqual(
+            _limit_fragments(
+                [RenderFragment("x" * 100), RenderFragment("retained")], 60
+            ),
+            "retained\n\n" + PLATFORM_TRUNCATION_NOTICE,
         )
 
     def test_padding_exception_is_u0020_only(self) -> None:

@@ -354,6 +354,8 @@ class ReleaseToolTests(unittest.TestCase):
     ) -> None:
         if not any_tags_resolvable(REPO_ROOT):
             self.skipTest("no release tags are available in this checkout")
+        if not tag_exists("v1.0.0", REPO_ROOT):
+            self.skipTest("v1.0.0 is not available in this checkout")
 
         completed = subprocess.run(
             [

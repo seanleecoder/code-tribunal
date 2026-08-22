@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import types
 import unittest
 from typing import (
@@ -323,7 +321,13 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
             tuple[str, object, dict[str, object], dict[str, object], str | None], ...
         ] = (
             ("obsolete critique keys", _ObsoleteCritique, critique_schema, critique_root, ""),
-            ("wrong scalar types", _WrongScalarPostResult, post_schema, post_schema, ""),
+            (
+                "wrong scalar types",
+                _WrongScalarPostResult,
+                post_schema,
+                post_schema,
+                r"^run_id\b",
+            ),
             ("wrong array item scalar", list[int], string_array, string_array, ""),
             (
                 "wrong dictionary value scalar",

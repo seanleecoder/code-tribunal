@@ -17,6 +17,8 @@ SUMMARY_MARKER_RE = re.compile(
 )
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
+
+
 @dataclass(frozen=True)
 class ExistingReviewDiscussion:
     discussion_id: Any

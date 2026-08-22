@@ -85,6 +85,7 @@ def render_review_prompt(input_dir: str | Path, config_path: str | Path, reviewe
         raise PromptRenderError("rendered prompt exceeds limits.max_prompt_bytes")
     return rendered
 
+
 def _reviewer_aliases(reviewers: list[str]) -> dict[str, str]:
     return {
         reviewer: f"reviewer_{chr(ord('A') + index)}"

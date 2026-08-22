@@ -259,13 +259,13 @@ def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
 
 
 def _fit_fragments(fragments: Sequence[RenderFragment], budget: int) -> list[str]:
-    """Fit priority-ordered whole fragments until the next one does not fit."""
+    """Fit whole fragments greedily, skipping any atom that does not fit."""
     surviving: list[str] = []
     used = 0
     for fragment in fragments:
         separator_length = len(_FRAGMENT_SEPARATOR) if surviving else 0
         if used + separator_length + len(fragment.text) > budget:
-            break
+            continue
         surviving.append(fragment.text)
         used += separator_length + len(fragment.text)
     return surviving
@@ -435,10 +435,9 @@ def render_body(
             if fragment is not None:
                 dissent_fragments.append(fragment)
 
-    # Dissent outranks evidence and suggestion deliberately. ``_fit_fragments``
-    # keeps fragments in order and stops at the first one that does not fit, so
-    # position *is* priority: a body under platform pressure must lose
-    # supporting detail before it loses the argument against the finding.
+    # Dissent is considered before evidence and suggestion deliberately. An
+    # oversized atomic fragment is omitted, but it does not suppress smaller
+    # later fragments that can still carry useful review context.
     # Reserving dissent next to the footer instead would put unbounded model
     # text in the never-truncated suffix, where a long enough rationale makes
     # `limit_body_before_marker` raise rather than shorten.

@@ -128,5 +128,6 @@ class PromptInjectionRenderingTests(unittest.TestCase):
                 f"prose line escaped its code span: {line!r}",
             )
 
+
 if __name__ == "__main__":
     unittest.main()

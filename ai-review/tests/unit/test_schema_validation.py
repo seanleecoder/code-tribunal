@@ -565,5 +565,6 @@ class SchemaValidationTests(unittest.TestCase):
             self.assertNotIn("extra_model_note", finalized["findings"][0])
             validate_instance(finalized, "finding_batch.schema.json")
 
+
 if __name__ == "__main__":
     unittest.main()
