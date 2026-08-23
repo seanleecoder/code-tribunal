@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_review.reviewers import REVIEWERS
+from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
@@ -33,7 +34,7 @@ def read_state(path: str | Path) -> dict[str, Any]:
 
 
 def write_state(path: str | Path, state: dict[str, Any]) -> None:
-    Path(path).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(path).write_bytes(canonical_json_bytes(state))
 
 
 def inject_demo_defect(source: str, error_type: type[RuntimeError]) -> str:

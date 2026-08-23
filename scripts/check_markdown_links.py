@@ -15,9 +15,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from check_docs import markdown_inventories
-
 SCRIPTS = Path(__file__).resolve().parent
+# Support importlib/module loading when scripts/ is not already on sys.path.
+sys.path.insert(0, str(SCRIPTS))
+
+from check_docs import markdown_inventories  # noqa: E402
+
 ROOT = SCRIPTS.parent
 PIN_PATH = ROOT / "ai-review/images/lychee.pin"
 RELEASE_EXCLUSION = r"spec-21-cursor-cli-reviewer\.md.*"

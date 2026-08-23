@@ -22,6 +22,17 @@ GITLAB_ORCHESTRATOR = ROOT / "scripts" / "gitlab_candidate_canary.py"
 
 
 class CandidateCanaryWorkflowTests(unittest.TestCase):
+    def test_state_uses_canonical_json_bytes_and_round_trips(self) -> None:
+        common = load_repository_script(
+            "candidate_canary_common", ROOT / "scripts" / "candidate_canary_common.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state = {"z": 2, "a": 1}
+            common.write_state(state_path, state)
+            self.assertEqual(state_path.read_bytes(), b'{\n  "a": 1,\n  "z": 2\n}\n')
+            self.assertEqual(common.read_state(state_path), state)
+
     def test_manual_inputs_and_protected_orchestration_are_fixed(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
