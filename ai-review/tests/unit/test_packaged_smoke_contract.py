@@ -19,6 +19,7 @@ import functools
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ai_review_smoke import manifest as smoke_manifest
 from ai_review_smoke.loader import SmokeManifestError, build_suite, present_case_ids
@@ -56,6 +57,20 @@ class PackagedSmokeManifestTests(unittest.TestCase):
     def test_unknown_scope_is_refused(self) -> None:
         with self.assertRaises(SmokeManifestError):
             build_suite("no-such-scope")
+
+    def test_a_renamed_declared_case_fails_naming_the_missing_method(self) -> None:
+        declared = smoke_manifest.MANIFEST["base"]
+        original = next(iter(declared))
+        renamed = original.rsplit(".", 1)[0] + ".test_renamed_without_manifest_update"
+        drifted = (declared - {original}) | {renamed}
+
+        with (
+            mock.patch.dict(smoke_manifest.MANIFEST, {"base": drifted}),
+            self.assertRaisesRegex(
+                SmokeManifestError, "has no test method test_renamed_without_manifest_update"
+            ),
+        ):
+            build_suite("base")
 
     def test_runtime_file_manifest_names_files_that_exist(self) -> None:
         for relative in smoke_manifest.RUNTIME_FILES:

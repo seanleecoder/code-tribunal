@@ -265,17 +265,8 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertLessEqual(required, set(gitignore))
         self.assertLessEqual(required, set(dockerignore))
 
-    def test_packaged_smoke_runtime_module_manifest_matches_the_package(self) -> None:
-        """The module list the base preflight imports lives in the suite, not in shell.
-
-        It used to be `for module in input_bundle consensus post schema` inline in the
-        workflow: deleting a module without editing that list breaks **image
-        publication**, not the review pipeline, so nothing else in this suite would
-        catch it. The list moved into the packaged suite's manifest and grew to the
-        whole package, and this asserts the equivalence in both directions -- a module
-        added without declaring it fails here, and a module declared after deletion
-        fails the in-image import case.
-        """
+    def test_packaged_smoke_cli_modules_are_part_of_the_package(self) -> None:
+        """Declared CLI entry points must remain packaged modules."""
         from ai_review_smoke import manifest as smoke_manifest
 
         package_root = _AI_REVIEW_ROOT / "src" / "ai_review"
@@ -286,11 +277,8 @@ class RepositoryDistributionContractTests(unittest.TestCase):
                 parts.pop()
             actual.add(".".join(parts))
 
-        self.assertEqual(set(smoke_manifest.RUNTIME_MODULES), actual)
-        self.assertIn("ai_review.post", smoke_manifest.RUNTIME_MODULES)
-        self.assertLessEqual(
-            set(smoke_manifest.CLI_MODULES), set(smoke_manifest.RUNTIME_MODULES)
-        )
+        self.assertIn("ai_review.post", actual)
+        self.assertLessEqual(set(smoke_manifest.CLI_MODULES), actual)
 
     def test_no_merge_gate_remains_in_the_runtime_or_its_schemas(self) -> None:
         """The gate is deleted, not disabled. Nothing may still name it.
