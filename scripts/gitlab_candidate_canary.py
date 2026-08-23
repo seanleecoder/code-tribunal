@@ -22,11 +22,18 @@ TEMPLATE_PROJECT = "84667707"
 
 
 class GitLabCanaryError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def _request(
-    method: str, path: str, *, payload: dict[str, Any] | None = None, raw: bool = False
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    raw: bool = False,
+    allow_missing: bool = False,
 ) -> Any:
     token = os.environ.get("GITLAB_CANARY_TOKEN", "")
     if not token:
@@ -42,12 +49,19 @@ def _request(
         with urllib.request.urlopen(request, timeout=60) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
+        if allow_missing and exc.code == 404:
+            return None
         raise GitLabCanaryError(
-            f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}"
+            f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}",
+            status=exc.code,
         ) from exc
     if raw:
         return body
     return json.loads(body) if body else None
+
+
+def _write_state(path: str, state: dict[str, Any]) -> None:
+    Path(path).write_text(json.dumps(state), encoding="utf-8")
 
 
 def _raw_file(project: str, path: str, ref: str = "main") -> str:
@@ -128,6 +142,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         ],
     )
     template_sha = str(template_commit["id"])
+    result: dict[str, Any] = {"branch": args.branch, "template_sha": template_sha}
+    _write_state(args.state, result)
 
     demo_ci = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
     demo_ci, ref_count = re.subn(
@@ -175,13 +191,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
             "remove_source_branch": False,
         },
     )
-    result = {
-        "branch": args.branch,
-        "template_sha": template_sha,
-        "mr_iid": str(mr["iid"]),
-        "mr_url": str(mr["web_url"]),
-    }
-    Path(args.state).write_text(json.dumps(result), encoding="utf-8")
+    result.update({"mr_iid": str(mr["iid"]), "mr_url": str(mr["web_url"])})
+    _write_state(args.state, result)
     return result
 
 
@@ -246,22 +257,35 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cleanup_campaign(args: argparse.Namespace) -> None:
-    state = json.loads(Path(args.state).read_text(encoding="utf-8"))
+    state_path = Path(args.state)
+    if not state_path.exists():
+        return
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     branch = state["branch"]
     mr_iid = state.get("mr_iid")
+    failures: list[str] = []
     if mr_iid:
-        _request(
-            "PUT",
-            f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}",
-            payload={"state_event": "close"},
-        )
+        try:
+            _request(
+                "PUT",
+                f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}",
+                payload={"state_event": "close"},
+                allow_missing=True,
+            )
+        except GitLabCanaryError as exc:
+            failures.append(str(exc))
     encoded = urllib.parse.quote(branch, safe="")
     for path in (
         f"projects/{DEMO_PROJECT}/protected_branches/{encoded}",
         f"projects/{DEMO_PROJECT}/repository/branches/{encoded}",
         f"projects/{TEMPLATE_PROJECT}/repository/branches/{encoded}",
     ):
-        _request("DELETE", path)
+        try:
+            _request("DELETE", path, allow_missing=True)
+        except GitLabCanaryError as exc:
+            failures.append(str(exc))
+    if failures:
+        raise GitLabCanaryError("GitLab cleanup failures: " + "; ".join(failures))
 
 
 def cli(argv: list[str] | None = None) -> int:

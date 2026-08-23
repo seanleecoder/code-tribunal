@@ -64,6 +64,10 @@ tokens only to the public demo and template projects, and restrict the
 environment's deployment branches to protected branches. Provider credentials
 stay in the consumers, not in the orchestrator; both demo consumers must provide
 `OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
+The GitHub demo must also define the repository variable `AI_REVIEW_REVIEWERS`
+with a roster that includes `cursor`; the canonical workflow consults that
+trusted variable before exposing `CURSOR_API_KEY` to the Cursor seat. GitLab has
+no equivalent credential gate.
 
 One dispatch runs exactly one GitHub and one GitLab campaign. Each enables
 Claude, Codex, OpenCode, and Cursor with shipped default effort, one review and

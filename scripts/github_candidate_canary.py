@@ -29,6 +29,10 @@ def _run(*args: str, cwd: Path | None = None, capture: bool = True) -> str:
     return completed.stdout.strip()
 
 
+def _write_state(path: str, state: dict[str, Any]) -> None:
+    Path(path).write_text(json.dumps(state), encoding="utf-8")
+
+
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.workdir)
     demo = root / "demo"
@@ -82,6 +86,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     _run("git", "add", ".github/workflows/ai-review.yml", "src/access.py", cwd=demo)
     _run("git", "commit", "-m", "candidate canary fixture", cwd=demo)
     _run("git", "push", "origin", f"HEAD:{args.branch}", cwd=demo)
+    state: dict[str, Any] = {"branch": args.branch}
+    _write_state(args.state, state)
     _run(
         "gh",
         "pr",
@@ -109,8 +115,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
             "number,url",
         )
     )
-    state = {"branch": args.branch, "pr_number": str(pr["number"]), "pr_url": pr["url"]}
-    Path(args.state).write_text(json.dumps(state), encoding="utf-8")
+    state.update({"pr_number": str(pr["number"]), "pr_url": pr["url"]})
+    _write_state(args.state, state)
     return state
 
 
@@ -192,16 +198,31 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cleanup_campaign(args: argparse.Namespace) -> None:
-    state = json.loads(Path(args.state).read_text(encoding="utf-8"))
-    _run(
-        "gh",
-        "pr",
-        "close",
-        state["pr_number"],
-        "--repo",
-        DEMO_REPOSITORY,
-        "--delete-branch",
-    )
+    state_path = Path(args.state)
+    if not state_path.exists():
+        return
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    pr_number = state.get("pr_number")
+    if pr_number:
+        _run(
+            "gh",
+            "pr",
+            "close",
+            str(pr_number),
+            "--repo",
+            DEMO_REPOSITORY,
+            "--delete-branch",
+        )
+        return
+    branch = state.get("branch")
+    if branch:
+        _run(
+            "gh",
+            "api",
+            "--method",
+            "DELETE",
+            f"repos/{DEMO_REPOSITORY}/git/refs/heads/{branch}",
+        )
 
 
 def cli(argv: list[str] | None = None) -> int:

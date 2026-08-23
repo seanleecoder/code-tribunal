@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
+import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -51,6 +55,30 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         self.assertEqual(text.count("validate_candidate_canary.py"), 2)
         self.assertNotIn("OPENROUTER_API_KEY", text)
         self.assertNotIn("CURSOR_API_KEY", text)
+
+    def test_both_campaign_jobs_install_validation_dependencies(self) -> None:
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job_name in ("github", "gitlab"):
+            steps = workflow["jobs"][job_name]["steps"]
+            setup = next(
+                index for index, step in enumerate(steps) if step.get("name") == "Set up Python"
+            )
+            install = next(
+                index
+                for index, step in enumerate(steps)
+                if step.get("name") == "Install validation dependencies"
+            )
+            validate = next(
+                index
+                for index, step in enumerate(steps)
+                if "validate_candidate_canary.py" in step.get("run", "")
+            )
+            self.assertEqual(steps[setup]["with"]["python-version"], "3.12")
+            self.assertEqual(
+                steps[install]["run"], "python -m pip install -r requirements-dev.txt"
+            )
+            self.assertLess(setup, install)
+            self.assertLess(install, validate)
 
     def test_demo_coordinates_and_gitlab_artifact_authority_are_fixed(self) -> None:
         github = _load_module("github_candidate_canary", GITHUB_ORCHESTRATOR)
@@ -148,3 +176,167 @@ class CandidateCanaryValidationTests(unittest.TestCase):
                 change_url="change",
                 cleanup_status="success",
             )
+
+
+class CandidateCanaryCleanupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.github = _load_module("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
+        self.gitlab = _load_module("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
+
+    def test_missing_state_is_an_idempotent_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(state=str(Path(tmp) / "missing.json"))
+            with (
+                mock.patch.object(self.github, "_run") as github_run,
+                mock.patch.object(self.gitlab, "_request") as gitlab_request,
+            ):
+                self.github.cleanup_campaign(args)
+                self.gitlab.cleanup_campaign(args)
+            github_run.assert_not_called()
+            gitlab_request.assert_not_called()
+
+    def test_github_branch_only_state_deletes_the_remote_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"branch": "candidate/test"}), encoding="utf-8")
+            with mock.patch.object(self.github, "_run") as run:
+                self.github.cleanup_campaign(argparse.Namespace(state=str(state)))
+            run.assert_called_once_with(
+                "gh",
+                "api",
+                "--method",
+                "DELETE",
+                "repos/seanleecoder/code-tribunal-demo/git/refs/heads/candidate/test",
+            )
+
+    def test_github_records_branch_before_pull_request_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.json"
+
+            def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
+                del cwd, capture
+                if command[:3] == ("gh", "repo", "clone"):
+                    demo = Path(command[4])
+                    (demo / ".github/workflows").mkdir(parents=True)
+                    (demo / "src").mkdir()
+                    (demo / "src/access.py").write_text(
+                        "    return normalize_username(username) in normalized_allowed\n",
+                        encoding="utf-8",
+                    )
+                if command[:3] == ("gh", "pr", "create"):
+                    raise self.github.GitHubCanaryError("creation failed")
+                return ""
+
+            args = argparse.Namespace(
+                workdir=str(root / "work"),
+                workflow=str(ROOT / ".github/workflows/ai-review.yml"),
+                branch="candidate-test",
+                base_image=(
+                    "ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64
+                ),
+                reviewer_image=(
+                    "ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64
+                ),
+                runtime_source="c" * 40,
+                state=str(state),
+            )
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                self.assertRaisesRegex(self.github.GitHubCanaryError, "creation failed"),
+            ):
+                self.github.create_campaign(args)
+            self.assertEqual(
+                json.loads(state.read_text(encoding="utf-8")),
+                {"branch": "candidate-test"},
+            )
+
+    def test_gitlab_records_template_branch_before_demo_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            commits = iter(
+                [
+                    {"id": "d" * 40},
+                    self.gitlab.GitLabCanaryError("demo commit failed", status=500),
+                ]
+            )
+
+            def commit(*_args: object, **_kwargs: object) -> dict[str, object]:
+                result = next(commits)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+
+            def raw_file(_project: str, path: str, ref: str = "main") -> str:
+                del ref
+                if path == ".gitlab-ci.yml":
+                    return (
+                        'first:\n  ref: "'
+                        + "0" * 40
+                        + '"\nsecond:\n  ref: "'
+                        + "1" * 40
+                        + '"\n'
+                    )
+                return "    return normalize_username(username) in normalized_allowed\n"
+
+            args = argparse.Namespace(
+                template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
+                child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
+                branch="candidate-test",
+                base_image="base",
+                reviewer_image="reviewer",
+                runtime_source="c" * 40,
+                state=str(state),
+            )
+            with (
+                mock.patch.object(self.gitlab, "_commit", side_effect=commit),
+                mock.patch.object(self.gitlab, "_raw_file", side_effect=raw_file),
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
+            ):
+                self.gitlab.create_campaign(args)
+            self.assertEqual(
+                json.loads(state.read_text(encoding="utf-8")),
+                {"branch": "candidate-test", "template_sha": "d" * 40},
+            )
+
+    def test_gitlab_cleanup_attempts_every_resource_and_aggregates_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(
+                json.dumps({"branch": "candidate/test", "mr_iid": "7"}),
+                encoding="utf-8",
+            )
+            calls: list[tuple[str, str]] = []
+
+            def request(method: str, path: str, **_kwargs: object) -> None:
+                calls.append((method, path))
+                if len(calls) == 1:
+                    raise self.gitlab.GitLabCanaryError("close failed", status=500)
+
+            with (
+                mock.patch.object(self.gitlab, "_request", side_effect=request),
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "close failed"),
+            ):
+                self.gitlab.cleanup_campaign(argparse.Namespace(state=str(state)))
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(
+                [method for method, _path in calls],
+                ["PUT", "DELETE", "DELETE", "DELETE"],
+            )
+
+    def test_gitlab_request_can_treat_404_as_already_removed(self) -> None:
+        error = urllib.error.HTTPError("https://gitlab.test", 404, "missing", {}, None)
+        with (
+            mock.patch.dict("os.environ", {"GITLAB_CANARY_TOKEN": "token"}),
+            mock.patch("urllib.request.urlopen", side_effect=error),
+        ):
+            self.assertIsNone(self.gitlab._request("DELETE", "resource", allow_missing=True))
+
+        error = urllib.error.HTTPError("https://gitlab.test", 500, "failed", {}, None)
+        with (
+            mock.patch.dict("os.environ", {"GITLAB_CANARY_TOKEN": "token"}),
+            mock.patch("urllib.request.urlopen", side_effect=error),
+            self.assertRaises(self.gitlab.GitLabCanaryError) as raised,
+        ):
+            self.gitlab._request("DELETE", "resource")
+        self.assertEqual(raised.exception.status, 500)
