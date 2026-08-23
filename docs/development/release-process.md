@@ -31,6 +31,12 @@ and remove completed spec files from the active
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
 3. Build base and reviewer images from exactly `R`; record the immutable image
    subjects, digests, publication run, attestations, and anonymous pulls.
+   Before changing any consumer pin, run the protected manual `Candidate Canary`
+   workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
+   with `R` and the two digest-pinned subjects. A red result blocks promotion or
+   repinning. It does not gate ordinary pull requests. One green GitHub run and
+   one green GitLab run are the complete campaign; repeat only after a failure
+   has led to a concrete fix.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:

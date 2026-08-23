@@ -41,6 +41,43 @@ artifacts. Network egress limitations must be documented honestly.
 Architecture, testing, and release guidance is indexed under
 [docs/development/](docs/development/README.md).
 
+## Candidate canary
+
+The manually dispatched `Candidate Canary` workflow validates a source-bound
+image pair against both public demo consumers before promotion or repinning:
+
+| Platform | Demo consumer | Template source |
+|---|---|---|
+| GitHub | `seanleecoder/code-tribunal-demo` | protected `main` in this repository |
+| GitLab | `seanleecoder/code-tribunal-demo`, project `84667714` | `seanleecoder/code-tribunal-ci-template`, project `84667707` |
+
+Dispatch it from protected `main` with a full `runtime_source` commit and the
+digest-pinned base and reviewer image references. The workflow rejects a source
+that is not reachable from protected `main`, verifies both digests, OCI revision
+labels, and provenance, and runs orchestration only from the protected checkout.
+The candidate source is exercised only as an isolated same-repository demo
+branch. The GitLab source branch is protected before its merge request opens.
+
+Configure a manually approved `candidate-canary` GitHub environment with
+`CANDIDATE_CANARY_GITHUB_TOKEN` and `CANDIDATE_CANARY_GITLAB_TOKEN`. Scope those
+tokens only to the public demo and template projects, and restrict the
+environment's deployment branches to protected branches. Provider credentials
+stay in the consumers, not in the orchestrator; both demo consumers must provide
+`OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
+
+One dispatch runs exactly one GitHub and one GitLab campaign. Each enables
+Claude, Codex, OpenCode, and Cursor with shipped default effort, one review and
+one critique per seat. A pass requires all eight stage results on each platform,
+four resolution-eligible review seats, a full panel, a successfully posted
+thread, and successful cleanup. Only redacted summaries are retained; model
+bodies and credentials are never uploaded by the orchestration workflow. The
+demo PR and MR are closed and temporary branches removed after diagnostics are
+collected; their closed discussions and external run URLs remain available.
+
+Do not rerun a green campaign for extra evidence. A failed campaign may be rerun
+only after its diagnostics produce a concrete fix. This canary is a candidate
+promotion gate, not an ordinary pull-request gate.
+
 ## Compatibility boundary
 
 The supported public surface, and the private seams that are deliberately not
