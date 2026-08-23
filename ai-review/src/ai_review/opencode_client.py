@@ -317,45 +317,6 @@ def _text_from_parts(parts: Any) -> list[str]:
     return text
 
 
-def _decode_stringified_structured_items(
-    payload: dict[str, Any] | list[Any], *, stage: str | None
-) -> dict[str, Any] | list[Any]:
-    """Normalize an OpenCode schema-transport quirk at the client boundary.
-
-    Real OpenRouter runs have returned a schema-backed object whose ``findings``
-    array contained a string item. The shared finalizer correctly treats a string
-    as malformed, but that needlessly degrades the panel when the string is itself
-    one unambiguous JSON object. Decode only that exact case, using the
-    duplicate-key-rejecting loader; prose, arrays, scalars, and malformed strings
-    remain untouched and fail closed downstream.
-    """
-    field = {"review": "findings", "critique": "critiques"}.get(stage or "")
-    if field is None or not isinstance(payload, dict):
-        return payload
-    items = payload.get(field)
-    if not isinstance(items, list):
-        return payload
-
-    decoded: list[Any] = []
-    changed = False
-    for item in items:
-        if isinstance(item, str):
-            try:
-                candidate = json_loads_no_duplicates(item)
-            except Exception:
-                candidate = None
-            if isinstance(candidate, dict):
-                decoded.append(candidate)
-                changed = True
-                continue
-        decoded.append(item)
-    if not changed:
-        return payload
-    normalized = dict(payload)
-    normalized[field] = decoded
-    return normalized
-
-
 def _normalize_message(
     response: dict[str, Any], *, stage: str | None = None
 ) -> tuple[dict[str, Any] | list[Any], bool]:
@@ -386,7 +347,7 @@ def _normalize_message(
             raise OpenCodeClientError(
                 f"OpenCode structured output was not an object or array: {_compact(structured)}"
             )
-        return _decode_stringified_structured_items(structured, stage=stage), True
+        return structured, True
 
     # No structured output means the required StructuredOutput tool did not run.
     # Compatibility path: admit the answer text under the same rule as every other
