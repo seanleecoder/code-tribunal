@@ -16,12 +16,14 @@ from ai_review.canonical import sha256_hex
 from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
+    _directory_sha256,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
     _git_command,
     _github_checkout_head,
     _github_pull_request_version,
     _load_platform_state,
+    _publish_staged_bundle,
     _resolve_github_pull_request,
     copy_repo_snapshot,
     prepare_github_bundle,
@@ -304,6 +306,136 @@ class PrepareStateLoadTests(unittest.TestCase):
                     lambda config: config["state"].update({"fail_closed_on_load_error": True})
                 ),
             )
+
+
+class BundlePublicationTests(unittest.TestCase):
+    def test_reprepare_removes_deleted_snapshot_file_and_updates_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            retained = repo / "retained.txt"
+            deleted = repo / "deleted.txt"
+            retained.write_text("retained\n", encoding="utf-8")
+            deleted.write_text("deleted\n", encoding="utf-8")
+            diff = root / "change.diff"
+            diff.write_text("diff --git a/f.py b/f.py\n", encoding="utf-8")
+            out = root / "inputs"
+
+            prepare_local_bundle(_REPO_CONFIG, diff, repo, out)
+            first_manifest = json.loads(
+                (out / "manifest.json").read_text(encoding="utf-8")
+            )
+            deleted.unlink()
+
+            prepare_local_bundle(_REPO_CONFIG, diff, repo, out)
+            second_manifest = json.loads(
+                (out / "manifest.json").read_text(encoding="utf-8")
+            )
+
+            snapshot = out / "repo_snapshot"
+            self.assertFalse((snapshot / "deleted.txt").exists())
+            self.assertEqual(
+                second_manifest["repo_snapshot_sha256"],
+                _directory_sha256(snapshot),
+            )
+            self.assertNotEqual(
+                first_manifest["repo_snapshot_sha256"],
+                second_manifest["repo_snapshot_sha256"],
+            )
+
+    def test_publish_cleanly_replaces_generated_entry_types_and_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            staging = root / "staging"
+            out = root / "inputs"
+            staging.mkdir()
+            out.mkdir()
+
+            (staging / "mr.diff").write_text("new diff\n", encoding="utf-8")
+            (staging / "rules").mkdir()
+            (staging / "rules" / "current.md").write_text("new\n", encoding="utf-8")
+            (staging / "prompts").mkdir()
+            (staging / "prompts" / "current.md").write_text("new\n", encoding="utf-8")
+            (staging / "config.review.yaml").write_text("new config\n", encoding="utf-8")
+            (staging / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+            (out / "mr.diff").mkdir()
+            (out / "mr.diff" / "stale").write_text("stale\n", encoding="utf-8")
+            (out / "rules").write_text("stale file\n", encoding="utf-8")
+            (out / "prompts" / "nested").mkdir(parents=True)
+            (out / "prompts" / "nested" / "stale.md").write_text(
+                "stale\n", encoding="utf-8"
+            )
+            symlink_target = root / "symlink-target"
+            symlink_target.write_text("do not replace\n", encoding="utf-8")
+            (out / "config.review.yaml").symlink_to(symlink_target)
+            marker = out / "user-owned.txt"
+            marker.write_text("keep\n", encoding="utf-8")
+
+            _publish_staged_bundle(staging, out)
+
+            self.assertEqual((out / "mr.diff").read_text(encoding="utf-8"), "new diff\n")
+            self.assertEqual(
+                (out / "rules" / "current.md").read_text(encoding="utf-8"), "new\n"
+            )
+            self.assertFalse((out / "prompts" / "nested").exists())
+            self.assertEqual(
+                (out / "config.review.yaml").read_text(encoding="utf-8"), "new config\n"
+            )
+            self.assertFalse((out / "config.review.yaml").is_symlink())
+            self.assertEqual(symlink_target.read_text(encoding="utf-8"), "do not replace\n")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep\n")
+
+    def test_fresh_bundles_are_byte_identical(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+            diff = root / "change.diff"
+            diff.write_text("diff --git a/f.py b/f.py\n", encoding="utf-8")
+            first = root / "first"
+            second = root / "second"
+
+            with mock.patch(
+                "ai_review.input_bundle.now_iso", return_value="2026-08-23T00:00:00Z"
+            ):
+                prepare_local_bundle(_REPO_CONFIG, diff, repo, first)
+                prepare_local_bundle(_REPO_CONFIG, diff, repo, second)
+
+            def bundle_bytes(path: Path) -> dict[str, bytes]:
+                return {
+                    item.relative_to(path).as_posix(): item.read_bytes()
+                    for item in sorted(path.rglob("*"))
+                    if item.is_file()
+                }
+
+            self.assertEqual(bundle_bytes(first), bundle_bytes(second))
+
+    def test_manifest_is_published_after_all_other_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            staging = root / "staging"
+            out = root / "inputs"
+            staging.mkdir()
+            out.mkdir()
+            (staging / "mr.diff").write_text("diff\n", encoding="utf-8")
+            (staging / "rules").mkdir()
+            (staging / "manifest.json").write_text("{}\n", encoding="utf-8")
+            published: list[str] = []
+
+            def record_publish(source: Path, destination: Path) -> None:
+                published.append(destination.name)
+                source.replace(destination)
+
+            with mock.patch(
+                "ai_review.input_bundle._replace_staged_entry",
+                side_effect=record_publish,
+            ):
+                _publish_staged_bundle(staging, out)
+
+            self.assertEqual(published[-1], "manifest.json")
 
 
 class GitHubPullRequestResolutionTests(unittest.TestCase):
@@ -813,12 +945,24 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             out.mkdir()
+            for filename in (
+                "mr.diff",
+                "config.review.yaml",
+                "prior_decisions.json",
+                "state_aliases.json",
+            ):
+                (out / filename).write_text("old\n", encoding="utf-8")
+            for dirname in ("rules", "prompts", "repo_snapshot"):
+                (out / dirname).mkdir()
+                (out / dirname / "old").write_text("old\n", encoding="utf-8")
+            (out / "manifest.json").write_text('{"old": true}\n', encoding="utf-8")
             marker = out / "user-owned.txt"
             marker.write_text("keep\n", encoding="utf-8")
             with self.assertRaisesRegex(BundleError, "manifest finalization"):
                 self._prepare_with_versions(tmpdir, [initial, initial, changed])
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep\n")
-            self.assertEqual(list(out.iterdir()), [marker])
+            self.assertFalse((out / "manifest.json").exists())
+            self.assertEqual((out / "mr.diff").read_text(encoding="utf-8"), "old\n")
 
     def test_oversized_raw_diff_error_fails_closed(self) -> None:
         initial = self._pull_request()

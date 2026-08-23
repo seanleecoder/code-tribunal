@@ -363,20 +363,29 @@ def _directory_sha256(path: Path) -> str:
     return sha256_hex(b"".join(digest_parts))
 
 
+def _remove_bundle_entry(path: Path) -> None:
+    """Remove one generated bundle entry regardless of its filesystem type."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def _replace_staged_entry(source: Path, destination: Path) -> None:
+    """Replace one generated destination without retaining stale contents."""
+    _remove_bundle_entry(destination)
+    source.replace(destination)
+
+
 def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
     """Publish a complete staged bundle, with the manifest as the final file."""
     manifest_source = staging_path / "manifest.json"
     manifest_destination = out_path / "manifest.json"
-    manifest_destination.unlink(missing_ok=True)
     for source in sorted(staging_path.iterdir()):
         if source == manifest_source:
             continue
-        destination = out_path / source.name
-        if source.is_dir() and destination.exists():
-            shutil.copytree(source, destination, dirs_exist_ok=True)
-        else:
-            source.replace(destination)
-    manifest_source.replace(manifest_destination)
+        _replace_staged_entry(source, out_path / source.name)
+    _replace_staged_entry(manifest_source, manifest_destination)
 
 
 def _prepare_bound_bundle(
@@ -391,6 +400,9 @@ def _prepare_bound_bundle(
     _enforce_diff_limits(diff_text, config_dict)
     out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
+    # A manifest makes every sibling artifact consumable. Invalidate any prior
+    # bundle before staging so no preparation failure can leave stale inputs live.
+    _remove_bundle_entry(out_path / "manifest.json")
     try:
         with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
             staging_path = Path(staging)
