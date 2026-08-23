@@ -13,19 +13,6 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
-# Strict for the whole package, rather than a per-module allowlist.
-#
-# That allowlist named 16 of the package's 35 modules and had gone stale twice
-# over: it still listed `ai_review.gitlab_client` after that module was merged
-# into `ai_review.platform.gitlab`, and the consolidated module was never added —
-# so ~500 lines of network-facing GitLab code silently left strict checking while
-# mypy still reported success. mypy cannot warn about this: `warn_unused_configs`
-# only fires when an entire section matches nothing, and 15 of the 16 names still
-# matched.
-#
-# Every module already satisfies strict, so the list was not holding a boundary;
-# it was a snapshot of a migration that had already finished. Deleting it removes
-# the drift entirely instead of adding a check to police it.
 # ai_review_smoke is the packaged-runtime smoke suite that ships in the images
 # (SPEC-58). It is checked here, under the same strictness as the runtime package,
 # because a mistake in it fails an image publication rather than a test run.

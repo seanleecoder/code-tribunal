@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -13,6 +14,7 @@ BASE_DOCKERFILE = ROOT / "ai-review/images/base.Dockerfile"
 REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+CANDIDATE_CANARY_WORKFLOW = ROOT / ".github/workflows/candidate-canary.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
@@ -21,6 +23,24 @@ PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 RIPGREP_PIN = ROOT / "ai-review/images/ripgrep.pin"
+LYCHEE_PIN = ROOT / "ai-review/images/lychee.pin"
+MARKDOWN_LINK_CHECKER = ROOT / "scripts/check_markdown_links.py"
+
+LYCHEE_VERSION = "0.24.2"
+LYCHEE_ARCHIVES = {
+    "linux_x86_64": (
+        "lychee-x86_64-unknown-linux-musl.tar.gz",
+        "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5",
+    ),
+    "darwin_aarch64": (
+        "lychee-aarch64-apple-darwin.tar.gz",
+        "c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977",
+    ),
+    "darwin_x86_64": (
+        "lychee-x86_64-apple-darwin.tar.gz",
+        "887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978",
+    ),
+}
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
@@ -34,6 +54,7 @@ APPROVED_ACTION_PINS = {
     ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
     ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
     ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
+    ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"): "v6.1.0",
 }
 
 IMAGE_PIN_KEYS = (
@@ -138,6 +159,53 @@ def _workflow_structure_issues(text: str) -> list[str]:
         comment = line.split("#", 1)[1]
         if re.search(r"(?:-\s+uses:|\bwith:|\bif:)", comment):
             issues.append(f"line {line_number} contains a YAML key inside an inline comment")
+    return issues
+
+
+def _lychee_pin_issues(pin_text: str, checker_text: str | None) -> list[str]:
+    """Validate the shipped pin and, in a checkout, its one script authority."""
+    issues: list[str] = []
+    release_root = (
+        "https://github.com/lycheeverse/lychee/releases/download/"
+        f"lychee-v{LYCHEE_VERSION}"
+    )
+    expected = {"version": LYCHEE_VERSION}
+    for target, (archive, sha256) in LYCHEE_ARCHIVES.items():
+        expected[f"{target}_url"] = f"{release_root}/{archive}"
+        expected[f"{target}_sha256"] = sha256
+    fields: dict[str, str] = {}
+    for raw_line in pin_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key in fields or not value:
+            issues.append(f"lychee.pin has invalid line {line!r}")
+            continue
+        fields[key] = value
+    if fields != expected:
+        issues.append(
+            "lychee.pin must contain the reviewed version and platform archive URLs/SHA-256s"
+        )
+    if checker_text is not None:
+        tree = ast.parse(checker_text)
+        pin_path_is_exact = any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PIN_PATH" for target in node.targets
+            )
+            and isinstance(node.value, ast.BinOp)
+            and isinstance(node.value.op, ast.Div)
+            and isinstance(node.value.left, ast.Name)
+            and node.value.left.id == "ROOT"
+            and isinstance(node.value.right, ast.Constant)
+            and node.value.right.value == "ai-review/images/lychee.pin"
+            for node in ast.walk(tree)
+        )
+        if not pin_path_is_exact:
+            issues.append(
+                "check_markdown_links.py PIN_PATH must resolve ai-review/images/lychee.pin"
+            )
     return issues
 
 
@@ -416,9 +484,7 @@ def _ripgrep_runtime_guard_issues(reviewer: str) -> list[str]:
     exact resolution the adapter will perform at review time.
     """
     issues: list[str] = []
-    if not re.search(
-        r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer
-    ):
+    if not re.search(r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer):
         issues.append(
             "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c"
         )
@@ -440,10 +506,6 @@ def main() -> int:
     # omits repository-only .github workflows. Check every shipped workflow
     # that exists in the current distribution without making the image test
     # depend on files that are not part of that distribution.
-    # The runtime image copies the reusable review workflow but intentionally
-    # omits repository-only .github workflows. Check every shipped workflow
-    # that exists in the current distribution without making the image test
-    # depend on files that are not part of that distribution.
     #
     # The installed copy under .github/workflows/ is deliberately absent from
     # every scan here. It is a byte duplicate of the canonical template, which
@@ -453,10 +515,15 @@ def main() -> int:
     # from /opt/scripts, where .github/ does not exist, so its parity check
     # silently passed on the one platform that ran it.
     shipped_workflows = {}
-    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+    for path in (CI_WORKFLOW, CANDIDATE_CANARY_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text
+    lychee_pin = _read(LYCHEE_PIN)
+    markdown_link_checker = _read_optional(MARKDOWN_LINK_CHECKER)
+    for issue in _lychee_pin_issues(lychee_pin, markdown_link_checker):
+        error(issue)
+        failures += 1
     canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
     for issue in _github_review_container_issues(canonical_review_workflow):
         error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
@@ -529,9 +596,7 @@ def main() -> int:
     for issue in _ripgrep_pin_issues(ripgrep_pin, pinned_opencode):
         error(issue)
         failures += 1
-    if not re.search(
-        r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M
-    ):
+    if not re.search(r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M):
         error("reviewer.Dockerfile must copy the pinned ripgrep to /usr/local/bin/rg")
         failures += 1
     for issue in _ripgrep_stage_issues(reviewer):

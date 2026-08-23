@@ -349,25 +349,42 @@ class ReleaseToolTests(unittest.TestCase):
                     "record is corrected in the next release's notes, not in place",
                 )
 
-    def test_historical_1_0_0_snapshot_preserves_identity_without_revalidation(
+    def test_historical_1_0_0_inputs_preserve_identity_without_revalidation(
         self,
     ) -> None:
-        snapshot = json.loads(
-            (REPO_ROOT / "release/history/1.0.0-release-inputs.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        if not any_tags_resolvable(REPO_ROOT):
+            self.skipTest("no release tags are available in this checkout")
+        if not tag_exists("v1.0.0", REPO_ROOT):
+            self.skipTest("v1.0.0 is not available in this checkout")
 
-        self.assertEqual(snapshot["release_version"], "1.0.0")
-        self.assertEqual(snapshot["status"], "active")
-        self.assertRegex(snapshot["runtime_source"], r"^[0-9a-f]{40}$")
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(REPO_ROOT),
+                "show",
+                "v1.0.0:release/release-inputs.json",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            "release/release-inputs.json is absent at v1.0.0",
+        )
+        historical_inputs = json.loads(completed.stdout)
+
+        self.assertEqual(historical_inputs["release_version"], "1.0.0")
+        self.assertEqual(historical_inputs["status"], "active")
+        self.assertRegex(historical_inputs["runtime_source"], r"^[0-9a-f]{40}$")
         for role in ("base", "reviewer"):
             with self.subTest(role=role):
-                digest = snapshot["images"][role]["digest"]
+                digest = historical_inputs["images"][role]["digest"]
                 self.assertIsInstance(digest, str)
                 self.assertIsNotNone(DIGEST_RE.fullmatch(digest))
 
-        verification = snapshot["verification"]
+        verification = historical_inputs["verification"]
         for field in ("ci_run_id", "publication_run_id"):
             with self.subTest(field=field):
                 self.assertRegex(verification[field], r"^[0-9]+$")

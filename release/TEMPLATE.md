@@ -87,5 +87,5 @@ After every required gate passes and the release commit and tag exist: promote
 `CHANGELOG` `[Unreleased]` to `[X.Y.Z] - <date>`, rewrite this file from draft notes
 to final release notes in the release commit, build and validate the external
 manifest with the release coordinates, and publish the manifest and checksum. Then
-snapshot the activated inputs to `release/history/X.Y.Z-release-inputs.json` and open
-the next draft.
+open the next draft. Historical inputs remain available at
+`vX.Y.Z:release/release-inputs.json`.

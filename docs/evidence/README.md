@@ -95,13 +95,10 @@ classified by whether a live run proves something the regression suite cannot:
 | Cursor reviewer real-run adapter and critique | **Observed; SPEC-21 partial; historical supporting evidence only** | [Supplemental record](record-cursor-real-runs.md): private GitLab pipeline `185695` and public GitHub workflow `30080420563` both produced successful, resolution-eligible Cursor artifacts and full panels. Both recorded `model: auto`; neither exercised the hostile permission-denial prompt or the 1.0.1 image pair. |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
-some inline posting, but explicitly did not prove a genuinely blocking required
-check or all current-image lifecycle paths. Previous GitLab runs proved a real
-consumer flow but not the hostile-MR deployment boundary. See
-Those pre-1.0
-acceptance records were deleted rather than archived; see
-[documentation history](../history/README.md#completed-specifications-and-pre-10-acceptance-records)
-for why, and `git log` for the files.
+some inline posting, but not all current-image lifecycle paths. Previous GitLab
+runs proved a real consumer flow but not the hostile-MR deployment boundary.
+Those pre-1.0 acceptance records were deleted rather than archived; `git log`
+retains them.
 
 ### Known gaps and missing evidence
 

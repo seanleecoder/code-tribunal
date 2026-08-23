@@ -66,7 +66,7 @@ def _is_packaged_runtime() -> bool:
     return os.environ.get(_PACKAGED_RUNTIME_ENV) == "1"
 
 
-def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW) -> str | None:
+def _cursor_publish_workflow_skip_reason(workflow_path: Path) -> str | None:
     """Return a skip reason only when a packaged runtime lacks the publish workflow.
 
     Raise AssertionError if the marker is set with the checkout workflow present,
@@ -83,59 +83,6 @@ def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW
             return "GitHub publish workflow is absent from the packaged runtime image"
         raise AssertionError(f"GitHub publish workflow is missing from checkout: {workflow_path}")
     return None
-
-
-def _strip_yaml_string(value: str) -> str:
-    value = value.strip()
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        return value[1:-1]
-    return value
-
-
-def _template_variables() -> dict[str, dict[str, str]]:
-    variables: dict[str, dict[str, str]] = {}
-    current_job: str | None = None
-    in_variables = False
-
-    for raw_line in _CI_TEMPLATE.read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip():
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip(" "))
-        stripped = raw_line.strip()
-        if indent == 0 and stripped.endswith(":"):
-            current_job = _strip_yaml_string(stripped[:-1])
-            in_variables = False
-            variables.setdefault(current_job, {})
-            continue
-        if current_job is None:
-            continue
-        if indent == 2 and stripped == "variables:":
-            in_variables = True
-            continue
-        if in_variables and indent == 4 and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            variables[current_job][key.strip()] = _strip_yaml_string(value)
-            continue
-        if in_variables and indent <= 2:
-            in_variables = False
-
-    return variables
-
-
-def _effective_variables(template: dict[str, dict[str, str]], job_name: str) -> dict[str, str]:
-    template_variables = template[".review_template"]
-    reviewer_variables = template[job_name]
-    return {**template_variables, **reviewer_variables}
-
-
-def _effective_critique_variables(
-    template: dict[str, dict[str, str]], job_name: str
-) -> dict[str, str]:
-    template_variables = template[".critique_template"]
-    reviewer_variables = template[job_name]
-    return {**template_variables, **reviewer_variables}
 
 
 def _workflow_job(text: str, job_name: str) -> str:
@@ -204,8 +151,7 @@ class TimeoutInvariantTests(unittest.TestCase):
         self.assertLessEqual(
             process_timeout + _OVERHEAD_RESERVE_SECONDS,
             shortest_outer_seconds,
-            "each outer ceiling must leave at least the overhead reserve for "
-            "wrapper/artifact work",
+            "each outer ceiling must leave at least the overhead reserve for wrapper/artifact work",
         )
 
     def test_reviewer_and_critique_templates_have_independent_outer_timeouts(self) -> None:
@@ -422,16 +368,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         _CONFIG_DOC.exists(),
         "repository-only configuration reference is absent from the runtime image",
     )
-    def test_configuration_reference_explains_cursor_gitlab_static_job_graph(self) -> None:
+    def test_configuration_reference_explains_gitlab_matrix_job_graph(self) -> None:
         text = _CONFIG_DOC.read_text(encoding="utf-8")
         text = " ".join(text.split())
 
-        self.assertIn("AI review: [cursor]", text)
-        self.assertIn("AI critique: [cursor]", text)
-        self.assertIn("GitLab creates jobs from the included YAML", text)
-        self.assertIn("consumer is still including an older template ref", text)
-        # Cursor's jobs exist regardless of the roster; the reference must explain
-        # that a seat sitting out still gets jobs and that they are cheap no-ops.
+        self.assertIn("shared `AI review` and `AI critique` matrix jobs", text)
+        self.assertIn("older included template", text)
+        # Cursor's instances exist regardless of the roster; the reference must
+        # explain that a seat sitting out is a cheap no-op.
         self.assertIn("whatever the roster says", text)
         self.assertIn("complete quickly with skipped artifacts", text)
         self.assertIn("second egress destination, not because it ranks below", text)
@@ -654,10 +598,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "python -m ai_review_smoke reviewer",
             "python -m compileall",
             "--user 65532:65532",
-            'workdir /runner-checkout',
+            "workdir /runner-checkout",
             "--env HOME=/tmp",
-            'PREFLIGHT_HEAD_SHA=$GITHUB_SHA',
-            '$GITHUB_WORKSPACE:/runner-checkout:ro',
+            "PREFLIGHT_HEAD_SHA=$GITHUB_SHA",
+            "$GITHUB_WORKSPACE:/runner-checkout:ro",
             "checkout owner and container uid to differ",
             "preflight negative control expected dubious ownership",
             "from ai_review.input_bundle import _github_checkout_head",
@@ -750,7 +694,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertRegex(wrapper, r"(?m)^  --mount \"type=bind,src=\$smoke_dir,dst=/smoke\" \\$")
         self.assertIn('mkdir -p "$smoke_dir/home"', wrapper)
 
-
     def test_packaged_runtime_marker_rejects_checkout_publish_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workflow_path = Path(tmp) / ".github/workflows/publish-ai-review-images.yml"
@@ -785,8 +728,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         self.assertIn("COPY README.md /opt/README.md", text)
         self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
-
-
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
@@ -855,52 +796,49 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
 
-    def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [claude]")
+    def test_gitlab_review_and_critique_are_four_seat_matrices(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        expected = ["claude", "codex", "opencode", "cursor"]
+        controls = {
+            "AI_REVIEW_LOCAL_MOCK": "0",
+            "AI_REVIEW_REQUIRE_REAL_CLAUDE": "1",
+            "AI_REVIEW_REQUIRE_REAL_OPENROUTER": "1",
+            "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
+            "AI_REVIEW_REQUIRE_REAL_CURSOR": "1",
+        }
+        for job_name, shared_name in (
+            ("AI review", ".review_template"),
+            ("AI critique", ".critique_template"),
+        ):
+            with self.subTest(job=job_name):
+                matrix = template[job_name]["parallel"]["matrix"]
+                self.assertEqual(matrix, [{"REVIEWER": expected}])
+                variables = template[shared_name]["variables"]
+                self.assertLessEqual(controls.items(), variables.items())
+                self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
 
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
+    def test_matrix_dependencies_are_aggregate_and_never_optional_per_seat(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        critique_needs = template[".critique_template"]["needs"]
+        consensus_needs = template["consensus_ai_review"]["needs"]
 
-    def test_cli_openrouter_jobs_require_real_cli(self) -> None:
-        template = _template_variables()
-
-        for reviewer in ("codex", "opencode"):
-            variables = _effective_variables(template, f"AI review: [{reviewer}]")
-            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-
-    def test_opencode_requires_real_opencode_cli(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [opencode]")
-
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
-
-    def test_cursor_requires_real_cursor_cli_without_enabling_in_template(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [cursor]")
-
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
-        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
-
-    def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
-        template = _template_variables()
-
-        claude = _effective_critique_variables(template, "AI critique: [claude]")
-        self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
-
-        for reviewer in ("codex", "opencode"):
-            variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
-            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        opencode = _effective_critique_variables(template, "AI critique: [opencode]")
-        self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
-        cursor = _effective_critique_variables(template, "AI critique: [cursor]")
-        self.assertEqual(cursor["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
-        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", cursor)
+        self.assertEqual(
+            critique_needs,
+            [
+                {"job": "prepare_ai_review", "artifacts": True},
+                {"job": "AI review", "artifacts": True},
+            ],
+        )
+        self.assertEqual(
+            consensus_needs,
+            [
+                {"job": "prepare_ai_review", "artifacts": True},
+                {"job": "AI review", "artifacts": True},
+                {"job": "AI critique", "artifacts": True, "optional": True},
+            ],
+        )
+        for need in (*critique_needs, *consensus_needs):
+            self.assertNotIn("parallel", need)
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -990,8 +928,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", post)
         self.assertIn(
-            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: "
-            "${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
+            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
             post,
         )
         self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
@@ -1008,9 +945,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
-            "AI_REVIEW_CRITIQUE_ENABLED": (
-                "${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"
-            ),
+            "AI_REVIEW_CRITIQUE_ENABLED": ("${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"),
         }
 
         for name, expression in expected_mappings.items():

@@ -144,14 +144,13 @@ depth is encoded in the model variant. The shipped OpenCode guidance favors low 
 for flash-class models, while these profiles intentionally use higher effort on
 their listed non-flash routes.
 
-GitLab creates jobs from the included YAML, so the static graph always contains
-`AI review: [cursor]` and `AI critique: [cursor]` alongside the other three
-seats, whatever the roster says. A seat that is not on the panel still gets its
-jobs; they complete quickly with skipped artifacts and cast no vote. Cursor is
-off in the shipped default roster because its backend is a second egress
-destination, not because it ranks below the other seats. If the consumer is still including an older template ref,
-setting the enablement variable cannot create jobs that are absent from that
-template.
+GitLab expands the shared `AI review` and `AI critique` matrix jobs into one job
+instance per trusted reviewer, whatever the roster says. A seat that is not on
+the panel still gets its instances; they complete quickly with skipped artifacts
+and cast no vote. Cursor is off in the shipped default roster because its backend
+is a second egress destination, not because it ranks below the other seats. An
+older included template may not contain the complete four-seat matrix, so repin
+the protected template before relying on a roster change.
 
 ### Panel
 
@@ -218,6 +217,39 @@ integrity, load-error policy, and retention.
 | `limits.max_fyi_findings` | integer, `50` | Maximum FYI findings listed in the summary comment; the section renders a visible "more" trailer when it truncates. There is no equivalent cap on surfaced threads — every anchorable surfaced finding becomes a thread, and the volume bound is each reviewer's `max_findings`. |
 | `limits.max_prompt_bytes` | integer, `500000` | Maximum rendered prompt bytes sent to a model. |
 | `security.allow_external_fork_secrets` | boolean, `false` | Guard against provider/platform credentials in external-fork execution. Canonical GitHub workflows skip forks independently. |
+
+## Platform differences
+
+Both platforms use the same configuration, reviewer adapters, schemas, consensus
+policy, and posting reconciliation. Platform credentials never enter reviewer
+subprocess environments. The transport-specific surface is:
+
+| Concern | GitLab | GitHub |
+|---|---|---|
+| Installation | Protected direct include or hardened child pipeline | Checked-in Actions workflow |
+| Trusted workflow | Protected template project/ref and variable boundary | Base-branch `pull_request` workflow; never `pull_request_target` |
+| Review target | Merge request | Pull request |
+| Inline posting | Discussions/DiffNotes | Pull-request review comments |
+| Summary/state | MR notes, authored by the token bot | PR issue comments, authored by the configured bot login |
+| Commands | Reply in a finding discussion; Developer/30+ | Reply to the root inline comment; verified repository write authority |
+| Thread resolution | Discussion API | GraphQL; optional fine-grained resolve token |
+| Merge enforcement | None; repository policy may require successful pipelines | None; a ruleset may require the publication check |
+| Forks | Protected variables are withheld; topology controls trusted execution | External forks are skipped by the canonical workflow |
+| Concurrency | MR-scoped post resource group | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
+| Diff collection | Paginated MR diff API with exact-path raw recovery | Immutable base/head comparison raw diff |
+| Artifact retention | 7 days for prepare/review/critique, 30 days for consensus/post | Repository or organization Actions default |
+
+The GitLab raw-diff compatibility fallback is accepted only when the response
+reports `overflow=false`, every affected path has one exact match, and no
+replacement is collapsed or too large. Prepare re-fetches the MR revision and
+rejects any base, start, or head change. GitHub binds the selected PR head, the
+checked-out commit, and fetched PR metadata before and after diff collection and
+again before writing the manifest.
+
+Model-authored values use the shared literal renderer on both platforms: scalar
+values are code spans, prose is one code span per line, and suggestions are text
+fences. Redaction and newline normalization happen before literal encoding, and
+the trusted footer and marker remain outside truncated model content.
 
 ## Environment variables
 

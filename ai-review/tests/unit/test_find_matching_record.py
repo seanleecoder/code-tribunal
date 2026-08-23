@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-from ai_review.memory import STATE_MATCHING_STRATEGY, find_matching_record
+from ai_review.memory import find_matching_record
 
 
 def _anchor(path: str = "src/foo.py", line: int = 10, symbol: str | None = "handle") -> dict:
@@ -148,8 +148,6 @@ class FindMatchingRecordTests(unittest.TestCase):
 
         self.assertEqual(result.status, "new")
         self.assertIsNone(result.record)
-        self.assertIn("deterministic", STATE_MATCHING_STRATEGY)
-        self.assertIn("semantic text similarity is not", STATE_MATCHING_STRATEGY)
 
     def test_ambiguous_duplicate_records_at_same_precedence(self) -> None:
         first = _record("1" * 64)

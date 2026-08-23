@@ -1,15 +1,4 @@
-"""Pure state planning for the posting pipeline.
-
-Deliberately platform-free: this module must not import ai_review.platform
-at all, and nothing here takes a platform client. That is what makes posting
-state transitions testable without constructing one, which
-tests/unit/test_import_boundaries.py pins as a standing guarantee rather
-than a one-time property.
-
-_pipeline_id's environment read and the now_iso() calls stay as they
-are — the boundary rule is "no platform clients and no requests", and
-injecting a clock would churn state signatures for no gain.
-"""
+"""Pure posting-state planning with no platform clients or requests."""
 
 from __future__ import annotations
 

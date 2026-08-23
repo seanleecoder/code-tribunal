@@ -1,18 +1,10 @@
-"""Marker and review-note parsing.
-
-Pure text handling with no platform access: the only package dependency is
-``render.PROSE_LINE_BREAK``, which is half of the prose round-trip
-``_read_prose_review_body`` recovers. Both command collection and state
-recovery consume this layer, which is why it is not folded into ``commands``.
-"""
+"""Pure, platform-free marker and review-note parsing."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Any
-
-from .render import PROSE_LINE_BREAK
 
 MARKER_RE = re.compile(
     r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
@@ -25,15 +17,6 @@ SUMMARY_MARKER_RE = re.compile(
 )
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
-# Headings that end the recovered summary. `Consensus:` is the pre-v4 footer
-# heading and is carried alongside `Support:` for one release: this parser runs on
-# the marker-recovery path taken when the persisted state note is missing, so it
-# must still decompose thread bodies written by the previous version. Removal is
-# tracked as COMPAT-004.
-REVIEW_SECTION_BOUNDARIES = frozenset(
-    {"Evidence:", "Dissent:", "Suggestion:", "Support:", "Consensus:"}
-)
-BODY_FENCE_RE = re.compile(r"^(?P<delimiter>`{3,})text\s*$")
 
 
 @dataclass(frozen=True)
@@ -44,8 +27,6 @@ class ExistingReviewDiscussion:
     position: dict[str, Any] | None
     category: str | None
     title: str
-    # Intentionally retained v2/v3 recovery metadata, not a state-matching key.
-    summary: str
     resolved: bool
     author_id: int | None
 
@@ -68,63 +49,22 @@ def _is_review_header_candidate(line: str) -> bool:
 
 
 def _parse_review_header(line: str) -> str | None:
-    """Return the category from a ``**AI review: <SEVERITY> <category>**`` line.
+    """Parse a stripped header with a linear scan over unauthenticated text.
 
-    Scanned rather than matched. The equivalent pattern
-    ``^\\*\\*AI review:\\s+\\S+\\s+(.+?)\\s*\\*\\*$`` puts ``\\s+``, a lazy
-    ``.+?``, and ``\\s*`` in front of an anchored ``\\*\\*$``, which backtracks
-    **cubically**: a 1,616-character line of interior spaces took 1.9 seconds.
-    This runs on every line of an unauthenticated note — see ``_unwrap_span``
-    for why the input is attacker-controlled — and ``line.strip()`` does not
-    help, because interior whitespace survives it. Do not restore the regex.
-
-    ``line`` must be a single already-stripped line; the one call site passes
-    ``line.strip()`` over ``splitlines()`` output. That precondition is what
-    makes the ``endswith`` test equivalent to the pattern's ``\\*\\*$``, which
-    would also have matched before one trailing newline.
-
-    One deliberate difference from that pattern: a whitespace-only category —
-    ``**AI review: MAJOR  **``, two or more spaces — matched it and yielded
-    ``""``, and is refused here. Recovering it would invent a category the note
-    does not carry, and ``normalize_record`` turns an empty one into ``other``,
-    which is the input most likely to match the *wrong* group. Refusing costs
-    only the two ``_same_category``-gated fallback tiers, and only for a
-    hand-edited note: ``category`` is a validated enum, so the renderer cannot
-    emit this shape — an empty category would produce a single space, which
-    both this parser and the pattern reject. The differential test asserts the
-    difference as a property rather than a list of cases.
-
-    That refusal is only meaningful because ``parse_review_note`` stops at the
-    first header-*shaped* line rather than the first line that parses. Scanning
-    on would not refuse the note at all: it would hand the choice to the next
-    header-shaped line, and in a v2 note the body is unfenced model text, so
-    the model could supply one. Do not turn that break back into a continue.
+    Whitespace-only categories are refused. ``parse_review_note`` must stop at
+    the first header-shaped line so an invalid header cannot delegate matching
+    to model-authored text later in the note.
     """
 
     if not _is_review_header_candidate(line):
         return None
     inner = line[len(REVIEW_HEADER_PREFIX) : -len(REVIEW_HEADER_SUFFIX)]
-    # The separator after the colon is mandatory, as the pattern's first
-    # ``\s+`` was: ``**AI review:MAJOR correctness**`` is not a header the
-    # renderer can emit, and accepting it would feed a hand-edited note's title
-    # and category into state matching instead of ignoring the note. The
-    # ``[:1]`` slice covers an empty ``inner`` without a separate length check.
+    # The separator after the colon is mandatory; ``[:1]`` also covers empty input.
     if not inner[:1].isspace():
         return None
-    # ``split(None, 1)`` collapses the leading and separating whitespace runs
-    # the pattern spelled ``\s+``; the category then keeps its own internal
-    # spaces and drops the trailing run that preceded the closing ``**``.
-    # ``str.split(None)`` and ``\s`` agree on every whitespace character.
     parts = inner.split(None, 1)
     if len(parts) != 2:
-        # A single part means there was no category, or only whitespace where
-        # one belonged. This is where the deliberate difference described above
-        # takes effect: the replaced pattern recovered ``""`` from
-        # ``**AI review: MAJOR  **``; refusing avoids inventing a category.
         return None
-    # ``split(None, 1)`` also discards a trailing whitespace run, so a second
-    # part always carries non-whitespace and ``category`` is never empty here.
-    # The fallback is belt and braces against a future change to the split.
     category = parts[1].strip()
     return category or None
 
@@ -191,73 +131,6 @@ def _unwrap_span(rendered: str) -> str | None:
     return value
 
 
-def _read_review_body(lines: list[str]) -> list[str]:
-    """Read a v2/v3 body without consuming renderer-owned later sections."""
-
-    start = 0
-    while start < len(lines) and not lines[start].strip():
-        start += 1
-    if start >= len(lines) or lines[start].strip() in REVIEW_SECTION_BOUNDARIES:
-        return []
-
-    opening_match = BODY_FENCE_RE.fullmatch(lines[start].strip())
-    if opening_match is not None:
-        delimiter = opening_match.group("delimiter")
-        for closing_index, line in enumerate(lines[start + 1 :], start + 1):
-            if line.strip() == delimiter:
-                return lines[start + 1 : closing_index]
-        # A damaged v3 note can retain its opening fence while losing the
-        # close. Recover the remainder with the v2 line-oriented rules so a
-        # footer section is not folded into the stored body summary.
-        return _read_unfenced_review_body(lines[start + 1 :])
-
-    prose = _read_prose_review_body(lines[start:])
-    if prose is not None:
-        return prose
-
-    return _read_unfenced_review_body(lines[start:])
-
-
-def _read_prose_review_body(lines: list[str]) -> list[str] | None:
-    """Read a prose paragraph of per-line code spans, or ``None``.
-
-    The paragraph ends at the blank line that separates it from the next
-    renderer-owned fragment. ``None`` means these lines are not a rendered
-    prose paragraph, so an older or hand-edited note falls back to the
-    line-oriented rules.
-
-    Any malformed line rejects the whole paragraph rather than returning the
-    lines read so far. A partial return looks like a successful read to
-    ``_read_review_body``, which would then silently discard every remaining
-    line instead of falling back and recovering them verbatim.
-    """
-
-    content: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped in REVIEW_SECTION_BOUNDARIES:
-            break
-        if stripped == PROSE_LINE_BREAK:
-            content.append("")
-            continue
-        value = _unwrap_span(stripped.removesuffix(PROSE_LINE_BREAK))
-        if value is None:
-            return None
-        content.append(value)
-    return content or None
-
-
-def _read_unfenced_review_body(lines: list[str]) -> list[str]:
-    """Read legacy body lines until a renderer-owned section boundary."""
-
-    content = []
-    for line in lines:
-        if line.strip() in REVIEW_SECTION_BOUNDARIES:
-            break
-        content.append(line)
-    return content
-
-
 def parse_review_note(body: str) -> dict[str, str] | None:
     without_marker = MARKER_RE.sub("", body).strip()
     lines = without_marker.splitlines()
@@ -285,19 +158,10 @@ def parse_review_note(body: str) -> dict[str, str] | None:
     if not remaining:
         return None
 
-    title, labelled_title = _parse_review_title(remaining[0])
-    remaining = remaining[1:]
-    while remaining and not remaining[0].strip():
-        remaining.pop(0)
-    if labelled_title and remaining and remaining[0].strip() == "Body:":
-        remaining = remaining[1:]
-    summary_lines = _read_review_body(remaining)
-    if summary_lines == ["(empty)"]:
-        summary_lines = []
+    title, _labelled_title = _parse_review_title(remaining[0])
     return {
         "category": header_category,
         "title": title,
-        "summary": "\n".join(summary_lines).strip(),
     }
 
 
@@ -330,7 +194,6 @@ def index_ai_review_discussions(
                 position=position if isinstance(position, dict) else None,
                 category=rendered.get("category"),
                 title=rendered.get("title", ""),
-                summary=rendered.get("summary", ""),
                 resolved=bool(discussion.get("resolved") or root.get("resolved")),
                 author_id=(
                     root.get("author", {}).get("id")

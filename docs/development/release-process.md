@@ -31,6 +31,12 @@ and remove completed spec files from the active
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
 3. Build base and reviewer images from exactly `R`; record the immutable image
    subjects, digests, publication run, attestations, and anonymous pulls.
+   Before changing any consumer pin, run the protected manual `Candidate Canary`
+   workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
+   with `R` and the two digest-pinned subjects. A red result blocks promotion or
+   repinning. It does not gate ordinary pull requests. One green GitHub run and
+   one green GitLab run are the complete campaign; repeat only after a failure
+   has led to a concrete fix.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
@@ -107,7 +113,7 @@ record belong in the next release's notes, never in the shipped one.
 | `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapters/*` | one real Chain A panel; plus the effort-route check if effort profiles changed | no |
 | `input_bundle.py`, `platform/gitlab.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
 | `consensus.py` | the surfacing/decision step of Chain B | yes — `test_consensus_policy.py`, `test_consensus_integrity.py` |
-| `github_platform.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
+| `input_bundle.py`, `platform/github.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
 | any image recipe, or `ai-review/src` at all | image publication verification | **never** — the digests always change |
 | the posted-body format version (`render-body.vN`) | one refresh run against a thread authored by the **previous** release's image | no |
 

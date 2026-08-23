@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 from typing import Any
 
@@ -189,33 +188,3 @@ def render_critique_prompt(
     if len(rendered.encode("utf-8")) > max_prompt_bytes:
         raise PromptRenderError("rendered prompt exceeds limits.max_prompt_bytes")
     return rendered
-
-
-def cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=["review", "critique"])
-    parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--reviewer", required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--findings-dir", default="out/findings")
-    parser.add_argument("--pooled-findings-out")
-    args = parser.parse_args(argv)
-    if args.stage == "review":
-        rendered = render_review_prompt(args.input_dir, args.config, args.reviewer)
-    else:
-        rendered = render_critique_prompt(
-            args.input_dir,
-            args.config,
-            args.reviewer,
-            args.findings_dir,
-            pooled_findings_out=args.pooled_findings_out,
-        )
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(rendered, encoding="utf-8")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())

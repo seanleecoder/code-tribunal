@@ -111,7 +111,6 @@ class SummaryRenderTests(PostCase):
 
         self.assertEqual(section.entries, ("first", "second"))
         self.assertEqual(section.retained_count, 2)
-        self.assertEqual(section.entry_prefix_lengths, (0, 5, 11))
 
     def test_summary_section_descriptor_rejects_invalid_retained_count(self) -> None:
         for retained_count in (-1, 2):

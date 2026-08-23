@@ -21,50 +21,6 @@ from support.post_case import PostCase  # noqa: E402
 class ReviewNoteParsingTests(PostCase):
     """Recovering the renderer's own output from a posted note body."""
 
-    def test_both_support_and_legacy_consensus_footers_bound_the_body(self) -> None:
-        """Marker recovery reads bodies written by the *previous* release.
-
-        `REVIEW_SECTION_BOUNDARIES` carries `Consensus:` alongside `Support:` for
-        one release for exactly that reason. Without the legacy heading the old
-        footer parses as body content, which does not raise — it silently
-        corrupts the recovered summary that feeds `title_anchor` matching.
-        """
-        group = self._consensus()["groups"][0]
-        current, _hash = render_body(group, "run", posting_mode="gitlab_discussions")
-        self.assertIn("\nSupport:", current)
-
-        parsed_current = parse_review_note(current)
-        self.assertIsNotNone(parsed_current)
-        assert parsed_current is not None
-        self.assertEqual(parsed_current["category"], "correctness")
-        self.assertEqual(parsed_current["title"], "Title")
-        self.assertEqual(parsed_current["summary"], "Body")
-
-        # The legacy heading is load-bearing on the unfenced body path, where the
-        # footer is not separated from the body by a blank line. Drop `Consensus:`
-        # from the boundary set and the whole footer is recovered *as body text* —
-        # no exception, just a corrupted summary.
-        marker = (
-            "<!-- ai-review:v1 issue_id="
-            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
-        )
-        legacy = (
-            "**AI review: MAJOR correctness**\n\n"
-            "Legacy title\n\n"
-            "Legacy body line\n"
-            "Consensus:\n"
-            "- Reviewers: claude, codex\n"
-            "- Decision: surface\n\n" + marker
-        )
-        parsed_legacy = parse_review_note(legacy)
-        self.assertIsNotNone(parsed_legacy)
-        assert parsed_legacy is not None
-        self.assertEqual(parsed_legacy["category"], "correctness")
-        self.assertEqual(parsed_legacy["title"], "Legacy title")
-        self.assertEqual(parsed_legacy["summary"], "Legacy body line")
-        self.assertIn("Consensus:", notes_module.REVIEW_SECTION_BOUNDARIES)
-        self.assertIn("Support:", notes_module.REVIEW_SECTION_BOUNDARIES)
-
     def test_v2_and_v3_review_note_titles_are_recoverable(self) -> None:
         v3_body, _body_hash = render_body(
             self._consensus()["groups"][0], "run", posting_mode="gitlab_discussions"
@@ -73,7 +29,6 @@ class ReviewNoteParsingTests(PostCase):
         self.assertIsNotNone(parsed_v3)
         assert parsed_v3 is not None
         self.assertEqual(parsed_v3["title"], "Title")
-        self.assertEqual(parsed_v3["summary"], "Body")
 
         v2_marker = (
             "<!-- ai-review:v1 issue_id="
@@ -85,130 +40,6 @@ class ReviewNoteParsingTests(PostCase):
         self.assertIsNotNone(parsed_v2)
         assert parsed_v2 is not None
         self.assertEqual(parsed_v2["title"], "Legacy title")
-        self.assertEqual(parsed_v2["summary"], "Legacy body")
-
-    def test_review_note_parser_preserves_exact_section_labels_inside_closed_v3_body(self) -> None:
-        body = "\n".join(
-            [
-                "**AI review: MAJOR correctness**",
-                "",
-                "Title: `` `starts with ticks` ``",
-                "",
-                "Body:",
-                "",
-                "````text",
-                "first line",
-                "Evidence:",
-                "Dissent:",
-                "Suggestion:",
-                "Consensus:",
-                "```python",
-                "second line",
-                "````",
-                "",
-                "Dissent:",
-                "- `critic`:",
-                "```text",
-                "ignored rationale",
-                "```",
-                "",
-                "Consensus:",
-                "- Decision: surface",
-            ]
-        )
-
-        parsed = parse_review_note(body)
-
-        self.assertIsNotNone(parsed)
-        assert parsed is not None
-        self.assertEqual(parsed["title"], "`starts with ticks`")
-        self.assertEqual(
-            parsed["summary"],
-            "first line\nEvidence:\nDissent:\nSuggestion:\nConsensus:\n```python\nsecond line",
-        )
-        self.assertNotIn("ignored rationale", parsed["summary"])
-
-    def test_review_note_parser_preserves_fenced_blank_lines_and_v2_boundaries(self) -> None:
-        fenced = "\n".join(
-            [
-                "**AI review: MINOR style**",
-                "",
-                "Title: `Clean title`",
-                "",
-                "Body:",
-                "",
-                "```text",
-                "first line",
-                "",
-                "last line",
-                "```",
-                "",
-                "Evidence:",
-                "ignored later section",
-            ]
-        )
-        parsed_fenced = parse_review_note(fenced)
-        self.assertIsNotNone(parsed_fenced)
-        assert parsed_fenced is not None
-        self.assertEqual(parsed_fenced["title"], "Clean title")
-        self.assertEqual(parsed_fenced["summary"], "first line\n\nlast line")
-
-        unfenced = "\n".join(
-            [
-                "**AI review: INFO style**",
-                "",
-                "Legacy title",
-                "",
-                "legacy body",
-                "",
-                "Evidence:",
-                "ignored evidence",
-                "Dissent:",
-                "ignored dissent",
-                "Suggestion:",
-                "ignored suggestion",
-                "Consensus:",
-                "ignored consensus",
-            ]
-        )
-        parsed_unfenced = parse_review_note(unfenced)
-        self.assertIsNotNone(parsed_unfenced)
-        assert parsed_unfenced is not None
-        self.assertEqual(parsed_unfenced["title"], "Legacy title")
-        self.assertEqual(parsed_unfenced["summary"], "legacy body")
-
-    def test_mixed_prose_note_falls_back_instead_of_returning_a_partial_body(self) -> None:
-        """A hand-edited note must not lose the lines after the first bad one.
-
-        Returning the lines read so far looks like a successful prose read, so
-        the caller would stop there and silently discard the remainder rather
-        than falling back to the line-oriented rules.
-        """
-
-        body = "\n".join(
-            [
-                "**AI review: INFO style**",
-                "",
-                "Title: `Clean title`",
-                "",
-                "Body:",
-                "`recovered line one`\\",
-                "hand-edited line two",
-                "hand-edited line three",
-                "",
-                "Consensus:",
-                "ignored consensus",
-            ]
-        )
-
-        parsed = parse_review_note(body)
-
-        self.assertIsNotNone(parsed)
-        assert parsed is not None
-        self.assertEqual(
-            parsed["summary"],
-            "`recovered line one`\\\nhand-edited line two\nhand-edited line three",
-        )
 
     def test_hand_edited_two_span_line_is_not_unwrapped(self) -> None:
         # The delimiter match is greedy, so two adjacent spans look like one
@@ -241,7 +72,6 @@ class ReviewNoteParsingTests(PostCase):
 
         started = time.perf_counter()
         self.assertIsNone(notes_module._unwrap_span(line))
-        self.assertIsNone(notes_module._read_prose_review_body([line]))
         elapsed = time.perf_counter() - started
 
         self.assertLess(elapsed, 2.0)
@@ -445,30 +275,6 @@ class ReviewNoteParsingTests(PostCase):
             with self.subTest(rendered=rendered):
                 self.assertIsNone(notes_module._unwrap_span(rendered))
 
-    def test_review_note_parser_bounds_unclosed_fence_at_v2_section_boundaries(self) -> None:
-        for boundary in ("Evidence:", "Dissent:", "Suggestion:", "Consensus:"):
-            with self.subTest(boundary=boundary):
-                body = "\n".join(
-                    [
-                        "**AI review: INFO style**",
-                        "",
-                        "Title: `Legacy title`",
-                        "",
-                        "Body:",
-                        "",
-                        "```text",
-                        "legacy body",
-                        boundary,
-                        "ignored footer content",
-                    ]
-                )
-
-                parsed = parse_review_note(body)
-
-                self.assertIsNotNone(parsed)
-                assert parsed is not None
-                self.assertEqual(parsed["summary"], "legacy body")
-
     def test_review_note_parser_handles_blank_lines_and_malformed_title_fallback(self) -> None:
         body = "\n".join(
             [
@@ -492,7 +298,6 @@ class ReviewNoteParsingTests(PostCase):
             {
                 "category": "style",
                 "title": "malformed title from an older note",
-                "summary": "legacy body",
             },
         )
 

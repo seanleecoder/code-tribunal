@@ -5,7 +5,7 @@ Status: waived
 Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
 Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
 Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
-Release-evidence-waived: Trust topology is unchanged: input_bundle.py, gitlab_platform.py, and scripts/verify_pipeline_trust.py carry no diff; roster documentation and stage timeouts do not alter credential withholding. Covered by test_verify_pipeline_trust.py and fork-secret withholding cases in test_input_bundle.py.
+Release-evidence-waived: Trust topology is unchanged: input_bundle.py, platform/gitlab.py, and scripts/verify_pipeline_trust.py carry no diff; roster documentation and stage timeouts do not alter credential withholding. Covered by test_verify_pipeline_trust.py and fork-secret withholding cases in test_input_bundle.py.
 
 > **1.0.2 disposition: waived, not re-run.** The live pass below remains scoped
 > to the 1.0.0 source and image pair; it is historical support, not a pass for the

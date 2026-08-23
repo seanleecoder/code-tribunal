@@ -104,7 +104,7 @@ identity and body rendering are platform-independent, as designed.
   adapter path is platform-independent and the single GitHub panel proves the changed
   default models resolve.
 - **Hostile-MR credential boundary** is waived for 1.0.1 — `input_bundle.py`,
-  `gitlab_platform.py`, `gate.py`, and `verify_pipeline_trust.py` carry no diff since
+  `platform/gitlab.py`, `gate.py`, and `scripts/verify_pipeline_trust.py` carry no diff since
   `v1.0.0`.
 
 ## Audit

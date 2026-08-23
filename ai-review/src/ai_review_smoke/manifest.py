@@ -9,60 +9,13 @@ Two kinds of manifest live here, and both are identity checks rather than counts
   a case that stopped matching collection -- a renamed method, a class that no
   longer subclasses ``TestCase``, a decorator that swallowed it -- and would
   still exit 0 while publishing an image that quietly lost a check.
-* :data:`RUNTIME_MODULES`, :data:`RUNTIME_FILES`, :data:`PACKAGED_FIXTURES`, and
-  :data:`PINNED_CLI_VERSION_COMMANDS` name what the image must contain. These
-  used to live in workflow shell (``for module in input_bundle consensus post
-  schema``), where a deleted module broke image publication and nothing in the
-  product suite could see it. The checkout suite asserts these lists against the
-  real package, so drift fails ``make quality`` rather than a publish run.
+* :data:`RUNTIME_FILES`, :data:`PACKAGED_FIXTURES`, and :data:`PINNED_CLIS`
+  name non-Python runtime contents that cannot be discovered from the package.
 """
 
 from __future__ import annotations
 
 from ai_review.reviewers import REVIEWERS
-
-# Every module in the shipped ``ai_review`` package. The checkout contract test
-# asserts this equals what the package actually contains, in both directions:
-# a module added without editing this list fails there, and a module named here
-# after deletion fails the in-image import case.
-RUNTIME_MODULES: tuple[str, ...] = (
-    "ai_review",
-    "ai_review.adapter_artifacts",
-    "ai_review.adapter_output",
-    "ai_review.adapter_process",
-    "ai_review.adapter_runner",
-    "ai_review.anchors",
-    "ai_review.canonical",
-    "ai_review.commands",
-    "ai_review.config",
-    "ai_review.consensus",
-    "ai_review.consensus_errors",
-    "ai_review.consensus_policy",
-    "ai_review.constants",
-    "ai_review.critique",
-    "ai_review.grouping",
-    "ai_review.http_retry",
-    "ai_review.input_bundle",
-    "ai_review.memory",
-    "ai_review.mock_reviewer",
-    "ai_review.notes",
-    "ai_review.opencode_client",
-    "ai_review.platform",
-    "ai_review.platform.base",
-    "ai_review.platform.github",
-    "ai_review.platform.gitlab",
-    "ai_review.platform.runtime",
-    "ai_review.post",
-    "ai_review.posting",
-    "ai_review.prompt_render",
-    "ai_review.redact",
-    "ai_review.render",
-    "ai_review.reviewers",
-    "ai_review.schema",
-    "ai_review.state_plan",
-    "ai_review.summary_render",
-    "ai_review.types",
-)
 
 # The modules a consumer pipeline invokes as ``python -m``. Import alone does not
 # prove the entry point survived a refactor, so these are additionally required
@@ -86,7 +39,6 @@ RUNTIME_FILES: tuple[str, ...] = tuple(
         | {
             "adapters/common.sh",
             "adapters/run_reviewer.sh",
-            "adapters/validate_output.py",
             "config/review.yaml",
             "prompts/critique.md",
             "prompts/review.md",
@@ -126,7 +78,6 @@ MANIFEST: dict[str, frozenset[str]] = {
         {
             f"{_BASE_CASES}.test_default_config_loads",
             f"{_BASE_CASES}.test_every_runtime_module_imports",
-            f"{_BASE_CASES}.test_expected_runtime_files_exist",
             f"{_BASE_CASES}.test_packaged_cli_entry_points_are_callable",
             f"{_BASE_CASES}.test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them",
             f"{_BASE_CASES}.test_packaged_runtime_root_is_read_only",

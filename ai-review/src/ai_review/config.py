@@ -134,27 +134,10 @@ LIMIT_KEYS = {
 }
 SECURITY_KEYS = {"allow_external_fork_secrets"}
 
-# Overrides that used to mean something and no longer do. Set one and the run
-# fails, naming the replacement.
-#
-# Silence would be worse here than anywhere else: GitLab project and group
-# variables are configured once and outlive every template revision that reads
-# them, so after a repin a stale override sits in the project settings looking
-# effective. AI_REVIEW_STATE_BACKEND selected a real backend two releases ago,
-# and the two semantic names were already rejected by name before it — dropping
-# the rejection would have turned a loud error into a no-op. The same reasoning
-# keeps GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN rejected in platform/runtime.py and
-# AI_REVIEW_CURSOR_EFFORT rejected in validate_config.
+# GitLab project/group variables outlive template revisions, so a removed name
+# must fail loudly rather than become a silent no-op.
 # Reviewer tombstones: AI_REVIEW_CLAUDE_ENABLED, AI_REVIEW_CODEX_ENABLED,
 # AI_REVIEW_OPENCODE_ENABLED, AI_REVIEW_CURSOR_ENABLED.
-#
-# review_config.v3 is the "next major release" the previous note deferred this
-# to, and the decision taken there is to KEEP all three. The reasoning above is
-# what settles it: these names are set as GitLab project and group variables that
-# outlive every template revision, so dropping the rejection converts a loud
-# error into a silent no-op for exactly the operators who still have them set.
-# The entries cost one dict lookup per run. Revisit only when the variables can
-# no longer plausibly be set — not on the next version bump.
 RETIRED_ENV_OVERRIDES = {
     # COMPAT-001: review_config.v2 and v3 environment tombstones.
     "AI_REVIEW_STATE_BACKEND": (
@@ -441,15 +424,9 @@ def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
 def resolve_reviewer_timeout_seconds(
     reviewer_config: dict[str, Any], stage: str
 ) -> int:
-    """Resolve a reviewer stage budget before the runner's reserve.
+    """Resolve the review or critique budget before the runner's reserve.
 
-    ``timeout_seconds`` is required; ``critique_timeout_seconds`` falls back to
-    ``DEFAULT_CRITIQUE_TIMEOUT_SECONDS``. It used to fall back to
-    ``timeout_seconds`` instead, capped at the same 900s so an inherited review
-    budget could not overrun the critique job ceiling. The cap made the fallback
-    safe but not clear: a reviewer with ``timeout_seconds: 1800`` silently got 900
-    for critique, and one with ``timeout_seconds: 600`` silently got 600. A flat
-    default says the same thing without overloading the field.
+    Critique uses its own key and defaults to 900 seconds.
     """
     if stage == "review":
         timeout_key = "timeout_seconds"

@@ -23,8 +23,8 @@
       "record-github-revision-failures.md"
     ],
     "evidence_waivers": {
-      "record-github-revision-failures.md": "github_platform.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.",
-      "record-gitlab-hostile-mr.md": "Trust topology is unchanged: input_bundle.py, gitlab_platform.py, and scripts/verify_pipeline_trust.py carry no diff; roster documentation and stage timeouts do not alter credential withholding. Covered by test_verify_pipeline_trust.py and fork-secret withholding cases in test_input_bundle.py.",
+      "record-github-revision-failures.md": "platform/github.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.",
+      "record-gitlab-hostile-mr.md": "Trust topology is unchanged: input_bundle.py, platform/gitlab.py, and scripts/verify_pipeline_trust.py carry no diff; roster documentation and stage timeouts do not alter credential withholding. Covered by test_verify_pipeline_trust.py and fork-secret withholding cases in test_input_bundle.py.",
       "record-model-effort-routes.md": "OpenCode max effort was already accepted in real runs on an operator-controlled project; those runs are operator attestation rather than source-bound public evidence, and the final runtime change only normalizes a returned structured item after provider execution, so the operator accepted skipping a duplicate 1.0.2 rerun."
     },
     "publication_run_id": "31369496025"

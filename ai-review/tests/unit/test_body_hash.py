@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import random
 import unittest
 from unittest.mock import patch
 
 from ai_review.notes import _unwrap_span, parse_marker, parse_review_note
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
+    PLATFORM_TRUNCATION_NOTICE,
+    RenderFragment,
     _encode_span,
-    _shorten_span,
+    _limit_fragments,
     literal_span,
     platform_comment_limit,
     prose_block,
@@ -230,14 +231,36 @@ class BodyHashTests(unittest.TestCase):
 
         body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
-        self.assertGreater(len(body), 60_000)
         self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
         self.assertIn("…[truncated: platform comment size limit]", body)
         self.assertIn("Dissent:", body)
         self.assertIn("`The guard is already applied by the caller.`", body)
+        self.assertNotIn("evidence " * 100, body)
         self.assertIn("Support:", body)
-        # Ordering is the mechanism, so pin it: dissent precedes evidence.
-        self.assertLess(body.index("Dissent:"), body.index("Evidence:"))
+        self.assertNotIn("Evidence:", body)
+
+    def test_oversized_section_entries_do_not_leave_orphan_headers(self) -> None:
+        group = self._group()
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "d" * 70_000,
+                "adjusted_severity": None,
+            }
+        ]
+        group["evidence_by_reviewer"] = {"claude": "e" * 70_000}
+        group["suggestion"] = "return early"
+
+        body, _body_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
+
+        self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
+        self.assertNotIn("Dissent:", body)
+        self.assertNotIn("Evidence:", body)
+        self.assertNotIn("cursor disputes:", body)
+        self.assertIn("Suggestion:\n```text\nreturn early\n```", body)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
 
     def test_renders_dissent_with_optional_severity_for_blocker_group(self) -> None:
         group = self._group()
@@ -339,8 +362,8 @@ class BodyHashTests(unittest.TestCase):
         )
 
         self.assertLessEqual(len(first), 65_536)
-        self.assertGreater(len(first), 65_000)
         self.assertIn("…[truncated: platform comment size limit]", first)
+        self.assertNotIn("Body:", first)
         self.assertIn("Support:", first)
         self.assertIn("- Status: surfaced for discussion", first)
         self.assertIn("- Independent support: 2", first)
@@ -349,7 +372,7 @@ class BodyHashTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first_hash, second_hash)
 
-    def test_v3_platform_limits_are_stable_and_close_owned_blocks(self) -> None:
+    def test_platform_limits_are_stable_with_atomic_fragments(self) -> None:
         group = self._group()
         group["body"] = "body " * 300_000
 
@@ -363,19 +386,42 @@ class BodyHashTests(unittest.TestCase):
                 )
 
                 limit = platform_comment_limit(posting_mode)
-                # A prose span cannot always fill an arbitrary budget to
-                # the character: it owns two delimiters, so the longest
-                # span that fits may leave a byte unusable.
                 self.assertLessEqual(len(first), limit)
-                self.assertGreater(len(first), limit - 8)
                 self.assertEqual(first, second)
                 self.assertEqual(first_hash, second_hash)
                 self.assertIn("…[truncated: platform comment size limit]", first)
                 self.assertIn("\nSupport:", first)
                 self.assertIsNotNone(parse_marker(first))
-                # The body is prose now, so truncation ends at a re-encoded
-                # span and the notice needs its own paragraph.
-                self.assertRegex(first, r"`\n\n…\[truncated")
+                self.assertNotIn("Body:", first)
+
+    def test_oversized_body_does_not_suppress_smaller_later_fragments(self) -> None:
+        group = self._group()
+        group["body"] = "x" * 70_000
+        group["critique_disputes"] = [
+            {
+                "critic": "cursor",
+                "rationale": "The caller already applies the guard.",
+                "adjusted_severity": None,
+            }
+        ]
+        group["evidence_by_reviewer"] = {"claude": "The caller checks emptiness."}
+        group["suggestion"] = "return early"
+
+        body, _body_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
+
+        self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
+        self.assertNotIn("Body:", body)
+        self.assertIn("Dissent:", body)
+        self.assertIn("`The caller already applies the guard.`", body)
+        self.assertIn("Evidence:", body)
+        self.assertIn("`The caller checks emptiness.`", body)
+        self.assertIn("Suggestion:\n```text\nreturn early\n```", body)
+        self.assertEqual(body.count("```"), 2)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
+        self.assertIn("Support:", body)
+        self.assertIsNotNone(parse_marker(body))
 
     def test_truncation_drops_whole_literal_span_instead_of_splitting_it(self) -> None:
         group = self._group()
@@ -391,7 +437,7 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("…[truncated: platform comment size limit]", body)
         self.assertIsNotNone(parse_marker(body))
 
-    def test_platform_truncation_closes_open_code_fence_before_footer(self) -> None:
+    def test_platform_truncation_omits_oversized_code_fragment(self) -> None:
         group = self._group()
         # A suggestion keeps the fenced block, so it is the field that exercises
         # closing an owned fence before the trusted footer.
@@ -405,7 +451,9 @@ class BodyHashTests(unittest.TestCase):
         )
 
         self.assertLessEqual(len(body), 65_536)
-        self.assertIn("\n````\n…[truncated: platform comment size limit]", body)
+        self.assertNotIn("Suggestion:", body)
+        self.assertNotIn("````", body)
+        self.assertIn("…[truncated: platform comment size limit]", body)
         self.assertLess(body.index("…[truncated"), body.index("Support:"))
         self.assertLess(body.index("Support:"), body.index("<!-- ai-review:v1"))
 
@@ -432,12 +480,8 @@ class BodyHashTests(unittest.TestCase):
                 parsed = parse_review_note(rendered)
                 self.assertIsNotNone(parsed)
                 assert parsed is not None
-                # Only whitespace-only lines normalize; a line's own trailing
-                # spaces survive the span's boundary padding.
-                expected = "\n".join(
-                    line if line.strip() else "" for line in body.strip().split("\n")
-                )
-                self.assertEqual(parsed["summary"], expected)
+                self.assertEqual(parsed["category"], group["category"])
+                self.assertEqual(parsed["title"], group["title"])
 
     def test_prose_paragraph_never_emits_a_blank_or_dangling_break(self) -> None:
         # An empty line would end the paragraph and orphan later fragments; a
@@ -460,73 +504,58 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("Body:\n`prose that should wrap`", body)
         self.assertIn("Suggestion:\n```text\nif not records:\n    return\n```", body)
 
-    def test_truncated_prose_keeps_content_and_closes_cleanly(self) -> None:
+    def test_just_under_limit_output_and_hash_are_unchanged(self) -> None:
         group = self._group()
-        # A single unbroken line has no line boundary to cut at, so truncation
-        # must re-encode a shortened span rather than drop the whole body.
-        group["body"] = "y" * 70_000
+        group["body"] = "x"
+        probe_body, _probe_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
+        group["body"] = "x" * (65_535 - (len(probe_body) - 1))
+        expected_body, expected_hash = render_body(
+            group, "run", posting_mode="github_reviews"
+        )
 
-        with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 900}):
-            body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
+        body, body_hash = render_body(group, "run", posting_mode="github_reviews")
 
-        self.assertLessEqual(len(body), 900)
-        self.assertGreater(body.count("y"), 300)
-        prose = body.split("Body:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertTrue(prose.startswith("`") and prose.endswith("`"))
-        self.assertIn("\n\n…[truncated: platform comment size limit]", body)
+        self.assertEqual(len(body), 65_535)
+        self.assertNotIn(PLATFORM_TRUNCATION_NOTICE, body)
+        self.assertEqual(body, expected_body)
+        self.assertEqual(body_hash, expected_hash)
+
+    def test_just_over_limit_keeps_only_complete_fragments(self) -> None:
+        group = self._group()
+        group["body"] = "whole fragment with `ticks`"
+        group["suggestion"] = "x"
+        probe_body, _probe_hash = render_body(
+            group, "run", posting_mode="gitlab_discussions"
+        )
+        group["suggestion"] = "x" * (65_537 - (len(probe_body) - 1))
+        full_body, _full_hash = render_body(
+            group, "run", posting_mode="gitlab_discussions"
+        )
+
+        body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
+
+        self.assertEqual(len(full_body), 65_537)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
+        self.assertNotIn("Suggestion:", body)
+        encoded_body = body.split("Body:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(_unwrap_span(encoded_body), group["body"])
         self.assertIsNotNone(parse_marker(body))
 
-    def test_backtick_heavy_prose_is_shortened_rather_than_dropped(self) -> None:
-        """A growing delimiter must not make truncation discard the field.
+    def test_oversized_first_fragment_produces_notice_only(self) -> None:
+        self.assertEqual(
+            _limit_fragments([RenderFragment("x" * 100)], 50),
+            PLATFORM_TRUNCATION_NOTICE,
+        )
 
-        Encoding cost is ``2 * (longest_backtick_run + 1) + length + padding``,
-        so a naive "step back by the overshoot" converges to zero on
-        backtick-dense text and drops the whole body — leaving a review with a
-        truncation notice and no finding text at all.
-        """
-
-        for label, body in (
-            ("all backticks", "`" * 70_000),
-            ("mixed", "a" * 50 + "`" * 300 + "b" * 50),
-        ):
-            with self.subTest(body=label):
-                group = self._group()
-                group["body"] = body
-
-                rendered, _body_hash = render_body(
-                    group, "run", posting_mode="github_reviews"
-                )
-
-                self.assertLessEqual(len(rendered), 65_536)
-                self.assertIn("Body:\n", rendered)
-                prose = rendered.split("Body:\n", 1)[1].split("\n", 1)[0]
-                self.assertGreater(len(prose), 100)
-                # The re-encoded span owns a matched delimiter on both sides.
-                delimiter = prose[: len(prose) - len(prose.lstrip("`"))]
-                self.assertTrue(prose.endswith(delimiter))
-                self.assertIsNotNone(parse_marker(rendered))
-
-    def test_shorten_span_returns_the_longest_prefix_that_fits(self) -> None:
-        # The encoded length is not monotone in the prefix length: a prefix
-        # ending in a space is padded and extending past it drops the padding.
-        for scalar in ("`" * 40, "a b `c`` d ", "x" * 30, "a" + "`" * 9 + "b"):
-            for room in range(0, 40):
-                with self.subTest(scalar=scalar, room=room):
-                    shortened = _shorten_span(scalar, room)
-                    best = max(
-                        (
-                            length
-                            for length in range(1, len(scalar) + 1)
-                            if len(_encode_span(scalar[:length])) <= room
-                        ),
-                        default=0,
-                    )
-                    if not best:
-                        self.assertIsNone(shortened)
-                        continue
-                    self.assertEqual(shortened, _encode_span(scalar[:best]))
-                    assert shortened is not None
-                    self.assertLessEqual(len(shortened), room)
+    def test_oversized_fragment_does_not_suppress_smaller_later_fragment(self) -> None:
+        self.assertEqual(
+            _limit_fragments(
+                [RenderFragment("x" * 100), RenderFragment("retained")], 60
+            ),
+            "retained\n\n" + PLATFORM_TRUNCATION_NOTICE,
+        )
 
     def test_padding_exception_is_u0020_only(self) -> None:
         """CommonMark's all-spaces exception counts U+0020, not whitespace.
@@ -547,42 +576,6 @@ class BodyHashTests(unittest.TestCase):
             with self.subTest(scalar=scalar):
                 self.assertEqual(_unwrap_span(_encode_span(scalar)), scalar)
 
-        # The reported case: a cut landing inside a leading space-tab run.
-        shortened = _shorten_span(" \t abcdefghij", 6)
-        assert shortened is not None
-        self.assertLessEqual(len(shortened), 6)
-        self.assertEqual(_unwrap_span(shortened), " \t")
-
-    def test_shorten_span_property_over_random_scalars(self) -> None:
-        """Seeded property check that the table above only samples by hand.
-
-        Encoded length is not monotone in the prefix length, so the search has
-        to be exactly right rather than approximately right; brute-force the
-        true maximum and demand equality.
-        """
-
-        generator = random.Random(20260728)
-        for _ in range(2_000):
-            scalar = "".join(
-                generator.choice("ab` \t") for _ in range(generator.randint(1, 30))
-            )
-            room = generator.randint(0, 40)
-            with self.subTest(scalar=scalar, room=room):
-                shortened = _shorten_span(scalar, room)
-                best = max(
-                    (
-                        length
-                        for length in range(1, len(scalar) + 1)
-                        if len(_encode_span(scalar[:length])) <= room
-                    ),
-                    default=0,
-                )
-                if not best:
-                    self.assertIsNone(shortened)
-                    continue
-                self.assertEqual(shortened, _encode_span(scalar[:best]))
-                assert shortened is not None
-                self.assertLessEqual(len(shortened), room)
 
     def test_unknown_posting_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):

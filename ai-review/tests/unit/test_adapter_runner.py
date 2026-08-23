@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.adapter_output import _load_adapter_json
+from ai_review.adapter_output import _coerce_adapter_root, _load_adapter_json
 from ai_review.adapter_process import (
     _SHELL_MOCK_ALLOW_REFUSAL,
     _effective_adapter_timeout_seconds,
@@ -20,9 +20,12 @@ from ai_review.adapter_process import (
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
+from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
+    finalize_critique_batch,
+    finalize_finding_batch,
     load_json_file,
     write_canonical_json,
 )
@@ -587,6 +590,152 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                     _load_adapter_json(stdout, stage="review")
 
 
+class StringifiedStructuredOutputTests(unittest.TestCase):
+    @staticmethod
+    def _critique() -> dict[str, object]:
+        return {
+            "target_source_finding_id": "4" * 64,
+            "verdict": "agree",
+            "adjusted_severity": None,
+            "rationale": "The finding is valid.",
+        }
+
+    def test_list_root_critique_and_review_item_finalize(self) -> None:
+        critique = self._critique()
+        raw_critique = _coerce_adapter_root([json.dumps(critique)], stage="critique")
+        finalized_critique = finalize_critique_batch(
+            raw_critique,
+            critic="claude",
+            run_id="test-run",
+            effective_config_sha256="0" * 64,
+        )
+        self.assertEqual(finalized_critique["critiques"][0]["verdict"], "agree")
+
+        finding = {
+            "anchor": {
+                "new_path": "src/session.py",
+                "old_path": "src/session.py",
+                "side": "new",
+                "start": {"old_line": None, "new_line": 13, "line_code": None},
+                "end": {"old_line": None, "new_line": 13, "line_code": None},
+                "hunk_header": "@@ -0,0 +1,13 @@",
+                "context_hash": "0" * 64,
+                "symbol": "check_token",
+            },
+            "severity": "major",
+            "category": "security",
+            "title": "Timing-safe comparison",
+            "body": "A direct equality check leaks timing information.",
+            "evidence": ["token == expected"],
+            "suggestion": "Use hmac.compare_digest(token, expected).",
+            "confidence": 0.95,
+        }
+        raw_finding = _coerce_adapter_root(
+            {"findings": [json.dumps(finding)]}, stage="review"
+        )
+        finalized_finding = finalize_finding_batch(
+            raw_finding,
+            reviewer="opencode",
+            model="test-model",
+            run_id="test-run",
+            started_at="2026-08-10T00:00:00Z",
+            effective_config_sha256="0" * 64,
+        )
+        self.assertEqual(finalized_finding["accepted_finding_count"], 1)
+
+    def test_whole_arrays_items_and_logging_follow_one_pass_contract(self) -> None:
+        finding = {"title": "Recovered"}
+        cases = (
+            ("review item", "review", {"findings": [json.dumps(finding)]}, 1),
+            ("review array", "review", {"findings": json.dumps([finding])}, 1),
+            (
+                "review array and item",
+                "review",
+                {"findings": json.dumps([json.dumps(finding)])},
+                2,
+            ),
+            ("review empty array", "review", {"findings": "[]"}, 1),
+            (
+                "critique array",
+                "critique",
+                {"critiques": json.dumps([self._critique()])},
+                1,
+            ),
+        )
+        for label, stage, payload, expected_count in cases:
+            with self.subTest(label), contextlib.redirect_stderr(stderr := io.StringIO()):
+                loaded = _coerce_adapter_root(payload, stage=stage)
+            self.assertIsNot(loaded, payload)
+            self.assertEqual(
+                stderr.getvalue(),
+                f"ai-review: {stage} decoded {expected_count} "
+                "stringified structured item(s)\n",
+            )
+
+    def test_non_decodes_preserve_identity_and_fail_closed(self) -> None:
+        values = [
+            "prose",
+            "{malformed",
+            "1",
+            "null",
+            json.dumps("another string"),
+            json.dumps([{"nested": "array"}]),
+            '{"title":"first","title":"second"}',
+        ]
+        payload = {"findings": values, "metadata": {"keep": "identity"}}
+        with contextlib.redirect_stderr(stderr := io.StringIO()):
+            loaded = _coerce_adapter_root(payload, stage="review")
+        self.assertIs(loaded, payload)
+        self.assertIs(loaded["findings"], values)
+        self.assertEqual(stderr.getvalue(), "")
+
+        duplicate_array = {"findings": '[{"title":"first","title":"second"}]'}
+        self.assertIs(
+            _coerce_adapter_root(duplicate_array, stage="review"), duplicate_array
+        )
+        invalid = _coerce_adapter_root(
+            {"critiques": [json.dumps({"not": "a critique"})]}, stage="critique"
+        )
+        with self.assertRaises(SchemaValidationError):
+            finalize_critique_batch(
+                invalid,
+                critic="claude",
+                run_id="test-run",
+                effective_config_sha256="0" * 64,
+            )
+
+    def test_no_stage_failure_batches_and_envelopes_are_unchanged(self) -> None:
+        item = json.dumps({"title": "leave encoded"})
+        payloads = (
+            ({"findings": [item]}, None),
+            ({"adapter_status": "timeout", "findings": "[]"}, "review"),
+            ({"type": "result", "structured_output": {"findings": []}}, "review"),
+        )
+        for payload, stage in payloads:
+            with self.subTest(stage=stage):
+                self.assertIs(_coerce_adapter_root(payload, stage=stage), payload)
+
+    def test_decode_is_copy_on_write_and_operational_errors_propagate(self) -> None:
+        encoded = json.dumps({"title": "Recovered"})
+        original_items = [encoded]
+        metadata = {"keep": "same nested object"}
+        payload = {"findings": original_items, "metadata": metadata}
+        loaded = _coerce_adapter_root(payload, stage="review")
+        self.assertIsNot(loaded, payload)
+        self.assertIs(payload["findings"], original_items)
+        self.assertEqual(payload["findings"], [encoded])
+        self.assertIs(loaded["metadata"], metadata)
+
+        with (
+            mock.patch(
+                "ai_review.adapter_output.json_loads_no_duplicates",
+                side_effect=RecursionError("too deeply nested"),
+            ),
+            self.assertRaisesRegex(RecursionError, "too deeply nested"),
+        ):
+            _coerce_adapter_root({"findings": "[]"}, stage="review")
+
+
 class EffortEnvTests(unittest.TestCase):
     def _run_effort_adapter(self, *, config_effort: str | None, env_effort: str | None) -> str:
         # Synthetic reviewer whose adapter echoes AI_REVIEW_EFFORT, so the test
@@ -848,6 +997,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_local_mock_without_allow_flag_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            manifest["effective_config_sha256"] = "2" * 64
+            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_adapter(
                 paths["adapter_dir"],
@@ -873,7 +1025,33 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["effective_config_sha256"], "2" * 64)
             self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
+
+    def test_failure_after_config_resolution_uses_resolved_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            manifest["effective_config_sha256"] = "2" * 64
+            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            self._set_env(paths, config_path)
+            self._adapter_path_patch.stop()
+            del self._adapter_path_patch
+
+            with mock.patch(
+                "ai_review.adapter_runner.resolve_adapter_path",
+                side_effect=ReviewerRegistryError("adapter unavailable"),
+            ):
+                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertNotEqual(status["effective_config_sha256"], "2" * 64)
+            self.assertEqual(
+                status["effective_config_sha256"], batch["effective_config_sha256"]
+            )
 
     def test_shell_mock_allow_refusal_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

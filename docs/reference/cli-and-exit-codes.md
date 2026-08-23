@@ -9,7 +9,6 @@ importable Python functions are not a public API.
 | `python -m ai_review.input_bundle local --config PATH --diff PATH --repo PATH --out DIR` | Build a local fixture bundle | 0 | 1 for bundle/config/runtime failure; argparse uses 2 |
 | `python -m ai_review.input_bundle prepare --config PATH --out DIR` | Build a platform-bound bundle | 0 | 1 for bundle/platform/config failure; argparse uses 2 |
 | `python -m ai_review.adapter_runner REVIEWER STAGE` | Run and validate a reviewer or critique | 0 | 1 after writing a structured failed status; argparse uses 2 |
-| `python -m ai_review.prompt_render STAGE --input-dir DIR --config PATH --reviewer NAME --out PATH` | Render review/critique prompts; findings/pool options are optional | 0 | 1 for render/config/artifact failure; argparse uses 2 |
 | `python -m ai_review.consensus --config PATH --inputs DIR --out PATH` | Validate evidence and reduce consensus; findings/critiques/state paths are optional | 0 | 3 for no usable panel or artifact/config integrity failure; argparse uses 2 |
 | `python -m ai_review.post --config PATH --inputs DIR --consensus PATH --out PATH` | Publish the review: reconcile state, post threads and the summary; `--dry-run` is optional | 0 for `success` and `stale_head` | 1 for `failed`, `partial_failed`, `state_overflow`, or any unrecognized status, and for unhandled CLI/platform/config failure; argparse uses 2 |
 | `python -m ai_review.schema validate --schema NAME --input PATH` | Validate one JSON artifact | 0 | 1 for invalid input/schema; argparse uses 2 |

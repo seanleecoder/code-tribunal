@@ -131,7 +131,7 @@ live-optional, not release-gating. Not attempted.
 ### Stale-head no-op: not run
 
 Part of the SPEC-34 revision-failures row, which is **waived** for 1.0.1 —
-`github_platform.py` and `input_bundle.py` carry no diff since `v1.0.0`. Not
+`platform/github.py` and `input_bundle.py` carry no diff since `v1.0.0`. Not
 attempted; the 1.0.0 live observation of `status: stale_head` / `passed_stale_head`
 stands as historical evidence at the prior coordinates.
 

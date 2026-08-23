@@ -15,17 +15,13 @@ completed spec is a description of work already visible in the code, tests, and
 
 | Spec | Status | Summary |
 |---|---|---|
-| [SPEC-20](spec-20-reviewer-usage-accounting.md) | Proposed; stale baseline | Reviewer token/cost accounting. Predates the SPEC-50 session transport and current CLI pins; rebase before executing. |
-| [SPEC-22](spec-22-project-rules-and-learning.md) | Proposed; stale baseline | Project rules and learning. Predates SPEC-47's trusted policy channel and the reviewer roster; rebase before executing. |
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel. Observed live; still unfixed. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies what is running. |
 | [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0) | Retain duplicate/noise/dispute reasoning behind a disclosure and record the suppression reason. Should land inside a release that changes the body format for another reason. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-45) | Carry non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
-| [SPEC-49](spec-49-opencode-session-title-inference.md) | Superseded by SPEC-50 | Its title decision — a deterministic, data-free session title — remains in force. |
-| [SPEC-53](spec-53-stringified-structured-output.md) | Proposed (post-1.0) | Normalize provider-stringified structured output once at the shared runner boundary. PR #116 shipped the narrow per-item case in 1.0.2; the remaining shapes still cost a finding or a whole seat, always failing closed. |
-| [SPEC-60 to SPEC-61](cleanup-consolidation/README.md) | Pending; documents not yet added | The remainder of the [cleanup and consolidation package](cleanup-consolidation/README.md): critique-quality observability and the candidate-image four-seat panel canary. |
+| [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
 
 ## What to do next
 

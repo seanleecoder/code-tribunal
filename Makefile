@@ -22,12 +22,8 @@ workflow-parity:
 
 docs-check:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_markdown_links.py
 
-# pytest is the documented local and CI test command, and the only one. The
-# previous unittest fallback could not collect the suite: a large part of it is
-# pytest-style bare functions (tests/contract, tests/integration) that
-# `unittest discover` silently skips, so the fallback reported success over a
-# subset. Fail with the fix instead of running something weaker.
 test:
 	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory test-strict; \

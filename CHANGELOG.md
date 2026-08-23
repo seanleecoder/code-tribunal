@@ -7,387 +7,81 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added a protected, manually approved candidate canary that verifies
+  source-bound image identity and provenance, then runs one four-reviewer
+  review-and-critique campaign on each public GitHub and GitLab demo consumer.
+  It retains only redacted status and cleanup summaries.
+- The packaged image smoke suite now discovers and imports every shipped
+  `ai_review` module while retaining its exact declared smoke cases, runtime
+  files, fixtures, and CLI entry points.
+
 ### Changed
 
-- **Breaking: findings are informational and surface on independent support.**
-  A grouped finding surfaces when at least two unique reviewer identities support
-  it across direct review and critique. Severity, including `blocker`, is an
-  impact label and changes no decision in either direction.
-
-  The reducer used to decide the same policy in four places: a pre-critique
-  quorum function, a post-critique recompute with an advisory-escalation path,
-  the ambiguous state-match override, and the majority-noise drop. There is now
-  one pure function in `ai_review/consensus_policy.py`, and one call site that
-  assigns `decision`. Its branches are ordered by precedence: an ambiguous
-  cross-run state match stays `fyi` whatever the support, majority independent
-  noise then drops the group, and only after both does the two-support threshold
-  apply.
-
-  Against the shipped v2 defaults most decisions are unchanged — two direct
-  reviewers already surfaced, and one reviewer plus one agreeing critic already
-  surfaced through advisory escalation. Four things do change:
-
-  - **A lone `blocker` in `security` or `correctness` no longer surfaces.** It
-    was surfaced with `human_ack_recommended`; it is now `fyi`. This is the only
-    change that reduces what maintainers see, and it is deliberate.
-  - **A thin panel can now surface.** A panel below the old blocking minimum was
-    forced to `fyi`; one successful review seat plus one independent agreeing
-    critic now reaches two supporters and surfaces.
-  - **Mixed verdicts from one critic collapse semantically.** Where grouping
-    combines findings a critic critiqued separately, the surviving verdict used
-    to be chosen by an incidental sort key under which `agree` beat `noise`. The
-    strongest objection now wins, by the precedence
-    `noise > dispute > duplicate > agree`. A critic still contributes at most one
-    verdict, one support vote, and one severity request per group.
-  - **`panel_status` loses `advisory_only`**, which described a panel below the
-    blocking minimum. Status now reports execution health only and never alters
-    the threshold. Absence-based cross-run resolution is unaffected: it has
-    always been decided by `panel.min_successful_reviewers_for_resolution`
-    against the resolution-eligible seats, never by panel status.
-
-  Dissent is unchanged and remains first-class: an effective `dispute` keeps its
-  critic, rationale, and optional adjusted severity, is rendered with the
-  finding, and subtracts no support even when the group surfaces.
-
-- **`render-body.v3` becomes `render-body.v4` — one bump for the whole series.**
-  The footer heading is now `Support:` rather than `Consensus:`. It no longer
-  reports direct votes, critique support, blocking, or human acknowledgement; it
-  reports the direct reviewers, agreeing critics (or `none`), the independent
-  support count, `Status: surfaced for discussion`, and that the merge decision is
-  left to maintainers and downstream automation. The highest severity header may
-  still read `BLOCKER`; the footer is what makes its informational meaning
-  unambiguous.
-
-  `parse_review_note` accepts **both** headings for one release, because marker
-  recovery reads thread bodies written by the previous version; the `Consensus:`
-  section boundary is a temporary compatibility entry with a removal target, not
-  a permanent alias.
-
-  The version string is a body-hash input, so **expect every pre-existing thread
-  to be updated once** on the first v4 run instead of reported
-  `skipped_unchanged`. That churn is cosmetic: finding identity lives in
-  `issue_id` and the alias chain, and the persisted state schema carries none of
-  the removed fields, so no state migration is required.
-
-- **Minority dissent now outranks evidence and suggestion under truncation.**
-  The renderer fits fragments in order and stops at the first one that does not
-  fit, so position is priority. Dissent previously sat after evidence and could
-  be dropped from an oversized body while the footer — which is never truncated —
-  survived. The new footer is longer, which would have made that more likely. A
-  body under platform pressure now loses supporting detail before it loses the
-  argument against the finding.
-
-- **Breaking: the `gate` required status check is gone. Remove it from branch
-  protection before or together with this upgrade.**
-
-  The installation guides used to instruct repositories to add the workflow's
-  `gate` job as a required status check. That job no longer exists, and on GitHub
-  a required check that never reports leaves pull requests **permanently
-  unmergeable** — the workflow does not fail, it simply never produces the check
-  the ruleset waits for. Delete the `gate` entry from every ruleset and
-  branch-protection rule that names it, **before or together with** installing
-  the new workflow. On GitLab, delete any custom `needs`, dashboard, or script
-  naming the `ai_review_gate` job.
-
-  A repository that wants the review to have *run* before a merge may require
-  `post` instead, but it is not equivalent: `post` reports whether publication
-  completed, not what the review found, and cannot cover a run whose `prepare`
-  job never started.
-
-- **`post` is the terminal stage and its exit status reports publication only.**
-  `success` and `stale_head` exit 0; `failed`, `partial_failed`, and
-  `state_overflow` exit nonzero. A finding of any severity, `blocker` included,
-  exits 0. `stale_head` is a successful no-op: a newer revision superseded the
-  run, so performing no mutation is correct. An **unrecognized** status also
-  exits nonzero, so a status added later without revisiting `post.py` fails
-  loudly instead of reporting a false success. `--dry-run` uses the same mapping.
-
-- **`ai_review_gate` stays reserved in `scripts/pipeline_trust.py` for one
-  release**, because a consumer pinned to an older template still declares the
-  job and un-reserving a name loosens a trust boundary. Tracked for removal.
+- Findings are informational and surface on two independent reviewer identities
+  across review and critique. Ambiguous state matches outrank majority-noise
+  drops, dissent remains visible, and panel status reports execution health only.
+- `render-body.v4` uses a `Support:` footer, prioritizes dissent before supporting
+  detail during truncation, and leaves merge decisions to maintainers. The old
+  `Consensus:` marker remains readable for one compatibility window.
+- `post` is the terminal publication-health job: success and stale-head no-ops
+  exit zero; publication failures exit nonzero; finding severity never changes
+  mergeability.
+- The configuration authority is `review_config.v3`, with one three-or-four-seat
+  roster, fixed trusted adapter/credential/endpoint routes, independently bounded
+  review and critique timeouts, and strict rejection of retired overrides.
+- Cursor is a supported peer seat, selected explicitly because it introduces a
+  second credential and egress destination. `auto` remains a valid model selector.
+- Image publication uses the curated packaged smoke suite instead of a mounted
+  checkout test subset; `make test` now requires pytest, installed workflow parity
+  has one shared implementation, and internal orchestration was decomposed along
+  the existing architecture boundaries without changing public entry points.
+- Input preparation now uses one private bound-revision pipeline for limits,
+  immutable inputs, hashes, state projections, final revision revalidation, and
+  manifest writing. GitHub's three SHA checks, GitLab's re-fetch check and
+  fork-secret refusal, local behavior, public artifacts, and CLI output remain
+  unchanged.
+- GitLab review and critique use one four-seat parallel matrix apiece. Critique
+  depends on the complete review matrix; consensus depends on review and
+  optionally on aggregate critique without combining optional needs with
+  `needs:parallel:matrix`.
+- Consensus-policy and critique-reduction coverage now lives in one parameterized
+  reducer suite. `consensus_policy.py` remains fully covered and
+  `critique.py` remains at least 97% covered.
+- Adapter output normalization now decodes one layer of stringified whole arrays
+  and stringified object items at the shared stage-aware boundary. It preserves
+  duplicate-key rejection, copy-on-write identity, fail-closed schema validation,
+  and emits one redacted replaced-string count.
+- Documentation validation retains repository-specific configuration, example,
+  release-state, and tagged-note contracts. CI additionally runs pinned Lychee
+  0.24.2 offline over current Markdown, excluding tagged release notes and
+  including drafts.
+- Architecture, release, platform, and canary guidance was consolidated; paused
+  plans and the obsolete pipeline walkthrough moved under excluded top-level
+  `archive/`.
 
 ### Removed
 
-- **Breaking: the merge gate is deleted.** `ai_review/gate.py`,
-  `gate_result.schema.json`, `GateResult`, `GateStatus`, `test_gate.py`, the
-  GitHub `gate` job, and the GitLab `ai_review_gate` job are gone, along with the
-  gate artifact upload/download paths. See the operator migration above.
+- Removed the merge-gate jobs, schemas, CLI, and artifact path; obsolete
+  configuration dimensions; the never-running Cursor permission smoke; redundant
+  release-input hashes and historical snapshots; and unused internal surfaces.
+- Removed the OpenCode-only structured-output decoder, bespoke general Markdown
+  path/anchor parser and parser-only tests, obsolete package narration, empty
+  history indexes, and completed or superseded SPEC-20, SPEC-22, SPEC-49, and
+  SPEC-53 documents.
+- Removed duplicated reducer test modules after mapping their unique cases into
+  `test_consensus_reducer.py`.
 
-  Two behaviors disappear with it, both deliberately:
+### Migration
 
-  - **The cross-artifact run-id check.** `evaluate_gate` re-verified that
-    `post_result.run_id` matched `consensus.run_id` as SPEC-33 defense in depth.
-    It existed because the gate was the one stage that recombined two
-    independently downloaded artifacts. No stage does that now: `post.py` derives
-    its result from the consensus it loaded in the same process, so a mismatch is
-    unreachable rather than merely unlikely. Do not reintroduce the check
-    elsewhere.
-  - **Consumer-side validation of `post_result.json`.** The gate CLI was its only
-    reader. `post.py` validates on write and nothing in the pipeline reads the
-    artifact afterwards, so the write-side validation is now the only one — and
-    is retained.
-
-  On GitHub, `post` gains `if: always() && needs.prepare.result == 'success'` and
-  a step that fails when consensus did not succeed, so a failed consensus
-  produces a *failed* `post` rather than a skipped one. This is **not** mirrored
-  on GitLab: **Pipelines must succeed** already enforces at pipeline level there,
-  so a failed `consensus_ai_review` blocks and `post_ai_review` staying skipped is
-  correct. The asymmetry follows from the platforms and is intentional.
-
-- **Breaking: the artifact contract is now `consensus.v2`.** Groups gain
-  `support_count` and `agreeing_critics`, and lose `vote_count`,
-  `critique_support_count`, `critique_noise_count` (available as
-  `critique_summary.noise`), `block_merge`, and `human_ack_recommended`. The
-  summary keeps only `surface_count`, `fyi_count`, and `drop_count`, losing
-  `block_merge` and `panel_convergence` — the latter was computed from direct
-  quorum and has no clear meaning once direct and critique support are
-  deliberately combined, and nothing in the runtime ever read it. Of the removed
-  fields only `summary.block_merge` had a behavioral consumer; the rest were read
-  by the thread footer or by the reducer itself. The removed fields are not
-  reintroduced as optional compatibility fields.
-
-- **Breaking: the configuration contract is now `review_config.v3`**, and every
-  configuration must leave at least **three** reviewer seats enabled.
-  `review_config.v2` is rejected with a message naming this migration.
-
-  ### Migrating a `review_config.v2` document
-
-  | v2 key | v3 | Why |
-  |---|---|---|
-  | `severity_policy` (whole object) | **delete** | Severity no longer affects any decision. `blocker` remains the highest impact label. |
-  | `panel.min_successful_reviewers_for_blocking` | **delete** | There is no blocking verdict to gate. |
-  | `panel.quorum` | **delete** | The support threshold is a product invariant, not an operator setting. Lowering it would make consensus a passthrough of one model's output. |
-  | `critique.allow_advisory_escalation` | **delete** | An agreeing independent critic is simply a second supporter; there is no separate escalation path to enable. |
-  | `merge_gate` (whole object) | **delete** | There is no merge gate. Publication health is reported by the `post` job's exit status. |
-  | `posting.fallback_to_summary_comment` | **delete** | Summary fallback is now unconditional. Set to `false` it discarded every surfaced finding that could not be anchored — from the threads *and* from the summary — leaving it only in persisted state and a warning. A flag whose only reachable effect is losing product output is not a choice. |
-  | `limits.max_posted_surface_findings` | **delete** | Every anchorable surfaced finding becomes a thread. The cap silently reclassified a finding two reviewers supported independently into summary-only because a configured count was reached. The volume bound is each reviewer's `max_findings`. `limits.max_fyi_findings` **stays**: it truncates a list that is already summary-only and renders a visible "more" trailer, which is a different thing. |
-  | `reviewers.<name>.adapter` | **delete** | Adapter paths are fixed by the trusted first-party reviewer registry shipped in the image. |
-  | `reviewers.<name>.credential_variable` | **delete** | Credential names and isolation are fixed by each seat's registry definition. Claude, Codex, and OpenCode use `OPENROUTER_API_KEY`; Cursor uses `CURSOR_API_KEY`. |
-  | `state.backend` | **delete** | v2 accepted a restatement of the value it derived from `posting.mode`; v3 rejects the key outright, with any value. Persistent state is always active and `posting.mode` selects the adapter that stores it (`gitlab_discussions` → a GitLab MR state note, `github_reviews` → a GitHub PR comment). Nothing is written back into `state`, so a resolved configuration no longer carries the field at all. |
-  | `AI_REVIEW_<REVIEWER>_ENABLED` environment variables | **unset and use `AI_REVIEW_REVIEWERS`** | One roster replaces four booleans that could express contradictory or accidental panel sizes. Retired names fail loudly so persisted repository/project variables do not become silent no-ops. |
-  | fewer than three enabled reviewer seats | **enable a third seat** | Every critique seat comes from the same roster and self-critique cannot corroborate, so one seat can never reach two supporters. Two can, but not after losing one — and a seat that degrades silently is indistinguishable from a clean review. |
-  | `schema_version: review_config.v2` | `review_config.v3` | |
-
-  The shipped `ai-review/config/review.yaml` already enables exactly three seats
-  (claude, codex, opencode; cursor off by default), so the floor does not change
-  the shipped default. It **does** reject two-seat deployments that were valid
-  under v2.
-
-  Claude now supports the pinned OpenRouter Anthropic-compatible endpoint only.
-  Native Anthropic credentials are no longer accepted; configure
-  `OPENROUTER_API_KEY`.
-
-  **Provider endpoints are no longer read from the environment.** Each reviewer
-  seat declares an endpoint family in the trusted registry, and the adapter runner
-  supplies the one accepted host for it — Claude gets
-  `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, Codex and OpenCode get
-  `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`, Cursor gets neither. Setting
-  either variable now has no effect: an ambient value is overridden rather than
-  rejected, so no caller has to know a URL that was never configurable. Both CI
-  templates stop declaring the two variables; a consumer copy that still declares
-  them keeps working. This replaces the endpoint validation that shipped earlier in
-  this series, which rejected an unset `ANTHROPIC_BASE_URL` and so broke the
-  reviewer-image publication preflight and every `make *-local` target defaulting
-  to the claude seat.
-
-  `critique.blind_reviewer_identity` and `critique.allow_severity_downgrade` are
-  now type-checked as booleans, like `critique.enabled`. They were read through
-  `bool()`, so the string `"false"` silently enabled them.
-
-  The removals change `effective_config_summary`, and therefore the cross-stage
-  effective-config digest — `state_backend` leaves it alongside the merge-gate
-  field, for the same reason: it only restated `posting_mode`, which the digest
-  already binds. Every stage recomputes the digest per run, so no artifact
-  *format* migration is needed, but an in-flight pipeline that mixes shapes fails
-  the drift check. Start a fresh run from `prepare` after upgrading; a pipeline
-  whose stages all use one immutable runtime revision stays internally consistent.
-
-  **`AI_REVIEW_MERGE_GATE_ENABLED` is now rejected by name**, not ignored. A run
-  fails at config load while it is set, naming the migration. Delete it from
-  every repository variable, GitLab project variable, and group variable — these
-  outlive template revisions, which is exactly why a retired override must raise
-  rather than become a silent no-op. The tombstone is a temporary-compatibility
-  entry with a removal target, not a permanent fixture.
-
-  **The effective-config digest changes for every configuration**, including one
-  whose YAML you never touched, because `merge_gate_enabled` and `state_backend`
-  leave `effective_config_summary()`. Consensus re-derives that digest as a cross-job
-  drift detector, so a pipeline that mixes a pre-upgrade `prepare` manifest with
-  post-upgrade `consensus` fails the drift check. **In-flight runs must be
-  restarted from `prepare` after upgrading, not resumed.**
-
-  `AI_REVIEW_STATE_BACKEND`, `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED`, and
-  `…_SEMANTIC_THRESHOLD` stay rejected by name. The v1 note below called them
-  droppable at the next major release; v3 is that release, and the decision taken
-  is to keep them. Silently ignoring a stale GitLab project variable is the exact
-  failure these entries exist to prevent.
-
-- **Breaking: the configuration contract is now `review_config.v2`.** Four keys
-  that were never choices are gone. `review_config.v1` is rejected with a message
-  naming this migration, rather than being accepted with a changed shape — a
-  version whose meaning depends on the runtime reading it is not a contract.
-
-  ### Migrating a `review_config.v1` document
-
-  | v1 key | v2 | Why |
-  |---|---|---|
-  | `critique.rounds` | **delete** | A second boolean that had to agree with `critique.enabled` before critique ran. `critique.enabled` is now the only switch. |
-  | `critique.can_add_quorum_votes` | **delete** | Validation rejected any value but `false`, and nothing read it. |
-  | `panel.grouping.semantic.enabled`, `…threshold` | **delete** | An opt-in Jaccard comparison over finding titles and bodies. Shipped disabled, outside the 1.0 guarantee, with both environment overrides rejected by name. |
-  | `state.backend` | **delete** | v2 derived the value from `posting.mode` and tolerated a matching restatement. v3 rejects the key with any value — see the v2 to v3 table above, which is the migration to follow if you are landing on the current release. |
-  | `schema_version: review_config.v1` | `review_config.v2` | |
-
-  A config copied from the shipped `ai-review/config/review.yaml` carries all of
-  the deleted keys, so it needs this edit. One that never set them needs only the
-  `schema_version` line.
-
-  Grouping now rests entirely on identity that survives rewording — path,
-  category, side, context hash, fingerprints, and symbol. The golden consensus
-  fixture for the default path is byte-identical, so no finding, group, or
-  decision changes.
-
-  The removals change `effective_config_summary`, and therefore the cross-stage
-  effective-config digest. Prepare, review, consensus, post, and gate recompute
-  it per run, so no artifact migration is needed.
-
-- **`AI_REVIEW_STATE_BACKEND` is retired and now rejected**, alongside
-  `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` and
-  `…_SEMANTIC_THRESHOLD`. Setting any of them raises a configuration error naming
-  the replacement. GitLab project and group variables outlive the template
-  revisions that read them, so a stale override has to fail loudly rather than be
-  silently ignored after a repin. The rejections are a migration aid and may be
-  dropped in the next major release.
-
-- **The Cursor permission smoke is deleted** — `scripts/smoke_cursor_permissions.sh`
-  and its unit suite, the `cursor-permission-smoke` publisher job, and the base-image
-  `COPY`. The job was never wired into `publish`'s `needs`, and its
-  `CURSOR_SMOKE_MODEL` was hardcoded to `auto`, the one value the script refuses,
-  so it had never executed: 865 lines asserting a guarantee nobody held. Nothing
-  now verifies the pinned CLI's *runtime* interpretation of the `Shell(*)` and
-  write denies; repository tests still prove the policy is passed to every
-  invocation, the CLI stays pinned by `cursor-agent.pin` and version-checked at
-  build, and the exposure is bounded by the review workflow running only for
-  same-repo heads, so the seat never processes fork content. `SUPPLY_CHAIN.md`
-  states this gap plainly instead of describing a gate that did not exist.
-
-- **Breaking: release inputs are now `code_tribunal.release_inputs.v2`.** v2 is
-  v1 without the per-file-set `hashes` member. The six aggregate SHA-256 groups
-  were compared against hashes recomputed from the same checkout being validated,
-  so they could only report a stale field, never a substitution —
-  `runtime_source` already commits to every byte of the tree.
-
-  ### Migrating a `code_tribunal.release_inputs.v1` document
-
-  | v1 | v2 |
-  |---|---|
-  | `hashes` | **delete** |
-  | `schema_version: code_tribunal.release_inputs.v1` | `code_tribunal.release_inputs.v2` |
-
-  Current tooling rejects v1 outright, naming this migration. The version is
-  checked before the exact key set, so a v1 artifact is told it speaks a retired
-  dialect rather than reported as carrying a stray key. Historical snapshots under
-  `release/history/` keep v1 and stay byte-identical: validate one from its own
-  release tag, with the validator that shipped beside it.
-
-  Evidence-record freshness, waiver registration, and image-digest binding are
-  unchanged.
-
-### Changed
-
-- **The published images run a curated packaged smoke suite instead of rerunning
-  the checkout test suite (SPEC-58).** The base-image preflight used to bind-mount
-  `ai-review/tests` over `/opt/ai-review/tests`, run `unittest discover` against
-  it, and guard the result with a `MIN_EXECUTED_TESTS=400` floor. That coupled
-  image publication to checkout test layout and proved nothing the checkout job had
-  not already proved. Both the mount and the floor are gone.
-
-  What replaces them is `ai_review_smoke`, a stdlib-only suite that ships in the
-  image under a narrow `COPY` and is invoked **by module name** —
-  `python -m ai_review_smoke base` on the base tag and
-  `python -m ai_review_smoke reviewer` on the reviewer tag. Shipping it is a
-  deliberate, bounded exception to "runtime images carry no product test code": it
-  imports no pytest and no checkout test module, adds no dependency the runtime
-  does not already install, and never runs during the build, so smoke test changes
-  still do not alter image identity.
-
-  The vacuous-pass property the floor was compensating for is preserved
-  structurally rather than numerically. `COPY` fails at build time on a missing
-  path, so a renamed or deleted suite fails the build; an absent module raises
-  `ModuleNotFoundError` and exits non-zero; and the suite refuses to run unless the
-  test IDs it loaded equal the manifest it declares, so a renamed method or a class
-  that stopped subclassing `TestCase` fails naming the missing case instead of
-  quietly reducing coverage. Test count remains forbidden as a quality signal.
-
-  Two properties are genuine additions, not reorganizations: the critique stage,
-  which no preflight exercised, and the cursor seat, which ships in the reviewer
-  image but was absent from the `for reviewer in claude codex opencode` loop. The
-  inline fixture-presence assertions and the `--help` module loop are absorbed into
-  the suite's own manifests. `compileall`, the non-owner-uid ownership preflight,
-  and the two OpenCode smoke scripts stay separate workflow steps. Packaged
-  fixtures still ship at `/opt/ai-review/tests/fixtures`, which both preflights
-  resolve with no mount.
-
-- **`make test` fails with an actionable message when pytest is missing, and the
-  `test-fallback` target is removed.** The fallback ran `unittest discover` over a
-  suite that is substantially pytest-style bare functions, so it reported success
-  over a silently collected subset. `make packaged-smoke` is the new explicit
-  target for the packaged-runtime suite; pytest remains the documented local and CI
-  test command.
-
-- `critique_timeout_seconds` now defaults to a flat 900 seconds when a reviewer
-  omits it. It previously fell back to that reviewer's `timeout_seconds` capped
-  at 900, so a seat with `timeout_seconds: 1800` silently got 900 for critique
-  while one with `600` silently got 600 — one field meaning two things. The
-  shipped configuration states the value explicitly and is unaffected.
-
-- Installed-workflow parity (`.github/workflows/ai-review.yml` against
-  `ai-review/ci/review.github-actions.yml`) has **one implementation** in
-  `release_common.sync_workflows`, with two callers. `make workflow-parity` is the
-  repository gate and, via `make sync-workflows`, the repair command; the
-  standalone release-manifest validator calls the same implementation
-  independently, because it may run from a tagged worktree where `make quality`
-  never did. Four separate copies of the byte comparison previously lived in
-  `check_supply_chain_pins.py`, `check_release_inputs.py`, `test_ci_template.py`
-  and the generator; none could repair what it reported, and the supply-chain copy
-  ran inside the base image, where `.github/` does not exist — it guarded a file
-  it could not see.
-
-- **SPEC-21 is closed: Cursor is a supported peer reviewer seat.** The operator
-  guides, `review.yaml`, the operations runbook, and the evidence index no longer
-  describe it as experimental, as a "substitute" for another seat, or as blocked
-  on an enablement queue, and the completed specification is deleted rather than
-  kept in the open-specification index. Nothing about the shipped default changes
-  — Cursor stays off in the default roster because enabling it is a deliberate
-  second egress destination to Cursor's backend, not because acceptance was
-  outstanding. Select it with `AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`.
-
-- **`AI_REVIEW_CURSOR_MODEL: auto` is documented as what it is: valid.** `auto` is
-  a Cursor CLI model selector that delegates model choice to Cursor, and both the
-  configuration parser and the adapter have always accepted it. Documentation had
-  called it a "discovery-only placeholder" that was "not valid Cursor-enablement
-  evidence" — an evidence-campaign requirement stated as a product restriction.
-  Pin an exact slug when you want model-stable reproducibility.
-  Released records under `release/` and the historical evidence rows keep their
-  wording, which describes what was true at those releases.
-
-- `pipeline_trust.py` moved from the runtime package to `scripts/`, where
-  `SECURITY_MODEL.md` already pointed readers. Nothing in the pipeline imported
-  it — it audits a consumer's `.gitlab-ci.yml` — so it no longer ships inside
-  the published images. `scripts/verify_pipeline_trust.py` is absorbed into it.
-
-- Internal decomposition only, no behavior change (SPEC-39 milestone B). The three
-  large orchestration modules were split along existing cohesive boundaries:
-  `post.py` keeps only the CLI entry point, with command parsing, pure state
-  planning (`state_plan.py`), mutation orchestration (`posting.py`), and summary
-  rendering (`summary_render.py`) extracted out; `adapter_runner.py` separates
-  output parsing/finalization from subprocess lifecycle; and `consensus.py`
-  separates critique application (`critique.py`) from grouping. The shipped
-  `python -m ai_review.post` / `.consensus` / `.adapter_runner` entry points,
-  configuration keys, artifact schemas, and rendered output are unchanged — the
-  golden consensus and post→gate end-to-end fixtures are byte-identical. Posting
-  state transitions can now be tested without constructing a platform client, and
-  an import-boundary test keeps the planning modules free of platform clients and
-  `requests`.
+| Previous surface | Current action |
+|---|---|
+| `review_config.v1` or `review_config.v2` | Use `review_config.v3`; delete `severity_policy`, `merge_gate`, `state.backend`, semantic-grouping, adapter/credential restatements, obsolete critique/quorum/cap keys, and per-reviewer enable variables. Configure at least three seats with `AI_REVIEW_REVIEWERS`. |
+| `consensus.v1` | Use `consensus.v2`; consume independent support and informational decisions rather than removed merge-blocking and vote-count fields. |
+| `render-body.v3` | Accept the one-release legacy `Consensus:` marker while writing `render-body.v4` with the `Support:` footer; expect one cosmetic update to existing threads. |
+| `code_tribunal.release_inputs.v1` | Use v2 and delete the redundant `hashes` object. |
+| Required `gate` / `ai_review_gate` checks | Remove them from branch protection and consumers; `post` is the terminal publication-health job and findings never decide mergeability. |
 
 ## [1.0.2] - 2026-08-10
 

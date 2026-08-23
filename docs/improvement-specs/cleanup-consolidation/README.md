@@ -1,147 +1,27 @@
-# Code Tribunal cleanup and consolidation implementation specs
+# SPEC-60 handoff — critique-quality observability
 
-- **Repository:** `seanleecoder/code-tribunal`
-- **Baseline:** `main` at `451472d2ed0a8bc5d870409b224a69199570c843`
-- **Intended destination:** `docs/improvement-specs/`
-- **Status:** SPEC-54 through SPEC-59 are implemented; SPEC-57 closed `review_config.v3`.
-  SPEC-60 and SPEC-61 are pending implementation.
+SPEC-54 through SPEC-59 are implemented. SPEC-61's dual-platform candidate
+canary is implemented by the protected manual workflow and release procedure.
+SPEC-60 is the only remaining cleanup/consolidation follow-up.
 
-Sections below that describe SPEC-54 through SPEC-59 work state what was done, not what to
-do. Read them as record; the shipped contract is the code, the tests, and
-[`CHANGELOG.md`](../../../CHANGELOG.md).
+## Objective
 
-## Purpose
+Expose enough aggregate critique-quality information to tell whether critique is
+useful without changing any reviewer, reducer, posting, or merge-policy outcome.
 
-This package converts the agreed cleanup and consolidation direction into individual,
-implementation-ready specifications. It deliberately preserves the product features that
-are required in production:
+## Constraints
 
-- four first-party reviewer adapters: Claude, Codex, OpenCode, and Cursor;
-- one review stage and one critique stage;
-- deterministic consensus over untrusted model output;
-- GitHub and GitLab support;
-- persistent cross-run finding state and thread reconciliation;
-- secure revision binding, snapshot containment, credential isolation, and artifact
-  validation.
+- Observational only: no new decision input, quorum, gate, retry policy, or model
+  stage.
+- Preserve the four first-party reviewers and the single review/single critique
+  pipeline on both platforms.
+- Do not retain model bodies, prompts, credentials, or provider session data.
+- Prefer existing status/consensus artifacts; a public schema change requires an
+  explicit version decision.
+- A missing metric must never change `post` exit status or restore a merge gate.
 
-The product policy this package targets is informational. SPEC-54 and SPEC-55 shipped it;
-the remaining specs must not walk it back:
+## Work still required
 
-- a finding is surfaced when at least two independent reviewers support it across direct
-  review and critique;
-- every anchorable surfaced finding is posted as a discussion thread;
-- severity, including `blocker`, is an impact label only;
-- Code Tribunal does not decide whether a change may merge;
-- humans and downstream agents decide what to do after reading the threads.
-
-## Spec set
-
-SPEC-54 and SPEC-55 landed as one change series and their requirement documents were
-deleted, as [the improvement-spec index](../README.md) requires of every completed spec:
-`git log` holds them, and the shipped contract is described by the code, the tests, and
-[`CHANGELOG.md`](../../../CHANGELOG.md). Their rows stay in the table below because the
-specs that follow state their dependencies in terms of them.
-
-SPEC-56 through SPEC-59 each landed as their own change series, and their requirement
-documents are deleted now that those histories are reachable from `main`. SPEC-60 and
-SPEC-61 stay plain text because their documents land separately.
-
-| Spec | Title | Type | Depends on |
-|---|---|---|---|
-| SPEC-54 — **implemented** | Independent-support informational findings | Behavior-changing cleanup | Current baseline |
-| SPEC-55 — **implemented** | Publish-only pipeline with no merge gate | Behavior-changing cleanup | SPEC-54 |
-| SPEC-56 — **implemented** | Static first-party reviewer registry | Consolidation | SPEC-54/55 config version coordination |
-| SPEC-57 — **implemented** | Always-on state path pruning | Medium cleanup; behavior-preserving for validated configurations | Implemented SPEC-54 through SPEC-56 `review_config.v3` baseline; landed before the first tagged v3 release |
-| SPEC-58 — **implemented** | Contract-oriented test consolidation | Behavior-preserving cleanup | SPEC-54 through SPEC-57 |
-| SPEC-59 — **implemented** | Product invariants and lightweight complexity control | Governance | None |
-| SPEC-60 — *pending, document not yet added* | Critique-quality observability | Non-blocking follow-up | SPEC-54 |
-| SPEC-61 — *pending, document not yet added* | Candidate-image four-seat panel canary | Release verification follow-up | SPEC-54 through SPEC-57 |
-
-## Required implementation order
-
-Steps 1 to 4 are done or superseded. They are kept as record; step 5 is the live roadmap.
-
-1. ~~**Land SPEC-59 first or in parallel.**~~ **Done, out of order.** SPEC-54/55 changed
-   the contracts before the product boundary was recorded, so
-   [ADR-0003](../../decisions/0003-product-invariants-and-complexity-envelope.md) records
-   the shipped informational contract rather than the pre-cleanup boundary this step
-   assumed.
-2. ~~**Implement SPEC-54 and SPEC-55 as one coordinated change series.**~~ **Done.** They
-   shipped together: SPEC-54 defined `consensus.v2` and SPEC-55 the renderer and the
-   publish-only pipeline over it. The hazard this step warned about — an intermediate state
-   in which the consensus schema had lost fields the renderer still read through defaulted
-   lookups — was avoided by shipping them as one series, and is now spent. There is no merge
-   gate left for a future step to coordinate with.
-3. ~~**Implement SPEC-56 and SPEC-57.**~~ **Done.** They shipped as separate pull requests. The policy
-   contracts they coordinate with — `consensus.v2` and `review_config.v3` — have landed on
-   `main` and are stable in shape, but neither has appeared in a tagged release: the newest
-   release still ships `review_config.v1`. `review_config.v3` is jointly defined by SPEC-54
-   through SPEC-57 and closed when SPEC-57 landed. SPEC-54/55 removed `merge_gate`,
-   `posting.fallback_to_summary_comment`, and `limits.max_posted_surface_findings`; SPEC-56
-   appended the two reviewer keys and SPEC-57 appended `state.backend`, each to that same
-   removal list rather than opening a new config version. SPEC-57, as the last
-   config-changing spec, owns the final consolidated migration message.
-4. ~~**Implement SPEC-58 after the production seams stop moving.**~~ **Done.** It deleted the
-   replaced tests rather than adding a suite beside them: the per-provider copies of shared
-   runner behavior, the duplicated endpoint and credential tables, and the image-time rerun of
-   the checkout suite with its executed-test floor. The re-survey this step called for found
-   section 2 already satisfied — landing SPEC-55 had collapsed the duplicated reducer-policy
-   tests — so nothing was deleted for it; the reducer work was limited to renaming the suite
-   that was still named after a spec phase.
-5. **Implement SPEC-60 and SPEC-61 as follow-ups.** ADR-0003 now records the product
-   boundary. SPEC-60 and SPEC-61 are not prerequisites for the cleanup. SPEC-60 is
-   observational and must not change surfacing decisions; its
-   prohibitions on changing the `post` exit status and on restoring a merge gate describe the
-   contract SPEC-55 established. SPEC-61 is required before promoting or repinning a
-   candidate image that changes reviewer-path behavior, but it is not a general pull-request
-   gate.
-
-## Cross-spec rules for coding agents
-
-- Preserve the four adapters and critique. Optional means selectable by a deployment,
-  not experimental.
-- Do not introduce a dynamic plugin system.
-- Do not preserve private Python imports, logger names, helper signatures, or test fixture
-  internals for compatibility.
-- Version public configuration and artifact shape changes explicitly. Do not change a
-  *released* versioned shape while keeping its version identifier. A version identifier that
-  has not yet appeared in a tagged release is still being defined: a spec that this package
-  names as a co-author of that version amends it in place, and the series takes one bump for
-  the whole release rather than one per spec. `review_config.v3` is the current example —
-  SPEC-54 through SPEC-57 jointly define it.
-- Avoid long-lived old/new code paths. A migration message is preferable to a permanent
-  compatibility adapter.
-- Preserve all security boundaries around revision binding, no-follow snapshot traversal,
-  external-fork secret refusal, provider credential isolation, endpoint validation,
-  immutable dependency pins, and strict artifact validation.
-- Do not add line-count, file-count, or test-count quality gates.
-- Do not add exact-prose documentation tests.
-- A new abstraction must either remove duplicated behavior immediately or establish a
-  product boundary named in
-  [ADR-0003](../../decisions/0003-product-invariants-and-complexity-envelope.md). Do not
-  add framework layers for hypothetical future adapters, stages, platforms, or state
-  backends.
-- Run `make quality`, update workflow parity, regenerate golden artifacts where required,
-  and execute the spec-specific negative tests before declaring a spec complete.
-
-## Explicitly out of scope
-
-The following existing proposals remain separate:
-
-- SPEC-41 reviewer confidence defaulting;
-- SPEC-43 trusted consumer image verification;
-- SPEC-45 critique provenance display;
-- SPEC-46 unanchored advisories;
-- SPEC-47 trusted project review configuration;
-- SPEC-48 auditable scope exclusions;
-- SPEC-53 broader stringified structured-output normalization.
-
-SPEC-42 became obsolete when SPEC-55 removed merge-gate semantics, and was deleted from the
-open-spec index as part of that implementation. The human `wontfix` disposition it reasoned
-about is unchanged and still supported.
-
-Three of the specs that stay open also contained contract text that SPEC-54 and SPEC-55
-invalidated — SPEC-45 and SPEC-46 read `block_merge` and quorum as given inputs, and SPEC-48
-specified a gate outcome that no longer exists. They were reconciled as part of landing
-SPEC-55, along with SPEC-47 and ADR-0002. No open specification now describes a consumer of
-a deleted artifact.
+Write a decision-complete SPEC-60 that defines the exact aggregate fields,
+redaction rules, retention destination, schema/version impact, tests, and deletion
+condition. Separate this observational work from ordinary reducer-policy changes.
