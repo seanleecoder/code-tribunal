@@ -7,8 +7,8 @@ own module is deliberate: the rule diverged once per adapter before, and each
 divergence either salvaged a payload the model never nominated or rejected a
 usable review.
 
-``_coerce_adapter_root`` is the single exported normalization point every seat
-funnels through — the invariant SPEC-53 depends on. Do not add a second one.
+``_coerce_adapter_root`` is the single normalization point every seat funnels
+through. Do not add a second one.
 
 Deliberately free of filesystem I/O: status and debug artifact writing lives in
 ``adapter_artifacts``, and subprocess lifecycle in ``adapter_process``.
@@ -160,22 +160,78 @@ def extract_json_text(value: str, *, stage: str | None = None) -> str:
     return text
 
 
-def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+def _decode_stringified_structured_output(
+    payload: dict[str, Any], *, stage: str | None
+) -> dict[str, Any]:
+    """Decode one layer of stringified structured output for the active stage.
+
+    A whole batch-array string is examined once, then each item exposed by that
+    array (or already present in an inline array) is examined once. Only an array
+    value or object item is replaced; scalars, nested arrays, malformed JSON, and
+    strings that decode to another string stay untouched and fail closed during
+    finalization. Duplicate keys are rejected at both decode boundaries.
+    """
+    field = {"review": "findings", "critique": "critiques"}.get(stage or "")
+    if field is None or payload.get("adapter_status", "success") != "success":
+        return payload
+    value = payload.get(field)
+    replaced = 0
+    if isinstance(value, str):
+        try:
+            candidate = json_loads_no_duplicates(value)
+        except ValueError:
+            candidate = None
+        if not isinstance(candidate, list):
+            return payload
+        items = candidate
+        replaced = 1
+    elif isinstance(value, list):
+        if all(not isinstance(item, str) for item in value):
+            return payload
+        items = value
+    else:
+        return payload
+
+    normalized_items: list[Any] = []
+    for item in items:
+        if isinstance(item, str):
+            try:
+                candidate = json_loads_no_duplicates(item)
+            except ValueError:
+                candidate = None
+            if isinstance(candidate, dict):
+                normalized_items.append(candidate)
+                replaced += 1
+                continue
+        normalized_items.append(item)
+    if replaced == 0:
+        return payload
+    normalized = dict(payload)
+    normalized[field] = normalized_items
+    sys.stderr.write(
+        redact_text(f"ai-review: {stage} decoded {replaced} stringified structured item(s)\n")
+    )
+    return normalized
+
+
+def _coerce_root_shape(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+    """Coerce the supported object and critique-array root shapes."""
     if isinstance(raw, dict):
         return raw
-    if isinstance(raw, list):
-        if stage == "critique":
-            return {"critiques": raw}
-        if (
-            stage is None
-            and all(isinstance(item, dict) for item in raw)
-            and (
-                not raw
-                or any("target_source_finding_id" in item or "verdict" in item for item in raw)
-            )
-        ):
-            return {"critiques": raw}
-    raise SchemaValidationError("adapter output root must be an object")
+    if not isinstance(raw, list):
+        raise SchemaValidationError("adapter output root must be an object")
+    if stage == "critique":
+        return {"critiques": raw}
+    if stage is not None or not all(isinstance(item, dict) for item in raw):
+        raise SchemaValidationError("adapter output root must be an object")
+    if raw and not any("target_source_finding_id" in item or "verdict" in item for item in raw):
+        raise SchemaValidationError("adapter output root must be an object")
+    return {"critiques": raw}
+
+
+def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+    """Coerce supported reviewer roots, then decode structured string values."""
+    return _decode_stringified_structured_output(_coerce_root_shape(raw, stage=stage), stage=stage)
 
 
 _ANSWER_PART_KEYS = ("content", "result", "parts", "part", "message")

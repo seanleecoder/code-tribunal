@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tests.support.repository_script import load_repository_script
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
+_CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _load_docs_checker():
-    spec = importlib.util.spec_from_file_location("check_docs", _DOCS_CHECK)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load documentation checker from {_DOCS_CHECK}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_repository_script("check_docs", _DOCS_CHECK)
 
 
 @unittest.skipUnless(
@@ -26,61 +24,34 @@ def _load_docs_checker():
     "repository-only documentation checker is absent from the runtime image",
 )
 class DocumentationContractTests(unittest.TestCase):
-    def test_github_slug_handles_formatting_and_punctuation(self) -> None:
-        checker = _load_docs_checker()
-        self.assertEqual(checker.github_slug("Upgrade from 0.4.x to 1.0"), "upgrade-from-04x-to-10")
-        self.assertEqual(
-            checker.github_slug("CLI modules and exit codes"), "cli-modules-and-exit-codes"
-        )
-        self.assertEqual(checker.github_slug("Two  spaces"), "two--spaces")
+    def test_import_does_not_query_git(self) -> None:
+        with mock.patch("subprocess.run") as run:
+            load_repository_script("check_docs_without_git", _DOCS_CHECK)
+        run.assert_not_called()
 
-    def test_duplicate_headings_receive_numeric_suffixes(self) -> None:
+    def test_markdown_inventories_separate_current_archive_and_released_notes(self) -> None:
         checker = _load_docs_checker()
-        anchors = checker.heading_anchors("# Example\n\n## Example\n\n## Example!\n")
-        self.assertEqual(anchors, {"example", "example-1", "example-2"})
+        inventories = checker.markdown_inventories()
+        current = {path.relative_to(checker.ROOT).as_posix() for path in inventories["current"]}
+        linked = {path.relative_to(checker.ROOT).as_posix() for path in inventories["link-checked"]}
+        released = {path.relative_to(checker.ROOT).as_posix() for path in inventories["released"]}
 
-    def test_link_checker_handles_titles_parentheses_and_fenced_examples(self) -> None:
-        checker = _load_docs_checker()
-        original_root = checker.ROOT
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            source = root / "source.md"
-            target = root / "target_(v1).md"
-            target.write_text("# Real heading\n", encoding="utf-8")
-            text = (
-                "```md\n``` (part of the example, not a closing fence)\n"
-                "# Fake heading\n[example](missing.md)\n```\n"
-                '[wrapped\nlabel](target_(v1).md#real-heading "Reference title")\n'
-            )
-            checker.ROOT = root
-            try:
-                self.assertEqual(checker._link_issues(source, text), [])
-                self.assertIn(
-                    "target_(v1).md#real-heading",
-                    checker._markdown_link_targets(text),
-                )
-                self.assertNotIn("fake-heading", checker.heading_anchors(text))
-            finally:
-                checker.ROOT = original_root
+        self.assertIn("release/TEMPLATE.md", current)
+        self.assertIn("release/TEMPLATE.md", linked)
+        self.assertNotIn("release/TEMPLATE.md", released)
+        self.assertIn("release/1.0.0.md", released)
+        self.assertNotIn("release/1.0.0.md", linked)
+        self.assertTrue(any(path.startswith("archive/") for path in linked))
+        self.assertFalse(any(path.startswith("archive/") for path in current))
+        self.assertFalse(any("site-packages" in path for path in linked | released))
 
-    def test_link_checker_reports_missing_target_and_anchor(self) -> None:
-        checker = _load_docs_checker()
-        original_root = checker.ROOT
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            source = root / "source.md"
-            target = root / "target.md"
-            target.write_text("# Present\n", encoding="utf-8")
-            checker.ROOT = root
-            try:
-                issues = checker._link_issues(
-                    source, "[missing](absent.md) [anchor](target.md#absent)"
-                )
-            finally:
-                checker.ROOT = original_root
-        self.assertEqual(len(issues), 2)
-        self.assertTrue(any("missing link target" in issue for issue in issues))
-        self.assertTrue(any("missing heading" in issue for issue in issues))
+    def test_ci_caches_and_installs_the_shipped_link_checker_pin(self) -> None:
+        workflow = _CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", workflow)
+        self.assertIn("scripts/check_markdown_links.py install", workflow)
+        self.assertNotIn("LYCHEE_VERSION", workflow)
+        self.assertNotIn("python -c 'from scripts.check_docs", workflow)
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
@@ -206,7 +177,6 @@ class DocumentationContractTests(unittest.TestCase):
         assert heading is not None
         environment_rows = checker._reference_row_counts(documentation[heading.end() :])
         self.assertEqual(environment_rows[marker], 1)
-
 
     def test_github_install_contract_binds_source_and_destination(self) -> None:
         checker = _load_docs_checker()
@@ -404,25 +374,23 @@ class DocumentationContractTests(unittest.TestCase):
         broken link passed both this checker and the byte guard.
         """
         checker = _load_docs_checker()
-        original_root, original_resolvable = checker.ROOT, checker._TAGS_RESOLVABLE
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            (root / "release").mkdir()
-            checker.ROOT = root
-            try:
-                checker._TAGS_RESOLVABLE = True
-                # 1.0.1 is tagged in this repository; 9.9.9 never will be.
-                checker.ROOT = original_root
-                self.assertTrue(checker._is_released_note(original_root / "release/1.0.1.md"))
-                self.assertFalse(checker._is_released_note(original_root / "release/9.9.9.md"))
-                self.assertFalse(checker._is_released_note(original_root / "release/TEMPLATE.md"))
-
-                # With no tags resolvable, every note is frozen: a shallow clone
-                # must not start failing on links that are correct at their tag.
-                checker._TAGS_RESOLVABLE = False
-                self.assertTrue(checker._is_released_note(original_root / "release/9.9.9.md"))
-            finally:
-                checker.ROOT, checker._TAGS_RESOLVABLE = original_root, original_resolvable
+        with mock.patch.object(
+            checker, "tag_exists", side_effect=lambda tag, _root: tag == "v1.0.1"
+        ):
+            self.assertTrue(
+                checker._is_released_note(checker.ROOT / "release/1.0.1.md", tags_resolvable=True)
+            )
+            self.assertFalse(
+                checker._is_released_note(checker.ROOT / "release/9.9.9.md", tags_resolvable=True)
+            )
+            self.assertFalse(
+                checker._is_released_note(
+                    checker.ROOT / "release/TEMPLATE.md", tags_resolvable=True
+                )
+            )
+        self.assertTrue(
+            checker._is_released_note(checker.ROOT / "release/9.9.9.md", tags_resolvable=False)
+        )
 
     def test_every_documented_cli_command_resolves(self) -> None:
         """Each command in the CLI reference must name something that exists.
@@ -549,12 +517,8 @@ class DocumentationContractTests(unittest.TestCase):
         It may be a reasonable repository policy; it is not a Code Tribunal
         requirement and nothing here enables it.
         """
-        github = (
-            _REPO_ROOT / "docs" / "getting-started" / "github.md"
-        ).read_text(encoding="utf-8")
-        gitlab = (
-            _REPO_ROOT / "docs" / "getting-started" / "gitlab.md"
-        ).read_text(encoding="utf-8")
+        github = (_REPO_ROOT / "docs" / "getting-started" / "github.md").read_text(encoding="utf-8")
+        gitlab = (_REPO_ROOT / "docs" / "getting-started" / "gitlab.md").read_text(encoding="utf-8")
 
         collapse = " ".join(github.split())
         self.assertIn(

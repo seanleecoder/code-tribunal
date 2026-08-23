@@ -8,7 +8,8 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,27 @@ from .schema import now_iso, write_canonical_json
 
 class BundleError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _BoundRevision:
+    """One platform-bound change revision ready for deterministic packaging."""
+
+    project_id: str
+    project_path: str
+    change_id: str
+    source_branch: str
+    target_branch: str
+    base_sha: str
+    start_sha: str
+    head_sha: str
+    run_id: str
+    state_pipeline_id: str
+    diff_text: str
+    snapshot_source: Path
+    manifest_extensions: dict[str, str] = field(default_factory=dict)
+    load_state: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    revalidate: Callable[[], None] = lambda: None
 
 
 # Always skipped at every depth (VCS / local harness metadata).
@@ -50,9 +72,7 @@ def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
 
 
 def _raise_snapshot_rejected(kind: str, rel_parts: tuple[str, ...]) -> None:
-    raise BundleError(
-        f"repository snapshot rejects {kind}: {_snapshot_rel_display(rel_parts)}"
-    )
+    raise BundleError(f"repository snapshot rejects {kind}: {_snapshot_rel_display(rel_parts)}")
 
 
 def _ensure_snapshot_destination_safe(
@@ -174,9 +194,7 @@ def _copy_snapshot_tree(
     try:
         root_fd = os.open(source_root, root_flags)
     except OSError as exc:
-        raise BundleError(
-            f"repository snapshot failed to open source root: {exc}"
-        ) from exc
+        raise BundleError(f"repository snapshot failed to open source root: {exc}") from exc
 
     # (dir_fd, rel_parts)
     stack: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
@@ -193,9 +211,7 @@ def _copy_snapshot_tree(
                 entries = _scan_directory(dir_fd=dir_fd, rel_parts=rel_parts)
                 for entry in entries:
                     name = entry.name
-                    if _should_ignore_entry(
-                        name, rel_parts, top_level_ignore=top_level_ignore
-                    ):
+                    if _should_ignore_entry(name, rel_parts, top_level_ignore=top_level_ignore):
                         continue
                     child_parts = (*rel_parts, name)
                     if entry.is_symlink():
@@ -282,9 +298,7 @@ def copy_repo_snapshot(
         )
     )
     try:
-        _copy_snapshot_tree(
-            source_root, tmp_dest, top_level_ignore=top_level_ignore
-        )
+        _copy_snapshot_tree(source_root, tmp_dest, top_level_ignore=top_level_ignore)
         # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
         # that are not the preparing uid (same-user CI jobs are unaffected either way).
         os.chmod(tmp_dest, 0o755)
@@ -323,10 +337,6 @@ def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
         )
 
 
-def _file_sha256(path: Path) -> str:
-    return sha256_hex(path.read_bytes())
-
-
 def _directory_sha256(path: Path) -> str:
     digest_parts: list[bytes] = []
     if path.exists():
@@ -340,64 +350,142 @@ def _directory_sha256(path: Path) -> str:
     return sha256_hex(b"".join(digest_parts))
 
 
+def _remove_bundle_entry(path: Path) -> None:
+    """Remove one generated bundle entry regardless of its filesystem type."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _replace_staged_entry(source: Path, destination: Path) -> None:
+    """Replace one generated destination without retaining stale contents."""
+    _remove_bundle_entry(destination)
+    source.replace(destination)
+
+
+def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
+    """Publish a complete staged bundle, with the manifest as the final file."""
+    sources = sorted(
+        staging_path.iterdir(), key=lambda path: (path.name == "manifest.json", path.name)
+    )
+    for source in sources:
+        _replace_staged_entry(source, out_path / source.name)
+
+
+def _prepare_bound_bundle(
+    bound: _BoundRevision,
+    *,
+    config_path: Path,
+    config_dict: dict[str, Any],
+    out_path: Path,
+) -> Path:
+    """Build every input bundle through the same revision-bound artifact path."""
+    _enforce_diff_limits(bound.diff_text, config_dict)
+    config_bytes = config_path.read_bytes()
+    out_created = not out_path.exists()
+    out_path.mkdir(parents=True, exist_ok=True)
+    # A manifest makes every sibling artifact consumable. Invalidate any prior
+    # bundle before staging so no preparation failure can leave stale inputs live.
+    _remove_bundle_entry(out_path / "manifest.json")
+    try:
+        with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
+            staging_path = Path(staging)
+            (staging_path / "mr.diff").write_bytes(bound.diff_text.encode("utf-8"))
+            (staging_path / "config.review.yaml").write_bytes(config_bytes)
+
+            source_rules = config_path.parent.parent / "rules"
+            source_prompts = config_path.parent.parent / "prompts"
+            shutil.copytree(source_rules, staging_path / "rules", dirs_exist_ok=True)
+            shutil.copytree(source_prompts, staging_path / "prompts", dirs_exist_ok=True)
+
+            snapshot_dir = staging_path / "repo_snapshot"
+            copy_repo_snapshot(
+                bound.snapshot_source,
+                snapshot_dir,
+                ignore_top_level_names={out_path.name},
+            )
+
+            state = empty_state(
+                project_id=bound.project_id,
+                merge_request_iid=bound.change_id,
+                head_sha=bound.head_sha,
+                pipeline_id=bound.state_pipeline_id,
+            )
+            if bound.load_state is not None:
+                state = bound.load_state(state)
+            write_canonical_json(
+                staging_path / "prior_decisions.json", prior_decisions_from_state(state)
+            )
+            write_canonical_json(
+                staging_path / "state_aliases.json", state_aliases_from_state(state)
+            )
+
+            manifest = {
+                "schema_version": "input_manifest.v1",
+                "run_id": bound.run_id,
+                "project_id": bound.project_id,
+                "project_path": bound.project_path,
+                "merge_request_iid": bound.change_id,
+                "source_branch": bound.source_branch,
+                "target_branch": bound.target_branch,
+                "base_sha": bound.base_sha,
+                "start_sha": bound.start_sha,
+                "head_sha": bound.head_sha,
+                **bound.manifest_extensions,
+                "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
+                "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
+                "config_sha256": sha256_hex(config_bytes),
+                "rules_sha256": _directory_sha256(source_rules),
+                "effective_config": effective_config_summary(config_dict),
+                "effective_config_sha256": effective_config_digest(config_dict),
+                "created_at": now_iso(),
+            }
+            bound.revalidate()
+            write_canonical_json(staging_path / "manifest.json", manifest)
+            _publish_staged_bundle(staging_path, out_path)
+    except Exception:
+        if out_created:
+            shutil.rmtree(out_path)
+        raise
+    return out_path
+
+
 def prepare_local_bundle(
-    config: str | Path, diff: str | Path, repo: str | Path, out: str | Path
+    config: str | Path,
+    diff: str | Path,
+    repo: str | Path,
+    out: str | Path,
 ) -> Path:
     config_path = Path(config)
     diff_path = Path(diff)
-    repo_path = Path(repo)
     out_path = Path(out)
-    out_path.mkdir(parents=True, exist_ok=True)
-
     config_dict = load_config(config_path)
-    _enforce_diff_limits(diff_path.read_text(encoding="utf-8"), config_dict)
-    shutil.copy2(diff_path, out_path / "mr.diff")
-    shutil.copy2(config_path, out_path / "config.review.yaml")
-
-    snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
-        repo_path,
-        snapshot_dir,
-        ignore_top_level_names={out_path.name},
+    diff_text = diff_path.read_text(encoding="utf-8")
+    bound = _BoundRevision(
+        project_id="local",
+        project_path="local/simple",
+        change_id="0",
+        source_branch="local-source",
+        target_branch="local-target",
+        base_sha="0" * 40,
+        start_sha="0" * 40,
+        head_sha="1" * 40,
+        run_id=f"local-{sha256_hex(diff_text.encode('utf-8'))[:12]}",
+        state_pipeline_id="",
+        diff_text=diff_text,
+        snapshot_source=Path(repo),
     )
-
-    source_rules = config_path.parent.parent / "rules"
-    source_prompts = config_path.parent.parent / "prompts"
-    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
-    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
-
-    prior_decisions = {
-        "schema_version": "prior_decisions.v1",
-        "settled": [],
-        "open": [],
-    }
-    write_canonical_json(out_path / "prior_decisions.json", prior_decisions)
-    write_canonical_json(
-        out_path / "state_aliases.json", {"schema_version": "state_aliases.v1", "records": []}
+    return _prepare_bound_bundle(
+        bound,
+        config_path=config_path,
+        config_dict=config_dict,
+        out_path=out_path,
     )
-
-    diff_sha = _file_sha256(diff_path)
-    manifest = {
-        "schema_version": "input_manifest.v1",
-        "run_id": f"local-{diff_sha[:12]}",
-        "project_id": "local",
-        "project_path": "local/simple",
-        "merge_request_iid": "0",
-        "source_branch": "local-source",
-        "target_branch": "local-target",
-        "base_sha": "0" * 40,
-        "start_sha": "0" * 40,
-        "head_sha": "1" * 40,
-        "diff_sha256": diff_sha,
-        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-        "config_sha256": _file_sha256(config_path),
-        "rules_sha256": _directory_sha256(source_rules),
-        "effective_config": effective_config_summary(config_dict),
-        "effective_config_sha256": effective_config_digest(config_dict),
-        "created_at": now_iso(),
-    }
-    write_canonical_json(out_path / "manifest.json", manifest)
-    return out_path
 
 
 def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
@@ -507,13 +595,10 @@ def _git_command(repo_path: Path, *args: str) -> str:
     try:
         resolved_repo_path = repo_path.resolve(strict=True)
     except OSError as exc:
-        raise BundleError(
-            f"failed to validate GitHub checkout path {repo_path}: {exc}"
-        ) from exc
+        raise BundleError(f"failed to validate GitHub checkout path {repo_path}: {exc}") from exc
     if not resolved_repo_path.is_dir():
         raise BundleError(
-            f"failed to validate GitHub checkout path: not a directory: "
-            f"{resolved_repo_path}"
+            f"failed to validate GitHub checkout path: not a directory: {resolved_repo_path}"
         )
 
     # Container jobs commonly run as a different uid from the host runner that
@@ -528,15 +613,11 @@ def _git_command(repo_path: Path, *args: str) -> str:
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
-        raise BundleError(
-            f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}"
-        )
+        raise BundleError(f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}")
     return completed.stdout.strip()
 
 
-def _github_checkout_head(
-    repo_path: Path, out_path: Path, *, expected_head_sha: str
-) -> str:
+def _github_checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha: str) -> str:
     """Resolve and validate the exact, clean commit used for the repository snapshot."""
     if not _GIT_OBJECT_SHA_RE.fullmatch(expected_head_sha):
         raise BundleError(
@@ -545,8 +626,7 @@ def _github_checkout_head(
     checkout_head = _git_command(repo_path, "rev-parse", "--verify", "HEAD^{commit}")
     if not _GIT_OBJECT_SHA_RE.fullmatch(checkout_head):
         raise BundleError(
-            "GitHub checkout HEAD did not resolve to a full commit SHA: "
-            f"{checkout_head}"
+            f"GitHub checkout HEAD did not resolve to a full commit SHA: {checkout_head}"
         )
     if checkout_head != expected_head_sha:
         raise BundleError(
@@ -623,8 +703,12 @@ def _require_github_revision(
     return version
 
 
-def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
+def prepare_github_bundle(
+    config: str | Path,
+    out: str | Path,
+) -> Path:
     out_path = Path(out)
+    config_path = Path(config)
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
@@ -633,8 +717,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
     checkout_head_sha = _github_checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
-    out_path.mkdir(parents=True, exist_ok=True)
-    config_dict = load_config(config)
+    config_dict = load_config(config_path)
     try:
         client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
@@ -651,9 +734,7 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         boundary="before diff collection",
     )
     try:
-        diff_text = client.fetch_comparison_diff(
-            repo, version.base_sha, version.head_sha
-        )
+        diff_text = client.fetch_comparison_diff(repo, version.base_sha, version.head_sha)
     except ReviewPlatformError as exc:
         raise BundleError(f"failed to fetch GitHub pull request diff: {exc}") from exc
     after_diff = _resolve_github_pull_request(client, repo)
@@ -664,89 +745,73 @@ def prepare_github_bundle(config: str | Path, out: str | Path) -> Path:
         expected_version=version,
         boundary="after diff collection",
     )
-    _enforce_diff_limits(diff_text, config_dict)
-    (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
-
-    config_path = Path(config)
-    shutil.copy2(config_path, out_path / "config.review.yaml")
-    source_rules = config_path.parent.parent / "rules"
-    source_prompts = config_path.parent.parent / "prompts"
-    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
-    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
-
-    snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
-        Path.cwd(),
-        snapshot_dir,
-        ignore_top_level_names={out_path.name},
-    )
-    diff_sha = sha256_hex(diff_text)
     raw_head = pull_request.get("head")
     head = raw_head if isinstance(raw_head, dict) else {}
     raw_base = pull_request.get("base")
     base = raw_base if isinstance(raw_base, dict) else {}
-    manifest = {
-        "schema_version": "input_manifest.v1",
-        "run_id": (
+
+    def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
+        return _load_platform_state(
+            client,
+            config_dict,
+            default_state,
+            project_id=repo,
+            change_id=pr_number,
+            platform_name="GitHub",
+        )
+
+    def revalidate() -> None:
+        _github_checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
+        final_pull_request = _resolve_github_pull_request(client, repo)
+        _require_github_revision(
+            final_pull_request,
+            selected_head_sha=selected_head_sha,
+            checkout_head_sha=checkout_head_sha,
+            expected_version=version,
+            boundary="manifest finalization",
+        )
+
+    bound = _BoundRevision(
+        project_id=repo,
+        project_path=repo,
+        change_id=pr_number,
+        source_branch=str(head.get("ref") or ""),
+        target_branch=str(base.get("ref") or ""),
+        base_sha=version.base_sha,
+        start_sha=version.base_sha,
+        head_sha=version.head_sha,
+        run_id=(
             f"gh-{os.environ.get('GITHUB_RUN_ID', '0')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '0')}"
         ),
-        "project_id": repo,
-        "project_path": repo,
-        "merge_request_iid": pr_number,
-        "source_branch": str(head.get("ref") or ""),
-        "target_branch": str(base.get("ref") or ""),
-        "base_sha": version.base_sha,
-        "start_sha": version.base_sha,
-        "head_sha": version.head_sha,
-        "selected_head_sha": selected_head_sha,
-        "checkout_head_sha": checkout_head_sha,
-        "diff_sha256": diff_sha,
-        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-        "config_sha256": _file_sha256(config_path),
-        "rules_sha256": _directory_sha256(source_rules),
-        "effective_config": effective_config_summary(config_dict),
-        "effective_config_sha256": effective_config_digest(config_dict),
-        "created_at": now_iso(),
-    }
-    state = empty_state(
-        project_id=repo,
-        merge_request_iid=pr_number,
-        head_sha=version.head_sha,
-        pipeline_id=os.environ.get("GITHUB_RUN_ID", ""),
+        state_pipeline_id=os.environ.get("GITHUB_RUN_ID", ""),
+        diff_text=diff_text,
+        snapshot_source=checkout_root,
+        manifest_extensions={
+            "selected_head_sha": selected_head_sha,
+            "checkout_head_sha": checkout_head_sha,
+        },
+        load_state=load_state,
+        revalidate=revalidate,
     )
-    state = _load_platform_state(
-        client,
-        config_dict,
-        state,
-        project_id=repo,
-        change_id=pr_number,
-        platform_name="GitHub",
+    return _prepare_bound_bundle(
+        bound,
+        config_path=config_path,
+        config_dict=config_dict,
+        out_path=out_path,
     )
-    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
-    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
-    # Revalidation only: the manifest already records the identical selected and
-    # checkout SHA proven above, and this call fails if the checkout has changed.
-    _github_checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
-    final_pull_request = _resolve_github_pull_request(client, repo)
-    _require_github_revision(
-        final_pull_request,
-        selected_head_sha=selected_head_sha,
-        checkout_head_sha=checkout_head_sha,
-        expected_version=version,
-        boundary="manifest finalization",
-    )
-    write_canonical_json(out_path / "manifest.json", manifest)
-    return out_path
 
 
-def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
+def prepare_gitlab_bundle(
+    config: str | Path,
+    out: str | Path,
+) -> Path:
     out_path = Path(out)
-    out_path.mkdir(parents=True, exist_ok=True)
+    config_path = Path(config)
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    config_dict = load_config(config)
+    config_dict = load_config(config_path)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
@@ -759,75 +824,56 @@ def prepare_gitlab_bundle(config: str | Path, out: str | Path) -> Path:
         diff_text = client.fetch_diff(project_id, mr_iid)
     except ReviewPlatformError as exc:
         raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
-    try:
-        confirmed_version = client.fetch_version(project_id, mr_iid)
-    except ReviewPlatformError as exc:
-        raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
     selected_revision = (version.base_sha, version.start_sha, version.head_sha)
-    confirmed_revision = (
-        confirmed_version.base_sha,
-        confirmed_version.start_sha,
-        confirmed_version.head_sha,
-    )
-    if confirmed_revision != selected_revision:
-        raise BundleError(
-            "merge request version changed during diff collection; "
-            "refusing to combine diff data from different revisions"
+
+    def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
+        return _load_platform_state(
+            client,
+            config_dict,
+            default_state,
+            project_id=str(project_id),
+            change_id=str(mr_iid),
+            platform_name="GitLab",
         )
-    _enforce_diff_limits(diff_text, config_dict)
-    (out_path / "mr.diff").write_text(diff_text, encoding="utf-8")
 
-    config_path = Path(config)
-    shutil.copy2(config_path, out_path / "config.review.yaml")
-    source_rules = config_path.parent.parent / "rules"
-    source_prompts = config_path.parent.parent / "prompts"
-    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
-    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
+    def revalidate() -> None:
+        try:
+            confirmed_version = client.fetch_version(project_id, mr_iid)
+        except ReviewPlatformError as exc:
+            raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
+        confirmed_revision = (
+            confirmed_version.base_sha,
+            confirmed_version.start_sha,
+            confirmed_version.head_sha,
+        )
+        if confirmed_revision != selected_revision:
+            raise BundleError(
+                "merge request version changed during diff collection; "
+                "refusing to combine diff data from different revisions"
+            )
 
-    snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
-        Path.cwd(),
-        snapshot_dir,
-        ignore_top_level_names={out_path.name},
-    )
-    diff_sha = sha256_hex(diff_text)
-    manifest = {
-        "schema_version": "input_manifest.v1",
-        "run_id": f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-{os.environ.get('CI_JOB_ID', '0')}",
-        "project_id": str(project_id),
-        "project_path": os.environ.get("CI_PROJECT_PATH", ""),
-        "merge_request_iid": str(mr_iid),
-        "source_branch": os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
-        "target_branch": os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
-        "base_sha": version.base_sha,
-        "start_sha": version.start_sha,
-        "head_sha": version.head_sha,
-        "diff_sha256": diff_sha,
-        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-        "config_sha256": _file_sha256(config_path),
-        "rules_sha256": _directory_sha256(source_rules),
-        "effective_config": effective_config_summary(config_dict),
-        "effective_config_sha256": effective_config_digest(config_dict),
-        "created_at": now_iso(),
-    }
-    state = empty_state(
+    bound = _BoundRevision(
         project_id=str(project_id),
-        merge_request_iid=str(mr_iid),
-        head_sha=version.head_sha,
-        pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
-    )
-    state = _load_platform_state(
-        client,
-        config_dict,
-        state,
-        project_id=str(project_id),
+        project_path=os.environ.get("CI_PROJECT_PATH", ""),
         change_id=str(mr_iid),
-        platform_name="GitLab",
+        source_branch=os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
+        target_branch=os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
+        base_sha=version.base_sha,
+        start_sha=version.start_sha,
+        head_sha=version.head_sha,
+        run_id=(f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-{os.environ.get('CI_JOB_ID', '0')}"),
+        state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
+        diff_text=diff_text,
+        snapshot_source=Path.cwd(),
+        load_state=load_state,
+        revalidate=revalidate,
     )
-    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
-    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
-    write_canonical_json(out_path / "manifest.json", manifest)
-    return out_path
+    return _prepare_bound_bundle(
+        bound,
+        config_path=config_path,
+        config_dict=config_dict,
+        out_path=out_path,
+    )
 
 
 def cli(argv: list[str] | None = None) -> int:

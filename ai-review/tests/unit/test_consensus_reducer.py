@@ -12,6 +12,7 @@ import copy
 import unittest
 
 from ai_review.consensus import build_consensus, panel_status
+from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group
 from ai_review.schema import validate_instance
 
@@ -264,6 +265,54 @@ class DecisionTableTests(unittest.TestCase):
         self.assertEqual(group["critique_summary"], {**_EMPTY_SUMMARY, "duplicate": 1})
         self.assertEqual(group["agreeing_critics"], [])
         self.assertEqual(group["support_count"], 2)
+
+    def test_invalid_duplicate_links_never_merge_groups(self) -> None:
+        first = _finding(
+            "claude",
+            _SOURCE_IDS["claude"],
+            line=10,
+            context_hash="1" * 64,
+            title_fingerprint="2" * 64,
+            evidence_fingerprint="3" * 64,
+            symbol="first",
+        )
+        second = _finding(
+            "codex",
+            _SOURCE_IDS["codex"],
+            line=100,
+            context_hash="4" * 64,
+            title_fingerprint="5" * 64,
+            evidence_fingerprint="6" * 64,
+            symbol="second",
+        )
+        cases = (
+            ("missing target", "opencode", "f" * 64, "success"),
+            ("self critique", "claude", _SOURCE_IDS["codex"], "success"),
+            ("failed batch", "opencode", _SOURCE_IDS["codex"], "schema_error"),
+        )
+        for label, critic, duplicate_of, status in cases:
+            with self.subTest(label):
+                consensus = build_consensus(
+                    _manifest(),
+                    [_batch("claude", first), _batch("codex", second)],
+                    _critique_config(),
+                    critique_batches=[
+                        _critique_batch(
+                            critic,
+                            [
+                                _critique(
+                                    critic,
+                                    _SOURCE_IDS["claude"],
+                                    "duplicate",
+                                    duplicate_of=duplicate_of,
+                                )
+                            ],
+                            status=status,
+                        )
+                    ],
+                )
+                self.assertEqual(len(consensus["groups"]), 2)
+                validate_instance(consensus, "consensus.schema.json")
         validate_instance(consensus, "consensus.schema.json")
 
     def test_direct_contributor_critique_is_excluded_even_when_successful(self) -> None:
@@ -327,6 +376,78 @@ class EffectiveVerdictTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_empty_dispute_rationale_is_not_display_data(self) -> None:
+        source_id = _SOURCE_IDS["claude"]
+        consensus = _run(
+            contributors=["claude"],
+            critique_batches=[
+                _critique_batch(
+                    "codex",
+                    [_critique("codex", source_id, "dispute", rationale="   ")],
+                )
+            ],
+        )
+        group = consensus["groups"][0]
+        self.assertEqual(group["critique_summary"]["dispute"], 1)
+        self.assertEqual(group["critique_disputes"], [])
+
+    def test_disabled_critique_and_unknown_targets_fail_at_the_policy_boundary(self) -> None:
+        source_id = _SOURCE_IDS["claude"]
+        batch = _batch("claude", _finding("claude", source_id, "major"))
+        critique = _critique_batch(
+            "codex", [_critique("codex", source_id, "noise")]
+        )
+        disabled = build_consensus(
+            _manifest(),
+            [batch],
+            _critique_config(enabled=False),
+            critique_batches=[critique],
+        )
+        baseline = build_consensus(
+            _manifest(), [batch], _critique_config(enabled=False)
+        )
+        self.assertEqual(disabled, baseline)
+
+        unknown = _critique_batch(
+            "codex", [_critique("codex", "f" * 64, "dispute")]
+        )
+        with self.assertRaises(ConsensusIntegrityError):
+            build_consensus(
+                _manifest(),
+                [batch],
+                _critique_config(),
+                critique_batches=[unknown],
+            )
+
+    def test_severity_downgrade_is_bounded_and_never_crosses_blocker(self) -> None:
+        cases = (
+            ("no request", "major", None, "major"),
+            ("one level", "major", "info", "minor"),
+            ("blocker boundary", "blocker", "minor", "blocker"),
+        )
+        for label, severity, adjusted, expected in cases:
+            source_id = _SOURCE_IDS["claude"]
+            with self.subTest(label):
+                consensus = _run(
+                    contributors=["claude"],
+                    severity=severity,
+                    config=_critique_config(allow_severity_downgrade=True),
+                    critique_batches=[
+                        _critique_batch(
+                            "codex",
+                            [
+                                _critique(
+                                    "codex",
+                                    source_id,
+                                    "dispute",
+                                    adjusted_severity=adjusted,
+                                )
+                            ],
+                        )
+                    ],
+                )
+                self.assertEqual(consensus["groups"][0]["final_severity"], expected)
 
     def test_agree_and_noise_collapse_to_one_noise_vote(self) -> None:
         group = self._grouped_pair_run(

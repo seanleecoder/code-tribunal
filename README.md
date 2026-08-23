@@ -97,7 +97,7 @@ For contributor setup and all quality checks, see
 | Understand trust boundaries and residual risks | [Security model](docs/SECURITY_MODEL.md) and [security policy](SECURITY.md) |
 | Inspect CLI, artifact, and platform contracts | [Reference index](docs/reference/README.md) |
 | Contribute or understand the implementation | [Development index](docs/development/README.md) |
-| Find old specs and acceptance records | [History index](docs/history/README.md) |
+| Inspect paused historical plans | [Archive index](archive/improvement-plans/README.md) |
 
 ## Pipeline at a glance
 

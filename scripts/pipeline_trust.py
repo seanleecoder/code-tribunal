@@ -7,6 +7,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal
 
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_SOURCE = ROOT / "ai-review" / "src"
+if str(PACKAGE_SOURCE) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SOURCE))
+
+from ai_review.reviewers import REVIEWERS  # noqa: E402
+
 yaml: ModuleType | None
 try:
     import yaml as _yaml
@@ -26,14 +33,11 @@ RESERVED_DIRECT_JOB_NAMES = {
     ".ai_review_rules",
     ".critique_template",
     ".review_template",
-    "AI critique: [claude]",
-    "AI critique: [codex]",
-    "AI critique: [cursor]",
-    "AI critique: [opencode]",
-    "AI review: [claude]",
-    "AI review: [codex]",
-    "AI review: [cursor]",
-    "AI review: [opencode]",
+    "AI critique",
+    "AI review",
+    # GitLab expands the current matrix jobs to these names.
+    *(f"AI critique: [{reviewer}]" for reviewer in REVIEWERS),
+    *(f"AI review: [{reviewer}]" for reviewer in REVIEWERS),
     # Deleted from the template with the merge gate, but kept reserved for one
     # release: this auditor runs from the image against a *consuming* project's
     # configuration, and a consumer pinned to an older template still declares the

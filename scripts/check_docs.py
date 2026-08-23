@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
-from urllib.parse import unquote
 
 import yaml
 
@@ -37,12 +38,8 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 
-# Resolved once: a subprocess per release note per run would be wasteful, and the
-# answer cannot change mid-run.
-_TAGS_RESOLVABLE = any_tags_resolvable(ROOT)
 
-
-def _is_released_note(path: Path) -> bool:
+def _is_released_note(path: Path, *, tags_resolvable: bool) -> bool:
     """A *published* release note, pinned byte-identical to its tag.
 
     These are excluded from the checks below, because a released note describes
@@ -68,18 +65,50 @@ def _is_released_note(path: Path) -> bool:
     """
     if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
         return False
-    if not _TAGS_RESOLVABLE:
+    if not tags_resolvable:
         return True
     return tag_exists(f"v{path.stem}", ROOT)
 
 
-CURRENT_MARKDOWN = tuple(
-    sorted(
-        path
-        for path in ROOT.rglob("*.md")
-        if ".git" not in path.parts and not _is_released_note(path)
+def markdown_inventories() -> dict[str, tuple[Path, ...]]:
+    """Partition tracked Markdown with one file query and one tag query."""
+    completed = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--", "*.md"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
     )
-)
+    if completed.returncode != 0:
+        raise RuntimeError("git ls-files failed while inventorying current Markdown")
+    tracked = tuple(
+        ROOT / relative.decode("utf-8")
+        for relative in completed.stdout.split(b"\0")
+        if relative and (ROOT / relative.decode("utf-8")).is_file()
+    )
+    tags_resolvable = any_tags_resolvable(ROOT)
+    released: list[Path] = []
+    link_checked: list[Path] = []
+    for path in tracked:
+        destination = (
+            released
+            if _is_released_note(path, tags_resolvable=tags_resolvable)
+            else link_checked
+        )
+        destination.append(path)
+    current = tuple(path for path in link_checked if "archive" not in path.parts)
+    return {
+        "current": current,
+        "link-checked": tuple(link_checked),
+        "released": tuple(released),
+    }
+
+
+def markdown_inventory(scope: str) -> tuple[Path, ...]:
+    try:
+        return markdown_inventories()[scope]
+    except KeyError:
+        raise ValueError(f"unknown Markdown inventory scope: {scope}") from None
+
 
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
@@ -90,7 +119,6 @@ SOURCE_ENV_PATHS = (
     ROOT / "scripts",
 )
 
-HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 ENVIRONMENT_HEADING_RE = re.compile(r"^## Environment variables[ \t]*$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\r\n]+)`(?!`)")
 ENV_RE = re.compile(
@@ -140,119 +168,9 @@ def _without_fenced_code(text: str) -> str:
     return "".join(output)
 
 
-def _markdown_link_targets(text: str) -> list[str]:
-    """Extract inline Markdown destinations, including balanced parentheses."""
-    text = _without_fenced_code(text)
-    targets: list[str] = []
-    for match in re.finditer(r"(?<!!)\[[^\]]+\]\(", text):
-        start = match.end()
-        depth = 1
-        escaped = False
-        end: int | None = None
-        for index in range(start, len(text)):
-            char = text[index]
-            if escaped:
-                escaped = False
-                continue
-            if char == "\\":
-                escaped = True
-            elif char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    end = index
-                    break
-        if end is None:
-            continue
-        payload = text[start:end].strip()
-        if payload.startswith("<"):
-            closing = payload.find(">")
-            if closing != -1:
-                targets.append(payload[1:closing])
-            continue
-        nested = 0
-        escaped = False
-        destination_end = len(payload)
-        for index, char in enumerate(payload):
-            if escaped:
-                escaped = False
-                continue
-            if char == "\\":
-                escaped = True
-            elif char == "(":
-                nested += 1
-            elif char == ")" and nested:
-                nested -= 1
-            elif char.isspace() and nested == 0:
-                destination_end = index
-                break
-        if destination_end:
-            targets.append(payload[:destination_end])
-    return targets
-
-
 def _inline_code_values(text: str) -> set[str]:
     """Return single-backtick inline code values outside fenced examples."""
     return set(INLINE_CODE_RE.findall(_without_fenced_code(text)))
-
-
-def github_slug(text: str) -> str:
-    """Return the GitHub-style base slug used by this repository's headings."""
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"[`*_~]", "", text).strip().lower()
-    text = re.sub(r"[^\w\- ]", "", text, flags=re.UNICODE)
-    return re.sub(r"\s", "-", text)
-
-
-def heading_anchors(text: str) -> set[str]:
-    counts: Counter[str] = Counter()
-    anchors: set[str] = set()
-    for heading in HEADING_RE.findall(_without_fenced_code(text)):
-        base = github_slug(heading)
-        count = counts[base]
-        counts[base] += 1
-        anchors.add(base if count == 0 else f"{base}-{count}")
-    return anchors
-
-
-def _target_parts(raw_target: str) -> tuple[str, str]:
-    target = raw_target.strip()
-    if target.startswith("<") and target.endswith(">"):
-        target = target[1:-1]
-    path, separator, anchor = target.partition("#")
-    return unquote(path), unquote(anchor) if separator else ""
-
-
-def _link_issues(
-    path: Path, text: str, anchor_cache: dict[Path, set[str]] | None = None
-) -> list[str]:
-    issues: list[str] = []
-    anchor_cache = {} if anchor_cache is None else anchor_cache
-    for raw_target in _markdown_link_targets(text):
-        if re.match(r"^(?:https?|mailto):", raw_target):
-            continue
-        target_text, anchor = _target_parts(raw_target)
-        target = path if not target_text else (path.parent / target_text).resolve()
-        try:
-            target.relative_to(ROOT)
-        except ValueError:
-            issues.append(f"{path.relative_to(ROOT)}: link escapes repository: {raw_target}")
-            continue
-        if not target.exists():
-            issues.append(f"{path.relative_to(ROOT)}: missing link target: {raw_target}")
-            continue
-        if anchor and target.is_file() and target.suffix.lower() == ".md":
-            anchors = anchor_cache.get(target)
-            if anchors is None:
-                anchors = heading_anchors(target.read_text(encoding="utf-8"))
-                anchor_cache[target] = anchors
-            if anchor not in anchors:
-                issues.append(
-                    f"{path.relative_to(ROOT)}: missing heading #{anchor} in "
-                    f"{target.relative_to(ROOT)}"
-                )
-    return issues
 
 
 def _config_leaf_paths(value: object, prefix: str = "") -> set[str]:
@@ -370,8 +288,10 @@ def _inventory_issues(
 
 def _github_install_issues(text: str) -> list[str]:
     issues: list[str] = []
-    targets = _markdown_link_targets(text)
-    if GITHUB_INSTALL_SOURCE not in targets:
+    if not re.search(
+        rf"\[[^\]]+\]\({re.escape(GITHUB_INSTALL_SOURCE)}(?:\s+[^)]*)?\)",
+        _without_fenced_code(text),
+    ):
         issues.append(
             f"docs/getting-started/github.md: install source must link to {GITHUB_INSTALL_SOURCE}"
         )
@@ -497,14 +417,8 @@ def _release_state_issues() -> list[str]:
 
 def find_issues() -> list[str]:
     issues: list[str] = []
-    seen: set[Path] = set()
-    anchor_cache: dict[Path, set[str]] = {}
-    for path in CURRENT_MARKDOWN:
-        if path in seen:
-            continue
-        seen.add(path)
+    for path in markdown_inventory("current"):
         text = path.read_text(encoding="utf-8")
-        issues.extend(_link_issues(path, text, anchor_cache))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
 
@@ -518,15 +432,26 @@ def find_issues() -> list[str]:
     return issues
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    list_markdown = subparsers.add_parser("list-markdown")
+    list_markdown.add_argument(
+        "--scope", choices=("current", "link-checked", "released"), required=True
+    )
+    args = parser.parse_args(argv)
+    if args.command == "list-markdown":
+        for path in markdown_inventory(args.scope):
+            print(path.relative_to(ROOT).as_posix())
+        return 0
     issues = find_issues()
     for issue in issues:
         print(f"ERROR: {issue}", file=sys.stderr)
     if issues:
         return 1
     print(
-        "OK: current documentation links, anchors, configuration/environment "
-        "inventory, and GitHub/GitLab examples are consistent"
+        "OK: documentation configuration/environment inventory, install contract, "
+        "release state, and GitHub/GitLab examples are consistent"
     )
     return 0
 

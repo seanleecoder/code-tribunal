@@ -15,18 +15,18 @@ import errno
 import importlib
 import json
 import os
+import pkgutil
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
+import ai_review
 from ai_review.reviewers import trusted_runtime_root
 
 from .manifest import (
     CLI_MODULES,
     PACKAGED_FIXTURES,
-    RUNTIME_FILES,
-    RUNTIME_MODULES,
 )
 
 # Set by ai-review/images/base.Dockerfile and by nothing else; documented in
@@ -38,15 +38,6 @@ _PACKAGED_RUNTIME_MARKER = "AI_REVIEW_PACKAGED_RUNTIME"
 
 
 class PackagedBaseImageTests(unittest.TestCase):
-    def test_expected_runtime_files_exist(self) -> None:
-        root = trusted_runtime_root()
-        for relative in RUNTIME_FILES:
-            with self.subTest(path=relative):
-                self.assertTrue(
-                    (root / relative).is_file(),
-                    f"{relative} is missing from the packaged runtime at {root}",
-                )
-
     def test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them(self) -> None:
         """The reviewer preflight resolves ``--diff``/``--repo`` from these paths.
 
@@ -65,7 +56,10 @@ class PackagedBaseImageTests(unittest.TestCase):
                     self.assertTrue(target.is_dir(), f"{relative} must ship as a directory")
 
     def test_every_runtime_module_imports(self) -> None:
-        for module_name in RUNTIME_MODULES:
+        modules = {"ai_review"} | {
+            module.name for module in pkgutil.walk_packages(ai_review.__path__, prefix="ai_review.")
+        }
+        for module_name in sorted(modules):
             with self.subTest(module=module_name):
                 importlib.import_module(module_name)
 

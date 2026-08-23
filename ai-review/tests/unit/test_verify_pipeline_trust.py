@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
 import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
+
+from tests.support.repository_script import load_repository_script
 
 _PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_trust.py"
 
@@ -30,13 +31,7 @@ def _load_pipeline_trust():
     """
     if "pipeline_trust" in sys.modules:
         return sys.modules["pipeline_trust"]
-    spec = importlib.util.spec_from_file_location("pipeline_trust", _PIPELINE_TRUST)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load trust auditor from {_PIPELINE_TRUST}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["pipeline_trust"] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_repository_script("pipeline_trust", _PIPELINE_TRUST)
 
 
 _pipeline_trust = _load_pipeline_trust()

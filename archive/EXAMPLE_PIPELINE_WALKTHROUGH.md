@@ -1,7 +1,7 @@
 # Worked Example: A Complete Pipeline Run
 
 > **Historical example.** Image/configuration details may be obsolete and are
-> non-normative; see the [history index](../docs/history/README.md). This
+> non-normative; see the [project changelog](../CHANGELOG.md). This
 > transcript reflects the 1.0.0 run; its model rows are historical and may
 > differ from the current defaults in the [configuration reference](../docs/configuration.md).
 >
