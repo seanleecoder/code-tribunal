@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -22,11 +23,11 @@ PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 RIPGREP_PIN = ROOT / "ai-review/images/ripgrep.pin"
+LYCHEE_PIN = ROOT / "ai-review/images/lychee.pin"
+MARKDOWN_LINK_CHECKER = ROOT / "scripts/check_markdown_links.py"
 
 LYCHEE_VERSION = "0.24.2"
-LYCHEE_LINUX_ARCHIVE_SHA256 = (
-    "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
-)
+LYCHEE_LINUX_ARCHIVE_SHA256 = "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
@@ -40,6 +41,7 @@ APPROVED_ACTION_PINS = {
     ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
     ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
     ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
+    ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"): "v6.1.0",
 }
 
 IMAGE_PIN_KEYS = (
@@ -147,24 +149,45 @@ def _workflow_structure_issues(text: str) -> list[str]:
     return issues
 
 
-def _ci_lychee_pin_issues(text: str) -> list[str]:
-    """Bind the CI download URL and checksum to the reviewed Lychee release."""
+def _lychee_pin_issues(pin_text: str, checker_text: str | None) -> list[str]:
+    """Validate the shipped pin and, in a checkout, its one script authority."""
     issues: list[str] = []
-    expected_lines = (
-        f'LYCHEE_VERSION: "{LYCHEE_VERSION}"',
-        f'LYCHEE_LINUX_ARCHIVE_SHA256: "{LYCHEE_LINUX_ARCHIVE_SHA256}"',
-    )
-    for line in expected_lines:
-        if line not in text:
-            issues.append(f"CI Lychee pin must contain {line}")
-    if "lychee-v${LYCHEE_VERSION}" not in text:
-        issues.append("CI Lychee download URL must use LYCHEE_VERSION")
-    if "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" not in text:
-        issues.append("CI Lychee archive verification must use its pinned checksum")
-    if '--strip-components=1 "${directory}/lychee"' not in text:
-        issues.append("CI Lychee extraction must select the binary from its archive directory")
-    if "lychee --offline --include-fragments=anchor-only" not in text:
-        issues.append("CI Lychee invocation must check local anchor fragments offline")
+    expected = {
+        "version": LYCHEE_VERSION,
+        "url": (
+            "https://github.com/lycheeverse/lychee/releases/download/"
+            f"lychee-v{LYCHEE_VERSION}/lychee-x86_64-unknown-linux-musl.tar.gz"
+        ),
+        "sha256": LYCHEE_LINUX_ARCHIVE_SHA256,
+    }
+    fields: dict[str, str] = {}
+    for line in pin_text.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key in fields:
+            issues.append(f"lychee.pin has invalid line {line!r}")
+            continue
+        fields[key] = value
+    if fields != expected:
+        issues.append("lychee.pin must contain the reviewed version, Linux URL, and SHA-256")
+    if checker_text is not None:
+        tree = ast.parse(checker_text)
+        pin_path_is_exact = any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PIN_PATH" for target in node.targets
+            )
+            and isinstance(node.value, ast.BinOp)
+            and isinstance(node.value.op, ast.Div)
+            and isinstance(node.value.left, ast.Name)
+            and node.value.left.id == "ROOT"
+            and isinstance(node.value.right, ast.Constant)
+            and node.value.right.value == "ai-review/images/lychee.pin"
+            for node in ast.walk(tree)
+        )
+        if not pin_path_is_exact:
+            issues.append(
+                "check_markdown_links.py PIN_PATH must resolve ai-review/images/lychee.pin"
+            )
     return issues
 
 
@@ -443,9 +466,7 @@ def _ripgrep_runtime_guard_issues(reviewer: str) -> list[str]:
     exact resolution the adapter will perform at review time.
     """
     issues: list[str] = []
-    if not re.search(
-        r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer
-    ):
+    if not re.search(r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer):
         issues.append(
             "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c"
         )
@@ -480,11 +501,11 @@ def main() -> int:
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text
-    ci_workflow = shipped_workflows.get(CI_WORKFLOW)
-    if ci_workflow is not None:
-        for issue in _ci_lychee_pin_issues(ci_workflow):
-            error(issue)
-            failures += 1
+    lychee_pin = _read(LYCHEE_PIN)
+    markdown_link_checker = _read_optional(MARKDOWN_LINK_CHECKER)
+    for issue in _lychee_pin_issues(lychee_pin, markdown_link_checker):
+        error(issue)
+        failures += 1
     canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
     for issue in _github_review_container_issues(canonical_review_workflow):
         error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
@@ -557,9 +578,7 @@ def main() -> int:
     for issue in _ripgrep_pin_issues(ripgrep_pin, pinned_opencode):
         error(issue)
         failures += 1
-    if not re.search(
-        r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M
-    ):
+    if not re.search(r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M):
         error("reviewer.Dockerfile must copy the pinned ripgrep to /usr/local/bin/rg")
         failures += 1
     for issue in _ripgrep_stage_issues(reviewer):

@@ -22,29 +22,25 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_current_tree_passes(self) -> None:
         self.assertEqual(check_supply_chain_pins.main(), 0)
 
-    def test_ci_lychee_version_and_linux_checksum_are_one_pin(self) -> None:
-        workflow = check_supply_chain_pins.CI_WORKFLOW.read_text(encoding="utf-8")
-        self.assertEqual(check_supply_chain_pins._ci_lychee_pin_issues(workflow), [])
+    def test_shipped_lychee_pin_and_checker_path_are_one_authority(self) -> None:
+        pin = check_supply_chain_pins.LYCHEE_PIN.read_text(encoding="utf-8")
+        checker = check_supply_chain_pins.MARKDOWN_LINK_CHECKER.read_text(encoding="utf-8")
+        self.assertEqual(check_supply_chain_pins._lychee_pin_issues(pin, checker), [])
         for old, replacement in (
-            ('LYCHEE_VERSION: "0.24.2"', 'LYCHEE_VERSION: "0.24.1"'),
+            ("version=0.24.2", "version=0.24.1"),
+            (check_supply_chain_pins.LYCHEE_LINUX_ARCHIVE_SHA256, "0" * 64),
             (
-                check_supply_chain_pins.LYCHEE_LINUX_ARCHIVE_SHA256,
-                "0" * 64,
-            ),
-            (
-                "lychee --offline --include-fragments=anchor-only",
-                "lychee --offline --include-fragments=none",
-            ),
-            (
-                '--strip-components=1 "${directory}/lychee"',
-                '"${directory}/missing"',
+                'PIN_PATH = ROOT / "ai-review/images/lychee.pin"',
+                'PIN_PATH = ROOT / "other/lychee.pin"',
             ),
         ):
             with self.subTest(old=old):
+                mutated_pin = pin.replace(old, replacement, 1) if old in pin else pin
+                mutated_checker = (
+                    checker.replace(old, replacement, 1) if old in checker else checker
+                )
                 self.assertTrue(
-                    check_supply_chain_pins._ci_lychee_pin_issues(
-                        workflow.replace(old, replacement, 1)
-                    )
+                    check_supply_chain_pins._lychee_pin_issues(mutated_pin, mutated_checker)
                 )
 
     def test_detects_reviewer_base_digest_drift(self) -> None:
@@ -217,9 +213,9 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         "    . ./ripgrep.pin; \\\n"
         '    if [ "$sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
         '    if [ "$binary_sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
-        "    curl -fL \"$url\" -o ripgrep.tar.gz; \\\n"
-        "    echo \"$sha256  ripgrep.tar.gz\" | sha256sum -c -; \\\n"
-        "    echo \"$binary_sha256  /opt/ripgrep/rg\" | sha256sum -c -;\n"
+        '    curl -fL "$url" -o ripgrep.tar.gz; \\\n'
+        '    echo "$sha256  ripgrep.tar.gz" | sha256sum -c -; \\\n'
+        '    echo "$binary_sha256  /opt/ripgrep/rg" | sha256sum -c -;\n'
         "FROM ${AI_REVIEW_BASE_IMAGE}\n"
     )
 
@@ -261,19 +257,11 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             "sha256=not-a-sha\n"
             "binary_sha256=also-not-a-sha\n"
         )
-        self.assertIn(
-            "ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest", issues
-        )
+        self.assertIn("ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest", issues)
         self.assertIn("ripgrep.pin version must be an exact ripgrep version", issues)
-        self.assertIn(
-            "ripgrep.pin url must contain the pinned version", issues
-        )
-        self.assertIn(
-            "ripgrep.pin url must use the upstream ripgrep release download host", issues
-        )
-        self.assertIn(
-            "ripgrep.pin sha256 must be a lowercase SHA-256 hex digest", issues
-        )
+        self.assertIn("ripgrep.pin url must contain the pinned version", issues)
+        self.assertIn("ripgrep.pin url must use the upstream ripgrep release download host", issues)
+        self.assertIn("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest", issues)
 
     def test_detects_zero_ripgrep_pin_placeholder(self) -> None:
         self.assertIn(
@@ -321,9 +309,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         self.assertIn(
             "ripgrep.pin missing binary_sha256",
             self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(
-                    f"binary_sha256={self._RIPGREP_BINARY_SHA}\n", ""
-                )
+                self._RIPGREP_PIN_OK.replace(f"binary_sha256={self._RIPGREP_BINARY_SHA}\n", "")
             ),
         )
 
@@ -340,9 +326,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         )
 
     def test_ripgrep_stage_requires_verify_stage(self) -> None:
-        issues = check_supply_chain_pins._ripgrep_stage_issues(
-            "FROM ${AI_REVIEW_BASE_IMAGE}\n"
-        )
+        issues = check_supply_chain_pins._ripgrep_stage_issues("FROM ${AI_REVIEW_BASE_IMAGE}\n")
         self.assertIn(
             "reviewer.Dockerfile must build the pinned ripgrep in a ripgrep-bin stage",
             issues,
@@ -466,8 +450,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "review.github-actions.yml"
             mutated.write_text(
-                original.read_text(encoding="utf-8")
-                + "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n",
+                original.read_text(encoding="utf-8") + "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n",
                 encoding="utf-8",
             )
             check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
@@ -620,7 +603,6 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 self.assertEqual(check_supply_chain_pins.main(), 0)
             finally:
                 check_supply_chain_pins.CI_WORKFLOW = original
-
 
     def test_script_imports_only_the_standard_library(self) -> None:
         """The script ships inside the base image and must stay stdlib-only.

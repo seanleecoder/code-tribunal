@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -37,12 +38,8 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
 
-# Resolved once: a subprocess per release note per run would be wasteful, and the
-# answer cannot change mid-run.
-_TAGS_RESOLVABLE = any_tags_resolvable(ROOT)
 
-
-def _is_released_note(path: Path) -> bool:
+def _is_released_note(path: Path, *, tags_resolvable: bool) -> bool:
     """A *published* release note, pinned byte-identical to its tag.
 
     These are excluded from the checks below, because a released note describes
@@ -68,12 +65,13 @@ def _is_released_note(path: Path) -> bool:
     """
     if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
         return False
-    if not _TAGS_RESOLVABLE:
+    if not tags_resolvable:
         return True
     return tag_exists(f"v{path.stem}", ROOT)
 
 
-def _tracked_markdown() -> tuple[Path, ...]:
+def _markdown_inventories() -> dict[str, tuple[Path, ...]]:
+    """Partition tracked Markdown with one file query and one tag query."""
     completed = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--", "*.md"],
         cwd=ROOT,
@@ -82,21 +80,26 @@ def _tracked_markdown() -> tuple[Path, ...]:
     )
     if completed.returncode != 0:
         raise RuntimeError("git ls-files failed while inventorying current Markdown")
-    return tuple(
+    tracked = tuple(
         ROOT / relative.decode("utf-8")
         for relative in completed.stdout.split(b"\0")
         if relative and (ROOT / relative.decode("utf-8")).is_file()
     )
+    tags_resolvable = any_tags_resolvable(ROOT)
+    released = tuple(
+        path for path in tracked if _is_released_note(path, tags_resolvable=tags_resolvable)
+    )
+    link_checked = tuple(path for path in tracked if path not in released)
+    current = tuple(path for path in link_checked if "archive" not in path.parts)
+    return {"current": current, "link-checked": link_checked, "released": released}
 
 
-_TRACKED_MARKDOWN = _tracked_markdown()
-RELEASED_MARKDOWN = tuple(path for path in _TRACKED_MARKDOWN if _is_released_note(path))
-LINK_CHECKED_MARKDOWN = tuple(
-    path for path in _TRACKED_MARKDOWN if not _is_released_note(path)
-)
-CURRENT_MARKDOWN = tuple(
-    path for path in LINK_CHECKED_MARKDOWN if "archive" not in path.parts
-)
+def markdown_inventory(scope: str) -> tuple[Path, ...]:
+    try:
+        return _markdown_inventories()[scope]
+    except KeyError:
+        raise ValueError(f"unknown Markdown inventory scope: {scope}") from None
+
 
 SOURCE_ENV_PATHS = (
     ROOT / "ai-review/src",
@@ -405,7 +408,7 @@ def _release_state_issues() -> list[str]:
 
 def find_issues() -> list[str]:
     issues: list[str] = []
-    for path in CURRENT_MARKDOWN:
+    for path in markdown_inventory("current"):
         text = path.read_text(encoding="utf-8")
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
@@ -420,7 +423,18 @@ def find_issues() -> list[str]:
     return issues
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    list_markdown = subparsers.add_parser("list-markdown")
+    list_markdown.add_argument(
+        "--scope", choices=("current", "link-checked", "released"), required=True
+    )
+    args = parser.parse_args(argv)
+    if args.command == "list-markdown":
+        for path in markdown_inventory(args.scope):
+            print(path.relative_to(ROOT).as_posix())
+        return 0
     issues = find_issues()
     for issue in issues:
         print(f"ERROR: {issue}", file=sys.stderr)

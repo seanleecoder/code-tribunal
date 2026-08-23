@@ -6,6 +6,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.support.repository_script import load_repository_script
 
@@ -23,13 +24,17 @@ def _load_docs_checker():
     "repository-only documentation checker is absent from the runtime image",
 )
 class DocumentationContractTests(unittest.TestCase):
+    def test_import_does_not_query_git(self) -> None:
+        with mock.patch("subprocess.run") as run:
+            load_repository_script("check_docs_without_git", _DOCS_CHECK)
+        run.assert_not_called()
+
     def test_markdown_inventories_separate_current_archive_and_released_notes(self) -> None:
         checker = _load_docs_checker()
-        current = {path.relative_to(checker.ROOT).as_posix() for path in checker.CURRENT_MARKDOWN}
-        linked = {
-            path.relative_to(checker.ROOT).as_posix() for path in checker.LINK_CHECKED_MARKDOWN
-        }
-        released = {path.relative_to(checker.ROOT).as_posix() for path in checker.RELEASED_MARKDOWN}
+        inventories = checker._markdown_inventories()
+        current = {path.relative_to(checker.ROOT).as_posix() for path in inventories["current"]}
+        linked = {path.relative_to(checker.ROOT).as_posix() for path in inventories["link-checked"]}
+        released = {path.relative_to(checker.ROOT).as_posix() for path in inventories["released"]}
 
         self.assertIn("release/TEMPLATE.md", current)
         self.assertIn("release/TEMPLATE.md", linked)
@@ -40,18 +45,13 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertFalse(any(path.startswith("archive/") for path in current))
         self.assertFalse(any("site-packages" in path for path in linked | released))
 
-    def test_ci_uses_both_link_inventories_and_protects_frozen_notes(self) -> None:
+    def test_ci_caches_and_installs_the_shipped_link_checker_pin(self) -> None:
         workflow = _CI_WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("from scripts.check_docs import LINK_CHECKED_MARKDOWN, ROOT", workflow)
-        self.assertIn("from scripts.check_docs import RELEASED_MARKDOWN, ROOT", workflow)
-        self.assertIn("--include-fragments=anchor-only", workflow)
-        self.assertIn("--include-fragments=none", workflow)
-        self.assertIn("--exclude 'spec-21-cursor-cli-reviewer\\.md.*'", workflow)
-        self.assertIn(
-            "Tagged release notes are immutable; restore missing link targets",
-            workflow,
-        )
+        self.assertIn("actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", workflow)
+        self.assertIn("scripts/check_markdown_links.py install", workflow)
+        self.assertNotIn("LYCHEE_VERSION", workflow)
+        self.assertNotIn("python -c 'from scripts.check_docs", workflow)
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
@@ -374,25 +374,23 @@ class DocumentationContractTests(unittest.TestCase):
         broken link passed both this checker and the byte guard.
         """
         checker = _load_docs_checker()
-        original_root, original_resolvable = checker.ROOT, checker._TAGS_RESOLVABLE
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            (root / "release").mkdir()
-            checker.ROOT = root
-            try:
-                checker._TAGS_RESOLVABLE = True
-                # 1.0.1 is tagged in this repository; 9.9.9 never will be.
-                checker.ROOT = original_root
-                self.assertTrue(checker._is_released_note(original_root / "release/1.0.1.md"))
-                self.assertFalse(checker._is_released_note(original_root / "release/9.9.9.md"))
-                self.assertFalse(checker._is_released_note(original_root / "release/TEMPLATE.md"))
-
-                # With no tags resolvable, every note is frozen: a shallow clone
-                # must not start failing on links that are correct at their tag.
-                checker._TAGS_RESOLVABLE = False
-                self.assertTrue(checker._is_released_note(original_root / "release/9.9.9.md"))
-            finally:
-                checker.ROOT, checker._TAGS_RESOLVABLE = original_root, original_resolvable
+        with mock.patch.object(
+            checker, "tag_exists", side_effect=lambda tag, _root: tag == "v1.0.1"
+        ):
+            self.assertTrue(
+                checker._is_released_note(checker.ROOT / "release/1.0.1.md", tags_resolvable=True)
+            )
+            self.assertFalse(
+                checker._is_released_note(checker.ROOT / "release/9.9.9.md", tags_resolvable=True)
+            )
+            self.assertFalse(
+                checker._is_released_note(
+                    checker.ROOT / "release/TEMPLATE.md", tags_resolvable=True
+                )
+            )
+        self.assertTrue(
+            checker._is_released_note(checker.ROOT / "release/9.9.9.md", tags_resolvable=False)
+        )
 
     def test_every_documented_cli_command_resolves(self) -> None:
         """Each command in the CLI reference must name something that exists.

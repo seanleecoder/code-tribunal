@@ -22,6 +22,7 @@ workflow-parity:
 
 docs-check:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_markdown_links.py
 
 test:
 	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \
