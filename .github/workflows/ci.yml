@@ -41,12 +41,27 @@ jobs:
           echo "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" | sha256sum -c -
           tar -xzf "/tmp/${archive}" -C /usr/local/bin \
             --strip-components=1 "${directory}/lychee"
-      - name: Check current Markdown links offline
+      - name: Check tracked Markdown links offline
         shell: bash
         run: |
           set -euo pipefail
-          python -c 'from scripts.check_docs import CURRENT_MARKDOWN, ROOT; print("\n".join(str(path.relative_to(ROOT)) for path in CURRENT_MARKDOWN))' > /tmp/lychee-inputs
+          python -c 'from scripts.check_docs import LINK_CHECKED_MARKDOWN, ROOT; print("\n".join(str(path.relative_to(ROOT)) for path in LINK_CHECKED_MARKDOWN))' > /tmp/lychee-inputs
           lychee --offline --include-fragments=anchor-only --no-progress \
             --files-from /tmp/lychee-inputs
+      - name: Check immutable release-note targets offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'from scripts.check_docs import RELEASED_MARKDOWN, ROOT; print("\n".join(str(path.relative_to(ROOT)) for path in RELEASED_MARKDOWN))' > /tmp/lychee-release-inputs
+          # release/1.0.1.md has one pre-existing link to the completed and
+          # deleted SPEC-21. The note is tag-pinned and the obsolete spec must
+          # not be restored as current documentation; grandfather that exact
+          # destination while preventing any new frozen-note target break.
+          if ! lychee --offline --include-fragments=none --no-progress \
+            --exclude 'spec-21-cursor-cli-reviewer\.md.*' \
+            --files-from /tmp/lychee-release-inputs; then
+            echo "::error::Tagged release notes are immutable; restore missing link targets rather than editing the notes."
+            exit 1
+          fi
       - name: Quality gates
         run: make quality

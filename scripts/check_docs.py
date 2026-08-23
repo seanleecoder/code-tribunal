@@ -89,10 +89,13 @@ def _tracked_markdown() -> tuple[Path, ...]:
     )
 
 
+_TRACKED_MARKDOWN = _tracked_markdown()
+RELEASED_MARKDOWN = tuple(path for path in _TRACKED_MARKDOWN if _is_released_note(path))
+LINK_CHECKED_MARKDOWN = tuple(
+    path for path in _TRACKED_MARKDOWN if not _is_released_note(path)
+)
 CURRENT_MARKDOWN = tuple(
-    path
-    for path in _tracked_markdown()
-    if "archive" not in path.parts and not _is_released_note(path)
+    path for path in LINK_CHECKED_MARKDOWN if "archive" not in path.parts
 )
 
 SOURCE_ENV_PATHS = (

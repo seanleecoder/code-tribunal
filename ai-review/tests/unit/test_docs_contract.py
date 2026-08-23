@@ -10,6 +10,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
+_CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _load_docs_checker():
@@ -26,12 +27,41 @@ def _load_docs_checker():
     "repository-only documentation checker is absent from the runtime image",
 )
 class DocumentationContractTests(unittest.TestCase):
-    def test_current_markdown_excludes_ignored_untracked_and_archive_paths(self) -> None:
+    def test_markdown_inventories_separate_current_archive_and_released_notes(self) -> None:
         checker = _load_docs_checker()
-        relative = {path.relative_to(checker.ROOT).as_posix() for path in checker.CURRENT_MARKDOWN}
-        self.assertIn("release/TEMPLATE.md", relative)
-        self.assertFalse(any(path.startswith("archive/") for path in relative))
-        self.assertFalse(any("site-packages" in path for path in relative))
+        current = {
+            path.relative_to(checker.ROOT).as_posix() for path in checker.CURRENT_MARKDOWN
+        }
+        linked = {
+            path.relative_to(checker.ROOT).as_posix()
+            for path in checker.LINK_CHECKED_MARKDOWN
+        }
+        released = {
+            path.relative_to(checker.ROOT).as_posix()
+            for path in checker.RELEASED_MARKDOWN
+        }
+
+        self.assertIn("release/TEMPLATE.md", current)
+        self.assertIn("release/TEMPLATE.md", linked)
+        self.assertNotIn("release/TEMPLATE.md", released)
+        self.assertIn("release/1.0.0.md", released)
+        self.assertNotIn("release/1.0.0.md", linked)
+        self.assertTrue(any(path.startswith("archive/") for path in linked))
+        self.assertFalse(any(path.startswith("archive/") for path in current))
+        self.assertFalse(any("site-packages" in path for path in linked | released))
+
+    def test_ci_uses_both_link_inventories_and_protects_frozen_notes(self) -> None:
+        workflow = _CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("from scripts.check_docs import LINK_CHECKED_MARKDOWN, ROOT", workflow)
+        self.assertIn("from scripts.check_docs import RELEASED_MARKDOWN, ROOT", workflow)
+        self.assertIn("--include-fragments=anchor-only", workflow)
+        self.assertIn("--include-fragments=none", workflow)
+        self.assertIn("--exclude 'spec-21-cursor-cli-reviewer\\.md.*'", workflow)
+        self.assertIn(
+            "Tagged release notes are immutable; restore missing link targets",
+            workflow,
+        )
 
     def test_inventory_reports_missing_duplicate_and_orphan_rows(self) -> None:
         checker = _load_docs_checker()
