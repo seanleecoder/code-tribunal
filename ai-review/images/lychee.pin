@@ -1,3 +1,15 @@
+# Markdown links are checked by the exact Lychee release used in CI and local
+# contributor gates. Keep native archives here so supported development
+# platforms install the same reviewed version without compiling source through
+# an unverified cargo dependency path.
+#
+# scripts/check_supply_chain_pins.py independently carries these reviewed
+# filenames and digests. A version or platform update must change both
+# authorities in the same reviewed commit.
 version=0.24.2
-url=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-musl.tar.gz
-sha256=73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5
+linux_x86_64_url=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-musl.tar.gz
+linux_x86_64_sha256=73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5
+darwin_aarch64_url=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-aarch64-apple-darwin.tar.gz
+darwin_aarch64_sha256=c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977
+darwin_x86_64_url=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-apple-darwin.tar.gz
+darwin_x86_64_sha256=887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978

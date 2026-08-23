@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,12 +62,13 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
         ):
             self.checker.check_links(lychee=Path("lychee"))
 
-    def test_missing_tool_names_exact_install_command(self) -> None:
+    def test_missing_tool_names_verified_install_command(self) -> None:
         with (
             mock.patch.object(self.checker.shutil, "which", return_value=None),
             self.assertRaisesRegex(
                 self.checker.LinkCheckError,
-                r"cargo install lychee --version 0\.24\.2 --locked",
+                r"python3 scripts/check_markdown_links\.py install "
+                r"--cache-dir \.venv/lychee-cache --bin-dir \.venv/bin",
             ),
         ):
             self.checker.check_links()
@@ -77,8 +80,63 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
             cache.mkdir()
             archive = cache / "lychee-x86_64-unknown-linux-musl.tar.gz"
             archive.write_bytes(b"not the reviewed archive")
-            with self.assertRaisesRegex(self.checker.LinkCheckError, "checksum mismatch"):
+            with (
+                mock.patch.object(
+                    self.checker,
+                    "_selected_archive",
+                    return_value=(f"https://example.test/{archive.name}", "0" * 64),
+                ),
+                self.assertRaisesRegex(self.checker.LinkCheckError, "checksum mismatch"),
+            ):
                 self.checker.install_pinned_lychee(cache_dir=cache, bin_dir=root / "bin")
+
+    def test_platform_selection_covers_supported_native_archives(self) -> None:
+        pin = self.checker.load_pin()
+        for system, machine, target in (
+            ("linux", "AMD64", "linux_x86_64"),
+            ("darwin", "arm64", "darwin_aarch64"),
+            ("darwin", "x86_64", "darwin_x86_64"),
+        ):
+            with self.subTest(system=system, machine=machine):
+                self.assertEqual(
+                    self.checker._selected_archive(pin, system=system, machine=machine),
+                    (pin[f"{target}_url"], pin[f"{target}_sha256"]),
+                )
+
+        with self.assertRaisesRegex(self.checker.LinkCheckError, "no pinned archive"):
+            self.checker._selected_archive(pin, system="win32", machine="AMD64")
+
+    def test_pin_parser_accepts_comments_and_rejects_unknown_fields(self) -> None:
+        shipped = self.checker.PIN_PATH.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            pin = Path(tmp) / "lychee.pin"
+            pin.write_text(f"\n# local rationale\n{shipped}", encoding="utf-8")
+            self.assertEqual(self.checker.load_pin(pin), self.checker.load_pin())
+            pin.write_text(f"{shipped}\nunknown=value\n", encoding="utf-8")
+            with self.assertRaisesRegex(self.checker.LinkCheckError, "must contain"):
+                self.checker.load_pin(pin)
+
+    def test_install_derives_binary_member_from_selected_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "cache"
+            cache.mkdir()
+            archive = cache / "lychee-aarch64-apple-darwin.tar.gz"
+            payload = b"native lychee"
+            with tarfile.open(archive, "w:gz") as bundle:
+                member = tarfile.TarInfo("lychee-aarch64-apple-darwin/lychee")
+                member.size = len(payload)
+                bundle.addfile(member, io.BytesIO(payload))
+            expected = self.checker._sha256(archive)
+            with mock.patch.object(
+                self.checker,
+                "_selected_archive",
+                return_value=(f"https://example.test/{archive.name}", expected),
+            ):
+                installed = self.checker.install_pinned_lychee(
+                    cache_dir=cache, bin_dir=root / "bin"
+                )
+            self.assertEqual(installed.read_bytes(), payload)
 
     def test_deliberately_broken_link_fixture_fails_current_documents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

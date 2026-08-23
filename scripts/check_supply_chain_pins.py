@@ -27,7 +27,20 @@ LYCHEE_PIN = ROOT / "ai-review/images/lychee.pin"
 MARKDOWN_LINK_CHECKER = ROOT / "scripts/check_markdown_links.py"
 
 LYCHEE_VERSION = "0.24.2"
-LYCHEE_LINUX_ARCHIVE_SHA256 = "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
+LYCHEE_ARCHIVES = {
+    "linux_x86_64": (
+        "lychee-x86_64-unknown-linux-musl.tar.gz",
+        "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5",
+    ),
+    "darwin_aarch64": (
+        "lychee-aarch64-apple-darwin.tar.gz",
+        "c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977",
+    ),
+    "darwin_x86_64": (
+        "lychee-x86_64-apple-darwin.tar.gz",
+        "887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978",
+    ),
+}
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
@@ -152,23 +165,28 @@ def _workflow_structure_issues(text: str) -> list[str]:
 def _lychee_pin_issues(pin_text: str, checker_text: str | None) -> list[str]:
     """Validate the shipped pin and, in a checkout, its one script authority."""
     issues: list[str] = []
-    expected = {
-        "version": LYCHEE_VERSION,
-        "url": (
-            "https://github.com/lycheeverse/lychee/releases/download/"
-            f"lychee-v{LYCHEE_VERSION}/lychee-x86_64-unknown-linux-musl.tar.gz"
-        ),
-        "sha256": LYCHEE_LINUX_ARCHIVE_SHA256,
-    }
+    release_root = (
+        "https://github.com/lycheeverse/lychee/releases/download/"
+        f"lychee-v{LYCHEE_VERSION}"
+    )
+    expected = {"version": LYCHEE_VERSION}
+    for target, (archive, sha256) in LYCHEE_ARCHIVES.items():
+        expected[f"{target}_url"] = f"{release_root}/{archive}"
+        expected[f"{target}_sha256"] = sha256
     fields: dict[str, str] = {}
-    for line in pin_text.splitlines():
+    for raw_line in pin_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
         key, separator, value = line.partition("=")
-        if not separator or key in fields:
+        if not separator or key in fields or not value:
             issues.append(f"lychee.pin has invalid line {line!r}")
             continue
         fields[key] = value
     if fields != expected:
-        issues.append("lychee.pin must contain the reviewed version, Linux URL, and SHA-256")
+        issues.append(
+            "lychee.pin must contain the reviewed version and platform archive URLs/SHA-256s"
+        )
     if checker_text is not None:
         tree = ast.parse(checker_text)
         pin_path_is_exact = any(

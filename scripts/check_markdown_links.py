@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import platform
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
+
+from check_docs import markdown_inventories
 
 SCRIPTS = Path(__file__).resolve().parent
 ROOT = SCRIPTS.parent
@@ -21,6 +25,13 @@ IMMUTABLE_FAILURE = (
     "Tagged release notes are immutable; restore missing link targets rather than "
     "editing the notes."
 )
+PLATFORMS = ("linux_x86_64", "darwin_aarch64", "darwin_x86_64")
+MACHINE_ALIASES = {
+    "amd64": "x86_64",
+    "arm64": "aarch64",
+    "x86_64": "x86_64",
+    "aarch64": "aarch64",
+}
 
 
 class LinkCheckError(RuntimeError):
@@ -29,18 +40,45 @@ class LinkCheckError(RuntimeError):
 
 def load_pin(path: Path = PIN_PATH) -> dict[str, str]:
     fields: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
         key, separator, value = line.partition("=")
         if not separator or key in fields or not value:
             raise LinkCheckError(f"invalid Lychee pin line: {line!r}")
         fields[key] = value
-    if set(fields) != {"version", "url", "sha256"}:
-        raise LinkCheckError("Lychee pin must contain exactly version, url, and sha256")
-    if len(fields["sha256"]) != 64 or any(
-        character not in "0123456789abcdef" for character in fields["sha256"]
-    ):
-        raise LinkCheckError("Lychee pin sha256 must be 64 lowercase hexadecimal characters")
+    expected = {"version"} | {
+        f"{target}_{suffix}" for target in PLATFORMS for suffix in ("url", "sha256")
+    }
+    if set(fields) != expected:
+        raise LinkCheckError(
+            "Lychee pin must contain version and exact URL/SHA-256 pairs for "
+            + ", ".join(PLATFORMS)
+        )
+    for target in PLATFORMS:
+        sha256 = fields[f"{target}_sha256"]
+        if len(sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in sha256
+        ):
+            raise LinkCheckError(
+                f"Lychee pin {target}_sha256 must be 64 lowercase hexadecimal characters"
+            )
     return fields
+
+
+def _selected_archive(
+    pin: dict[str, str], *, system: str | None = None, machine: str | None = None
+) -> tuple[str, str]:
+    resolved_system = system or sys.platform
+    resolved_machine = (machine or platform.machine()).lower()
+    architecture = MACHINE_ALIASES.get(resolved_machine)
+    target = f"{resolved_system}_{architecture}" if architecture is not None else ""
+    if target not in PLATFORMS:
+        raise LinkCheckError(
+            f"Lychee has no pinned archive for {resolved_system}/{resolved_machine}"
+        )
+    return pin[f"{target}_url"], pin[f"{target}_sha256"]
 
 
 def _sha256(path: Path) -> str:
@@ -53,18 +91,22 @@ def _sha256(path: Path) -> str:
 
 def install_pinned_lychee(*, cache_dir: Path, bin_dir: Path) -> Path:
     pin = load_pin()
+    url, expected_sha256 = _selected_archive(pin)
     cache_dir.mkdir(parents=True, exist_ok=True)
     bin_dir.mkdir(parents=True, exist_ok=True)
-    archive = cache_dir / Path(pin["url"]).name
+    archive_name = Path(urllib.parse.urlparse(url).path).name
+    if not archive_name.endswith(".tar.gz"):
+        raise LinkCheckError(f"Lychee archive URL is not a .tar.gz asset: {url}")
+    archive = cache_dir / archive_name
     if not archive.exists():
-        with urllib.request.urlopen(pin["url"], timeout=60) as response:
+        with urllib.request.urlopen(url, timeout=60) as response:
             archive.write_bytes(response.read())
     actual = _sha256(archive)
-    if actual != pin["sha256"]:
+    if actual != expected_sha256:
         raise LinkCheckError(
-            f"Lychee archive checksum mismatch: expected {pin['sha256']}, got {actual}"
+            f"Lychee archive checksum mismatch: expected {expected_sha256}, got {actual}"
         )
-    expected_member = "lychee-x86_64-unknown-linux-musl/lychee"
+    expected_member = f"{archive_name.removesuffix('.tar.gz')}/lychee"
     with tarfile.open(archive, mode="r:gz") as bundle:
         try:
             member = bundle.getmember(expected_member)
@@ -86,11 +128,9 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _inventories() -> dict[str, tuple[str, ...]]:
-    from check_docs import _markdown_inventories
-
     return {
         scope: tuple(path.relative_to(ROOT).as_posix() for path in paths)
-        for scope, paths in _markdown_inventories().items()
+        for scope, paths in markdown_inventories().items()
     }
 
 
@@ -101,8 +141,9 @@ def _lychee_path(explicit: Path | None) -> Path:
     if resolved is None:
         version = load_pin()["version"]
         raise LinkCheckError(
-            f"Lychee {version} is required; install it with: "
-            f"cargo install lychee --version {version} --locked"
+            f"Lychee {version} is required; install the verified native archive with: "
+            "python3 scripts/check_markdown_links.py install "
+            "--cache-dir .venv/lychee-cache --bin-dir .venv/bin"
         )
     return Path(resolved)
 

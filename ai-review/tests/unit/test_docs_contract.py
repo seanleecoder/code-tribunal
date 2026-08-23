@@ -31,7 +31,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_markdown_inventories_separate_current_archive_and_released_notes(self) -> None:
         checker = _load_docs_checker()
-        inventories = checker._markdown_inventories()
+        inventories = checker.markdown_inventories()
         current = {path.relative_to(checker.ROOT).as_posix() for path in inventories["current"]}
         linked = {path.relative_to(checker.ROOT).as_posix() for path in inventories["link-checked"]}
         released = {path.relative_to(checker.ROOT).as_posix() for path in inventories["released"]}

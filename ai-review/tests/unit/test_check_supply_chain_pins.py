@@ -26,14 +26,22 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         pin = check_supply_chain_pins.LYCHEE_PIN.read_text(encoding="utf-8")
         checker = check_supply_chain_pins.MARKDOWN_LINK_CHECKER.read_text(encoding="utf-8")
         self.assertEqual(check_supply_chain_pins._lychee_pin_issues(pin, checker), [])
-        for old, replacement in (
+        mutations = [
             ("version=0.24.2", "version=0.24.1"),
-            (check_supply_chain_pins.LYCHEE_LINUX_ARCHIVE_SHA256, "0" * 64),
+            *(
+                (sha256, "0" * 64)
+                for _archive, sha256 in check_supply_chain_pins.LYCHEE_ARCHIVES.values()
+            ),
+            *(
+                (archive, f"unexpected-{archive}")
+                for archive, _sha256 in check_supply_chain_pins.LYCHEE_ARCHIVES.values()
+            ),
             (
                 'PIN_PATH = ROOT / "ai-review/images/lychee.pin"',
                 'PIN_PATH = ROOT / "other/lychee.pin"',
             ),
-        ):
+        ]
+        for old, replacement in mutations:
             with self.subTest(old=old):
                 mutated_pin = pin.replace(old, replacement, 1) if old in pin else pin
                 mutated_checker = (

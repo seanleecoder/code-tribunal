@@ -70,7 +70,7 @@ def _is_released_note(path: Path, *, tags_resolvable: bool) -> bool:
     return tag_exists(f"v{path.stem}", ROOT)
 
 
-def _markdown_inventories() -> dict[str, tuple[Path, ...]]:
+def markdown_inventories() -> dict[str, tuple[Path, ...]]:
     """Partition tracked Markdown with one file query and one tag query."""
     completed = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--", "*.md"],
@@ -86,17 +86,26 @@ def _markdown_inventories() -> dict[str, tuple[Path, ...]]:
         if relative and (ROOT / relative.decode("utf-8")).is_file()
     )
     tags_resolvable = any_tags_resolvable(ROOT)
-    released = tuple(
-        path for path in tracked if _is_released_note(path, tags_resolvable=tags_resolvable)
-    )
-    link_checked = tuple(path for path in tracked if path not in released)
+    released: list[Path] = []
+    link_checked: list[Path] = []
+    for path in tracked:
+        destination = (
+            released
+            if _is_released_note(path, tags_resolvable=tags_resolvable)
+            else link_checked
+        )
+        destination.append(path)
     current = tuple(path for path in link_checked if "archive" not in path.parts)
-    return {"current": current, "link-checked": link_checked, "released": released}
+    return {
+        "current": current,
+        "link-checked": tuple(link_checked),
+        "released": tuple(released),
+    }
 
 
 def markdown_inventory(scope: str) -> tuple[Path, ...]:
     try:
-        return _markdown_inventories()[scope]
+        return markdown_inventories()[scope]
     except KeyError:
         raise ValueError(f"unknown Markdown inventory scope: {scope}") from None
 

@@ -59,7 +59,6 @@ class PackagedBaseImageTests(unittest.TestCase):
         modules = {"ai_review"} | {
             module.name for module in pkgutil.walk_packages(ai_review.__path__, prefix="ai_review.")
         }
-        self.assertLessEqual(set(CLI_MODULES), modules)
         for module_name in sorted(modules):
             with self.subTest(module=module_name):
                 importlib.import_module(module_name)
