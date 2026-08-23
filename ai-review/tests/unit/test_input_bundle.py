@@ -215,6 +215,11 @@ class InputBundleLimitTests(unittest.TestCase):
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=MovingVersionClient(),
             ),
+            mock.patch("ai_review.input_bundle.shutil.copy2"),
+            mock.patch("ai_review.input_bundle.shutil.copytree"),
+            mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
+            mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),
+            mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "version changed during diff collection"),
         ):
             prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir))
