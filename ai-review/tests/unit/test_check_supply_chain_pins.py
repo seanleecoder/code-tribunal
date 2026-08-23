@@ -35,6 +35,10 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 "lychee --offline --include-fragments=anchor-only",
                 "lychee --offline --include-fragments=none",
             ),
+            (
+                '--strip-components=1 "${directory}/lychee"',
+                '"${directory}/missing"',
+            ),
         ):
             with self.subTest(old=old):
                 self.assertTrue(

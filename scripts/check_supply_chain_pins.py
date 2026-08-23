@@ -161,6 +161,8 @@ def _ci_lychee_pin_issues(text: str) -> list[str]:
         issues.append("CI Lychee download URL must use LYCHEE_VERSION")
     if "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" not in text:
         issues.append("CI Lychee archive verification must use its pinned checksum")
+    if '--strip-components=1 "${directory}/lychee"' not in text:
+        issues.append("CI Lychee extraction must select the binary from its archive directory")
     if "lychee --offline --include-fragments=anchor-only" not in text:
         issues.append("CI Lychee invocation must check local anchor fragments offline")
     return issues

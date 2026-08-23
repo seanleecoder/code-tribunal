@@ -34,11 +34,13 @@ jobs:
         run: |
           set -euo pipefail
           archive="lychee-x86_64-unknown-linux-musl.tar.gz"
+          directory="${archive%.tar.gz}"
           curl -fL \
             "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/${archive}" \
             -o "/tmp/${archive}"
           echo "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" | sha256sum -c -
-          tar -xzf "/tmp/${archive}" -C /usr/local/bin lychee
+          tar -xzf "/tmp/${archive}" -C /usr/local/bin \
+            --strip-components=1 "${directory}/lychee"
       - name: Check current Markdown links offline
         shell: bash
         run: |
