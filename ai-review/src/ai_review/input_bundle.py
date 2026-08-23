@@ -363,6 +363,22 @@ def _directory_sha256(path: Path) -> str:
     return sha256_hex(b"".join(digest_parts))
 
 
+def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
+    """Publish a complete staged bundle, with the manifest as the final file."""
+    manifest_source = staging_path / "manifest.json"
+    manifest_destination = out_path / "manifest.json"
+    manifest_destination.unlink(missing_ok=True)
+    for source in sorted(staging_path.iterdir()):
+        if source == manifest_source:
+            continue
+        destination = out_path / source.name
+        if source.is_dir() and destination.exists():
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+        else:
+            source.replace(destination)
+    manifest_source.replace(manifest_destination)
+
+
 def _prepare_bound_bundle(
     bound: _BoundRevision,
     *,
@@ -373,55 +389,68 @@ def _prepare_bound_bundle(
     """Build every input bundle through the same revision-bound artifact path."""
     diff_text = bound.diff_bytes.decode("utf-8")
     _enforce_diff_limits(diff_text, config_dict)
+    out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
-    (out_path / "mr.diff").write_bytes(bound.diff_bytes)
-    shutil.copy2(config_path, out_path / "config.review.yaml")
+    try:
+        with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
+            staging_path = Path(staging)
+            (staging_path / "mr.diff").write_bytes(bound.diff_bytes)
+            shutil.copy2(config_path, staging_path / "config.review.yaml")
 
-    source_rules = config_path.parent.parent / "rules"
-    source_prompts = config_path.parent.parent / "prompts"
-    shutil.copytree(source_rules, out_path / "rules", dirs_exist_ok=True)
-    shutil.copytree(source_prompts, out_path / "prompts", dirs_exist_ok=True)
+            source_rules = config_path.parent.parent / "rules"
+            source_prompts = config_path.parent.parent / "prompts"
+            shutil.copytree(source_rules, staging_path / "rules", dirs_exist_ok=True)
+            shutil.copytree(source_prompts, staging_path / "prompts", dirs_exist_ok=True)
 
-    snapshot_dir = out_path / "repo_snapshot"
-    copy_repo_snapshot(
-        bound.snapshot_source,
-        snapshot_dir,
-        ignore_top_level_names={out_path.name},
-    )
+            snapshot_dir = staging_path / "repo_snapshot"
+            copy_repo_snapshot(
+                bound.snapshot_source,
+                snapshot_dir,
+                ignore_top_level_names={out_path.name},
+            )
 
-    state = empty_state(
-        project_id=bound.project_id,
-        merge_request_iid=bound.change_id,
-        head_sha=bound.head_sha,
-        pipeline_id=bound.state_pipeline_id,
-    )
-    if bound.load_state is not None:
-        state = bound.load_state(state)
-    write_canonical_json(out_path / "prior_decisions.json", prior_decisions_from_state(state))
-    write_canonical_json(out_path / "state_aliases.json", state_aliases_from_state(state))
+            state = empty_state(
+                project_id=bound.project_id,
+                merge_request_iid=bound.change_id,
+                head_sha=bound.head_sha,
+                pipeline_id=bound.state_pipeline_id,
+            )
+            if bound.load_state is not None:
+                state = bound.load_state(state)
+            write_canonical_json(
+                staging_path / "prior_decisions.json", prior_decisions_from_state(state)
+            )
+            write_canonical_json(
+                staging_path / "state_aliases.json", state_aliases_from_state(state)
+            )
 
-    manifest = {
-        "schema_version": "input_manifest.v1",
-        "run_id": bound.run_id,
-        "project_id": bound.project_id,
-        "project_path": bound.project_path,
-        "merge_request_iid": bound.change_id,
-        "source_branch": bound.source_branch,
-        "target_branch": bound.target_branch,
-        "base_sha": bound.base_sha,
-        "start_sha": bound.start_sha,
-        "head_sha": bound.head_sha,
-        **bound.manifest_extensions,
-        "diff_sha256": sha256_hex(bound.diff_bytes),
-        "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-        "config_sha256": _file_sha256(config_path),
-        "rules_sha256": _directory_sha256(source_rules),
-        "effective_config": effective_config_summary(config_dict),
-        "effective_config_sha256": effective_config_digest(config_dict),
-        "created_at": now_iso(),
-    }
-    bound.revalidate()
-    write_canonical_json(out_path / "manifest.json", manifest)
+            manifest = {
+                "schema_version": "input_manifest.v1",
+                "run_id": bound.run_id,
+                "project_id": bound.project_id,
+                "project_path": bound.project_path,
+                "merge_request_iid": bound.change_id,
+                "source_branch": bound.source_branch,
+                "target_branch": bound.target_branch,
+                "base_sha": bound.base_sha,
+                "start_sha": bound.start_sha,
+                "head_sha": bound.head_sha,
+                **bound.manifest_extensions,
+                "diff_sha256": sha256_hex(bound.diff_bytes),
+                "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
+                "config_sha256": _file_sha256(config_path),
+                "rules_sha256": _directory_sha256(source_rules),
+                "effective_config": effective_config_summary(config_dict),
+                "effective_config_sha256": effective_config_digest(config_dict),
+                "created_at": now_iso(),
+            }
+            bound.revalidate()
+            write_canonical_json(staging_path / "manifest.json", manifest)
+            _publish_staged_bundle(staging_path, out_path)
+    except Exception:
+        if out_created:
+            shutil.rmtree(out_path)
+        raise
     return out_path
 
 

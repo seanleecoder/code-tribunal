@@ -800,7 +800,25 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             out = Path(tmpdir) / "inputs"
             with self.assertRaisesRegex(BundleError, "manifest finalization"):
                 self._prepare_with_versions(tmpdir, [initial, initial, changed])
-            self.assertFalse((out / "manifest.json").exists())
+            self.assertFalse(out.exists())
+
+    def test_manifest_revalidation_failure_preserves_preexisting_output(self) -> None:
+        initial = self._pull_request()
+        changed = self._pull_request()
+        changed["head"] = {
+            "ref": "feature",
+            "sha": "2" * 40,
+            "repo": {"full_name": "octo/repo"},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "inputs"
+            out.mkdir()
+            marker = out / "user-owned.txt"
+            marker.write_text("keep\n", encoding="utf-8")
+            with self.assertRaisesRegex(BundleError, "manifest finalization"):
+                self._prepare_with_versions(tmpdir, [initial, initial, changed])
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep\n")
+            self.assertEqual(list(out.iterdir()), [marker])
 
     def test_oversized_raw_diff_error_fails_closed(self) -> None:
         initial = self._pull_request()
@@ -1175,7 +1193,8 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
-            self.assertEqual(snap.call_args.args[1], out / "repo_snapshot")
+            self.assertEqual(snap.call_args.args[1].name, "repo_snapshot")
+            self.assertEqual(snap.call_args.args[1].parent.parent, out)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
@@ -1207,7 +1226,8 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
-            self.assertEqual(snap.call_args.args[1], out / "repo_snapshot")
+            self.assertEqual(snap.call_args.args[1].name, "repo_snapshot")
+            self.assertEqual(snap.call_args.args[1].parent.parent, out)
             self.assertEqual(gitlab_client.fetch_version_calls, 2)
 
 
