@@ -111,7 +111,7 @@ finding reached two independent supporters, so every one of them is FYI.
 
 Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. Current
 repository-level live evidence and its limits are recorded in
-[history](../history/README.md).
+the [evidence index](../evidence/README.md).
 
 ## Update or roll back
 

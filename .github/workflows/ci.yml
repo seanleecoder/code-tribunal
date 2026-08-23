@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ai-review/src
+      LYCHEE_VERSION: "0.24.2"
+      LYCHEE_LINUX_ARCHIVE_SHA256: "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -27,5 +29,22 @@ jobs:
           cache: pip
       - name: Install dev dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Install pinned Lychee
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="lychee-x86_64-unknown-linux-musl.tar.gz"
+          curl -fL \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/${archive}" \
+            -o "/tmp/${archive}"
+          echo "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" | sha256sum -c -
+          tar -xzf "/tmp/${archive}" -C /usr/local/bin lychee
+      - name: Check current Markdown links offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'from scripts.check_docs import CURRENT_MARKDOWN, ROOT; print("\n".join(str(path.relative_to(ROOT)) for path in CURRENT_MARKDOWN))' > /tmp/lychee-inputs
+          lychee --offline --include-fragments=anchor-only --no-progress \
+            --files-from /tmp/lychee-inputs
       - name: Quality gates
         run: make quality

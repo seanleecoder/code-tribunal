@@ -22,6 +22,27 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_current_tree_passes(self) -> None:
         self.assertEqual(check_supply_chain_pins.main(), 0)
 
+    def test_ci_lychee_version_and_linux_checksum_are_one_pin(self) -> None:
+        workflow = check_supply_chain_pins.CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(check_supply_chain_pins._ci_lychee_pin_issues(workflow), [])
+        for old, replacement in (
+            ('LYCHEE_VERSION: "0.24.2"', 'LYCHEE_VERSION: "0.24.1"'),
+            (
+                check_supply_chain_pins.LYCHEE_LINUX_ARCHIVE_SHA256,
+                "0" * 64,
+            ),
+            (
+                "lychee --offline --include-fragments=anchor-only",
+                "lychee --offline --include-fragments=none",
+            ),
+        ):
+            with self.subTest(old=old):
+                self.assertTrue(
+                    check_supply_chain_pins._ci_lychee_pin_issues(
+                        workflow.replace(old, replacement, 1)
+                    )
+                )
+
     def test_detects_reviewer_base_digest_drift(self) -> None:
         original = check_supply_chain_pins.REVIEWER_DOCKERFILE
         with tempfile.TemporaryDirectory() as tmp:

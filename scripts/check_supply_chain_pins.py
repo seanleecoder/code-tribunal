@@ -13,6 +13,7 @@ BASE_DOCKERFILE = ROOT / "ai-review/images/base.Dockerfile"
 REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+CANDIDATE_CANARY_WORKFLOW = ROOT / ".github/workflows/candidate-canary.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
@@ -21,6 +22,11 @@ PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
 RIPGREP_PIN = ROOT / "ai-review/images/ripgrep.pin"
+
+LYCHEE_VERSION = "0.24.2"
+LYCHEE_LINUX_ARCHIVE_SHA256 = (
+    "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5"
+)
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
@@ -138,6 +144,25 @@ def _workflow_structure_issues(text: str) -> list[str]:
         comment = line.split("#", 1)[1]
         if re.search(r"(?:-\s+uses:|\bwith:|\bif:)", comment):
             issues.append(f"line {line_number} contains a YAML key inside an inline comment")
+    return issues
+
+
+def _ci_lychee_pin_issues(text: str) -> list[str]:
+    """Bind the CI download URL and checksum to the reviewed Lychee release."""
+    issues: list[str] = []
+    expected_lines = (
+        f'LYCHEE_VERSION: "{LYCHEE_VERSION}"',
+        f'LYCHEE_LINUX_ARCHIVE_SHA256: "{LYCHEE_LINUX_ARCHIVE_SHA256}"',
+    )
+    for line in expected_lines:
+        if line not in text:
+            issues.append(f"CI Lychee pin must contain {line}")
+    if "lychee-v${LYCHEE_VERSION}" not in text:
+        issues.append("CI Lychee download URL must use LYCHEE_VERSION")
+    if "${LYCHEE_LINUX_ARCHIVE_SHA256}  /tmp/${archive}" not in text:
+        issues.append("CI Lychee archive verification must use its pinned checksum")
+    if "lychee --offline --include-fragments=anchor-only" not in text:
+        issues.append("CI Lychee invocation must check local anchor fragments offline")
     return issues
 
 
@@ -440,10 +465,6 @@ def main() -> int:
     # omits repository-only .github workflows. Check every shipped workflow
     # that exists in the current distribution without making the image test
     # depend on files that are not part of that distribution.
-    # The runtime image copies the reusable review workflow but intentionally
-    # omits repository-only .github workflows. Check every shipped workflow
-    # that exists in the current distribution without making the image test
-    # depend on files that are not part of that distribution.
     #
     # The installed copy under .github/workflows/ is deliberately absent from
     # every scan here. It is a byte duplicate of the canonical template, which
@@ -453,10 +474,15 @@ def main() -> int:
     # from /opt/scripts, where .github/ does not exist, so its parity check
     # silently passed on the one platform that ran it.
     shipped_workflows = {}
-    for path in (CI_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+    for path in (CI_WORKFLOW, CANDIDATE_CANARY_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text
+    ci_workflow = shipped_workflows.get(CI_WORKFLOW)
+    if ci_workflow is not None:
+        for issue in _ci_lychee_pin_issues(ci_workflow):
+            error(issue)
+            failures += 1
     canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
     for issue in _github_review_container_issues(canonical_review_workflow):
         error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
