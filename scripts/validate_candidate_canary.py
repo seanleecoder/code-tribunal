@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one platform's real-provider candidate canary and emit safe metadata."""
+"""Validate a real-provider candidate canary and emit private redacted metadata."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from typing import Any
 from ai_review.consensus import batch_usable_for_panel
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from candidate_canary_common import read_state
+
+CLEANUP_STATUSES = ("success", "failure", "cancelled", "skipped")
 
 
 class CanaryValidationError(RuntimeError):
@@ -20,6 +23,54 @@ def _load(path: Path, schema: str) -> dict[str, Any]:
     value = load_json_file(path)
     validate_instance(value, schema)
     return value
+
+
+def _summary_base(
+    *,
+    platform: str,
+    runtime_source: str,
+    base_image: str,
+    reviewer_image: str,
+    external_run_url: str,
+    change_url: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "candidate_canary_summary.v1",
+        "platform": platform,
+        "candidate": {
+            "runtime_source": runtime_source,
+            "base_image": base_image,
+            "reviewer_image": reviewer_image,
+        },
+        "external_run_url": external_run_url,
+        "change_url": change_url,
+    }
+
+
+def build_incomplete_summary(
+    *,
+    platform: str,
+    runtime_source: str,
+    base_image: str,
+    reviewer_image: str,
+    external_run_url: str,
+    change_url: str,
+    cleanup_status: str,
+) -> dict[str, Any]:
+    return {
+        **_summary_base(
+            platform=platform,
+            runtime_source=runtime_source,
+            base_image=base_image,
+            reviewer_image=reviewer_image,
+            external_run_url=external_run_url,
+            change_url=change_url,
+        ),
+        "seats": {"status": "incomplete"},
+        "consensus": {"status": "incomplete"},
+        "posting": {"status": "incomplete"},
+        "cleanup": cleanup_status,
+    }
 
 
 def validate_run(
@@ -88,19 +139,18 @@ def validate_run(
         raise CanaryValidationError(f"{platform} posted no finding thread")
 
     return {
-        "schema_version": "candidate_canary_summary.v1",
-        "platform": platform,
-        "candidate": {
-            "runtime_source": runtime_source,
-            "base_image": base_image,
-            "reviewer_image": reviewer_image,
-        },
+        **_summary_base(
+            platform=platform,
+            runtime_source=runtime_source,
+            base_image=base_image,
+            reviewer_image=reviewer_image,
+            external_run_url=external_run_url,
+            change_url=change_url,
+        ),
         "run_id": manifest["run_id"],
-        "external_run_url": external_run_url,
-        "change_url": change_url,
         "seats": seats,
         "consensus": {
-            "panel_status": "full",
+            "panel_status": consensus["panel_status"],
             "successful_reviewers": consensus["successful_reviewers"],
             "resolution_eligible_reviewers": consensus["resolution_eligible_reviewers"],
         },
@@ -115,27 +165,32 @@ def validate_run(
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", choices=("github", "gitlab"), required=True)
-    parser.add_argument("--inputs", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--inputs", type=Path)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--runtime-source", required=True)
     parser.add_argument("--base-image", required=True)
     parser.add_argument("--reviewer-image", required=True)
-    parser.add_argument("--external-run-url", required=True)
-    parser.add_argument("--change-url", required=True)
-    parser.add_argument("--cleanup-status", required=True)
+    parser.add_argument("--cleanup-status", choices=CLEANUP_STATUSES, required=True)
     parser.add_argument("--summary-out", type=Path, required=True)
+    parser.add_argument("--incomplete", action="store_true")
     args = parser.parse_args(argv)
-    summary = validate_run(
-        platform=args.platform,
-        inputs=args.inputs,
-        output=args.output,
-        runtime_source=args.runtime_source,
-        base_image=args.base_image,
-        reviewer_image=args.reviewer_image,
-        external_run_url=args.external_run_url,
-        change_url=args.change_url,
-        cleanup_status=args.cleanup_status,
-    )
+    state = read_state(args.state) if args.state.exists() else {}
+    summary_args = {
+        "platform": args.platform,
+        "runtime_source": args.runtime_source,
+        "base_image": args.base_image,
+        "reviewer_image": args.reviewer_image,
+        "external_run_url": str(state.get("external_run_url") or "unavailable"),
+        "change_url": str(state.get("change_url") or "unavailable"),
+        "cleanup_status": args.cleanup_status,
+    }
+    if args.incomplete:
+        summary = build_incomplete_summary(**summary_args)
+    else:
+        if args.inputs is None or args.output is None:
+            parser.error("--inputs and --output are required unless --incomplete is set")
+        summary = validate_run(inputs=args.inputs, output=args.output, **summary_args)
     write_canonical_json(args.summary_out, summary)
     return 0
 

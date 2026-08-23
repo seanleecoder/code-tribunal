@@ -16,6 +16,14 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from candidate_canary_common import (
+    build_campaign_parser,
+    canary_stage_environment,
+    inject_demo_defect,
+    read_state,
+    write_state,
+)
+
 API = "https://gitlab.com/api/v4"
 DEMO_PROJECT = "84667714"
 TEMPLATE_PROJECT = "84667707"
@@ -60,10 +68,6 @@ def _request(
     return json.loads(body) if body else None
 
 
-def _write_state(path: str, state: dict[str, Any]) -> None:
-    Path(path).write_text(json.dumps(state), encoding="utf-8")
-
-
 def _raw_file(project: str, path: str) -> str:
     encoded = urllib.parse.quote(path, safe="")
     return _request(
@@ -104,11 +108,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     # Candidate acceptance deliberately exercises the shipped effort defaults,
     # regardless of any ordinary demo-project overrides. Apply the same process
     # environment to every stage so the effective-config digest remains bound.
-    canary_env = (
-        "env -u AI_REVIEW_CLAUDE_EFFORT -u AI_REVIEW_CODEX_EFFORT "
-        "-u AI_REVIEW_OPENCODE_EFFORT "
-        "AI_REVIEW_REVIEWERS=claude,codex,opencode,cursor"
-    )
+    canary_env = canary_stage_environment()
     template, python_count = re.subn(
         r"(?m)^(\s*- )(python -m ai_review\.)", rf"\g<1>{canary_env} \g<2>", template
     )
@@ -139,7 +139,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
     template_sha = str(template_commit["id"])
     result: dict[str, Any] = {"branch": args.branch, "template_sha": template_sha}
-    _write_state(args.state, result)
+    write_state(args.state, result)
 
     demo_ci = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
     demo_ci, ref_count = re.subn(
@@ -148,17 +148,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     if ref_count != 2:
         raise GitLabCanaryError(f"demo CI has {ref_count} trusted template refs, expected 2")
     access = _raw_file(DEMO_PROJECT, "src/access.py")
-    original = "return normalize_username(username) in normalized_allowed"
-    replacement = (
-        "# Candidate-canary defect: prefix membership grants unintended users.\n"
-        "    return any(\n"
-        "        normalize_username(username).startswith(candidate)\n"
-        "        for candidate in normalized_allowed\n"
-        "    )"
-    )
-    if original not in access:
-        raise GitLabCanaryError("demo fixture no longer contains the expected safe membership line")
-    access = access.replace(original, replacement, 1)
+    access = inject_demo_defect(access, GitLabCanaryError)
     _commit(
         DEMO_PROJECT,
         args.branch,
@@ -187,25 +177,28 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
             "remove_source_branch": False,
         },
     )
-    result.update({"mr_iid": str(mr["iid"]), "mr_url": str(mr["web_url"])})
-    _write_state(args.state, result)
+    result.update({"mr_iid": str(mr["iid"]), "change_url": str(mr["web_url"])})
+    write_state(args.state, result)
     return result
 
 
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
-    state = json.loads(Path(args.state).read_text(encoding="utf-8"))
+    state = read_state(args.state)
     mr_iid = state["mr_iid"]
     deadline = time.monotonic() + args.timeout_seconds
     child: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        pipelines = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines")
-        if pipelines:
-            parent_id = pipelines[0]["id"]
-            bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges")
-            for bridge in bridges:
-                if bridge.get("downstream_pipeline"):
-                    child = bridge["downstream_pipeline"]
-                    break
+        if child is None:
+            pipelines = _request(
+                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines"
+            )
+            if pipelines:
+                parent_id = pipelines[0]["id"]
+                bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges")
+                for bridge in bridges:
+                    if bridge.get("downstream_pipeline"):
+                        child = bridge["downstream_pipeline"]
+                        break
         if child is not None:
             pipeline = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}")
             status = pipeline.get("status")
@@ -239,8 +232,8 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
             if source.is_dir():
                 shutil.copytree(source, target, dirs_exist_ok=True)
     state["pipeline_id"] = str(child["id"])
-    state["pipeline_url"] = str(child["web_url"])
-    Path(args.state).write_text(json.dumps(state), encoding="utf-8")
+    state["external_run_url"] = str(child["web_url"])
+    write_state(args.state, state)
     return state
 
 
@@ -248,7 +241,7 @@ def cleanup_campaign(args: argparse.Namespace) -> None:
     state_path = Path(args.state)
     if not state_path.exists():
         return
-    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state = read_state(state_path)
     branch = state["branch"]
     mr_iid = state.get("mr_iid")
     failures: list[str] = []
@@ -276,23 +269,15 @@ def cleanup_campaign(args: argparse.Namespace) -> None:
         raise GitLabCanaryError("GitLab cleanup failures: " + "; ".join(failures))
 
 
+def _configure_create(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--template", required=True)
+    parser.add_argument("--child-template", required=True)
+
+
 def cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    create = subparsers.add_parser("create")
-    create.add_argument("--branch", required=True)
-    create.add_argument("--runtime-source", required=True)
-    create.add_argument("--base-image", required=True)
-    create.add_argument("--reviewer-image", required=True)
-    create.add_argument("--template", required=True)
-    create.add_argument("--child-template", required=True)
-    create.add_argument("--state", required=True)
-    collect = subparsers.add_parser("collect")
-    collect.add_argument("--state", required=True)
-    collect.add_argument("--destination", required=True)
-    collect.add_argument("--timeout-seconds", type=int, default=7200)
-    cleanup = subparsers.add_parser("cleanup")
-    cleanup.add_argument("--state", required=True)
+    parser = build_campaign_parser(
+        "Create, collect, or clean a GitLab candidate canary", _configure_create
+    )
     args = parser.parse_args(argv)
     if args.command == "create":
         create_campaign(args)

@@ -39,52 +39,62 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate source and image identity
+      - name: Validate source and image inputs
         id: identity
         env:
-          GH_TOKEN: ${{ github.token }}
           RUNTIME_SOURCE: ${{ inputs.runtime_source }}
           BASE_IMAGE: ${{ inputs.base_image }}
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
-        shell: bash
         run: |
-          set -euo pipefail
-          [[ "$RUNTIME_SOURCE" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "runtime_source must be a full lowercase commit" >&2
-            exit 1
-          }
-          git merge-base --is-ancestor "$RUNTIME_SOURCE" origin/main || {
-            echo "runtime_source is not reachable from protected main" >&2
-            exit 1
-          }
-          expected_base="ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-${RUNTIME_SOURCE}"
-          expected_reviewer="ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-${RUNTIME_SOURCE}"
-          for value in "$BASE_IMAGE" "$REVIEWER_IMAGE"; do
-            [[ "$value" =~ ^ghcr\.io/seanleecoder/code-tribunal/ai-review-(base|reviewer):1\.0-[0-9a-f]{40}@sha256:[0-9a-f]{64}$ ]] || {
-              echo "candidate image is not an approved digest-pinned subject" >&2
-              exit 1
-            }
-          done
-          [[ "${BASE_IMAGE%@*}" == "$expected_base" ]]
-          [[ "${REVIEWER_IMAGE%@*}" == "$expected_reviewer" ]]
-          for image in "$BASE_IMAGE" "$REVIEWER_IMAGE"; do
-            docker pull "$image"
-            [[ "$(docker inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image")" == "$RUNTIME_SOURCE" ]]
-            docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" \
-              | grep -Fqx "${image/:1.0-${RUNTIME_SOURCE}/}"
-            gh attestation verify "oci://$image" \
-              --repo seanleecoder/code-tribunal \
-              --predicate-type https://slsa.dev/provenance/v1 \
-              --format json > attestation.json
-            jq -e --arg source "$RUNTIME_SOURCE" \
-              '[.. | strings | select(. == $source)] | length > 0' attestation.json >/dev/null
-          done
-          echo "branch=candidate-canary-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          python scripts/validate_candidate_identity.py \
+            --runtime-source "$RUNTIME_SOURCE" \
+            --base-image "$BASE_IMAGE" \
+            --reviewer-image "$REVIEWER_IMAGE" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Pull candidate images
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+          REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
+        run: |
+          docker pull "$BASE_IMAGE"
+          docker pull "$REVIEWER_IMAGE"
+      - name: Verify candidate attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_IMAGE: ${{ inputs.base_image }}
+          REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
+        run: |
+          gh attestation verify "oci://$BASE_IMAGE" \
+            --repo seanleecoder/code-tribunal \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --format json > base-attestation.json
+          gh attestation verify "oci://$REVIEWER_IMAGE" \
+            --repo seanleecoder/code-tribunal \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --format json > reviewer-attestation.json
+          python scripts/validate_candidate_identity.py \
+            --runtime-source "${{ inputs.runtime_source }}" \
+            --base-image "$BASE_IMAGE" \
+            --reviewer-image "$REVIEWER_IMAGE" \
+            --base-attestation base-attestation.json \
+            --reviewer-attestation reviewer-attestation.json
 
-  github:
+  campaign:
     needs: verify-candidate
     runs-on: ubuntu-latest
     environment: candidate-canary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: github
+            token_secret: CANDIDATE_CANARY_GITHUB_TOKEN
+            token_env: GH_TOKEN
+          - platform: gitlab
+            token_secret: CANDIDATE_CANARY_GITLAB_TOKEN
+            token_env: GITLAB_CANARY_TOKEN
+    env:
+      PYTHONPATH: ai-review/src
     steps:
       - name: Check out protected orchestration
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -96,159 +106,98 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Install validation dependencies
-        run: python -m pip install -r requirements-dev.txt
-      - name: Create isolated GitHub demo pull request
+      - name: Install validation dependency
+        run: >-
+          python -m pip install
+          --constraint ai-review/images/python-constraints.txt
+          jsonschema
+      - name: Create isolated demo change
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_candidate_canary.py create \
-            --branch "${{ needs.verify-candidate.outputs.branch }}-github" \
-            --runtime-source "${{ inputs.runtime_source }}" \
-            --base-image "${{ inputs.base_image }}" \
-            --reviewer-image "${{ inputs.reviewer_image }}" \
-            --workflow .github/workflows/ai-review.yml \
-            --workdir "$RUNNER_TEMP/github" \
-            --state "$RUNNER_TEMP/github-state.json"
-      - name: Run and collect GitHub review
+          script="scripts/${PLATFORM}_candidate_canary.py"
+          state="$RUNNER_TEMP/${PLATFORM}-state.json"
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          common=(
+            --branch "${{ needs.verify-candidate.outputs.branch }}-${PLATFORM}"
+            --runtime-source "${{ inputs.runtime_source }}"
+            --base-image "${{ inputs.base_image }}"
+            --reviewer-image "${{ inputs.reviewer_image }}"
+            --state "$state"
+          )
+          if [[ "$PLATFORM" == github ]]; then
+            env "$TOKEN_ENV=$token_value" python "$script" create "${common[@]}" \
+              --workflow .github/workflows/ai-review.yml \
+              --workdir "$RUNNER_TEMP/github"
+          else
+            env "$TOKEN_ENV=$token_value" python "$script" create "${common[@]}" \
+              --template ai-review/ci/review.gitlab-ci.yml \
+              --child-template ai-review/ci/review-child.gitlab-ci.yml
+          fi
+      - name: Run and collect review
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_candidate_canary.py collect \
-            --state "$RUNNER_TEMP/github-state.json" \
-            --destination "$RUNNER_TEMP/github-result"
-      - name: Clean up GitHub demo
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          env "$TOKEN_ENV=$token_value" \
+            python "scripts/${PLATFORM}_candidate_canary.py" collect \
+              --state "$RUNNER_TEMP/${PLATFORM}-state.json" \
+              --destination "$RUNNER_TEMP/${PLATFORM}-result"
+      - name: Clean up demo
         id: cleanup
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_candidate_canary.py cleanup \
-            --state "$RUNNER_TEMP/github-state.json"
-      - name: Write redacted GitHub summary
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          env "$TOKEN_ENV=$token_value" \
+            python "scripts/${PLATFORM}_candidate_canary.py" cleanup \
+              --state "$RUNNER_TEMP/${PLATFORM}-state.json"
+      - name: Write redacted success summary
+        id: summary
         if: success()
-        shell: bash
-        run: |
-          run_url="$(jq -r .run_url "$RUNNER_TEMP/github-state.json")"
-          change_url="$(jq -r .pr_url "$RUNNER_TEMP/github-state.json")"
-          PYTHONPATH=ai-review/src python scripts/validate_candidate_canary.py \
-            --platform github \
-            --inputs "$RUNNER_TEMP/github-result/inputs" \
-            --output "$RUNNER_TEMP/github-result/out" \
-            --runtime-source "${{ inputs.runtime_source }}" \
-            --base-image "${{ inputs.base_image }}" \
-            --reviewer-image "${{ inputs.reviewer_image }}" \
-            --external-run-url "$run_url" \
-            --change-url "$change_url" \
-            --cleanup-status success \
-            --summary-out github-summary.json
-      - name: Write redacted GitHub failure summary
-        if: always() && hashFiles('github-summary.json') == ''
         env:
+          PLATFORM: ${{ matrix.platform }}
           CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
-        shell: bash
         run: |
-          state="$RUNNER_TEMP/github-state.json"
-          run_url="$(test -f "$state" && jq -r '.run_url // "unavailable"' "$state" || echo unavailable)"
-          change_url="$(test -f "$state" && jq -r '.pr_url // "unavailable"' "$state" || echo unavailable)"
-          jq -n \
-            --arg source "${{ inputs.runtime_source }}" \
-            --arg base "${{ inputs.base_image }}" \
-            --arg reviewer "${{ inputs.reviewer_image }}" \
-            --arg run "$run_url" --arg change "$change_url" \
-            --arg cleanup "$CLEANUP_OUTCOME" \
-            '{schema_version:"candidate_canary_summary.v1",platform:"github",candidate:{runtime_source:$source,base_image:$base,reviewer_image:$reviewer},external_run_url:$run,change_url:$change,seats:{status:"incomplete"},consensus:{status:"incomplete"},posting:{status:"incomplete"},cleanup:$cleanup}' \
-            > github-summary.json
-
-      - name: Upload redacted GitHub summary
-        if: always() && hashFiles('github-summary.json') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: candidate-canary-github-summary
-          path: github-summary.json
-
-  gitlab:
-    needs: verify-candidate
-    runs-on: ubuntu-latest
-    environment: candidate-canary
-    steps:
-      - name: Check out protected orchestration
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: main
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: '3.12'
-          cache: pip
-      - name: Install validation dependencies
-        run: python -m pip install -r requirements-dev.txt
-      - name: Create isolated protected GitLab demo merge request
-        env:
-          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
-        run: |
-          python scripts/gitlab_candidate_canary.py create \
-            --branch "${{ needs.verify-candidate.outputs.branch }}-gitlab" \
+          python scripts/validate_candidate_canary.py \
+            --platform "$PLATFORM" \
+            --state "$RUNNER_TEMP/${PLATFORM}-state.json" \
+            --inputs "$RUNNER_TEMP/${PLATFORM}-result/inputs" \
+            --output "$RUNNER_TEMP/${PLATFORM}-result/out" \
             --runtime-source "${{ inputs.runtime_source }}" \
             --base-image "${{ inputs.base_image }}" \
             --reviewer-image "${{ inputs.reviewer_image }}" \
-            --template ai-review/ci/review.gitlab-ci.yml \
-            --child-template ai-review/ci/review-child.gitlab-ci.yml \
-            --state "$RUNNER_TEMP/gitlab-state.json"
-      - name: Run and collect GitLab review
+            --cleanup-status "$CLEANUP_OUTCOME" \
+            --summary-out "${PLATFORM}-summary.json"
+      - name: Write redacted incomplete summary
+        if: always() && steps.summary.outcome != 'success'
         env:
-          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
+          PLATFORM: ${{ matrix.platform }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: |
-          python scripts/gitlab_candidate_canary.py collect \
-            --state "$RUNNER_TEMP/gitlab-state.json" \
-            --destination "$RUNNER_TEMP/gitlab-result"
-      - name: Clean up GitLab demo
-        id: cleanup
+          python scripts/validate_candidate_canary.py \
+            --incomplete \
+            --platform "$PLATFORM" \
+            --state "$RUNNER_TEMP/${PLATFORM}-state.json" \
+            --runtime-source "${{ inputs.runtime_source }}" \
+            --base-image "${{ inputs.base_image }}" \
+            --reviewer-image "${{ inputs.reviewer_image }}" \
+            --cleanup-status "$CLEANUP_OUTCOME" \
+            --summary-out "${PLATFORM}-summary.json"
+      - name: Upload redacted summary
         if: always()
-        env:
-          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
-        run: |
-          python scripts/gitlab_candidate_canary.py cleanup \
-            --state "$RUNNER_TEMP/gitlab-state.json"
-      - name: Write redacted GitLab summary
-        if: success()
-        shell: bash
-        run: |
-          run_url="$(jq -r .pipeline_url "$RUNNER_TEMP/gitlab-state.json")"
-          change_url="$(jq -r .mr_url "$RUNNER_TEMP/gitlab-state.json")"
-          PYTHONPATH=ai-review/src python scripts/validate_candidate_canary.py \
-            --platform gitlab \
-            --inputs "$RUNNER_TEMP/gitlab-result/inputs" \
-            --output "$RUNNER_TEMP/gitlab-result/out" \
-            --runtime-source "${{ inputs.runtime_source }}" \
-            --base-image "${{ inputs.base_image }}" \
-            --reviewer-image "${{ inputs.reviewer_image }}" \
-            --external-run-url "$run_url" \
-            --change-url "$change_url" \
-            --cleanup-status success \
-            --summary-out gitlab-summary.json
-      - name: Write redacted GitLab failure summary
-        if: always() && hashFiles('gitlab-summary.json') == ''
-        env:
-          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
-        shell: bash
-        run: |
-          state="$RUNNER_TEMP/gitlab-state.json"
-          run_url="$(test -f "$state" && jq -r '.pipeline_url // "unavailable"' "$state" || echo unavailable)"
-          change_url="$(test -f "$state" && jq -r '.mr_url // "unavailable"' "$state" || echo unavailable)"
-          jq -n \
-            --arg source "${{ inputs.runtime_source }}" \
-            --arg base "${{ inputs.base_image }}" \
-            --arg reviewer "${{ inputs.reviewer_image }}" \
-            --arg run "$run_url" --arg change "$change_url" \
-            --arg cleanup "$CLEANUP_OUTCOME" \
-            '{schema_version:"candidate_canary_summary.v1",platform:"gitlab",candidate:{runtime_source:$source,base_image:$base,reviewer_image:$reviewer},external_run_url:$run,change_url:$change,seats:{status:"incomplete"},consensus:{status:"incomplete"},posting:{status:"incomplete"},cleanup:$cleanup}' \
-            > gitlab-summary.json
-
-      - name: Upload redacted GitLab summary
-        if: always() && hashFiles('gitlab-summary.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: candidate-canary-gitlab-summary
-          path: gitlab-summary.json
+          name: candidate-canary-${{ matrix.platform }}-summary
+          path: ${{ matrix.platform }}-summary.json
+          if-no-files-found: error

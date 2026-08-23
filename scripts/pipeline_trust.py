@@ -8,9 +8,9 @@ from types import ModuleType
 from typing import Any, Literal
 
 ROOT = Path(__file__).resolve().parents[1]
-AI_REVIEW_SRC = ROOT / "ai-review" / "src"
-if str(AI_REVIEW_SRC) not in sys.path:
-    sys.path.insert(0, str(AI_REVIEW_SRC))
+PACKAGE_SOURCE = ROOT / "ai-review" / "src"
+if str(PACKAGE_SOURCE) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SOURCE))
 
 from ai_review.reviewers import REVIEWERS  # noqa: E402
 

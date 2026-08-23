@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -8,18 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support.repository_script import load_repository_script
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
 _CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _load_docs_checker():
-    spec = importlib.util.spec_from_file_location("check_docs", _DOCS_CHECK)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load documentation checker from {_DOCS_CHECK}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_repository_script("check_docs", _DOCS_CHECK)
 
 
 @unittest.skipUnless(
@@ -29,17 +25,11 @@ def _load_docs_checker():
 class DocumentationContractTests(unittest.TestCase):
     def test_markdown_inventories_separate_current_archive_and_released_notes(self) -> None:
         checker = _load_docs_checker()
-        current = {
-            path.relative_to(checker.ROOT).as_posix() for path in checker.CURRENT_MARKDOWN
-        }
+        current = {path.relative_to(checker.ROOT).as_posix() for path in checker.CURRENT_MARKDOWN}
         linked = {
-            path.relative_to(checker.ROOT).as_posix()
-            for path in checker.LINK_CHECKED_MARKDOWN
+            path.relative_to(checker.ROOT).as_posix() for path in checker.LINK_CHECKED_MARKDOWN
         }
-        released = {
-            path.relative_to(checker.ROOT).as_posix()
-            for path in checker.RELEASED_MARKDOWN
-        }
+        released = {path.relative_to(checker.ROOT).as_posix() for path in checker.RELEASED_MARKDOWN}
 
         self.assertIn("release/TEMPLATE.md", current)
         self.assertIn("release/TEMPLATE.md", linked)
@@ -187,7 +177,6 @@ class DocumentationContractTests(unittest.TestCase):
         assert heading is not None
         environment_rows = checker._reference_row_counts(documentation[heading.end() :])
         self.assertEqual(environment_rows[marker], 1)
-
 
     def test_github_install_contract_binds_source_and_destination(self) -> None:
         checker = _load_docs_checker()
@@ -530,12 +519,8 @@ class DocumentationContractTests(unittest.TestCase):
         It may be a reasonable repository policy; it is not a Code Tribunal
         requirement and nothing here enables it.
         """
-        github = (
-            _REPO_ROOT / "docs" / "getting-started" / "github.md"
-        ).read_text(encoding="utf-8")
-        gitlab = (
-            _REPO_ROOT / "docs" / "getting-started" / "gitlab.md"
-        ).read_text(encoding="utf-8")
+        github = (_REPO_ROOT / "docs" / "getting-started" / "github.md").read_text(encoding="utf-8")
+        gitlab = (_REPO_ROOT / "docs" / "getting-started" / "gitlab.md").read_text(encoding="utf-8")
 
         collapse = " ".join(github.split())
         self.assertIn(

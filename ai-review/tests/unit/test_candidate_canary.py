@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import tempfile
 import unittest
@@ -10,22 +9,16 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from ai_review.reviewers import REVIEWERS
+
+from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "candidate-canary.yml"
 VALIDATOR = ROOT / "scripts" / "validate_candidate_canary.py"
+IDENTITY_VALIDATOR = ROOT / "scripts" / "validate_candidate_identity.py"
 GITHUB_ORCHESTRATOR = ROOT / "scripts" / "github_candidate_canary.py"
 GITLAB_ORCHESTRATOR = ROOT / "scripts" / "gitlab_candidate_canary.py"
-REVIEWERS = ("claude", "codex", "opencode", "cursor")
-
-
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 class CandidateCanaryWorkflowTests(unittest.TestCase):
@@ -34,7 +27,7 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(set(inputs), {"runtime_source", "base_image", "reviewer_image"})
         self.assertTrue(all(value["required"] == "true" for value in inputs.values()))
-        self.assertEqual(set(workflow["jobs"]), {"verify-candidate", "github", "gitlab"})
+        self.assertEqual(set(workflow["jobs"]), {"verify-candidate", "campaign"})
         self.assertEqual(
             workflow["jobs"]["verify-candidate"]["if"],
             "github.ref == 'refs/heads/main'",
@@ -45,57 +38,60 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
             self.assertEqual(checkout["with"]["ref"], "main")
             self.assertEqual(checkout["with"]["persist-credentials"], "false")
 
-    def test_identity_and_campaign_contracts_are_explicit(self) -> None:
-        text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn('git merge-base --is-ancestor "$RUNTIME_SOURCE" origin/main', text)
-        self.assertEqual(text.count("gh attestation verify"), 1)
-        self.assertIn("org.opencontainers.image.revision", text)
-        self.assertIn("CANDIDATE_CANARY_GITHUB_TOKEN", text)
-        self.assertIn("CANDIDATE_CANARY_GITLAB_TOKEN", text)
-        self.assertEqual(text.count("validate_candidate_canary.py"), 2)
-        self.assertNotIn("OPENROUTER_API_KEY", text)
-        self.assertNotIn("CURSOR_API_KEY", text)
-
-    def test_both_campaign_jobs_install_validation_dependencies(self) -> None:
+    def test_campaign_matrix_and_summary_fallback_are_fixed(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-        for job_name in ("github", "gitlab"):
-            steps = workflow["jobs"][job_name]["steps"]
-            setup = next(
-                index for index, step in enumerate(steps) if step.get("name") == "Set up Python"
-            )
-            install = next(
-                index
-                for index, step in enumerate(steps)
-                if step.get("name") == "Install validation dependencies"
-            )
-            validate = next(
-                index
-                for index, step in enumerate(steps)
-                if "validate_candidate_canary.py" in step.get("run", "")
-            )
-            self.assertEqual(steps[setup]["with"]["python-version"], "3.12")
-            self.assertEqual(
-                steps[install]["run"], "python -m pip install -r requirements-dev.txt"
-            )
-            self.assertLess(setup, install)
-            self.assertLess(install, validate)
+        campaign = workflow["jobs"]["campaign"]
+        self.assertEqual(campaign["strategy"]["fail-fast"], "false")
+        self.assertEqual(
+            campaign["strategy"]["matrix"]["include"],
+            [
+                {
+                    "platform": "github",
+                    "token_secret": "CANDIDATE_CANARY_GITHUB_TOKEN",
+                    "token_env": "GH_TOKEN",
+                },
+                {
+                    "platform": "gitlab",
+                    "token_secret": "CANDIDATE_CANARY_GITLAB_TOKEN",
+                    "token_env": "GITLAB_CANARY_TOKEN",
+                },
+            ],
+        )
+        self.assertEqual(campaign["env"]["PYTHONPATH"], "ai-review/src")
+        steps = campaign["steps"]
+        install = next(step for step in steps if step["name"] == "Install validation dependency")
+        self.assertIn("jsonschema", install["run"])
+        self.assertNotIn("requirements-dev", install["run"])
+        summary = next(step for step in steps if step.get("id") == "summary")
+        self.assertEqual(summary["if"], "success()")
+        incomplete = next(
+            step for step in steps if step["name"] == "Write redacted incomplete summary"
+        )
+        self.assertEqual(incomplete["if"], "always() && steps.summary.outcome != 'success'")
+        upload = next(step for step in steps if step["name"] == "Upload redacted summary")
+        self.assertEqual(upload["if"], "always()")
+        self.assertEqual(upload["with"]["if-no-files-found"], "error")
 
     def test_demo_coordinates_and_gitlab_artifact_authority_are_fixed(self) -> None:
-        github = _load_module("github_candidate_canary", GITHUB_ORCHESTRATOR)
-        gitlab = _load_module("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        github = load_repository_script("github_candidate_canary", GITHUB_ORCHESTRATOR)
+        gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
         self.assertEqual(github.DEMO_REPOSITORY, "seanleecoder/code-tribunal-demo")
         self.assertEqual(gitlab.DEMO_PROJECT, "84667714")
         self.assertEqual(gitlab.TEMPLATE_PROJECT, "84667707")
-        source = GITLAB_ORCHESTRATOR.read_text(encoding="utf-8")
-        self.assertIn('f"projects/{DEMO_PROJECT}/pipelines/{child[\'id\']}/jobs', source)
-        self.assertIn('f"projects/{DEMO_PROJECT}/jobs/{job[\'id\']}/artifacts"', source)
-        self.assertIn("AI_REVIEW_REVIEWERS=claude,codex,opencode,cursor", source)
-        self.assertIn("-u AI_REVIEW_OPENCODE_EFFORT", source)
+        common = load_repository_script(
+            "candidate_canary_common", ROOT / "scripts" / "candidate_canary_common.py"
+        )
+        environment = common.canary_stage_environment()
+        for reviewer, definition in REVIEWERS.items():
+            self.assertIn(reviewer, common.reviewer_ids())
+            self.assertIn(f"{definition.require_real_control}=1", environment)
+            effort = f"AI_REVIEW_{reviewer.upper()}_EFFORT"
+            self.assertEqual(f"-u {effort}" in environment, definition.supports_effort)
 
 
 class CandidateCanaryValidationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.validator = _load_module("validate_candidate_canary", VALIDATOR)
+        self.validator = load_repository_script("validate_candidate_canary", VALIDATOR)
 
     def _artifact(self, path: Path, _schema: str):
         name = path.name
@@ -151,6 +147,22 @@ class CandidateCanaryValidationTests(unittest.TestCase):
         self.assertEqual(summary["cleanup"], "success")
         self.assertNotIn("redacted-by-summary", repr(summary))
 
+    def test_incomplete_summary_has_one_redacted_shape(self) -> None:
+        summary = self.validator.build_incomplete_summary(
+            platform="gitlab",
+            runtime_source="a" * 40,
+            base_image="base",
+            reviewer_image="reviewer",
+            external_run_url="unavailable",
+            change_url="https://example.test/change",
+            cleanup_status="failure",
+        )
+        self.assertEqual(summary["seats"], {"status": "incomplete"})
+        self.assertEqual(summary["consensus"], {"status": "incomplete"})
+        self.assertEqual(summary["posting"], {"status": "incomplete"})
+        self.assertEqual(summary["cleanup"], "failure")
+        self.assertNotIn("token", repr(summary).lower())
+
     def test_failed_or_ineligible_seat_fails_closed(self) -> None:
         def failed(path: Path, schema: str):
             value = self._artifact(path, schema)
@@ -178,10 +190,149 @@ class CandidateCanaryValidationTests(unittest.TestCase):
             )
 
 
+class CandidateIdentityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.identity = load_repository_script("validate_candidate_identity", IDENTITY_VALIDATOR)
+        self.source = "a" * 40
+        self.base = (
+            f"ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-{self.source}@sha256:{'b' * 64}"
+        )
+        self.reviewer = (
+            "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-"
+            f"{self.source}@sha256:{'c' * 64}"
+        )
+
+    def test_inputs_use_release_identity_authorities(self) -> None:
+        with mock.patch.object(self.identity, "git_is_ancestor", return_value=True) as ancestor:
+            coordinates = self.identity.validate_inputs(self.source, self.base, self.reviewer)
+        ancestor.assert_called_once_with(self.source, "origin/main")
+        self.assertEqual(coordinates["base"]["digest"], "sha256:" + "b" * 64)
+
+    def test_pulled_image_checks_label_digest_and_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            attestation = Path(tmp) / "attestation.json"
+            attestation.write_text(
+                json.dumps({"predicate": {"materials": [self.source]}}),
+                encoding="utf-8",
+            )
+            outputs = iter(
+                [
+                    self.source,
+                    "ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:" + "b" * 64,
+                ]
+            )
+            with mock.patch.object(self.identity, "_run", side_effect=lambda *_args: next(outputs)):
+                self.identity.verify_pulled_image(
+                    role="base",
+                    image=self.base,
+                    runtime_source=self.source,
+                    attestation_path=attestation,
+                )
+
+    def test_wrong_registry_digest_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            attestation = Path(tmp) / "attestation.json"
+            attestation.write_text(json.dumps([self.source]), encoding="utf-8")
+            with (
+                mock.patch.object(
+                    self.identity, "_run", side_effect=[self.source, "different@sha256:value"]
+                ),
+                self.assertRaisesRegex(self.identity.CandidateIdentityError, "RepoDigests"),
+            ):
+                self.identity.verify_pulled_image(
+                    role="base",
+                    image=self.base,
+                    runtime_source=self.source,
+                    attestation_path=attestation,
+                )
+
+
+class CandidateCollectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.github = load_repository_script(
+            "github_candidate_canary_collection", GITHUB_ORCHESTRATOR
+        )
+        self.gitlab = load_repository_script(
+            "gitlab_candidate_canary_collection", GITLAB_ORCHESTRATOR
+        )
+
+    def test_github_polls_status_with_one_end_to_end_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(
+                json.dumps({"branch": "candidate", "pr_number": "7"}),
+                encoding="utf-8",
+            )
+            commands: list[tuple[str, ...]] = []
+
+            def run(*command: str, **_kwargs: object) -> str:
+                commands.append(command)
+                if command[:3] == ("gh", "run", "list"):
+                    return json.dumps([{"databaseId": 9, "url": "run", "status": "queued"}])
+                if command[:3] == ("gh", "run", "view"):
+                    return json.dumps(
+                        {
+                            "databaseId": 9,
+                            "url": "run",
+                            "status": "completed",
+                            "conclusion": "success",
+                        }
+                    )
+                return ""
+
+            args = argparse.Namespace(
+                state=str(state), destination=str(Path(tmp) / "result"), timeout_seconds=7200
+            )
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                mock.patch.object(self.github.shutil, "copytree"),
+            ):
+                result = self.github.collect_campaign(args)
+            self.assertEqual(result["external_run_url"], "run")
+            self.assertTrue(any(command[:3] == ("gh", "run", "view") for command in commands))
+            self.assertFalse(any("watch" in command for command in commands))
+
+    def test_gitlab_discovers_child_once_then_polls_only_that_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"mr_iid": "7"}), encoding="utf-8")
+            parent_requests = 0
+            child_polls = iter(
+                [
+                    {"id": 22, "web_url": "child", "status": "running"},
+                    {"id": 22, "web_url": "child", "status": "success"},
+                ]
+            )
+
+            def request(_method: str, path: str, **_kwargs: object):
+                nonlocal parent_requests
+                if path.endswith("merge_requests/7/pipelines"):
+                    parent_requests += 1
+                    return [{"id": 11}]
+                if path.endswith("pipelines/11/bridges"):
+                    return [{"downstream_pipeline": {"id": 22}}]
+                if path.endswith("pipelines/22"):
+                    return next(child_polls)
+                if path.endswith("pipelines/22/jobs?per_page=100"):
+                    return []
+                raise AssertionError(path)
+
+            args = argparse.Namespace(
+                state=str(state), destination=str(Path(tmp) / "result"), timeout_seconds=7200
+            )
+            with (
+                mock.patch.object(self.gitlab, "_request", side_effect=request),
+                mock.patch.object(self.gitlab.time, "sleep"),
+            ):
+                result = self.gitlab.collect_campaign(args)
+            self.assertEqual(parent_requests, 1)
+            self.assertEqual(result["external_run_url"], "child")
+
+
 class CandidateCanaryCleanupTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.github = _load_module("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
-        self.gitlab = _load_module("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
+        self.github = load_repository_script("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
+        self.gitlab = load_repository_script("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
 
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,12 +383,8 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 workdir=str(root / "work"),
                 workflow=str(ROOT / ".github/workflows/ai-review.yml"),
                 branch="candidate-test",
-                base_image=(
-                    "ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64
-                ),
-                reviewer_image=(
-                    "ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64
-                ),
+                base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
+                reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
                 runtime_source="c" * 40,
                 state=str(state),
             )
@@ -270,13 +417,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             def raw_file(_project: str, path: str, ref: str = "main") -> str:
                 del ref
                 if path == ".gitlab-ci.yml":
-                    return (
-                        'first:\n  ref: "'
-                        + "0" * 40
-                        + '"\nsecond:\n  ref: "'
-                        + "1" * 40
-                        + '"\n'
-                    )
+                    return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
                 return "    return normalize_username(username) in normalized_allowed\n"
 
             args = argparse.Namespace(
