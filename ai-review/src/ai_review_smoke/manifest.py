@@ -78,7 +78,6 @@ MANIFEST: dict[str, frozenset[str]] = {
         {
             f"{_BASE_CASES}.test_default_config_loads",
             f"{_BASE_CASES}.test_every_runtime_module_imports",
-            f"{_BASE_CASES}.test_expected_runtime_files_exist",
             f"{_BASE_CASES}.test_packaged_cli_entry_points_are_callable",
             f"{_BASE_CASES}.test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them",
             f"{_BASE_CASES}.test_packaged_runtime_root_is_read_only",

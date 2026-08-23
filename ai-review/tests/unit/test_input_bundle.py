@@ -129,19 +129,15 @@ class InputBundleLimitTests(unittest.TestCase):
             mock.patch(
                 "ai_review.input_bundle.load_config",
                 return_value=runtime_config(
-                    lambda config: config["state"].update(
-                        {"fail_closed_on_load_error": True}
-                    )
+                    lambda config: config["state"].update({"fail_closed_on_load_error": True})
                 ),
             ),
             mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=BrokenUserClient(),
             ),
-            mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "current_user"),
         ):
@@ -217,10 +213,8 @@ class InputBundleLimitTests(unittest.TestCase):
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=MovingVersionClient(),
             ),
-            mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._file_sha256", return_value="0" * 64),
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "version changed during diff collection"),
         ):
@@ -246,9 +240,7 @@ class PrepareStateLoadTests(unittest.TestCase):
         def current_user_id(self) -> int:
             return 10
 
-        def list_state_notes(
-            self, project_id: str, change_id: str
-        ) -> list[dict[str, object]]:
+        def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, object]]:
             self.list_calls += 1
             if isinstance(self.notes, Exception):
                 raise self.notes
@@ -323,15 +315,11 @@ class BundlePublicationTests(unittest.TestCase):
             out = root / "inputs"
 
             prepare_local_bundle(_REPO_CONFIG, diff, repo, out)
-            first_manifest = json.loads(
-                (out / "manifest.json").read_text(encoding="utf-8")
-            )
+            first_manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             deleted.unlink()
 
             prepare_local_bundle(_REPO_CONFIG, diff, repo, out)
-            second_manifest = json.loads(
-                (out / "manifest.json").read_text(encoding="utf-8")
-            )
+            second_manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
             snapshot = out / "repo_snapshot"
             self.assertFalse((snapshot / "deleted.txt").exists())
@@ -364,9 +352,7 @@ class BundlePublicationTests(unittest.TestCase):
             (out / "mr.diff" / "stale").write_text("stale\n", encoding="utf-8")
             (out / "rules").write_text("stale file\n", encoding="utf-8")
             (out / "prompts" / "nested").mkdir(parents=True)
-            (out / "prompts" / "nested" / "stale.md").write_text(
-                "stale\n", encoding="utf-8"
-            )
+            (out / "prompts" / "nested" / "stale.md").write_text("stale\n", encoding="utf-8")
             symlink_target = root / "symlink-target"
             symlink_target.write_text("do not replace\n", encoding="utf-8")
             (out / "config.review.yaml").symlink_to(symlink_target)
@@ -376,9 +362,7 @@ class BundlePublicationTests(unittest.TestCase):
             _publish_staged_bundle(staging, out)
 
             self.assertEqual((out / "mr.diff").read_text(encoding="utf-8"), "new diff\n")
-            self.assertEqual(
-                (out / "rules" / "current.md").read_text(encoding="utf-8"), "new\n"
-            )
+            self.assertEqual((out / "rules" / "current.md").read_text(encoding="utf-8"), "new\n")
             self.assertFalse((out / "prompts" / "nested").exists())
             self.assertEqual(
                 (out / "config.review.yaml").read_text(encoding="utf-8"), "new config\n"
@@ -398,9 +382,7 @@ class BundlePublicationTests(unittest.TestCase):
             first = root / "first"
             second = root / "second"
 
-            with mock.patch(
-                "ai_review.input_bundle.now_iso", return_value="2026-08-23T00:00:00Z"
-            ):
+            with mock.patch("ai_review.input_bundle.now_iso", return_value="2026-08-23T00:00:00Z"):
                 prepare_local_bundle(_REPO_CONFIG, diff, repo, first)
                 prepare_local_bundle(_REPO_CONFIG, diff, repo, second)
 
@@ -455,9 +437,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         client = mock.Mock()
         expected = self._pull_request()
         client.fetch_pull_request.return_value = expected
-        with mock.patch.dict(
-            "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "7"}, clear=True
-        ):
+        with mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "7"}, clear=True):
             actual = _resolve_github_pull_request(client, "octo/repo")
 
         self.assertEqual(actual, expected)
@@ -505,17 +485,13 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.load_config", return_value={}),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
-            mock.patch(
-                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
-            ),
+            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
                 side_effect=lambda _client, _config, state, **_kwargs: state,
             ),
-            mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
         ):
             out = Path(tmpdir) / "inputs"
@@ -523,21 +499,15 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(client.fetch_pull_request.call_count, 3)
-        client.fetch_pull_request.assert_has_calls(
-            [mock.call("octo/repo", "32")] * 3
-        )
+        client.fetch_pull_request.assert_has_calls([mock.call("octo/repo", "32")] * 3)
         client.fetch_version.assert_not_called()
         client.fetch_diff.assert_not_called()
-        client.fetch_comparison_diff.assert_called_once_with(
-            "octo/repo", "0" * 40, "1" * 40
-        )
+        client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, "1" * 40)
         self.assertEqual(manifest["base_sha"], "0" * 40)
         self.assertEqual(manifest["head_sha"], "1" * 40)
         self.assertEqual(manifest["selected_head_sha"], "1" * 40)
         self.assertEqual(manifest["checkout_head_sha"], "1" * 40)
-        self.assertEqual(
-            manifest["diff_sha256"], sha256_hex("diff --git a/f.py b/f.py\n")
-        )
+        self.assertEqual(manifest["diff_sha256"], sha256_hex("diff --git a/f.py b/f.py\n"))
 
     def test_manual_dispatch_requires_numeric_pull_request(self) -> None:
         with (
@@ -566,9 +536,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             completed = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="abc123\n", stderr=""
             )
-            with mock.patch(
-                "ai_review.input_bundle.subprocess.run", return_value=completed
-            ) as run:
+            with mock.patch("ai_review.input_bundle.subprocess.run", return_value=completed) as run:
                 output = _git_command(repo, "rev-parse", "--verify", "HEAD^{commit}")
 
             resolved_repo = repo.resolve(strict=True)
@@ -599,9 +567,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 args=[], returncode=128, stdout="", stderr="fatal: invalid HEAD\n"
             )
             with (
-                mock.patch(
-                    "ai_review.input_bundle.subprocess.run", return_value=completed
-                ),
+                mock.patch("ai_review.input_bundle.subprocess.run", return_value=completed),
                 self.assertRaisesRegex(
                     BundleError,
                     r"git rev-parse --verify HEAD\^\{commit\}: fatal: invalid HEAD",
@@ -614,9 +580,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             missing = Path(tmpdir) / "missing"
             with (
                 mock.patch("ai_review.input_bundle.subprocess.run") as run,
-                self.assertRaisesRegex(
-                    BundleError, r"failed to validate GitHub checkout path"
-                ),
+                self.assertRaisesRegex(BundleError, r"failed to validate GitHub checkout path"),
             ):
                 _git_command(missing, "status")
             run.assert_not_called()
@@ -676,9 +640,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                     ) as git_command:
                         _github_checkout_head(repo, out_path, expected_head_sha=selected)
                     status_args = git_command.call_args_list[1].args[1:]
-                    self.assertFalse(
-                        any(arg.startswith(":(exclude)") for arg in status_args)
-                    )
+                    self.assertFalse(any(arg.startswith(":(exclude)") for arg in status_args))
 
     @staticmethod
     def _init_git_repo(root: Path) -> str:
@@ -718,9 +680,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             out.mkdir()
             (out / "partial-artifact.json").write_text("{}\n", encoding="utf-8")
 
-            self.assertEqual(
-                _github_checkout_head(repo, out, expected_head_sha=selected), selected
-            )
+            self.assertEqual(_github_checkout_head(repo, out, expected_head_sha=selected), selected)
 
     def test_real_checkout_rejects_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -760,17 +720,13 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.load_config", return_value={}),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
-            mock.patch(
-                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
-            ),
+            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
                 side_effect=lambda _client, _config, state, **_kwargs: state,
             ),
-            mock.patch("ai_review.input_bundle.shutil.copy2"),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
         )
         with ExitStack() as stack:
@@ -795,14 +751,10 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=mock.Mock(spec=[]),
             ),
-            mock.patch(
-                "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
-            ),
+            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             self.assertRaisesRegex(SystemExit, "comparison diff support"),
         ):
-            prepare_github_bundle(
-                Path("ai-review/config/review.yaml"), Path(tmpdir) / "inputs"
-            )
+            prepare_github_bundle(Path("ai-review/config/review.yaml"), Path(tmpdir) / "inputs")
 
     def test_prepare_uses_real_checkout_and_immutable_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -833,29 +785,21 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 ),
                 mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
                 mock.patch("ai_review.input_bundle.load_config", return_value={}),
-                mock.patch(
-                    "ai_review.input_bundle.create_runtime_platform", return_value=client
-                ),
+                mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
                     side_effect=lambda _client, _config, state, **_kwargs: state,
                 ),
-                mock.patch("ai_review.input_bundle.shutil.copy2"),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-                mock.patch("ai_review.input_bundle._file_sha256", return_value="2" * 64),
-                mock.patch(
-                    "ai_review.input_bundle._directory_sha256", return_value="3" * 64
-                ),
+                mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
             ):
                 prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
 
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["selected_head_sha"], selected)
             self.assertEqual(manifest["checkout_head_sha"], selected)
-            client.fetch_comparison_diff.assert_called_once_with(
-                "octo/repo", "0" * 40, selected
-            )
+            client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, selected)
 
     def test_prepare_rejects_real_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -889,8 +833,9 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             "sha": "2" * 40,
             "repo": {"full_name": "octo/repo"},
         }
-        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaisesRegex(
-            BundleError, "before diff collection"
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self.assertRaisesRegex(BundleError, "before diff collection"),
         ):
             self._prepare_with_versions(tmpdir, [changed])
 
@@ -1162,9 +1107,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 if rel_parts == ("src", "pkg", "mod.py"):
                     victim.unlink()
                     victim.symlink_to(outside)
-                _copy_regular_file_nofollow(
-                    dst, expected, rel_parts, dir_fd=dir_fd, name=name
-                )
+                _copy_regular_file_nofollow(dst, expected, rel_parts, dir_fd=dir_fd, name=name)
 
             with (
                 mock.patch(
@@ -1175,11 +1118,14 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             ):
                 copy_repo_snapshot(source, dest)
             self.assertFalse(dest.exists())
-            self.assertNotIn(b"outside", b"".join(
-                path.read_bytes()
-                for path in Path(tmpdir).rglob("*")
-                if path.is_file() and not path.is_symlink() and path != outside
-            ))
+            self.assertNotIn(
+                b"outside",
+                b"".join(
+                    path.read_bytes()
+                    for path in Path(tmpdir).rglob("*")
+                    if path.is_file() and not path.is_symlink() and path != outside
+                ),
+            )
 
     def test_directory_symlink_swap_during_descent_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1216,9 +1162,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch("ai_review.input_bundle.os.open", side_effect=racing_open),
                 # Linux may surface ELOOP ("symlink") or ENOTDIR when O_DIRECTORY|
                 # O_NOFOLLOW hits a swapped symlink; both are fail-closed.
-                self.assertRaisesRegex(
-                    BundleError, r"rejects (symlink|non-directory): nested"
-                ),
+                self.assertRaisesRegex(BundleError, r"rejects (symlink|non-directory): nested"),
             ):
                 copy_repo_snapshot(source, dest)
             self.assertFalse(dest.exists())
@@ -1247,9 +1191,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 copy_repo_snapshot(source, dest)
             self.assertFalse(dest.exists())
             leaked = [
-                path
-                for path in Path(tmpdir).rglob("TOP-SECRET")
-                if "outside" not in path.parts
+                path for path in Path(tmpdir).rglob("TOP-SECRET") if "outside" not in path.parts
             ]
             self.assertEqual(leaked, [])
 
@@ -1321,17 +1263,13 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=github_client,
                 ),
-                mock.patch(
-                    "ai_review.input_bundle._github_checkout_head", return_value="1" * 40
-                ),
+                mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
                     side_effect=lambda _client, _config, state, **_kwargs: state,
                 ),
-                mock.patch("ai_review.input_bundle.shutil.copy2"),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
-                mock.patch("ai_review.input_bundle._file_sha256", return_value="a" * 64),
                 mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
             ):
                 prepare_github_bundle(Path("ai-review/config/review.yaml"), out)
@@ -1361,10 +1299,8 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=gitlab_client,
                 ),
-                mock.patch("ai_review.input_bundle.shutil.copy2"),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
-                mock.patch("ai_review.input_bundle._file_sha256", return_value="c" * 64),
                 mock.patch("ai_review.input_bundle._directory_sha256", return_value="d" * 64),
             ):
                 prepare_gitlab_bundle(Path("ai-review/config/review.yaml"), out)

@@ -35,7 +35,6 @@ class BundleError(RuntimeError):
 class _BoundRevision:
     """One platform-bound change revision ready for deterministic packaging."""
 
-    platform_name: str
     project_id: str
     project_path: str
     change_id: str
@@ -46,7 +45,7 @@ class _BoundRevision:
     head_sha: str
     run_id: str
     state_pipeline_id: str
-    diff_bytes: bytes
+    diff_text: str
     snapshot_source: Path
     manifest_extensions: dict[str, str] = field(default_factory=dict)
     load_state: Callable[[dict[str, Any]], dict[str, Any]] | None = None
@@ -73,9 +72,7 @@ def _snapshot_rel_display(parts: tuple[str, ...]) -> str:
 
 
 def _raise_snapshot_rejected(kind: str, rel_parts: tuple[str, ...]) -> None:
-    raise BundleError(
-        f"repository snapshot rejects {kind}: {_snapshot_rel_display(rel_parts)}"
-    )
+    raise BundleError(f"repository snapshot rejects {kind}: {_snapshot_rel_display(rel_parts)}")
 
 
 def _ensure_snapshot_destination_safe(
@@ -197,9 +194,7 @@ def _copy_snapshot_tree(
     try:
         root_fd = os.open(source_root, root_flags)
     except OSError as exc:
-        raise BundleError(
-            f"repository snapshot failed to open source root: {exc}"
-        ) from exc
+        raise BundleError(f"repository snapshot failed to open source root: {exc}") from exc
 
     # (dir_fd, rel_parts)
     stack: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
@@ -216,9 +211,7 @@ def _copy_snapshot_tree(
                 entries = _scan_directory(dir_fd=dir_fd, rel_parts=rel_parts)
                 for entry in entries:
                     name = entry.name
-                    if _should_ignore_entry(
-                        name, rel_parts, top_level_ignore=top_level_ignore
-                    ):
+                    if _should_ignore_entry(name, rel_parts, top_level_ignore=top_level_ignore):
                         continue
                     child_parts = (*rel_parts, name)
                     if entry.is_symlink():
@@ -305,9 +298,7 @@ def copy_repo_snapshot(
         )
     )
     try:
-        _copy_snapshot_tree(
-            source_root, tmp_dest, top_level_ignore=top_level_ignore
-        )
+        _copy_snapshot_tree(source_root, tmp_dest, top_level_ignore=top_level_ignore)
         # mkdtemp uses 0o700; restore umask-typical directory mode for consumers
         # that are not the preparing uid (same-user CI jobs are unaffected either way).
         os.chmod(tmp_dest, 0o755)
@@ -346,10 +337,6 @@ def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
         )
 
 
-def _file_sha256(path: Path) -> str:
-    return sha256_hex(path.read_bytes())
-
-
 def _directory_sha256(path: Path) -> str:
     digest_parts: list[bytes] = []
     if path.exists():
@@ -365,9 +352,13 @@ def _directory_sha256(path: Path) -> str:
 
 def _remove_bundle_entry(path: Path) -> None:
     """Remove one generated bundle entry regardless of its filesystem type."""
-    if path.is_symlink() or path.is_file():
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
         path.unlink()
-    elif path.exists():
+    else:
         shutil.rmtree(path)
 
 
@@ -379,13 +370,11 @@ def _replace_staged_entry(source: Path, destination: Path) -> None:
 
 def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
     """Publish a complete staged bundle, with the manifest as the final file."""
-    manifest_source = staging_path / "manifest.json"
-    manifest_destination = out_path / "manifest.json"
-    for source in sorted(staging_path.iterdir()):
-        if source == manifest_source:
-            continue
+    sources = sorted(
+        staging_path.iterdir(), key=lambda path: (path.name == "manifest.json", path.name)
+    )
+    for source in sources:
         _replace_staged_entry(source, out_path / source.name)
-    _replace_staged_entry(manifest_source, manifest_destination)
 
 
 def _prepare_bound_bundle(
@@ -396,8 +385,8 @@ def _prepare_bound_bundle(
     out_path: Path,
 ) -> Path:
     """Build every input bundle through the same revision-bound artifact path."""
-    diff_text = bound.diff_bytes.decode("utf-8")
-    _enforce_diff_limits(diff_text, config_dict)
+    _enforce_diff_limits(bound.diff_text, config_dict)
+    config_bytes = config_path.read_bytes()
     out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
     # A manifest makes every sibling artifact consumable. Invalidate any prior
@@ -406,8 +395,8 @@ def _prepare_bound_bundle(
     try:
         with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
             staging_path = Path(staging)
-            (staging_path / "mr.diff").write_bytes(bound.diff_bytes)
-            shutil.copy2(config_path, staging_path / "config.review.yaml")
+            (staging_path / "mr.diff").write_bytes(bound.diff_text.encode("utf-8"))
+            (staging_path / "config.review.yaml").write_bytes(config_bytes)
 
             source_rules = config_path.parent.parent / "rules"
             source_prompts = config_path.parent.parent / "prompts"
@@ -448,9 +437,9 @@ def _prepare_bound_bundle(
                 "start_sha": bound.start_sha,
                 "head_sha": bound.head_sha,
                 **bound.manifest_extensions,
-                "diff_sha256": sha256_hex(bound.diff_bytes),
+                "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
                 "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-                "config_sha256": _file_sha256(config_path),
+                "config_sha256": sha256_hex(config_bytes),
                 "rules_sha256": _directory_sha256(source_rules),
                 "effective_config": effective_config_summary(config_dict),
                 "effective_config_sha256": effective_config_digest(config_dict),
@@ -471,16 +460,13 @@ def prepare_local_bundle(
     diff: str | Path,
     repo: str | Path,
     out: str | Path,
-    *,
-    _config: dict[str, Any] | None = None,
 ) -> Path:
     config_path = Path(config)
     diff_path = Path(diff)
     out_path = Path(out)
-    config_dict = _config if _config is not None else load_config(config_path)
-    diff_bytes = diff_path.read_bytes()
+    config_dict = load_config(config_path)
+    diff_text = diff_path.read_text(encoding="utf-8")
     bound = _BoundRevision(
-        platform_name="local",
         project_id="local",
         project_path="local/simple",
         change_id="0",
@@ -489,9 +475,9 @@ def prepare_local_bundle(
         base_sha="0" * 40,
         start_sha="0" * 40,
         head_sha="1" * 40,
-        run_id=f"local-{sha256_hex(diff_bytes)[:12]}",
+        run_id=f"local-{sha256_hex(diff_text.encode('utf-8'))[:12]}",
         state_pipeline_id="",
-        diff_bytes=diff_bytes,
+        diff_text=diff_text,
         snapshot_source=Path(repo),
     )
     return _prepare_bound_bundle(
@@ -609,13 +595,10 @@ def _git_command(repo_path: Path, *args: str) -> str:
     try:
         resolved_repo_path = repo_path.resolve(strict=True)
     except OSError as exc:
-        raise BundleError(
-            f"failed to validate GitHub checkout path {repo_path}: {exc}"
-        ) from exc
+        raise BundleError(f"failed to validate GitHub checkout path {repo_path}: {exc}") from exc
     if not resolved_repo_path.is_dir():
         raise BundleError(
-            f"failed to validate GitHub checkout path: not a directory: "
-            f"{resolved_repo_path}"
+            f"failed to validate GitHub checkout path: not a directory: {resolved_repo_path}"
         )
 
     # Container jobs commonly run as a different uid from the host runner that
@@ -630,15 +613,11 @@ def _git_command(repo_path: Path, *args: str) -> str:
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
-        raise BundleError(
-            f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}"
-        )
+        raise BundleError(f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}")
     return completed.stdout.strip()
 
 
-def _github_checkout_head(
-    repo_path: Path, out_path: Path, *, expected_head_sha: str
-) -> str:
+def _github_checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha: str) -> str:
     """Resolve and validate the exact, clean commit used for the repository snapshot."""
     if not _GIT_OBJECT_SHA_RE.fullmatch(expected_head_sha):
         raise BundleError(
@@ -647,8 +626,7 @@ def _github_checkout_head(
     checkout_head = _git_command(repo_path, "rev-parse", "--verify", "HEAD^{commit}")
     if not _GIT_OBJECT_SHA_RE.fullmatch(checkout_head):
         raise BundleError(
-            "GitHub checkout HEAD did not resolve to a full commit SHA: "
-            f"{checkout_head}"
+            f"GitHub checkout HEAD did not resolve to a full commit SHA: {checkout_head}"
         )
     if checkout_head != expected_head_sha:
         raise BundleError(
@@ -728,8 +706,6 @@ def _require_github_revision(
 def prepare_github_bundle(
     config: str | Path,
     out: str | Path,
-    *,
-    _config: dict[str, Any] | None = None,
 ) -> Path:
     out_path = Path(out)
     config_path = Path(config)
@@ -741,7 +717,7 @@ def prepare_github_bundle(
     checkout_head_sha = _github_checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
-    config_dict = _config if _config is not None else load_config(config_path)
+    config_dict = load_config(config_path)
     try:
         client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
@@ -758,9 +734,7 @@ def prepare_github_bundle(
         boundary="before diff collection",
     )
     try:
-        diff_text = client.fetch_comparison_diff(
-            repo, version.base_sha, version.head_sha
-        )
+        diff_text = client.fetch_comparison_diff(repo, version.base_sha, version.head_sha)
     except ReviewPlatformError as exc:
         raise BundleError(f"failed to fetch GitHub pull request diff: {exc}") from exc
     after_diff = _resolve_github_pull_request(client, repo)
@@ -775,6 +749,7 @@ def prepare_github_bundle(
     head = raw_head if isinstance(raw_head, dict) else {}
     raw_base = pull_request.get("base")
     base = raw_base if isinstance(raw_base, dict) else {}
+
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
             client,
@@ -797,7 +772,6 @@ def prepare_github_bundle(
         )
 
     bound = _BoundRevision(
-        platform_name="GitHub",
         project_id=repo,
         project_path=repo,
         change_id=pr_number,
@@ -807,11 +781,10 @@ def prepare_github_bundle(
         start_sha=version.base_sha,
         head_sha=version.head_sha,
         run_id=(
-            f"gh-{os.environ.get('GITHUB_RUN_ID', '0')}-"
-            f"{os.environ.get('GITHUB_RUN_ATTEMPT', '0')}"
+            f"gh-{os.environ.get('GITHUB_RUN_ID', '0')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '0')}"
         ),
         state_pipeline_id=os.environ.get("GITHUB_RUN_ID", ""),
-        diff_bytes=diff_text.encode("utf-8"),
+        diff_text=diff_text,
         snapshot_source=checkout_root,
         manifest_extensions={
             "selected_head_sha": selected_head_sha,
@@ -831,8 +804,6 @@ def prepare_github_bundle(
 def prepare_gitlab_bundle(
     config: str | Path,
     out: str | Path,
-    *,
-    _config: dict[str, Any] | None = None,
 ) -> Path:
     out_path = Path(out)
     config_path = Path(config)
@@ -840,7 +811,7 @@ def prepare_gitlab_bundle(
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    config_dict = _config if _config is not None else load_config(config_path)
+    config_dict = load_config(config_path)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
@@ -882,7 +853,6 @@ def prepare_gitlab_bundle(
             )
 
     bound = _BoundRevision(
-        platform_name="GitLab",
         project_id=str(project_id),
         project_path=os.environ.get("CI_PROJECT_PATH", ""),
         change_id=str(mr_iid),
@@ -891,12 +861,9 @@ def prepare_gitlab_bundle(
         base_sha=version.base_sha,
         start_sha=version.start_sha,
         head_sha=version.head_sha,
-        run_id=(
-            f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-"
-            f"{os.environ.get('CI_JOB_ID', '0')}"
-        ),
+        run_id=(f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-{os.environ.get('CI_JOB_ID', '0')}"),
         state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
-        diff_bytes=diff_text.encode("utf-8"),
+        diff_text=diff_text,
         snapshot_source=Path.cwd(),
         load_state=load_state,
         revalidate=revalidate,
@@ -924,18 +891,15 @@ def cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "local":
-        config_dict = load_config(args.config)
-        prepare_local_bundle(
-            args.config, args.diff, args.repo, args.out, _config=config_dict
-        )
+        prepare_local_bundle(args.config, args.diff, args.repo, args.out)
         return 0
     if args.command == "prepare":
         config_dict = load_config(args.config)
         posting = config_dict.get("posting", {}) if isinstance(config_dict, dict) else {}
         if posting.get("mode") == "github_reviews":
-            prepare_github_bundle(args.config, args.out, _config=config_dict)
+            prepare_github_bundle(args.config, args.out)
         else:
-            prepare_gitlab_bundle(args.config, args.out, _config=config_dict)
+            prepare_gitlab_bundle(args.config, args.out)
         return 0
     raise AssertionError(args.command)
 

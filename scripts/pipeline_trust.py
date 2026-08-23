@@ -7,6 +7,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal
 
+ROOT = Path(__file__).resolve().parents[1]
+AI_REVIEW_SRC = ROOT / "ai-review" / "src"
+if str(AI_REVIEW_SRC) not in sys.path:
+    sys.path.insert(0, str(AI_REVIEW_SRC))
+
+from ai_review.reviewers import REVIEWERS  # noqa: E402
+
 yaml: ModuleType | None
 try:
     import yaml as _yaml
@@ -28,17 +35,9 @@ RESERVED_DIRECT_JOB_NAMES = {
     ".review_template",
     "AI critique",
     "AI review",
-    # Generated job names from the pre-matrix template remain reserved while
-    # older pinned consumers can still declare them. The aggregate names above
-    # are the current template authority.
-    "AI critique: [claude]",
-    "AI critique: [codex]",
-    "AI critique: [cursor]",
-    "AI critique: [opencode]",
-    "AI review: [claude]",
-    "AI review: [codex]",
-    "AI review: [cursor]",
-    "AI review: [opencode]",
+    # GitLab expands the current matrix jobs to these names.
+    *(f"AI critique: [{reviewer}]" for reviewer in REVIEWERS),
+    *(f"AI review: [{reviewer}]" for reviewer in REVIEWERS),
     # Deleted from the template with the merge gate, but kept reserved for one
     # release: this auditor runs from the image against a *consuming* project's
     # configuration, and a consumer pinned to an older template still declares the

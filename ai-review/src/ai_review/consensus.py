@@ -84,12 +84,10 @@ def _final_severity(findings: list[dict[str, Any]]) -> str:
     Severity is an impact label. It changes no decision in either direction: a
     lone `blocker` is `fyi`, and a two-support `minor` surfaces.
     """
-    return max(
-        (str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value]
-    )
+    return max((str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value])
 
 
-def _batch_usable_for_panel(batch: dict[str, Any]) -> bool:
+def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
     """Operational panel seat and resolution eligibility predicate.
 
     Requires ``adapter_status == "success"`` and ``usable_for_resolution``; callers
@@ -158,7 +156,7 @@ def build_consensus(
     enabled = sorted(enabled_reviewers(config))
     # successful_reviewers / resolution_eligible_reviewers share one predicate.
     successful = sorted(
-        str(batch["reviewer"]) for batch in finding_batches if _batch_usable_for_panel(batch)
+        str(batch["reviewer"]) for batch in finding_batches if batch_usable_for_panel(batch)
     )
     resolution_eligible = list(successful)
     failed = sorted(set(enabled) - set(successful))
@@ -166,7 +164,7 @@ def build_consensus(
 
     all_findings = []
     for batch in finding_batches:
-        if _batch_usable_for_panel(batch):
+        if batch_usable_for_panel(batch):
             for finding in batch["findings"]:
                 copied = dict(finding)
                 copied["reviewer"] = batch["reviewer"]
@@ -367,16 +365,14 @@ def validate_consensus_inputs(
             if reviewer not in enabled:
                 # Matrix jobs may still emit skipped artifacts for disabled seats.
                 if status != "skipped":
-                    raise ConsensusIntegrityError(
-                        f"finding batch for disabled reviewer={reviewer}"
-                    )
+                    raise ConsensusIntegrityError(f"finding batch for disabled reviewer={reviewer}")
                 continue
             expected_model = str(reviewer_cfg.get("model") or "")
             if status == "success" and str(batch.get("model") or "") != expected_model:
                 raise ConsensusIntegrityError(
                     f"finding batch model mismatch for reviewer={reviewer}"
                 )
-            if _batch_usable_for_panel(batch):
+            if batch_usable_for_panel(batch):
                 for finding in batch.get("findings") or []:
                     if isinstance(finding, dict) and finding.get("source_finding_id"):
                         known_finding_ids.add(str(finding["source_finding_id"]))
@@ -394,18 +390,14 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(f"duplicate critique batch for critic={critic}")
             seen_critics.add(critic)
             if batch.get("run_id") != run_id:
-                raise ConsensusIntegrityError(
-                    f"critique batch run_id mismatch for critic={critic}"
-                )
+                raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
             status = str(batch.get("adapter_status") or "success")
             critic_cfg = reviewers_cfg.get(critic)
             if not isinstance(critic_cfg, dict):
                 raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
             if critic not in enabled:
                 if status != "skipped":
-                    raise ConsensusIntegrityError(
-                        f"critique batch for disabled critic={critic}"
-                    )
+                    raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
                 continue
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(

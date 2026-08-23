@@ -19,10 +19,8 @@ class GitHubCanaryError(RuntimeError):
     pass
 
 
-def _run(*args: str, cwd: Path | None = None, capture: bool = True) -> str:
-    completed = subprocess.run(
-        list(args), cwd=cwd, text=True, capture_output=capture, check=False
-    )
+def _run(*args: str, cwd: Path | None = None) -> str:
+    completed = subprocess.run(list(args), cwd=cwd, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
         raise GitHubCanaryError(f"{args[0]} {args[1] if len(args) > 1 else ''} failed: {detail}")
@@ -182,15 +180,9 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
     for reviewer in ("claude", "codex", "opencode", "cursor"):
-        shutil.copytree(
-            artifacts / f"ai-review-review-{reviewer}", output, dirs_exist_ok=True
-        )
-        shutil.copytree(
-            artifacts / f"ai-review-critique-{reviewer}", output, dirs_exist_ok=True
-        )
-    shutil.copytree(
-        artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True
-    )
+        shutil.copytree(artifacts / f"ai-review-review-{reviewer}", output, dirs_exist_ok=True)
+        shutil.copytree(artifacts / f"ai-review-critique-{reviewer}", output, dirs_exist_ok=True)
+    shutil.copytree(artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True)
     shutil.copytree(artifacts / "ai-review-post", output / "post", dirs_exist_ok=True)
     state.update({"run_id": run_id, "run_url": run["url"]})
     state_path.write_text(json.dumps(state), encoding="utf-8")

@@ -66,7 +66,7 @@ def _is_packaged_runtime() -> bool:
     return os.environ.get(_PACKAGED_RUNTIME_ENV) == "1"
 
 
-def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW) -> str | None:
+def _cursor_publish_workflow_skip_reason(workflow_path: Path) -> str | None:
     """Return a skip reason only when a packaged runtime lacks the publish workflow.
 
     Raise AssertionError if the marker is set with the checkout workflow present,
@@ -83,59 +83,6 @@ def _cursor_publish_workflow_skip_reason(workflow_path: Path = _PUBLISH_WORKFLOW
             return "GitHub publish workflow is absent from the packaged runtime image"
         raise AssertionError(f"GitHub publish workflow is missing from checkout: {workflow_path}")
     return None
-
-
-def _strip_yaml_string(value: str) -> str:
-    value = value.strip()
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        return value[1:-1]
-    return value
-
-
-def _template_variables() -> dict[str, dict[str, str]]:
-    variables: dict[str, dict[str, str]] = {}
-    current_job: str | None = None
-    in_variables = False
-
-    for raw_line in _CI_TEMPLATE.read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip():
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip(" "))
-        stripped = raw_line.strip()
-        if indent == 0 and stripped.endswith(":"):
-            current_job = _strip_yaml_string(stripped[:-1])
-            in_variables = False
-            variables.setdefault(current_job, {})
-            continue
-        if current_job is None:
-            continue
-        if indent == 2 and stripped == "variables:":
-            in_variables = True
-            continue
-        if in_variables and indent == 4 and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            variables[current_job][key.strip()] = _strip_yaml_string(value)
-            continue
-        if in_variables and indent <= 2:
-            in_variables = False
-
-    return variables
-
-
-def _effective_variables(template: dict[str, dict[str, str]], job_name: str) -> dict[str, str]:
-    template_variables = template[".review_template"]
-    reviewer_variables = template[job_name]
-    return {**template_variables, **reviewer_variables}
-
-
-def _effective_critique_variables(
-    template: dict[str, dict[str, str]], job_name: str
-) -> dict[str, str]:
-    template_variables = template[".critique_template"]
-    reviewer_variables = template[job_name]
-    return {**template_variables, **reviewer_variables}
 
 
 def _workflow_job(text: str, job_name: str) -> str:
@@ -204,8 +151,7 @@ class TimeoutInvariantTests(unittest.TestCase):
         self.assertLessEqual(
             process_timeout + _OVERHEAD_RESERVE_SECONDS,
             shortest_outer_seconds,
-            "each outer ceiling must leave at least the overhead reserve for "
-            "wrapper/artifact work",
+            "each outer ceiling must leave at least the overhead reserve for wrapper/artifact work",
         )
 
     def test_reviewer_and_critique_templates_have_independent_outer_timeouts(self) -> None:
@@ -652,10 +598,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "python -m ai_review_smoke reviewer",
             "python -m compileall",
             "--user 65532:65532",
-            'workdir /runner-checkout',
+            "workdir /runner-checkout",
             "--env HOME=/tmp",
-            'PREFLIGHT_HEAD_SHA=$GITHUB_SHA',
-            '$GITHUB_WORKSPACE:/runner-checkout:ro',
+            "PREFLIGHT_HEAD_SHA=$GITHUB_SHA",
+            "$GITHUB_WORKSPACE:/runner-checkout:ro",
             "checkout owner and container uid to differ",
             "preflight negative control expected dubious ownership",
             "from ai_review.input_bundle import _github_checkout_head",
@@ -748,7 +694,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertRegex(wrapper, r"(?m)^  --mount \"type=bind,src=\$smoke_dir,dst=/smoke\" \\$")
         self.assertIn('mkdir -p "$smoke_dir/home"', wrapper)
 
-
     def test_packaged_runtime_marker_rejects_checkout_publish_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workflow_path = Path(tmp) / ".github/workflows/publish-ai-review-images.yml"
@@ -783,8 +728,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
         self.assertIn("COPY README.md /opt/README.md", text)
         self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
-
-
 
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
@@ -985,8 +928,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", post)
         self.assertIn(
-            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: "
-            "${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
+            "AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}",
             post,
         )
         self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
@@ -1003,9 +945,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
-            "AI_REVIEW_CRITIQUE_ENABLED": (
-                "${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"
-            ),
+            "AI_REVIEW_CRITIQUE_ENABLED": ("${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"),
         }
 
         for name, expression in expected_mappings.items():

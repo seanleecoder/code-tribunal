@@ -7,9 +7,9 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from ai_review.consensus import batch_usable_for_panel
+from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
-
-REVIEWERS = ("claude", "codex", "opencode", "cursor")
 
 
 class CanaryValidationError(RuntimeError):
@@ -37,32 +37,22 @@ def validate_run(
     manifest = load_json_file(inputs / "manifest.json")
     seats: dict[str, dict[str, Any]] = {}
     for reviewer in REVIEWERS:
-        review_status = _load(
-            output / "status" / f"{reviewer}.json", "adapter_status.schema.json"
-        )
+        review_status = _load(output / "status" / f"{reviewer}.json", "adapter_status.schema.json")
         critique_status = _load(
             output / "status" / f"critique-{reviewer}.json",
             "adapter_status.schema.json",
         )
-        finding_batch = _load(
-            output / "findings" / f"{reviewer}.json", "finding_batch.schema.json"
-        )
+        finding_batch = _load(output / "findings" / f"{reviewer}.json", "finding_batch.schema.json")
         critique_batch = _load(
             output / "critiques" / f"{reviewer}.json", "critique_batch.schema.json"
         )
         if review_status.get("status") != "success":
             raise CanaryValidationError(f"{platform} {reviewer} review did not succeed")
         if review_status.get("usable_for_resolution") is not True:
-            raise CanaryValidationError(
-                f"{platform} {reviewer} review is not resolution-eligible"
-            )
+            raise CanaryValidationError(f"{platform} {reviewer} review is not resolution-eligible")
         if critique_status.get("status") != "success":
             raise CanaryValidationError(f"{platform} {reviewer} critique did not succeed")
-        if finding_batch.get("adapter_status") != "success":
-            raise CanaryValidationError(
-                f"{platform} {reviewer} finding batch did not record success"
-            )
-        if finding_batch.get("usable_for_resolution") is not True:
+        if not batch_usable_for_panel(finding_batch):
             raise CanaryValidationError(
                 f"{platform} {reviewer} finding batch is not resolution-eligible"
             )
@@ -77,15 +67,13 @@ def validate_run(
                 )
         seats[reviewer] = {
             "review": {
-                "status": "success",
+                "status": finding_batch["adapter_status"],
                 "model": finding_batch.get("model"),
             },
-            "critique": {"status": "success"},
+            "critique": {"status": critique_batch["adapter_status"]},
         }
 
-    consensus = _load(
-        output / "consensus" / "consensus.json", "consensus.schema.json"
-    )
+    consensus = _load(output / "consensus" / "consensus.json", "consensus.schema.json")
     post = _load(output / "post" / "post_result.json", "post_result.schema.json")
     expected = set(REVIEWERS)
     if consensus.get("panel_status") != "full":
@@ -113,11 +101,11 @@ def validate_run(
         "seats": seats,
         "consensus": {
             "panel_status": "full",
-            "successful_reviewers": list(REVIEWERS),
-            "resolution_eligible_reviewers": list(REVIEWERS),
+            "successful_reviewers": consensus["successful_reviewers"],
+            "resolution_eligible_reviewers": consensus["resolution_eligible_reviewers"],
         },
         "posting": {
-            "status": "success",
+            "status": post["status"],
             "posted_thread_count": len(post["posted_discussions"]),
         },
         "cleanup": cleanup_status,

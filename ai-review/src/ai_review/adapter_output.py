@@ -186,6 +186,8 @@ def _decode_stringified_structured_output(
         items = candidate
         replaced = 1
     elif isinstance(value, list):
+        if all(not isinstance(item, str) for item in value):
+            return payload
         items = value
     else:
         return payload
@@ -207,38 +209,29 @@ def _decode_stringified_structured_output(
     normalized = dict(payload)
     normalized[field] = normalized_items
     sys.stderr.write(
-        redact_text(
-            f"ai-review: {stage} decoded {replaced} stringified structured item(s)\n"
-        )
+        redact_text(f"ai-review: {stage} decoded {replaced} stringified structured item(s)\n")
     )
     return normalized
 
 
-def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
-    """Coerce supported reviewer roots, then apply shared normalization."""
+def _coerce_root_shape(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+    """Coerce the supported object and critique-array root shapes."""
     if isinstance(raw, dict):
-        coerced = raw
-    elif (
-        isinstance(raw, list)
-        and (
-            stage == "critique"
-            or (
-                stage is None
-                and all(isinstance(item, dict) for item in raw)
-                and (
-                    not raw
-                    or any(
-                        "target_source_finding_id" in item or "verdict" in item
-                        for item in raw
-                    )
-                )
-            )
-        )
-    ):
-        coerced = {"critiques": raw}
-    else:
+        return raw
+    if not isinstance(raw, list):
         raise SchemaValidationError("adapter output root must be an object")
-    return _decode_stringified_structured_output(coerced, stage=stage)
+    if stage == "critique":
+        return {"critiques": raw}
+    if stage is not None or not all(isinstance(item, dict) for item in raw):
+        raise SchemaValidationError("adapter output root must be an object")
+    if raw and not any("target_source_finding_id" in item or "verdict" in item for item in raw):
+        raise SchemaValidationError("adapter output root must be an object")
+    return {"critiques": raw}
+
+
+def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+    """Coerce supported reviewer roots, then decode structured string values."""
+    return _decode_stringified_structured_output(_coerce_root_shape(raw, stage=stage), stage=stage)
 
 
 _ANSWER_PART_KEYS = ("content", "result", "parts", "part", "message")

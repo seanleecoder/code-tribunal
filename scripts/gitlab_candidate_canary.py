@@ -64,11 +64,11 @@ def _write_state(path: str, state: dict[str, Any]) -> None:
     Path(path).write_text(json.dumps(state), encoding="utf-8")
 
 
-def _raw_file(project: str, path: str, ref: str = "main") -> str:
+def _raw_file(project: str, path: str) -> str:
     encoded = urllib.parse.quote(path, safe="")
     return _request(
         "GET",
-        f"projects/{project}/repository/files/{encoded}/raw?ref={urllib.parse.quote(ref)}",
+        f"projects/{project}/repository/files/{encoded}/raw?ref=main",
         raw=True,
     ).decode("utf-8")
 
@@ -97,9 +97,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         "AI_REVIEW_TRUSTED_IMAGE_SHA": args.runtime_source,
     }
     for key, value in replacements.items():
-        template, count = re.subn(
-            rf'(?m)^(\s*{key}:\s*)"[^"]+"$', rf'\g<1>"{value}"', template
-        )
+        template, count = re.subn(rf'(?m)^(\s*{key}:\s*)"[^"]+"$', rf'\g<1>"{value}"', template)
         if count != 1:
             raise GitLabCanaryError(f"candidate template has {count} {key} assignments")
 
@@ -120,9 +118,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         template,
     )
     if python_count < 3 or adapter_count != 2:
-        raise GitLabCanaryError(
-            "candidate template no longer exposes the expected stage commands"
-        )
+        raise GitLabCanaryError("candidate template no longer exposes the expected stage commands")
 
     template_commit = _commit(
         TEMPLATE_PROJECT,
@@ -202,14 +198,10 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     deadline = time.monotonic() + args.timeout_seconds
     child: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        pipelines = _request(
-            "GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines"
-        )
+        pipelines = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines")
         if pipelines:
             parent_id = pipelines[0]["id"]
-            bridges = _request(
-                "GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges"
-            )
+            bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges")
             for bridge in bridges:
                 if bridge.get("downstream_pipeline"):
                     child = bridge["downstream_pipeline"]
@@ -231,17 +223,13 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    jobs = _request(
-        "GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}/jobs?per_page=100"
-    )
+    jobs = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}/jobs?per_page=100")
     for job in jobs:
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
         archive = destination / f"job-{job['id']}.zip"
         archive.write_bytes(
-            _request(
-                "GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts", raw=True
-            )
+            _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts", raw=True)
         )
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
