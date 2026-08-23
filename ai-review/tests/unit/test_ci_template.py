@@ -422,16 +422,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         _CONFIG_DOC.exists(),
         "repository-only configuration reference is absent from the runtime image",
     )
-    def test_configuration_reference_explains_cursor_gitlab_static_job_graph(self) -> None:
+    def test_configuration_reference_explains_gitlab_matrix_job_graph(self) -> None:
         text = _CONFIG_DOC.read_text(encoding="utf-8")
         text = " ".join(text.split())
 
-        self.assertIn("AI review: [cursor]", text)
-        self.assertIn("AI critique: [cursor]", text)
-        self.assertIn("GitLab creates jobs from the included YAML", text)
-        self.assertIn("consumer is still including an older template ref", text)
-        # Cursor's jobs exist regardless of the roster; the reference must explain
-        # that a seat sitting out still gets jobs and that they are cheap no-ops.
+        self.assertIn("shared `AI review` and `AI critique` matrix jobs", text)
+        self.assertIn("older included template", text)
+        # Cursor's instances exist regardless of the roster; the reference must
+        # explain that a seat sitting out is a cheap no-op.
         self.assertIn("whatever the roster says", text)
         self.assertIn("complete quickly with skipped artifacts", text)
         self.assertIn("second egress destination, not because it ranks below", text)
@@ -855,52 +853,49 @@ class GitLabCiTemplateTests(unittest.TestCase):
         ):
             self.assertNotRegex(text, rf"(?m)^\s+{secret}:\s*\${secret}\s*$")
 
-    def test_claude_job_wires_real_openrouter_env_for_claude_adapter(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [claude]")
+    def test_gitlab_review_and_critique_are_four_seat_matrices(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        expected = ["claude", "codex", "opencode", "cursor"]
+        controls = {
+            "AI_REVIEW_LOCAL_MOCK": "0",
+            "AI_REVIEW_REQUIRE_REAL_CLAUDE": "1",
+            "AI_REVIEW_REQUIRE_REAL_OPENROUTER": "1",
+            "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
+            "AI_REVIEW_REQUIRE_REAL_CURSOR": "1",
+        }
+        for job_name, shared_name in (
+            ("AI review", ".review_template"),
+            ("AI critique", ".critique_template"),
+        ):
+            with self.subTest(job=job_name):
+                matrix = template[job_name]["parallel"]["matrix"]
+                self.assertEqual(matrix, [{"REVIEWER": expected}])
+                variables = template[shared_name]["variables"]
+                self.assertLessEqual(controls.items(), variables.items())
+                self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
 
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
+    def test_matrix_dependencies_are_aggregate_and_never_optional_per_seat(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        critique_needs = template[".critique_template"]["needs"]
+        consensus_needs = template["consensus_ai_review"]["needs"]
 
-    def test_cli_openrouter_jobs_require_real_cli(self) -> None:
-        template = _template_variables()
-
-        for reviewer in ("codex", "opencode"):
-            variables = _effective_variables(template, f"AI review: [{reviewer}]")
-            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-
-    def test_opencode_requires_real_opencode_cli(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [opencode]")
-
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
-
-    def test_cursor_requires_real_cursor_cli_without_enabling_in_template(self) -> None:
-        variables = _effective_variables(_template_variables(), "AI review: [cursor]")
-
-        self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
-        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", variables)
-
-    def test_critique_jobs_wire_same_provider_environment_as_review_jobs(self) -> None:
-        template = _template_variables()
-
-        claude = _effective_critique_variables(template, "AI critique: [claude]")
-        self.assertEqual(claude["AI_REVIEW_LOCAL_MOCK"], "0")
-        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        self.assertEqual(claude["AI_REVIEW_REQUIRE_REAL_CLAUDE"], "1")
-
-        for reviewer in ("codex", "opencode"):
-            variables = _effective_critique_variables(template, f"AI critique: [{reviewer}]")
-            self.assertEqual(variables["AI_REVIEW_LOCAL_MOCK"], "0")
-            self.assertEqual(variables["AI_REVIEW_REQUIRE_REAL_OPENROUTER"], "1")
-        opencode = _effective_critique_variables(template, "AI critique: [opencode]")
-        self.assertEqual(opencode["AI_REVIEW_REQUIRE_REAL_OPENCODE"], "1")
-        cursor = _effective_critique_variables(template, "AI critique: [cursor]")
-        self.assertEqual(cursor["AI_REVIEW_REQUIRE_REAL_CURSOR"], "1")
-        self.assertNotIn("AI_REVIEW_CURSOR_ENABLED", cursor)
+        self.assertEqual(
+            critique_needs,
+            [
+                {"job": "prepare_ai_review", "artifacts": True},
+                {"job": "AI review", "artifacts": True},
+            ],
+        )
+        self.assertEqual(
+            consensus_needs,
+            [
+                {"job": "prepare_ai_review", "artifacts": True},
+                {"job": "AI review", "artifacts": True},
+                {"job": "AI critique", "artifacts": True, "optional": True},
+            ],
+        )
+        for need in (*critique_needs, *consensus_needs):
+            self.assertNotIn("parallel", need)
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")

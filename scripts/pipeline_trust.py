@@ -26,6 +26,11 @@ RESERVED_DIRECT_JOB_NAMES = {
     ".ai_review_rules",
     ".critique_template",
     ".review_template",
+    "AI critique",
+    "AI review",
+    # Generated job names from the pre-matrix template remain reserved while
+    # older pinned consumers can still declare them. The aggregate names above
+    # are the current template authority.
     "AI critique: [claude]",
     "AI critique: [codex]",
     "AI critique: [cursor]",

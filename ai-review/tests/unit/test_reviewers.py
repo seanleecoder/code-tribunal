@@ -361,30 +361,28 @@ class ReviewerConfigAndWorkflowParityTests(unittest.TestCase):
         self.assertEqual(set(self.config["reviewers"]), REVIEWER_IDS)
 
         gitlab = yaml.safe_load(_GITLAB_TEMPLATE.read_text(encoding="utf-8"))
-        review_jobs = {f"AI review: [{reviewer}]" for reviewer in REVIEWER_IDS}
-        critique_jobs = {f"AI critique: [{reviewer}]" for reviewer in REVIEWER_IDS}
-        for stage, job_names in (("review", review_jobs), ("critique", critique_jobs)):
-            for job_name in job_names:
-                reviewer = job_name.removeprefix(f"AI {stage}: [").removesuffix("]")
-                job = gitlab[job_name]
-                self.assertEqual(job["variables"]["REVIEWER"], reviewer)
-                self.assertEqual(job["extends"], f".{stage}_template")
-                self.assertEqual(gitlab[job["extends"]]["stage"], "ai_review")
-                self.assertEqual(
-                    gitlab[job["extends"]]["script"],
-                    [f'/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" {stage}'],
-                )
+        for stage in ("review", "critique"):
+            job = gitlab[f"AI {stage}"]
+            self.assertEqual(
+                set(job["parallel"]["matrix"][0]["REVIEWER"]), REVIEWER_IDS
+            )
+            self.assertEqual(job["extends"], f".{stage}_template")
+            self.assertEqual(gitlab[job["extends"]]["stage"], "ai_review")
+            self.assertEqual(
+                gitlab[job["extends"]]["script"],
+                [f'/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" {stage}'],
+            )
 
         review_needs = {item["job"] for item in gitlab[".review_template"]["needs"]}
         self.assertEqual(review_needs, {"prepare_ai_review"})
         critique_needs = {
             item["job"] for item in gitlab[".critique_template"]["needs"]
         }
-        self.assertEqual(critique_needs, {"prepare_ai_review"} | review_jobs)
+        self.assertEqual(critique_needs, {"prepare_ai_review", "AI review"})
         consensus_needs = {item["job"] for item in gitlab["consensus_ai_review"]["needs"]}
         self.assertEqual(
             consensus_needs,
-            {"prepare_ai_review"} | review_jobs | critique_jobs,
+            {"prepare_ai_review", "AI review", "AI critique"},
         )
 
 
