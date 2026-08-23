@@ -6,8 +6,7 @@ These documents describe the current executable product contract:
 - [Artifacts and schemas](artifacts-and-schemas.md)
 - [Consensus policy](consensus.md)
 - [Finding revision lifecycle](revision-lifecycle.md)
-- [GitHub and GitLab differences](platform-differences.md)
 
 For operator decisions, start with [configuration](../configuration.md) and
-[operations](../operations.md). Historical specifications are explicitly
-non-normative and live under [history](../history/README.md).
+[operations](../operations.md). Paused historical plans are excluded from current
+documentation checks under top-level [`archive/`](../../archive/).

@@ -38,4 +38,3 @@ Further documentation:
 - [CLI and exit codes](../docs/reference/cli-and-exit-codes.md)
 - [Artifacts and schemas](../docs/reference/artifacts-and-schemas.md)
 - [Development](../docs/development/README.md)
-- [Historical acceptance records](../docs/history/README.md)

@@ -105,8 +105,8 @@ timeouts and finding caps, bounding diff/files/prompt size, and optionally
 disabling critique (critique is a second model pass, so disabling it roughly
 halves reviewer calls). Validate panel thresholds after changing seats. The
 product does not currently provide the proposed per-reviewer token/cost
-accounting from SPEC-20, so provider billing remains the authoritative cost
-source; record it per run when collecting live evidence.
+token/cost accounting, so provider billing remains the authoritative cost source;
+record it per run when collecting live evidence.
 
 For validation and lifecycle rehearsal without model spend, the deterministic
 mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
