@@ -25,7 +25,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate supply-chain pins
         shell: bash
@@ -312,14 +312,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attest base image
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.AI_REVIEW_BASE_IMAGE }}
           subject-digest: ${{ steps.push-images.outputs.base_digest }}
           push-to-registry: true
 
       - name: Attest reviewer image
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.AI_REVIEW_REVIEWER_IMAGE }}
           subject-digest: ${{ steps.push-images.outputs.reviewer_digest }}

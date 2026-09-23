@@ -1,6 +1,6 @@
 # Contributor setup
 
-Use Python 3.12 from the repository root:
+Use Python 3.14 from the repository root:
 
 ```bash
 python3 -m pip install -r requirements-dev.txt

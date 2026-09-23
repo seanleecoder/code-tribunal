@@ -1,5 +1,5 @@
-ARG AI_REVIEW_BASE_IMAGE=python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
-FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS reviewer-clis
+ARG AI_REVIEW_BASE_IMAGE=python:3.14.7-slim-trixie@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS reviewer-clis
 
 WORKDIR /opt/ai-review/reviewer-clis
 COPY ai-review/images/package.json ai-review/images/package-lock.json ./
@@ -14,7 +14,7 @@ RUN npm ci --omit=dev \
 # checks, placeholder rejection, pinned URL, checksum, extract). The two stay
 # duplicated rather than sharing a base stage so a change to one pinned artifact's
 # verification cannot silently alter the other's.
-FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS cursor-cli
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS cursor-cli
 
 WORKDIR /opt/cursor-agent-src
 COPY ai-review/images/cursor-agent.pin ./cursor-agent.pin
@@ -34,7 +34,7 @@ RUN set -eu; \
 
 # Deliberately parallel to the cursor-cli stage above; see the comment there for why
 # the verification bodies are not shared.
-FROM debian:bookworm-slim@sha256:df52e55e3361a81ac1bead266f3373ee55d29aa50cf0975d440c2be3483d8ed3 AS ripgrep-bin
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS ripgrep-bin
 
 WORKDIR /opt/ripgrep-src
 COPY ai-review/images/ripgrep.pin ./ripgrep.pin
@@ -63,9 +63,12 @@ ARG CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code
 ARG CODEX_NPM_PACKAGE=@openai/codex
 ARG OPENCODE_NPM_PACKAGE=opencode-ai
 
+# Node 26 links libatomic dynamically; the Python slim base does not provide it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=reviewer-clis /usr/local/bin/node /usr/local/bin/node
-COPY --from=reviewer-clis /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=reviewer-clis /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=reviewer-clis /opt/ai-review/reviewer-clis/node_modules /usr/local/lib/node_modules
 COPY --from=cursor-cli /usr/local/cursor-agent /usr/local/cursor-agent
 COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg
@@ -101,9 +104,11 @@ for (const packageName of process.argv.slice(1)) { \
     fs.chmodSync(targetPath, 0o755); \
     fs.symlinkSync(relativeTarget, link); \
   } \
-}' "$CLAUDE_NPM_PACKAGE" "$CODEX_NPM_PACKAGE" "$OPENCODE_NPM_PACKAGE"
+}' "$CLAUDE_NPM_PACKAGE" "$CODEX_NPM_PACKAGE" "$OPENCODE_NPM_PACKAGE" npm
 
-RUN claude --version \
+RUN npm --version \
+    && npx --version \
+    && claude --version \
     && codex --version \
     && opencode --version \
     && cursor-agent --version \

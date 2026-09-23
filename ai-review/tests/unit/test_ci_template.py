@@ -550,7 +550,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
-        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.0")
+        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.2")
         self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)

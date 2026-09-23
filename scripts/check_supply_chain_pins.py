@@ -42,18 +42,18 @@ LYCHEE_ARCHIVES = {
     ),
 }
 
-PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
+PYTHON_DIRECT_PACKAGES = {"pip", "jsonschema", "PyYAML", "requests"}
 
 # Version labels are documentation, but incorrect labels conceal dependency
 # upgrades. Keep this registry offline and reviewable so CI can verify every
 # action pin that the repository currently ships without consulting GitHub.
 APPROVED_ACTION_PINS = {
-    ("actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"): "v7.0.0",
-    ("actions/setup-python", "ece7cb06caefa5fff74198d8649806c4678c61a1"): "v6.3.0",
+    ("actions/checkout", "3d3c42e5aac5ba805825da76410c181273ba90b1"): "v7.0.1",
+    ("actions/setup-python", "5fda3b95a4ea91299a34e894583c3862153e4b97"): "v7.0.0",
     ("actions/github-script", "3a2844b7e9c422d3c10d287c895573f7108da1b3"): "v9.0.0",
     ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
     ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
-    ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
+    ("actions/attest", "1e69f48acb82d1966a394da916b4c1698aa569d6"): "v4.2.2",
     ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"): "v6.1.0",
 }
 
@@ -88,7 +88,7 @@ def _read_optional(path: Path) -> str | None:
 
 
 def _python_base_image(text: str) -> str | None:
-    match = re.search(r"^FROM (python:3\.12-slim-bookworm@sha256:[0-9a-f]{64})$", text, re.M)
+    match = re.search(r"^FROM (python:3\.14\.7-slim-trixie@sha256:[0-9a-f]{64})$", text, re.M)
     return match.group(1) if match else None
 
 
@@ -545,10 +545,10 @@ def main() -> int:
 
     base_image = _python_base_image(base)
     if base_image is None:
-        error("base.Dockerfile must pin python:3.12-slim-bookworm by sha256 digest")
+        error("base.Dockerfile must pin python:3.14.7-slim-trixie by sha256 digest")
         failures += 1
     reviewer_default = re.search(
-        r"^ARG AI_REVIEW_BASE_IMAGE=(python:3\.12-slim-bookworm@sha256:[0-9a-f]{64})$",
+        r"^ARG AI_REVIEW_BASE_IMAGE=(python:3\.14\.7-slim-trixie@sha256:[0-9a-f]{64})$",
         reviewer,
         re.M,
     )
@@ -558,9 +558,9 @@ def main() -> int:
     elif base_image is not None and reviewer_default.group(1) != base_image:
         error("reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile")
         failures += 1
-    node_from_pattern = r"^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64} AS reviewer-clis$"
+    node_from_pattern = r"^FROM node:26\.10\.0-trixie-slim@sha256:[0-9a-f]{64} AS reviewer-clis$"
     if not re.search(node_from_pattern, reviewer, re.M):
-        error("reviewer.Dockerfile must pin node:22-bookworm-slim by sha256 digest")
+        error("reviewer.Dockerfile must pin node:26.10.0-trixie-slim by sha256 digest")
         failures += 1
     if ">=" in base or 'pip install --no-cache-dir \\\n      "' in base:
         error("base.Dockerfile must install Python packages through python-constraints.txt")

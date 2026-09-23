@@ -11,9 +11,9 @@ The reviewer image keeps mutable package inputs in reviewed repository files:
 
 ## Refresh process
 
-1. Update npm CLI versions in `package.json` and regenerate the lockfile from `ai-review/images` with `npm install --package-lock-only`.
+1. Update npm CLI and package-manager versions in `package.json` and regenerate the lockfile from `ai-review/images` with `npm install --package-lock-only` under the pinned Node builder. The lockfile also pins npm itself; the final image links `npm` and `npx` from that installed package, not dangling links copied from the builder.
 2. Update Python pins in `python-constraints.txt` from a clean resolver after reviewing upstream release notes.
-3. Refresh the base image digest with a registry manifest inspection, for example `docker buildx imagetools inspect python:3.12-slim-bookworm`, and update both `base.Dockerfile` and the `AI_REVIEW_BASE_IMAGE` default in `reviewer.Dockerfile` to the same digest. The new base must keep the interpreter at `/usr/local/bin/python3`: `adapters/opencode.sh` resolves the interpreter there before forwarding it into `env -i`, and treats a packaged runtime without it as a broken image rather than falling back to an ambient `python3`. A base that moved the interpreter would fail closed, which is the safe direction but must be handled in the same reviewed change by updating that adapter's pinned-copy evidence.
+3. Refresh the base image digest with a registry manifest inspection, for example `docker buildx imagetools inspect python:3.14.7-slim-trixie`, and update both `base.Dockerfile` and the `AI_REVIEW_BASE_IMAGE` default in `reviewer.Dockerfile` to the same digest. The new base must keep the interpreter at `/usr/local/bin/python3`: `adapters/opencode.sh` resolves the interpreter there before forwarding it into `env -i`, and treats a packaged runtime without it as a broken image rather than falling back to an ambient `python3`. A base that moved the interpreter would fail closed, which is the safe direction but must be handled in the same reviewed change by updating that adapter's pinned-copy evidence.
 4. Refresh the pinned Node builder digest in `reviewer.Dockerfile` when intentionally changing the builder image.
 5. Refresh `cursor-agent.pin` by selecting a versioned `downloads.cursor.com` artifact, recording its SHA-256, and rebuilding the reviewer image. If Cursor only exposes a moving installer for a release window, run the installer in a builder, hash the produced binary/archive, and document the weaker provenance in the pin-review commit.
 6. Refresh `ripgrep.pin` whenever `opencode-ai` changes in `package.json`; `check_supply_chain_pins.py` fails until you do, because the pin names the opencode version it belongs to. OpenCode resolves `which("rg")` first and otherwise downloads an unverified binary, so to learn the version the pinned opencode would fetch, run the pinned `opencode-ai` once where `rg` is absent from PATH and the cache is cold, then read the `ripgrep-<version>-<platform>` URL it requests (the binary it would drop into `$HOME/.cache/opencode/bin/rg`). Record that exact version and the new `opencode_version` in `ripgrep.pin`, together with **both** digests of the matching `x86_64-unknown-linux-musl.tar.gz` release asset — `sha256` of the tarball and `binary_sha256` of the `rg` extracted from it (`tar -xzf … --strip-components=1` then `sha256sum rg`). Then rebuild the reviewer image so the checksum, digest, resolution, and version guards re-run.
@@ -22,11 +22,26 @@ The reviewer image keeps mutable package inputs in reviewed repository files:
 9. After the trusted `main` publication succeeds, copy the source commit and both digests from the workflow summary. Update `.github/workflows/ai-review.yml`, `ai-review/ci/review.github-actions.yml`, and `ai-review/ci/review.gitlab-ci.yml` together; update `AI_REVIEW_TRUSTED_IMAGE_SHA` in the GitLab template to that same source commit. Digest changes remain reviewed rather than being committed automatically by the publishing workflow.
 10. For every `cursor-agent.pin` bump, retry `--sandbox enabled` in the nested-container preflight; remove the allowlist exception if the new CLI can initialize its kernel sandbox there.
 
+## September 2026 refresh
+
+The runtime baseline is Python 3.14.7 and Node 26.10.0 on Debian Trixie. Node 26
+is the stable Current line, not LTS. Python bootstrap uses the exact pip pin in
+`python-constraints.txt`.
+
+The reviewer layer installs `libatomic1`, which the copied Node 26 executable
+requires and the Python slim base does not supply. Both `npm` and `npx` are linked
+from the lockfile-installed npm 12.1.0 package and exercised during the image build.
+
+OpenCode 1.18.32 still selects ripgrep 15.1.0 in its upstream
+`packages/core/src/ripgrep/binary.ts`. Keep that compatibility pin even though
+ripgrep 15.2.0 is available; re-observe it on the next OpenCode upgrade. This is
+the existing upstream-version contract, not a temporary alternate code path.
+
 ## Residual apt limits
 
 The `cursor-cli` and `ripgrep-bin` builder stages in `reviewer.Dockerfile` carry deliberately parallel bodies (presence checks, placeholder rejection, pinned-URL download, checksum, extract) rather than sharing a base stage, so a change to one pinned artifact's verification cannot silently alter the other's. A shared verifying stage would be a fair refactor once a third pinned artifact appears; it is not worth putting the already-verified Cursor stage on a new base for two.
 
-The base image installs Debian `ca-certificates` and `git` from the Bookworm apt repositories without exact package-version pins. Apt repository snapshots would improve byte-for-byte rebuilds, but add mirror operations and security-update latency. The pinned base-image digest and Python/npm lock inputs keep the application-layer tools reproducible; apt drift is limited to explicit rebuilds after the base digest is intentionally refreshed.
+The base image installs Debian `ca-certificates` and `git` from the Trixie apt repositories without exact package-version pins. Apt repository snapshots would improve byte-for-byte rebuilds, but add mirror operations and security-update latency. The pinned base-image digest and Python/npm lock inputs keep the application-layer tools reproducible; apt drift is limited to explicit rebuilds after the base digest is intentionally refreshed.
 
 ## Cursor CLI egress exception
 
@@ -34,5 +49,9 @@ Cursor CLI cannot use OpenRouter or a custom base URL in agent mode. The default
 
 ## Cursor sandbox exception
 
-The pinned Cursor CLI's kernel sandbox is unavailable inside nested GitHub Actions job containers. The adapter therefore selects the CLI's native read-only Q&A mode on each print invocation with `--mode ask --sandbox disabled --trust`, avoiding a separate state-mutating setup command. Isolation for this reviewer depends on that mode, the sanitized disposable workspace, and `cli-config.json`, which allows `Read(**)` while denying relative writes with `Write(**)`, absolute writes with `Write(/**)`, and every shell command with `Shell(*)`. The repository tests verify that this policy is wired into every invocation. **Nothing verifies the pinned CLI's own runtime interpretation of those denies**, so a `cursor-agent.pin` bump could change it unnoticed. A behavioural probe for this existed and was deleted: hardcoded to the model value that made it skip and absent from `publish`'s needs, it had never run, so it was 865 lines asserting a guarantee nobody held. The exposure is bounded rather than removed: the review workflow runs only when the pull request head is the same repository, and `CURSOR_API_KEY` reaches only the Cursor matrix entry, so this seat never processes fork-supplied content. Re-add a probe before that stops being true. This is an explicit, weaker tradeoff rather than an equivalent replacement for kernel isolation.
+The September 2026 refresh retried `--sandbox enabled` without credentials in the
+local container; authentication stopped the invocation before sandbox capability
+could be established. Retain the exception until an authenticated nested-container
+preflight demonstrates support.
 
+The pinned Cursor CLI's kernel sandbox is unavailable inside nested GitHub Actions job containers. The adapter therefore selects the CLI's native read-only Q&A mode on each print invocation with `--mode ask --sandbox disabled --trust`, avoiding a separate state-mutating setup command. Isolation for this reviewer depends on that mode, the sanitized disposable workspace, and `cli-config.json`, which allows `Read(**)` while denying relative writes with `Write(**)`, absolute writes with `Write(/**)`, and every shell command with `Shell(*)`. The repository tests verify that this policy is wired into every invocation. **Nothing verifies the pinned CLI's own runtime interpretation of those denies**, so a `cursor-agent.pin` bump could change it unnoticed. A behavioural probe for this existed and was deleted: hardcoded to the model value that made it skip and absent from `publish`'s needs, it had never run, so it was 865 lines asserting a guarantee nobody held. The exposure is bounded rather than removed: the review workflow runs only when the pull request head is the same repository, and `CURSOR_API_KEY` reaches only the Cursor matrix entry, so this seat never processes fork-supplied content. Re-add a probe before that stops being true. This is an explicit, weaker tradeoff rather than an equivalent replacement for kernel isolation.

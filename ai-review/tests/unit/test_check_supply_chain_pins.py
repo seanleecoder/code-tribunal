@@ -56,7 +56,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "reviewer.Dockerfile"
             mutated.write_text(
-                original.read_text(encoding="utf-8").replace("8a7e7c", "9a7e7c", 1),
+                original.read_text(encoding="utf-8").replace("caaf356", "daaf356", 1),
                 encoding="utf-8",
             )
             check_supply_chain_pins.REVIEWER_DOCKERFILE = mutated
@@ -76,6 +76,24 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             "GitHub containers contain 2 distinct values for AI_REVIEW_BASE_IMAGE; expected one",
             check_supply_chain_pins._cross_platform_image_pin_issues(template, mutated),
         )
+
+    def test_rejects_unconstrained_pip_bootstrap(self) -> None:
+        original = check_supply_chain_pins.PYTHON_CONSTRAINTS
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "python-constraints.txt"
+            mutated.write_text(
+                "\n".join(
+                    line
+                    for line in original.read_text(encoding="utf-8").splitlines()
+                    if not line.startswith("pip==")
+                ) + "\n",
+                encoding="utf-8",
+            )
+            check_supply_chain_pins.PYTHON_CONSTRAINTS = mutated
+            try:
+                self.assertEqual(check_supply_chain_pins.main(), 1)
+            finally:
+                check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
     def test_cross_platform_pin_check_rejects_missing_github_containers(self) -> None:
         template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
@@ -578,8 +596,8 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_accepts_registered_preceding_version_label(self) -> None:
         text = (
             "steps:\n"
-            "  # actions/checkout@v7.0.0\n"
-            "  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n"
+            "  # actions/checkout@v7.0.1\n"
+            "  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
         )
 
         self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
