@@ -7,9 +7,9 @@
 .ruff_cache/
 .tox/
 .venv/
-__pycache__/
-*.egg-info/
-*.py[cod]
+**/__pycache__/
+**/*.egg-info/
+**/*.py[cod]
 build/
 dist/
 htmlcov/

@@ -3,13 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Pinned reviewer CLI dependencies for ai-review/images/reviewer.Dockerfile",
-  "scripts": {
-    "verify": "claude --version && codex --version && opencode --version && npm --version"
-  },
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.280",
     "@openai/codex": "0.156.1",
-    "opencode-ai": "1.18.32",
-    "npm": "12.1.0"
+    "opencode-ai": "1.18.32"
   }
 }
