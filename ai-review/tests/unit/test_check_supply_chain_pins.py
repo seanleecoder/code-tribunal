@@ -53,10 +53,15 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_detects_reviewer_base_digest_drift(self) -> None:
         original = check_supply_chain_pins.REVIEWER_DOCKERFILE
+        base_pin = check_supply_chain_pins._python_base_image(
+            check_supply_chain_pins.BASE_DOCKERFILE.read_text(encoding="utf-8")
+        )
+        assert base_pin is not None
+        replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
         with tempfile.TemporaryDirectory() as tmp:
             mutated = Path(tmp) / "reviewer.Dockerfile"
             mutated.write_text(
-                original.read_text(encoding="utf-8").replace("8a7e7c", "9a7e7c", 1),
+                original.read_text(encoding="utf-8").replace(base_pin, replacement, 1),
                 encoding="utf-8",
             )
             check_supply_chain_pins.REVIEWER_DOCKERFILE = mutated
@@ -75,6 +80,21 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         self.assertIn(
             "GitHub containers contain 2 distinct values for AI_REVIEW_BASE_IMAGE; expected one",
             check_supply_chain_pins._cross_platform_image_pin_issues(template, mutated),
+        )
+
+    def test_rejects_unconstrained_pip_bootstrap(self) -> None:
+        base = check_supply_chain_pins.BASE_DOCKERFILE.read_text(encoding="utf-8")
+        dockerfile = (
+            "RUN python -m pip install --no-cache-dir --upgrade pip \\\n"
+            "    && python -m pip install --no-cache-dir \\\n"
+            "      --constraint /opt/c.txt \\\n"
+            "      requests\n"
+        )
+
+        self.assertEqual(check_supply_chain_pins._unconstrained_pip_installs(base), [])
+        self.assertEqual(
+            check_supply_chain_pins._unconstrained_pip_installs(dockerfile),
+            ["RUN python -m pip install --no-cache-dir --upgrade pip"],
         )
 
     def test_cross_platform_pin_check_rejects_missing_github_containers(self) -> None:
@@ -576,11 +596,12 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
 
     def test_accepts_registered_preceding_version_label(self) -> None:
-        text = (
-            "steps:\n"
-            "  # actions/checkout@v7.0.0\n"
-            "  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n"
-        )
+        ((sha, version),) = [
+            (sha, version)
+            for (action, sha), version in check_supply_chain_pins.APPROVED_ACTION_PINS.items()
+            if action == "actions/checkout"
+        ]
+        text = f"steps:\n  # actions/checkout@{version}\n  - uses: actions/checkout@{sha}\n"
 
         self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
 

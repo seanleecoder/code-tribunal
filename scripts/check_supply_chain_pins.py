@@ -44,16 +44,21 @@ LYCHEE_ARCHIVES = {
 
 PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
 
+# The tag names the release line; the digest pins the exact bytes, so patch-level
+# base-image refreshes need no checker edit.
+PYTHON_BASE_IMAGE_PATTERN = r"python:3\.14(?:\.\d+)*-slim-trixie@sha256:[0-9a-f]{64}"
+NODE_BUILDER_IMAGE_PATTERN = r"node:26(?:\.\d+)*-trixie-slim@sha256:[0-9a-f]{64}"
+
 # Version labels are documentation, but incorrect labels conceal dependency
 # upgrades. Keep this registry offline and reviewable so CI can verify every
 # action pin that the repository currently ships without consulting GitHub.
 APPROVED_ACTION_PINS = {
-    ("actions/checkout", "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"): "v7.0.0",
-    ("actions/setup-python", "ece7cb06caefa5fff74198d8649806c4678c61a1"): "v6.3.0",
+    ("actions/checkout", "3d3c42e5aac5ba805825da76410c181273ba90b1"): "v7.0.1",
+    ("actions/setup-python", "5fda3b95a4ea91299a34e894583c3862153e4b97"): "v7.0.0",
     ("actions/github-script", "3a2844b7e9c422d3c10d287c895573f7108da1b3"): "v9.0.0",
     ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
     ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
-    ("actions/attest", "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"): "v4.2.0",
+    ("actions/attest", "1e69f48acb82d1966a394da916b4c1698aa569d6"): "v4.2.2",
     ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"): "v6.1.0",
 }
 
@@ -88,8 +93,18 @@ def _read_optional(path: Path) -> str | None:
 
 
 def _python_base_image(text: str) -> str | None:
-    match = re.search(r"^FROM (python:3\.12-slim-bookworm@sha256:[0-9a-f]{64})$", text, re.M)
+    match = re.search(rf"^FROM ({PYTHON_BASE_IMAGE_PATTERN})$", text, re.M)
     return match.group(1) if match else None
+
+
+def _unconstrained_pip_installs(dockerfile: str) -> list[str]:
+    logical_lines = dockerfile.replace("\\\n", " ").splitlines()
+    commands = (command.strip() for line in logical_lines for command in line.split("&&"))
+    return [
+        " ".join(command.split())
+        for command in commands
+        if "pip install" in command and "--constraint " not in command
+    ]
 
 
 def _constraint_packages(text: str) -> set[str]:
@@ -545,10 +560,10 @@ def main() -> int:
 
     base_image = _python_base_image(base)
     if base_image is None:
-        error("base.Dockerfile must pin python:3.12-slim-bookworm by sha256 digest")
+        error("base.Dockerfile must pin python:3.14-slim-trixie by sha256 digest")
         failures += 1
     reviewer_default = re.search(
-        r"^ARG AI_REVIEW_BASE_IMAGE=(python:3\.12-slim-bookworm@sha256:[0-9a-f]{64})$",
+        rf"^ARG AI_REVIEW_BASE_IMAGE=({PYTHON_BASE_IMAGE_PATTERN})$",
         reviewer,
         re.M,
     )
@@ -558,20 +573,23 @@ def main() -> int:
     elif base_image is not None and reviewer_default.group(1) != base_image:
         error("reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile")
         failures += 1
-    node_from_pattern = r"^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64} AS reviewer-clis$"
+    node_from_pattern = rf"^FROM {NODE_BUILDER_IMAGE_PATTERN} AS reviewer-clis$"
     if not re.search(node_from_pattern, reviewer, re.M):
-        error("reviewer.Dockerfile must pin node:22-bookworm-slim by sha256 digest")
+        error("reviewer.Dockerfile must pin node:26-trixie-slim by sha256 digest")
         failures += 1
-    if ">=" in base or 'pip install --no-cache-dir \\\n      "' in base:
+    if ">=" in base:
         error("base.Dockerfile must install Python packages through python-constraints.txt")
+        failures += 1
+    for command in _unconstrained_pip_installs(base):
+        error(f"base.Dockerfile pip install must pass --constraint: {command}")
         failures += 1
     for package_name in PYTHON_DIRECT_PACKAGES:
         if not re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(package_name)}(?![A-Za-z0-9_.-])", base):
             error(f"base.Dockerfile pip install list is missing {package_name}")
             failures += 1
     constrained = _constraint_packages(constraints)
-    if not PYTHON_DIRECT_PACKAGES.issubset(constrained):
-        error("python-constraints.txt must pin every package named in base.Dockerfile pip install")
+    if not (PYTHON_DIRECT_PACKAGES | {"pip"}).issubset(constrained):
+        error("python-constraints.txt must pin pip and every package base.Dockerfile installs")
         failures += 1
     if dev_requirements is not None:
         for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):

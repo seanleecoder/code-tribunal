@@ -550,7 +550,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
-        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.0")
+        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.2")
         self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)
@@ -737,19 +737,18 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/claude", text)
         self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/codex", text)
         self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/opencode", text)
-        self.assertIn("RUN node -e", text)
-        self.assertIn("fs.symlinkSync(relativeTarget, link)", text)
-        self.assertIn('manifest.name.replace(/^@[^/]+\\//, "")', text)
-        self.assertIn("/[\\\\/]/.test(name)", text)
-        self.assertIn("fs.chmodSync(targetPath, 0o755)", text)
-        self.assertIn("stat.isDirectory()", text)
-        self.assertIn("process.argv.slice(1)", text)
+        # No node ships: the build refuses a node binary, and codex runs through an
+        # exec shim instead of its codex.js launcher.
+        self.assertNotIn("COPY --from=reviewer-clis /usr/local/bin/node", text)
+        self.assertIn("if command -v node >/dev/null; then", text)
+        self.assertIn("> /usr/local/bin/codex", text)
         self.assertIn("claude --version", text)
         self.assertIn("codex --version", text)
         self.assertIn("opencode --version", text)
         self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
-        self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--hostname'", text)
-        self.assertIn("opencode --pure serve --help 2>&1 | grep -F -- '--port'", text)
+        self.assertIn('serve_help="$(opencode --pure serve --help 2>&1 || true)"', text)
+        self.assertIn("""printf '%s\\n' "$serve_help" | grep -F -- '--hostname'""", text)
+        self.assertIn("""printf '%s\\n' "$serve_help" | grep -F -- '--port'""", text)
         # OpenCode resolves which("rg") first and otherwise downloads an
         # unverified ripgrep at review time. The build must prove the pinned
         # binary is what resolves on the adapter's forwarded PATH.

@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b
+FROM python:3.14.7-slim-trixie@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
 
 # Test-only packaging marker with no production runtime behavior; checkout-based tests must not override it.
 ENV PYTHONUNBUFFERED=1 \
@@ -14,7 +14,7 @@ RUN apt-get update \
 
 COPY ai-review/images/python-constraints.txt /opt/ai-review/images/python-constraints.txt
 
-RUN python -m pip install --no-cache-dir --upgrade pip \
+RUN python -m pip install --no-cache-dir --constraint /opt/ai-review/images/python-constraints.txt --upgrade pip \
     && python -m pip install --no-cache-dir \
       --constraint /opt/ai-review/images/python-constraints.txt \
       jsonschema PyYAML requests

@@ -8,7 +8,7 @@ pythonpath = ["ai-review/src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -17,7 +17,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # (SPEC-58). It is checked here, under the same strictness as the runtime package,
 # because a mistake in it fails an image publication rather than a test run.
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 packages = ["ai_review", "ai_review_smoke"]
 mypy_path = "ai-review/src"
 strict = true

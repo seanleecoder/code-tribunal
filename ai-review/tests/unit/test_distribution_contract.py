@@ -258,12 +258,15 @@ class RepositoryDistributionContractTests(unittest.TestCase):
                 )
 
     def test_generated_artifacts_are_excluded_from_git_and_container_contexts(self) -> None:
-        required = {"build/", "dist/", "*.egg-info/", "__pycache__/", ".coverage"}
+        root_only = {"build/", "dist/", ".coverage"}
+        any_depth = {"*.egg-info/", "__pycache__/", "*.py[cod]"}
         gitignore = (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         dockerignore = (_REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
 
-        self.assertLessEqual(required, set(gitignore))
-        self.assertLessEqual(required, set(dockerignore))
+        self.assertLessEqual(root_only | any_depth, set(gitignore))
+        # .dockerignore patterns anchor at the context root, unlike .gitignore, so
+        # artifacts that appear beside nested sources need an explicit **/ prefix.
+        self.assertLessEqual(root_only | {f"**/{p}" for p in any_depth}, set(dockerignore))
 
     def test_packaged_smoke_cli_modules_are_part_of_the_package(self) -> None:
         """Declared CLI entry points must remain packaged modules."""
