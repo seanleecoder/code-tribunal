@@ -68,11 +68,13 @@ a deployment-branch policy that admits only `main`, then add two secrets:
 - `CANDIDATE_CANARY_GITLAB_TOKEN`: a GitLab personal access token with `api`
   scope. It must reach both the demo and the template project, and GitLab cannot
   restrict a personal token to named projects, so it reaches every project its
-  owner can. Keep its expiry short (90 days or less) and rotate it on expiry.
+  owner can.
 
-Provider credentials
-stay in the consumers, not in the orchestrator; both demo consumers must provide
-`OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
+Give both tokens an expiry of at most one year and rotate them before it lapses;
+an expired token fails the campaign at its first demo call.
+
+Provider credentials stay in the consumers, not in the orchestrator; both demo
+consumers must provide `OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
 The GitHub demo must also define the repository variable `AI_REVIEW_REVIEWERS`
 with a roster that includes `cursor`; the canonical workflow consults that
 trusted variable before exposing `CURSOR_API_KEY` to the Cursor seat. GitLab has
