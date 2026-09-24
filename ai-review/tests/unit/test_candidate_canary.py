@@ -375,9 +375,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state = root / "state.json"
+            commands: list[tuple[str, ...]] = []
 
             def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
                 del cwd, capture
+                commands.append(command)
                 if command[:3] == ("gh", "repo", "clone"):
                     demo = Path(command[4])
                     (demo / ".github/workflows").mkdir(parents=True)
@@ -407,6 +409,20 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(state.read_text(encoding="utf-8")),
                 {"branch": "candidate-test"},
+            )
+            # The runner has no git credentials; only gh's helper can authenticate the push.
+            self.assertIn(
+                (
+                    "git",
+                    "-c",
+                    "credential.helper=",
+                    "-c",
+                    "credential.helper=!gh auth git-credential",
+                    "push",
+                    "origin",
+                    "HEAD:candidate-test",
+                ),
+                commands,
             )
 
     def test_gitlab_records_template_branch_before_demo_mutation(self) -> None:

@@ -58,12 +58,23 @@ labels, and provenance, and runs orchestration only from the protected checkout.
 The candidate source is exercised only as an isolated same-repository demo
 branch. The GitLab source branch is protected before its merge request opens.
 
-Configure a manually approved `candidate-canary` GitHub environment with
-`CANDIDATE_CANARY_GITHUB_TOKEN` and `CANDIDATE_CANARY_GITLAB_TOKEN`. Scope those
-tokens only to the public demo and template projects, and restrict the
-environment's deployment branches to protected branches. Provider credentials
-stay in the consumers, not in the orchestrator; both demo consumers must provide
-`OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
+Configure the `candidate-canary` GitHub environment with a required reviewer and
+a deployment-branch policy that admits only `main`, then add two secrets:
+
+- `CANDIDATE_CANARY_GITHUB_TOKEN`: a fine-grained personal access token whose
+  repository access is only the GitHub demo, with read/write Actions, Contents,
+  Pull requests, and Workflows permissions. The orchestrator authenticates its
+  demo-branch push with this token through `gh`'s git credential helper.
+- `CANDIDATE_CANARY_GITLAB_TOKEN`: a GitLab personal access token with `api`
+  scope. It must reach both the demo and the template project, and GitLab cannot
+  restrict a personal token to named projects, so it reaches every project its
+  owner can.
+
+Give both tokens an expiry of at most one year and rotate them before it lapses;
+an expired token fails the campaign at its first demo call.
+
+Provider credentials stay in the consumers, not in the orchestrator; both demo
+consumers must provide `OPENROUTER_API_KEY` and `CURSOR_API_KEY` to their trusted review templates.
 The GitHub demo must also define the repository variable `AI_REVIEW_REVIEWERS`
 with a roster that includes `cursor`; the canonical workflow consults that
 trusted variable before exposing `CURSOR_API_KEY` to the Cursor seat. GitLab has
