@@ -22,6 +22,14 @@ from candidate_canary_common import (
 )
 
 DEMO_REPOSITORY = "seanleecoder/code-tribunal-demo"
+# gh authenticates only the git commands it runs itself, and the protected
+# checkout persists no credentials, so the push must borrow gh's GH_TOKEN helper.
+GH_CREDENTIAL_HELPER = (
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+)
 
 
 class GitHubCanaryError(RuntimeError):
@@ -77,7 +85,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     _run("git", "config", "user.email", "canary@users.noreply.github.com", cwd=demo)
     _run("git", "add", ".github/workflows/ai-review.yml", "src/access.py", cwd=demo)
     _run("git", "commit", "-m", "candidate canary fixture", cwd=demo)
-    _run("git", "push", "origin", f"HEAD:{args.branch}", cwd=demo)
+    _run("git", *GH_CREDENTIAL_HELPER, "push", "origin", f"HEAD:{args.branch}", cwd=demo)
     state: dict[str, Any] = {"branch": args.branch}
     write_state(args.state, state)
     _run(

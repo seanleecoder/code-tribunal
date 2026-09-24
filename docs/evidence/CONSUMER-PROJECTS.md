@@ -1,7 +1,7 @@
 # Evidence consumer projects
 
 The live-evidence runs in [`RUNBOOK.md`](RUNBOOK.md) need real consumer projects with
-real runners, protected credentials, and real merge enforcement. Two long-lived,
+real runners and protected credentials. Two long-lived,
 operator-controlled, **public** scratch projects serve that purpose. They were used
 for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
@@ -9,7 +9,7 @@ pre-v3 threads that the body-refresh check depends on.
 
 | Platform | Project | Role |
 |---|---|---|
-| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, branch ruleset |
+| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, repository variables |
 | GitLab | <https://gitlab.com/seanleecoder/code-tribunal-demo> (project id `84667714`) | consumer: `.gitlab-ci.yml`, protected/masked variables, runner |
 | GitLab | `seanleecoder/code-tribunal-ci-template` (project id `84667707`) | protected template project holding `ai-review/ci/` |
 
@@ -27,31 +27,21 @@ repo's canonical template.
 
 **Already configured — do not rebuild this, only repin it:**
 
-- **Secrets:** `OPENROUTER_API_KEY`, `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
-- **Ruleset** "Require AI Review gate" (id `19420757`), active, targeting
-  `~DEFAULT_BRANCH`, with `gate` as a **required status check**
-  (`strict_required_status_checks_policy: false`).
-
-  > **Must be changed before the next repin.** The `gate` job no longer exists,
-  > so this ruleset now waits on a check that will never report and every PR in
-  > the consumer stays unmergeable. Either delete the ruleset or replace the
-  > required check with `post`. Do this **before or together with** copying the
-  > new workflow, not after. Requiring `post` reports publication, not findings,
-  > and does not cover a run whose `prepare` never started — it is not a
-  > replacement for the deleted gate, and no live step verifies blocking any
-  > more.
-
-  Because a required check also blocks direct pushes to `main`, adopting a
-  workflow change has to go through a PR — run that PR in mock mode so it costs
-  nothing.
-- **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true` and
-  `AI_REVIEW_MANUAL=false`. Delete the retired per-seat `AI_REVIEW_*_ENABLED`
-  variables; use `AI_REVIEW_REVIEWERS` only when overriding the packaged roster.
-
-  > **Delete `AI_REVIEW_MERGE_GATE_ENABLED` from this consumer.** It is a retired
-  > override: a run against a current image fails at config load while the
-  > variable is set. It is rejected rather than ignored precisely so a stale
-  > repository variable cannot sit there looking effective.
+- **Secrets:** `OPENROUTER_API_KEY`, `CURSOR_API_KEY`,
+  `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
+- **No branch ruleset.** The "Require AI Review gate" ruleset (id `19420757`)
+  required the retired `gate` check and was deleted on 2026-09-24; Code Tribunal
+  informs and never gates merges. `main` accepts direct pushes, but land a
+  workflow adoption as a PR anyway so the new copy runs once before it is merged.
+- **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
+  `AI_REVIEW_MANUAL=false`, `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and
+  `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`. The roster variable must
+  include `cursor`: the canonical workflow reads it before exposing
+  `CURSOR_API_KEY`. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
+  `AI_REVIEW_MERGE_GATE_ENABLED` were deleted; a current image fails at config
+  load while the merge-gate override is set. The pre-#126 workflow copy still on
+  `main` hard-maps that override to `'true'`, so the next adoption from a
+  current `R` is what finally removes it.
 - **The mock-variable mapping is already in the workflow.** The one-time edit the
   runbook describes has been made: the review and critique steps read
   `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
@@ -109,9 +99,8 @@ Public, project id `84667714`. Verified present:
   masked**. `AI_REVIEW_CRITIQUE_ENABLED=true` is deliberately *unprotected*, so
   it applies on any ref including the hostile probe. Delete retired per-seat
   `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
-  packaged roster.
-  **Delete the project's `AI_REVIEW_MERGE_GATE_ENABLED` variable**: it is retired
-  and a current image fails at config load while it is set.
+  packaged roster. `AI_REVIEW_MERGE_GATE_ENABLED` is absent, and must stay so: it
+  is retired and a current image fails at config load while it is set.
 - `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge
   (`detailed_merge_status: ci_must_pass`). `merge_method = merge`.
 - **Mock variables absent.** `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_ALLOW_LOCAL_MOCK`,
@@ -174,16 +163,15 @@ Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, up
 2. Copy the workflow / CI template from the new `R`; repin the five GitHub container
    digests and the three GitLab pin variables (`AI_REVIEW_BASE_IMAGE`,
    `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the new pair.
-   Remove `AI_REVIEW_MERGE_GATE_ENABLED` from both consumers in the same pass; it
-   is retired and now fails the run.
-3. Land the GitHub adoption change as a PR — if a required check is configured it
-   blocks direct pushes to `main` — and run that PR in mock mode so it costs
-   nothing.
+   Confirm `AI_REVIEW_MERGE_GATE_ENABLED` is still absent from both consumers; it
+   is retired and fails the run.
+3. Land the GitHub adoption change as a PR and run that PR in mock mode so it
+   costs nothing.
 4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then
    point **both** consumer includes at that new SHA. Two different SHAs, or a stale
    template pin, means the evidence exercised the wrong images.
-5. Confirm the GitHub ruleset no longer requires `gate` (see above — a leftover
-   entry makes every PR unmergeable) and that GitLab
+5. Confirm no GitHub ruleset requires the retired `gate` check (a leftover entry
+   makes every PR unmergeable) and that GitLab
    `only_allow_merge_if_pipeline_succeeds` is still true. On GitLab that setting
    is what makes a *publication* failure withhold the merge; it says nothing
    about findings.
