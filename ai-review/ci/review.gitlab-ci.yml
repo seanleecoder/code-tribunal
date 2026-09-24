@@ -3,8 +3,8 @@
 # order.
 
 variables:
-  # Public GHCR images, cut over from the Phase 5.5 private bootstrap refs.
-  # Replace all three values together when bumping to a newer published commit.
+  # Public GHCR images. Replace all three values together when bumping to a
+  # newer published commit.
   AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4"
   AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab"
   AI_REVIEW_TRUSTED_IMAGE_SHA: "54dffa130be5c921602f264a2123fda4b1895f13"
@@ -52,7 +52,7 @@ prepare_ai_review:
   # trigger here gates the entire review. Defaults to auto-run on MRs; set the
   # project/pipeline variable AI_REVIEW_MANUAL="true" to require a human to
   # start the review (non-blocking: un-played leaves the MR mergeable, and the
-  # gate still runs once triggered). Use allow_failure: false instead if the
+  # review still runs once triggered). Use allow_failure: false instead if the
   # review must be mandatory-but-manual (every MR blocked awaiting a click).
   rules:
     - if: '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID && $AI_REVIEW_MANUAL == "true"'

@@ -187,7 +187,7 @@ not when they happen to choose similar phrasing.
 | `posting.mode` | enum, `gitlab_discussions` | `gitlab_discussions` or `github_reviews`. |
 | `posting.v1_inline_sides` | list, `[new, old, unchanged]` | Diff sides eligible for inline placement. |
 | `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
-| `posting.fyi_mode` | enum, `summary_comment` | Current destination for non-blocking FYI findings. |
+| `posting.fyi_mode` | enum, `summary_comment` | Current destination for FYI (unsurfaced) findings. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
 
 Persistent cross-run state is always active and has no backend setting.
@@ -320,14 +320,14 @@ rejected. Native Anthropic routing is not supported.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_CLAUDE_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CODEX_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_OPENCODE_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CURSOR_ENABLED` | Retired in `review_config.v3`; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in `review_config.v3` with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
-| `AI_REVIEW_STATE_BACKEND` | Retired in `review_config.v2`; persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in `review_config.v2` with semantic grouping itself. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in `review_config.v2` with semantic grouping itself. |
+| `AI_REVIEW_CLAUDE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CODEX_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_OPENCODE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CURSOR_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in 2.0 (`review_config.v3`) with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
+| `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
+| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
 | `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 | `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
 
@@ -353,9 +353,6 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_REQUIRE_REAL_OPENCODE` | Require the real OpenCode CLI. |
 | `AI_REVIEW_REQUIRE_REAL_CURSOR` | Require the real Cursor CLI. |
 
-Each seat has exactly one control name, declared in the trusted reviewer registry,
-and the runner forwards only that name to that seat's adapter. Setting any other
-`AI_REVIEW_REQUIRE_REAL_*` name has no effect on a seat that does not declare it.
 | `AI_REVIEW_GITHUB_PR_NUMBER` | Immutable selected pull-request number passed to prepare. |
 | `AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA` | Immutable selected pull-request head passed to prepare. |
 | `AI_REVIEW_REVIEWER` | Selected adapter seat inside dispatch. |
@@ -372,6 +369,10 @@ and the runner forwards only that name to that seat's adapter. Setting any other
 | `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory. |
 | `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON. |
 
+Each seat has exactly one control name, declared in the trusted reviewer registry,
+and the runner forwards only that name to that seat's adapter. Setting any other
+`AI_REVIEW_REQUIRE_REAL_*` name has no effect on a seat that does not declare it.
+
 Build-only names, package-name variables, and
 image tags belong to the release workflows, not the runtime configuration
 surface.
@@ -386,6 +387,10 @@ surface.
 | `AI_REVIEW_OPENCODE_NPM_PACKAGE` | Pinned OpenCode package name during image build. |
 | `AI_REVIEW_ROOT_DIR` | Internal shell path to the implementation root. |
 
+Cursor Agent has no package-name variable: the image installs the tarball pinned,
+with its SHA-256, in
+[`ai-review/images/cursor-agent.pin`](../ai-review/images/cursor-agent.pin).
+
 ## Stage visibility and integrity
 
 Configuration overrides that affect decisions must be visible to prepare,
@@ -395,6 +400,21 @@ it. Consensus exits 3 when consequential configuration, run identity, or
 artifact identity differs. This digest detects pipeline misconfiguration; it is
 not cryptographic authentication against a writer that already controls a
 trusted job.
+
+## 1.x migration summary
+
+Every 1.x release shipped `review_config.v1`; 2.0 accepts only
+`review_config.v3` and rejects a v1 document once, listing every removed key.
+Delete `severity_policy`, `merge_gate`, `state.backend`, `panel.grouping`,
+`panel.quorum`, `panel.min_successful_reviewers_for_blocking`,
+`critique.rounds`, `critique.can_add_quorum_votes`,
+`critique.allow_advisory_escalation`, `posting.fallback_to_summary_comment`,
+`limits.max_posted_surface_findings`, and per-reviewer `adapter` and
+`credential_variable`. Configure at least three seats with
+`AI_REVIEW_REVIEWERS`, and unset the
+[rejected variables](#platform-and-provider-runtime). The complete procedure,
+including removing the required gate check, is in
+[operations](operations.md#upgrade-from-10x-to-20).
 
 ## 0.4.x migration summary
 

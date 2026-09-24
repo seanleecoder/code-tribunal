@@ -47,7 +47,7 @@ was used for release evidence.
 ## 1.0 historical evidence matrix
 
 This section records the evidence that supported the already-released `v1.0.0`.
-It is retained for provenance and is not a passing matrix for 1.0.1.
+It is retained for provenance and is not a passing matrix for any later release.
 
 > Historical candidates (`b674d1e`, `15d424f`, and earlier) remain useful
 > provenance only. **Every release-gating row below, including image
@@ -85,7 +85,7 @@ classified by whether a live run proves something the regression suite cannot:
 | Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | Not completed at 1.0.0; waived for 1.0.1 with a registered reason — [record](record-model-effort-routes.md) |
 | GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
 | Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
-| Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery) + `test_gate.py` (post-result run-id binding, gate precedence) | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
+| Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery); `test_gate.py` was deleted with the gate | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
 | GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional; **waived** for 1.0.0 with a reason registered under `verification.evidence_waivers`. The **stale-head** boundary was nonetheless reproduced live in run `30173073036` attempt 7 (`post` returned `status: stale_head` and wrote nothing; `gate` returned `passed_stale_head`). The other two boundaries and the 406 path rest on the regression suite. [record](record-github-revision-failures.md) |
 
 ### Supplemental experimental evidence (not release-gating)
@@ -110,11 +110,13 @@ retains them.
   `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
   same `issue_id` across both platforms. Also unit-covered by
   `test_post.py::test_post_existing_marker_updates_changed_body`.
-- **Cursor has no release-gating evidence row.** The seat is supported and
-  selected like any other through `AI_REVIEW_REVIEWERS`, but it carries a separate
-  credential and egress path and is off in the shipped default roster, so no
-  release campaign has exercised it. The supplemental
-  [real-run record](record-cursor-real-runs.md) covers historical coordinates.
+- **Cursor has no deny-policy evidence.** The seat is supported and selected like
+  any other through `AI_REVIEW_REVIEWERS`, but it carries a separate credential
+  and egress path and is off in the shipped default roster. Through 1.0.2 no
+  release campaign exercised it; from 2.0.0 the four-seat Candidate Canary runs
+  it with `auto` on both platforms, which proves wiring, not model-specific
+  behavior. The supplemental [real-run record](record-cursor-real-runs.md) covers
+  historical coordinates.
   A release that ships Cursor on the default roster would need its own gating row.
   Note the distinction: `auto` is a valid Cursor selector for production use, but
   evidence proving behavior for a *specific* model needs an explicit slug.
@@ -122,19 +124,19 @@ retains them.
   `Shell(*)` and write denies at runtime — only that the policy reaches every
   invocation; see
   [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
-- **The added-file path has no live green evidence, even after the 1.0.1 fix.** The
-  1.0.0 matrix used modify-only fixtures to work around the GitHub `/dev/null` anchor
-  defect, so no live run has ever exercised a finding on a newly added or deleted
-  file. Shipping the fix does not by itself close this — a Chain B run with an
-  **adding** fixture is required, asserting
-  `accepted_finding_count == raw_finding_count`. It is the headline run of the 1.0.1
-  campaign above. See the carried coverage-gap table in the [runbook](RUNBOOK.md).
-- **`render-body.v3` has no live rendering or migration evidence.** The format
-  changed after `v1.0.0`, so no live run has confirmed that prose renders as wrapping
-  code spans on either platform without autolink/mention/issue-reference expansion,
-  nor that a thread authored by an older image receives exactly one body update
-  (`updated_discussions=1`, `created=0`, same `issue_id`). Goldens prove generation;
-  only a real comment proves rendering.
+- **The added-file path is proven live on GitHub only.** The 1.0.0 matrix used
+  modify-only fixtures to work around the GitHub `/dev/null` anchor defect. The
+  1.0.1 GitHub Chain B ran an **adding** fixture
+  ([lifecycle record](record-github-current-image.md)); GitLab renders added files
+  differently and has not. See the carried coverage-gap table in the
+  [runbook](RUNBOOK.md).
+- **`render-body.v4` has no live rendering or migration evidence.** The
+  `render-body.v3` refresh was proven on GitHub at 1.0.1
+  ([record](record-render-body-v3-refresh.md)). The v4 `Support:` footer changed
+  after 1.0.2, so no live run has yet confirmed that a thread authored by the
+  1.0.2 image receives exactly one body update (`updated_discussions=1`,
+  `created=0`, same `issue_id`). Goldens prove generation; only a real comment
+  proves rendering.
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable
@@ -154,9 +156,10 @@ retains them.
 The live runs use two long-lived, operator-controlled, public scratch consumers —
 `seanleecoder/code-tribunal-demo` on GitHub and on GitLab (project id `84667714`),
 plus the protected GitLab template project `seanleecoder/code-tribunal-ci-template`.
-Reuse them every release: they already carry the required-check ruleset, protected
-credentials, the mock-variable mapping, the `evidence/` fixture branches, and the
-pre-v3 bot threads the posted-body refresh check needs. See
+Reuse them every release: they already carry protected credentials, the
+mock-variable mapping, the `evidence/` fixture branches, and the older bot
+threads the posted-body refresh check needs. The same demos host the
+[Candidate Canary](../../CONTRIBUTING.md#candidate-canary). See
 [`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md).
 
 ## Record format
@@ -176,7 +179,7 @@ run. Required fields:
 
 Use an unprotected source branch or fork in a scratch consumer. Attempt to
 replace jobs/templates, forward root/bridge variables, override trusted image
-and config values, print protected credential names, forge the gate artifact,
+and config values, print protected credential names, forge consensus or post artifacts,
 and add a symlink targeting environment data. Confirm the protected composition
 is retained or the pipeline safely withholds credentials/fails. Audit every
 trace and downloaded artifact for credential values.
@@ -187,8 +190,8 @@ forwarding flags disabled.
 
 The live-only value here is real protected-credential withholding and real
 trusted-composition enforcement. The SPEC-31 symlink variants and the SPEC-33
-forged-gate integrity binding are regression-covered
-(`test_input_bundle.py`, `test_gate.py`, `test_consensus_integrity.py`); confirm
+forged-artifact integrity binding are regression-covered
+(`test_input_bundle.py`, `test_consensus_integrity.py`); confirm
 at most one representative symlink variant live rather than re-running every
 class.
 
@@ -196,15 +199,16 @@ class.
 
 Publish both images from one reviewed release-candidate commit and verify their
 digests. On each platform, create an inline finding, rerun unchanged, change the
-body, resolve, reopen, and force a blocking finding while platform enforcement is
-enabled. Record post/state/gate artifacts and platform object IDs at every step.
+body, resolve, reopen, and confirm that a `blocker`-severity finding leaves the
+pipeline green. Record post/state artifacts and platform object IDs at every step.
 Unrelated line movement is **not** in the required live sequence: its internal
 remap (finding identity + persisted anchor moved, existing discussion updated not
 duplicated) is regression-covered, and only the *platform-visible* re-anchoring of
 a moved comment is a live-optional confirmation — see the runbook.
 
-Run this as two independent chains: one **real** default-model panel (the smoke),
-and one **deterministic-mock** lifecycle chain on a separate finding identity
+Run this as two independent chains: one **real** panel (from 2.0.0 the
+[Candidate Canary](RUNBOOK.md#step-0b--candidate-canary-before-any-consumer-repin)
+record), and one **deterministic-mock** lifecycle chain on a separate finding identity
 (`AI_REVIEW_LOCAL_MOCK=1` + `AI_REVIEW_MOCK_SCENARIO`, with `blocking_alt` for the
 changed-body step). The below-quorum FYI/summary-comment path and the
 inline-unmappable summary fallback are **regression-covered**

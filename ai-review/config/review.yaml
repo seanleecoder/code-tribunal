@@ -84,7 +84,7 @@ posting:
   mode: gitlab_discussions # Platform target for discussions; set github_reviews for GitHub Actions. The same value selects the adapter that stores persistent state.
   v1_inline_sides: [new, old, unchanged] # Allowed diff context sides for inline thread placement
   inline_multiline: true # Support multiline diff range comments
-  fyi_mode: summary_comment # Location for non-blocking advisory findings ('summary_comment' groups in summary note)
+  fyi_mode: summary_comment # Location for FYI (unsurfaced) findings ('summary_comment' groups in summary note)
   stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
 
 # Persistent state management across pipeline runs. Always on: posting.mode

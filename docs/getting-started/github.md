@@ -30,8 +30,9 @@ In **Settings → Secrets and variables → Actions**, create:
 | Kind | Name | Required | Purpose |
 |---|---|---:|---|
 | Secret | `OPENROUTER_API_KEY` | yes | Claude, Codex, and OpenCode model calls |
-| Secret | `CURSOR_API_KEY` | only when Cursor is enabled | Peer reviewer seat; required only when Cursor is on the roster |
+| Secret | `CURSOR_API_KEY` | only when Cursor is selected | Peer reviewer seat; the workflow passes it to the Cursor job only when `AI_REVIEW_REVIEWERS` names `cursor` |
 | Secret | `AI_REVIEW_GITHUB_RESOLVE_TOKEN` | conditional | Fine-grained token for resolve/unresolve; configure it for organization-repository command authorization or whenever the built-in token is rejected |
+| Variable | `AI_REVIEW_REVIEWERS` | optional | Comma-separated panel of at least three seats, such as `claude,codex,cursor`; defaults to Claude, Codex, and OpenCode. Cursor on GitHub must be selected here, not only in YAML |
 | Variable | `AI_REVIEW_MANUAL` | optional | Exact `true` disables automatic review jobs; use manual dispatch |
 
 The resolve token should be a fine-grained token restricted to this repository
@@ -116,7 +117,9 @@ the [evidence index](../evidence/README.md).
 ## Update or roll back
 
 Replace the installed workflow with the complete file from one reviewed Code
-Tribunal release/commit. Never rotate only one image digest. To roll back,
+Tribunal release/commit. Never rotate only one image digest. Read the
+[upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
+1.0.x to 2.0: the required `gate` check must be removed first. To roll back,
 restore the previous complete workflow and rerun against a fresh PR revision;
 do not reuse old prepare/reviewer artifacts across versions.
 
