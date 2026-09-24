@@ -25,6 +25,12 @@ For the accepted release-version grammar and derived notes path, see the
      number. Name any output-format or default-value change explicitly, and say
      whether it carries a migration. -->
 
+## Migration
+
+<!-- Required when the release changes a consumer-visible contract (config schema,
+     artifact schema, posted-body format, job names, variables). Summarize the
+     actions and link the upgrade section in docs/operations.md; omit otherwise. -->
+
 ## Live campaign
 
 Scoped with the
@@ -72,10 +78,11 @@ tag must point at a commit that satisfies it.
 ## Carried known limitations
 
 <!-- Copy forward what still is not established, and do not soften it. Standing
-     items as of 1.0.0/1.0.1: no in-pipeline trusted-image enforcement; network
-     egress unenforced at the container/runner boundary; "credential isolated"
-     claimable only in the recorded hardened-child/unprotected-ref sense; GitLab
-     forks untested; Cursor off in the default roster with no gating row. -->
+     items as of 2.0.0: no in-pipeline trusted-image enforcement; network egress
+     unenforced at the container/runner boundary; "credential isolated" claimable
+     only in the recorded hardened-child/unprotected-ref sense; GitLab forks
+     untested; Cursor off in the default roster, exercised only by the four-seat
+     Candidate Canary. -->
 
 ## Operator sign-off items
 

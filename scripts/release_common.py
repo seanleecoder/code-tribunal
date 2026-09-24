@@ -65,8 +65,12 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
 
 
 # The release-input contract this tooling accepts. v2 is v1 without the per-file-set
-# `hashes` member; historical snapshots keep v1 and their own validator.
+# `hashes` member; tagged releases before 2.0.0 keep v1 at their own tag.
 RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
+
+# Image tag series: images are tagged `<series>-<runtime_source>`. It must equal
+# IMAGE_VERSION in .github/workflows/publish-ai-review-images.yml.
+IMAGE_TAG_SERIES = "2.0"
 
 ALLOWED_RELEASE_PATHS = (
     ".github/workflows/ai-review.yml",
@@ -109,7 +113,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def image_ref(image: dict[str, Any], runtime_source: str) -> str:
-    return f"{image['name']}:1.0-{runtime_source}@{image['digest']}"
+    return f"{image['name']}:{IMAGE_TAG_SERIES}-{runtime_source}@{image['digest']}"
 
 
 def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROOT) -> list[str]:

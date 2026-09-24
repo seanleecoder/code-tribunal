@@ -52,6 +52,7 @@ try:
     from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         DIGEST_RE,
+        IMAGE_TAG_SERIES,
         RELEASE_VERSION_RE,
         WORKFLOW_PAIRS,
         ReleaseValidationError,
@@ -131,13 +132,14 @@ class ReleaseToolTests(unittest.TestCase):
                         "",
                     ]
                 )
+            tag = f"{IMAGE_TAG_SERIES}-{runtime_source}"
             lines.extend(
                 [
                     "## Identity",
                     "",
                     f"- Source commit: `{runtime_source}`",
-                    f"- Base image tag and digest: `1.0-{runtime_source}` `{base_digest}`",
-                    f"- Reviewer image tag and digest: `1.0-{runtime_source}` `{reviewer_digest}`",
+                    f"- Base image tag and digest: `{tag}` `{base_digest}`",
+                    f"- Reviewer image tag and digest: `{tag}` `{reviewer_digest}`",
                     "",
                     "## Verdict",
                     "",
@@ -154,8 +156,8 @@ class ReleaseToolTests(unittest.TestCase):
         base_name = "ghcr.io/example/code-tribunal/ai-review-base"
         reviewer_name = "ghcr.io/example/code-tribunal/ai-review-reviewer"
         expected = {
-            "base": f"{base_name}:1.0-{runtime_source}@{base_digest}",
-            "reviewer": f"{reviewer_name}:1.0-{runtime_source}@{reviewer_digest}",
+            "base": f"{base_name}:{IMAGE_TAG_SERIES}-{runtime_source}@{base_digest}",
+            "reviewer": f"{reviewer_name}:{IMAGE_TAG_SERIES}-{runtime_source}@{reviewer_digest}",
         }
         for relative in (
             ".github/workflows/ai-review.yml",
@@ -415,6 +417,12 @@ class ReleaseToolTests(unittest.TestCase):
 
             self.assertEqual(validate_release_inputs(data, root), [])
 
+    def test_publish_workflow_tags_images_with_the_release_tag_series(self) -> None:
+        workflow = (REPO_ROOT / ".github/workflows/publish-ai-review-images.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f'  IMAGE_VERSION: "{IMAGE_TAG_SERIES}"\n', workflow)
+
     def test_release_version_accepts_prerelease_and_rejects_build_metadata(self) -> None:
         self.assertEqual(validate_release_version("1.0.2-rc.1"), "1.0.2-rc.1")
         validate_release_coordinates("v1.0.2-rc.1", "a" * 40, "b" * 40, "1.0.2-rc.1")
@@ -478,10 +486,10 @@ class ReleaseToolTests(unittest.TestCase):
                         "## Identity",
                         "",
                         f"- Source commit: `{runtime_source}`",
-                        f"- Base image tag and digest: `1.0-{runtime_source}`",
+                        f"- Base image tag and digest: `{IMAGE_TAG_SERIES}-{runtime_source}`",
                         "  `ghcr.io/example/code-tribunal/ai-review-base@"
                         f"{base_digest}`",
-                        f"- Reviewer image tag and digest: `1.0-{runtime_source}`",
+                        f"- Reviewer image tag and digest: `{IMAGE_TAG_SERIES}-{runtime_source}`",
                         "  `ghcr.io/example/code-tribunal/ai-review-reviewer@"
                         f"{reviewer_digest}`",
                         "",

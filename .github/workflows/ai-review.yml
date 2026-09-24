@@ -124,7 +124,7 @@ jobs:
     needs: prepare
     # Individual model failures are data for deterministic consensus. Keep the
     # fan-out running; consensus fails with panel_status=failed when no reviewer
-    # succeeds, so this does not turn a total panel failure into a green gate.
+    # succeeds, so this does not turn a total panel failure into a green run.
     continue-on-error: true
     runs-on: ubuntu-latest
     # Outer ceiling for the 1800s review process timeout plus wrapper/artifact
@@ -152,10 +152,6 @@ jobs:
           # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
           # is evaluated per matrix entry, so without it every seat's job would
           # carry the key whenever Cursor was selected.
-          #
-          # The legacy flag is consulted only when no roster is set. With a roster
-          # present it is ignored for panel selection, so honoring it here would
-          # hand the key to a Cursor seat the roster had excluded.
           #
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".
@@ -207,10 +203,6 @@ jobs:
           # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
           # is evaluated per matrix entry, so without it every seat's job would
           # carry the key whenever Cursor was selected.
-          #
-          # The legacy flag is consulted only when no roster is set. With a roster
-          # present it is ignored for panel selection, so honoring it here would
-          # hand the key to a Cursor seat the roster had excluded.
           #
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".

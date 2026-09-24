@@ -47,21 +47,23 @@ class PlatformRuntimeTests(unittest.TestCase):
             self.assertEqual(factory.call_args.args[1], "preferred")
 
     def test_gitlab_mode_ignores_legacy_split_tokens(self) -> None:
+        # A retired split token is never read, and its presence must not turn the
+        # missing GITLAB_TOKEN into a silent no-op.
         config = {"posting": {"mode": "gitlab_discussions"}}
         for legacy_name in ("GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
-            with self.subTest(legacy_name=legacy_name):
-                with self.assertRaisesRegex(
-                    PlatformRuntimeError,
-                    r"GITLAB_TOKEN.*GITLAB_READ_TOKEN/GITLAB_WRITE_TOKEN",
-                ) as ctx:
-                    create_runtime_platform(
-                        config,
-                        env={
-                            "CI_API_V4_URL": "https://gitlab.example/api/v4",
-                            legacy_name: "legacy",
-                        },
-                    )
-                self.assertIn("no longer accepted", str(ctx.exception))
+            with (
+                self.subTest(legacy_name=legacy_name),
+                self.assertRaisesRegex(
+                    PlatformRuntimeError, r"^gitlab_discussions requires GITLAB_TOKEN$"
+                ),
+            ):
+                create_runtime_platform(
+                    config,
+                    env={
+                        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                        legacy_name: "legacy",
+                    },
+                )
 
     def test_github_mode_passes_configured_bot_login(self) -> None:
         with mock.patch("ai_review.platform.runtime.GitHubReviewPlatform") as factory:

@@ -32,14 +32,23 @@ versioning.
   across review and critique. Ambiguous state matches outrank majority-noise
   drops, dissent remains visible, and panel status reports execution health only.
 - `render-body.v4` uses a `Support:` footer, prioritizes dissent before supporting
-  detail during truncation, and leaves merge decisions to maintainers. The old
-  `Consensus:` marker remains readable for one compatibility window.
+  detail during truncation, and leaves merge decisions to maintainers. State
+  recovery reads only the hidden `ai-review:v1` marker, which is unchanged, so
+  threads written by 1.0.x remain recoverable without a legacy footer parser.
 - `post` is the terminal publication-health job: success and stale-head no-ops
   exit zero; publication failures exit nonzero; finding severity never changes
   mergeability.
 - The configuration authority is `review_config.v3`, with one three-or-four-seat
   roster, fixed trusted adapter/credential/endpoint routes, independently bounded
-  review and critique timeouts, and strict rejection of retired overrides.
+  review and critique timeouts, and strict rejection of retired overrides. A
+  `review_config.v1` or `v2` document is rejected once, before key validation,
+  with the complete list of removed keys, so a 1.x configuration reaches the
+  migration message instead of its first removed top-level key.
+- Images are tagged `2.0-<runtime source>`. The tag series is one constant in the
+  release tooling, checked against the publish workflow.
+- The GitLab missing-token error no longer names the retired
+  `GITLAB_READ_TOKEN`/`GITLAB_WRITE_TOKEN` split (COMPAT-003 removed); it still
+  fails loudly when `GITLAB_TOKEN` is absent.
 - Cursor is a supported peer seat, selected explicitly because it introduces a
   second credential and egress destination. `auto` remains a valid model selector.
 - Image publication uses the curated packaged smoke suite instead of a mounted
@@ -86,9 +95,9 @@ versioning.
 
 | Previous surface | Current action |
 |---|---|
-| `review_config.v1` or `review_config.v2` | Use `review_config.v3`; delete `severity_policy`, `merge_gate`, `state.backend`, semantic-grouping, adapter/credential restatements, obsolete critique/quorum/cap keys, and per-reviewer enable variables. Configure at least three seats with `AI_REVIEW_REVIEWERS`. |
+| `review_config.v1` (every 1.x release) or `review_config.v2` | Use `review_config.v3`; delete `severity_policy`, `merge_gate`, `state.backend`, semantic-grouping, adapter/credential restatements, obsolete critique/quorum/cap keys, and per-reviewer enable variables. Configure at least three seats with `AI_REVIEW_REVIEWERS`. |
 | `consensus.v1` | Use `consensus.v2`; consume independent support and informational decisions rather than removed merge-blocking and vote-count fields. |
-| `render-body.v3` | Accept the one-release legacy `Consensus:` marker while writing `render-body.v4` with the `Support:` footer; expect one cosmetic update to existing threads. |
+| `render-body.v3` | No action. Existing threads keep their hidden marker and receive one cosmetic update to the `render-body.v4` `Support:` footer. |
 | `code_tribunal.release_inputs.v1` | Use v2 and delete the redundant `hashes` object. |
 | Required `gate` / `ai_review_gate` checks | Remove them from branch protection and consumers; `post` is the terminal publication-health job and findings never decide mergeability. |
 

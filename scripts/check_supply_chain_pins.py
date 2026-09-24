@@ -337,9 +337,15 @@ def _gitlab_image_pin_issues(template: str) -> list[str]:
     trusted_sha = pins.get("AI_REVIEW_TRUSTED_IMAGE_SHA")
     for key in ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE"):
         image = pins.get(key, "")
-        match = re.fullmatch(r"ghcr\.io/[^\s]+:1\.0-([0-9a-f]{40})@sha256:[0-9a-f]{64}", image)
+        # Structural only: the exact tag series is enforced by check_release_inputs
+        # at activation, so a series bump does not break main before the repin.
+        match = re.fullmatch(
+            r"ghcr\.io/[^\s]+:[0-9]+\.[0-9]+-([0-9a-f]{40})@sha256:[0-9a-f]{64}", image
+        )
         if not match:
-            issues.append(f"GitLab review template {key} must be a digest-pinned 1.0 source tag")
+            issues.append(
+                f"GitLab review template {key} must be a digest-pinned <series>-<sha> source tag"
+            )
         elif trusted_sha and match.group(1) != trusted_sha:
             issues.append(f"GitLab review template {key} source SHA must match trusted SHA")
     return issues

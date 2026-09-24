@@ -28,14 +28,14 @@ Release-reviewer-digest: `sha256:<64-character-reviewer-image-digest>`
 ## Preconditions
 
 - Protected/masked variables or GitHub secret configuration verified:
-- Required pipeline/check configuration verified:
+- Pipeline trigger and branch-protection configuration verified:
 - Expected behavior:
 
 ## Actual result
 
 - Stage outcomes:
 - Platform objects created/updated/resolved:
-- Consensus/post/gate summary:
+- Consensus/post summary:
 - Attack or failure result:
 
 ## Audit

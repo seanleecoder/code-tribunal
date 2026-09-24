@@ -35,8 +35,11 @@ and remove completed spec files from the active
    workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
    with `R` and the two digest-pinned subjects. A red result blocks promotion or
    repinning. It does not gate ordinary pull requests. One green GitHub run and
-   one green GitLab run are the complete campaign; repeat only after a failure
-   has led to a concrete fix.
+   one green GitLab run are the complete canary campaign; repeat only after a
+   failure has led to a concrete fix. The canary retains only redacted summary
+   artifacts and writes no evidence record: the operator records the green pair
+   in `docs/evidence/record-candidate-canary.md` with the `Release-*` binding
+   fields, and that record is the real Chain A panel row for step 5.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
@@ -60,11 +63,11 @@ and remove completed spec files from the active
    SHA/digest-mismatched, or undeclared-waiver evidence).
 6. Move `CHANGELOG` `[Unreleased]` to `[$V]`, finalize `release/$V.md`, and
    create final release commit `P`. Set `V` to the release version (for example
-   `1.0.2`), build and validate the external asset against `P`, then create the
+   `2.0.0`), build and validate the external asset against `P`, then create the
    signed `v$V` tag on `P` with the manifest checksum in its certificate message:
 
    ```bash
-   V=1.0.2
+   V=2.0.0
    python scripts/build_release_manifest.py \
      --tag "v$V" --runtime-source "$R" --release-commit "$P" \
      --out /tmp/release-manifest.json
@@ -101,27 +104,33 @@ missing.
 
 Stamp both halves **at activation**, not while drafting: a draft artifact must carry
 an empty `verification` block — no run IDs, no cited records, no waivers — which
-`test_release_tools.py::test_draft_has_no_historical_verification_binding` enforces.
+`test_release_tools.py::test_checked_in_artifact_matches_its_declared_status` enforces.
 Record the *intended* scoping in the release's notes file meanwhile. For the same
 reason a published notes file is pinned byte-identical to its tag
-(`test_1_0_0_release_notes_remain_tag_identical`): corrections to a shipped release
+(`test_released_notes_remain_tag_identical`, which covers every tagged final
+release): corrections to a shipped release
 record belong in the next release's notes, never in the shipped one.
 
 | Changed module | Live rows that must re-run | Waivable when untouched (cite these tests) |
 |---|---|---|
-| `anchors.py`, `render.py`, `post.py`, `mock_reviewer.py` | lifecycle Chain B on **both** platforms — they are independent render surfaces and diverge on added-file diffs | no |
-| `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapters/*` | one real Chain A panel; plus the effort-route check if effort profiles changed | no |
-| `input_bundle.py`, `platform/gitlab.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
-| `consensus.py` | the surfacing/decision step of Chain B | yes — `test_consensus_policy.py`, `test_consensus_integrity.py` |
+| `anchors.py`, `render.py`, `summary_render.py`, `post.py`, `posting.py`, `state_plan.py`, `notes.py`, `commands.py`, `memory.py`, `mock_reviewer.py` | lifecycle Chain B on **both** platforms — they are independent render surfaces and diverge on added-file diffs | no |
+| `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapter_process.py`, `adapter_output.py`, `adapter_artifacts.py`, `reviewers.py`, `opencode_client.py`, `adapters/*` | one real Chain A panel (the Candidate Canary record satisfies it); plus the effort-route check if effort profiles changed | no |
+| `input_bundle.py`, `platform/gitlab.py`, `platform/runtime.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
+| `consensus.py`, `consensus_policy.py`, `grouping.py`, `critique.py` | the surfacing/decision step of Chain B | yes — `test_consensus_reducer.py`, `test_consensus_integrity.py` |
 | `input_bundle.py`, `platform/github.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
 | any image recipe, or `ai-review/src` at all | image publication verification | **never** — the digests always change |
-| the posted-body format version (`render-body.vN`) | one refresh run against a thread authored by the **previous** release's image | no |
+| the posted-body format version (`render-body.vN`) | one refresh run against a bot thread in the **previous** body format, authored by a released image | no |
 
 Two invariants that have caught operators out, and that no path-level check proves:
 
 - **`ai-review/src` is copied into the base image**, and the reviewer is built
   `FROM` that base. Rebuilding only the reviewer contains no source change, so any
   release touching `ai-review/src` must rebuild the **base** from `R` first.
+- **Image tags carry a series prefix, not the release version.** Images are
+  tagged `<series>-<R>`, where the series is `IMAGE_TAG_SERIES` in
+  `scripts/release_common.py` and must equal `IMAGE_VERSION` in the publish
+  workflow (a test enforces this). Change both together, before `R`, when a
+  release opens a new series; a 2.0.x patch keeps `2.0`.
 - **A record binds to one `R` and one digest pair.** A record stamped with an
   earlier `Release-runtime-source` never certifies a later runtime source, however
   small the diff. Re-stamp or waive; do not reinterpret.

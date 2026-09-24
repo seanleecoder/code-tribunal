@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate deterministic 1.0 release inputs and canonical template pins."""
+"""Validate deterministic release inputs and canonical template pins."""
 
 from __future__ import annotations
 
@@ -252,8 +252,8 @@ def validate_release_inputs(
     if data.get("schema_version") == "code_tribunal.release_inputs.v1":
         raise ReleaseValidationError(
             "code_tribunal.release_inputs.v1 is retired: drop the `hashes` member "
-            f"and set schema_version to {RELEASE_INPUTS_SCHEMA_VERSION}. Historical "
-            "snapshots keep v1 and are validated from their own tag."
+            f"and set schema_version to {RELEASE_INPUTS_SCHEMA_VERSION}. Tagged "
+            "releases that shipped v1 are validated from their own tag."
         )
     _require_keys(
         data,

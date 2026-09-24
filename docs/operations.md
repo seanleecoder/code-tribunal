@@ -1,6 +1,64 @@
 # Operations
 
+## Upgrade from 1.0.x to 2.0
+
+2.0 removes the merge gate and retires the 1.x configuration contract. Code
+Tribunal now only publishes review output; it never decides whether a change may
+merge. Upgrade the template, both images, variables, and any custom
+configuration together, in this order.
+
+1. **Save the rollback set:** the current workflow or template SHA, both image
+   digests, custom `review.yaml`, branch-protection or ruleset entries, and
+   CI variables.
+2. **Remove the gate first.** On GitHub, delete any branch-protection or
+   ruleset entry that requires the `gate` check: 2.0 has no such job, and a
+   required check that never reports leaves pull requests permanently
+   unmergeable. On GitLab, remove custom jobs, `needs`, or rules that reference
+   `ai_review_gate`; the name stays reserved, so a consumer job cannot take it.
+3. **Delete retired variables.** Config load rejects each of these with a
+   migration message rather than ignoring it:
+   `AI_REVIEW_CLAUDE_ENABLED`, `AI_REVIEW_CODEX_ENABLED`,
+   `AI_REVIEW_OPENCODE_ENABLED`, `AI_REVIEW_CURSOR_ENABLED`,
+   `AI_REVIEW_MERGE_GATE_ENABLED`, and `AI_REVIEW_STATE_BACKEND`. On GitLab,
+   project and group variables reach every job, so a leftover value fails the
+   pipeline. On GitHub the canonical workflow no longer forwards them, but a
+   hand-edited copy that still does will fail.
+4. **Select the panel with `AI_REVIEW_REVIEWERS`.** It must name at least three
+   seats; 1.0.x accepted two. The default remains Claude, Codex, and OpenCode.
+   On GitHub, Cursor receives `CURSOR_API_KEY` only when the repository variable
+   `AI_REVIEW_REVIEWERS` names `cursor`, so enabling Cursor in YAML alone
+   leaves it without a credential.
+5. **Migrate custom configuration to `review_config.v3`.** Every 1.x release
+   shipped `review_config.v1`, which is rejected once with the complete list of
+   removed keys. Delete the keys listed in
+   [the 1.x migration summary](configuration.md#1x-migration-summary) and set
+   `schema_version: review_config.v3`.
+6. **Update the template and both images together:** the complete canonical
+   GitHub workflow, or the protected GitLab template SHA with its base image,
+   reviewer image, and trusted source SHA.
+7. **Update GitLab `needs`.** Review and critique are now one parallel matrix
+   job apiece, `AI review` and `AI critique`. The expanded names such as
+   `AI review: [claude]` remain, but a custom job that needed one of them must
+   now use `needs:parallel:matrix` against the matrix job.
+8. **Update artifact consumers.** Tools that read `consensus.json` must accept
+   `consensus.v2`: independent support and informational decisions replace the
+   removed blocking and vote-count fields. There is no `out/gate/` artifact.
+9. **Expect one cosmetic thread update.** Existing threads keep their hidden
+   marker and are refreshed once from `render-body.v3` to `render-body.v4`,
+   which uses a `Support:` footer. Identities are updated, not duplicated.
+10. **Verify:** open a test change, then confirm posting, state, and commands.
+    `post` is the terminal job. It fails only on a publication failure, never
+    because of a finding's severity.
+
+To roll back, restore the saved workflow or template SHA with its matching
+images, variables, and configuration, and start again at prepare. Threads receive
+one reverse cosmetic update back to `render-body.v3`. Re-add the required gate
+check only if you restore a 1.0.x template.
+
 ## Upgrade from 0.4.x to 1.0
+
+This section is retained for installations still on 0.4.x. Complete it, then
+apply [the 1.0.x to 2.0 upgrade](#upgrade-from-10x-to-20).
 
 Treat the upgrade as a coordinated template, image, configuration, schema, and
 state migration.
@@ -27,13 +85,10 @@ state migration.
    hashing also invalidates old prepare manifests.
 7. Expect a one-time update of existing bot-authored bodies when the render-body
    version changes. This should update existing identities, not duplicate them.
-8. Verify state ownership, posting, and commands. There is no gate to enforce:
-   Code Tribunal publishes review output and never decides whether a change may
-   merge. Remove any branch-protection or ruleset entry that requires the
-   deleted `gate` check — on GitHub a required check that never reports leaves
-   pull requests permanently unmergeable.
+8. Verify state ownership, posting, and commands.
 9. Leave Cursor off unless you deliberately accept its separate egress path. It
    is a supported peer seat; enabling it requires `CURSOR_API_KEY`.
+
 Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
 `needs`, overrides, dashboards, and scripts that refer to the old job names:
 
@@ -50,7 +105,7 @@ Cursor review/critique jobs are new optional grouped jobs and have no legacy
 identifier.
 
 Python-package consumers must move to the supported containers and CI templates.
-There is no supported installable Python distribution in 1.0.
+There is no supported installable Python distribution.
 
 ## Failure behavior
 
@@ -105,7 +160,7 @@ timeouts and finding caps, bounding diff/files/prompt size, and optionally
 disabling critique (critique is a second model pass, so disabling it roughly
 halves reviewer calls). Validate panel thresholds after changing seats. The
 product does not currently provide the proposed per-reviewer token/cost
-token/cost accounting, so provider billing remains the authoritative cost source;
+accounting, so provider billing remains the authoritative cost source;
 record it per run when collecting live evidence.
 
 For validation and lifecycle rehearsal without model spend, the deterministic
@@ -143,8 +198,8 @@ Uninstall instructions are in the platform getting-started guides.
 
 ## Incident response
 
-1. Stop automatic/manual review triggers or remove the required check only under
-   the repository's incident policy.
+1. Stop automatic/manual review triggers, or disable the workflow or include,
+   under the repository's incident policy.
 2. Revoke suspected provider and platform credentials.
 3. Preserve sanitized job IDs, source/image digests, artifacts, and logs without
    copying secret values or sensitive model content.
@@ -153,5 +208,5 @@ Uninstall instructions are in the platform getting-started guides.
 5. Rotate credentials and bot identity deliberately; document state-ownership
    consequences.
 6. Patch, rebuild from a reviewed commit, rerun hostile and functional evidence,
-   and only then restore enforcement.
+   and only then restore review triggers.
 7. Report product vulnerabilities through [SECURITY.md](../SECURITY.md).

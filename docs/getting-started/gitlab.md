@@ -46,7 +46,8 @@ In **Settings → CI/CD → Variables**, configure:
 |---|---:|---:|---:|---|
 | `OPENROUTER_API_KEY` | yes | yes | yes | Reviewer provider calls |
 | `GITLAB_TOKEN` | yes | yes | yes | Prepare, discussions, state, and commands |
-| `CURSOR_API_KEY` | yes | yes | only when Cursor is enabled | Peer reviewer seat; required only when Cursor is on the roster |
+| `CURSOR_API_KEY` | yes | yes | only when Cursor is selected | Peer reviewer seat; required only when `AI_REVIEW_REVIEWERS` names `cursor` |
+| `AI_REVIEW_REVIEWERS` | no | yes | optional | Comma-separated panel of at least three seats; defaults to Claude, Codex, and OpenCode |
 
 Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
 Configure runtime overrides as protected project/group variables so every stage
@@ -71,7 +72,7 @@ failing prepare.
 Cursor is a supported peer reviewer seat, off in the shipped default roster.
 Enabling it is a deliberate second egress destination: the Cursor CLI cannot route
 through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
-Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS`, supply
+Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS` and supply
 `CURSOR_API_KEY`. The shipped `auto` model is a valid Cursor selector; set
 `AI_REVIEW_CURSOR_MODEL` to an exact slug when you want model-stable
 reproducibility.
@@ -113,13 +114,15 @@ means no finding reached two independent supporters, so every one of them is
 FYI.
 
 Before a production rollout, execute the hostile-MR checklist in the
-[evidence runbook](../evidence/README.md). Repository-only tests do not
+[evidence runbook](../evidence/RUNBOOK.md#run-3--gitlab-hostile-mr-credential--enforcement-boundary). Repository-only tests do not
 prove protected-variable behavior in a particular GitLab deployment.
 
 ## Update or roll back
 
 Change the template SHA only after reviewing the target revision and its image
-pins. Update the two child includes together. A rollback restores the previous
+pins. Update the two child includes together. Read the
+[upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
+1.0.x to 2.0: remove custom jobs, `needs`, or rules that reference `ai_review_gate`. A rollback restores the previous
 template SHA and reruns prepare; never feed artifacts created by one source or
 configuration into another.
 

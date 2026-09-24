@@ -206,10 +206,10 @@ class CandidateIdentityTests(unittest.TestCase):
         self.identity = load_repository_script("validate_candidate_identity", IDENTITY_VALIDATOR)
         self.source = "a" * 40
         self.base = (
-            f"ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-{self.source}@sha256:{'b' * 64}"
+            f"ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-{self.source}@sha256:{'b' * 64}"
         )
         self.reviewer = (
-            "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-"
+            "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-"
             f"{self.source}@sha256:{'c' * 64}"
         )
 

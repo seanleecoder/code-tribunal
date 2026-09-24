@@ -5,7 +5,7 @@ real runners and protected credentials. Two long-lived,
 operator-controlled, **public** scratch projects serve that purpose. They were used
 for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
-pre-v3 threads that the body-refresh check depends on.
+older-format threads that the body-refresh check depends on.
 
 | Platform | Project | Role |
 |---|---|---|
@@ -57,9 +57,9 @@ repo's canonical template.
   fake "real" evidence. **Delete them again after every Chain B campaign.**
 
 **What changes per release:** the five container digest pins in the workflow (jobs
-`prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of this writing they
-are still the 1.0.0 pair, `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e` with base
-`sha256:f2a433ac…` and reviewer `sha256:2fd84c43…`. Copy the workflow from the new `R`
+`prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of
+2026-09-24 `main` pins the unreleased `1.0-451472d2ed0a8bc5d870409b224a69199570c843`
+pair (base `sha256:bb32fdb8…`, reviewer `sha256:8b1a1bd1…`), adopted by PR #17. Copy the workflow from the new `R`
 rather than hand-editing pins: an older copy can carry env keys that a newer `R`
 rejects (the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides were one such case).
 
@@ -78,17 +78,24 @@ Existing branches, all worth keeping:
 | `chore/adopt-canonical-workflow-<R-short>` | the repin PR; merged, not squashed |
 
 1.0.0 used PR #4 to adopt the workflow at `R = 88bc941`, PRs #5/#6 for Chain B, and
-PR #7 for Chain A. Chain A and Chain B must use **separate** PRs and separate finding
+PR #7 for Chain A. 1.0.2 used PR #14 for Chain A. PRs #15/#16 validated SPEC-39 at
+`09f4e65`, PR #17 adopted `451472d`, PR #18 is its Chain A, and PRs #19–#21 were
+opened and closed by the Candidate Canary. Chain A and Chain B must use **separate** PRs and separate finding
 identities: the real panel emits a model-authored finding whose identity you do not
 control, so continuing it with the mock opens a new discussion instead of updating
 one.
 
 ### Threads that must not be deleted
 
-The `render-body.v3` refresh check needs a bot-authored thread created by an
-**older** image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR
-(created `2026-07-25 20:13:42`, updated `20:20:37`, `issue_id` shared with the GitLab
-note below). Closing the PR is fine; deleting the comment or the branch is not.
+The posted-body refresh check needs a bot-authored thread created by an **older**
+image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR #6
+(created `2026-07-25 20:13:42`, `issue_id` shared with the GitLab note below). The
+1.0.1 image refreshed it to `render-body.v3` on 2026-07-30
+([record](record-render-body-v3-refresh.md)), so it is the subject for the 2.0
+`render-body.v4` refresh: after the repin, merge `main` into
+`evidence/chain-b-88bc941`, confirm the branch diff is still only the fixture, and
+re-review with `AI_REVIEW_MOCK_SCENARIO=blocking_alt`. Closing the PR is fine;
+deleting the comment or the branch is not.
 
 ## GitLab consumer — `seanleecoder/code-tribunal-demo`
 
@@ -117,7 +124,8 @@ Public, project id `84667714`. Verified present:
 The **three GitLab pin variables** live in the template project's
 `ai-review/ci/review.gitlab-ci.yml` `variables:` block, not in the consumer, and must
 be replaced together: `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and
-`AI_REVIEW_TRUSTED_IMAGE_SHA`. All three still carry the 1.0.0 pair. Push the update
+`AI_REVIEW_TRUSTED_IMAGE_SHA`. Check their current values in the template project
+before the repin; do not trust a value recorded here. Push the update
 as a new template commit and then point **both** consumer includes at that new SHA.
 
 **Two branch classes, and the distinction is load-bearing:**
@@ -154,12 +162,17 @@ with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
 before any Chain A run and after every Chain B campaign.
 
 Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, updated
-`20:59:24`) for the same body-refresh reason as the GitHub comment above.
+`20:59:24`) for the same body-refresh reason as the GitHub comment above. It was
+never refreshed, so it still carries the 1.0.0 body format and can prove the GitLab
+refresh surface.
 
 ## Per-release setup checklist
 
 1. Confirm the mock variables are absent on **both** consumers. Both are currently
    clean; verify anyway, because a leftover toggle turns a real run into a fake one.
+   Then dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
+   against the new pair. It needs no repin: it pushes its own temporary branch and
+   closes its PR/MR afterwards. Do not repin until it is green.
 2. Copy the workflow / CI template from the new `R`; repin the five GitHub container
    digests and the three GitLab pin variables (`AI_REVIEW_BASE_IMAGE`,
    `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the new pair.

@@ -45,8 +45,9 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
 
 > **Historical: the activated 1.0.0 pair.** Retained because Step 0's example
 > commands and several 1.0.0 result notes below reference it. It is **not** the
-> current candidate — `release/release-inputs.json` is the 1.0.1 draft
-> (`status: draft`, runtime source and digests unset pending rebuild).
+> current candidate: `release/release-inputs.json` names the release under
+> preparation (`status: draft`, runtime source and digests unset until the
+> candidate pair is published).
 
 > The prior `b674d1e` and `15d424f` candidates are historical provenance only —
 > `b674d1e` was invalidated by a GitHub human-command authorization defect and
@@ -72,22 +73,23 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
   replace this identity block and repeat the release-gating probes against the new
   pair — a record bound to `88bc941` does not certify a later runtime source.
 
-> The `1.0` tag is mutable; **always pull and pin by the `sha256:` digest** in
-> consumer templates and when verifying an image.
+> Image tags (`<series>-<R>`, for example `2.0-<R>`) are mutable registry
+> pointers; **always pull and pin by the `sha256:` digest** in consumer templates
+> and when verifying an image.
 
 > **Satisfied by the pair above — kept as the procedure for any future rebuild.**
-> The `AI_REVIEW_MOCK_SCENARIO` reviewer support and the gate `run_id` binding both
-> live in `ai-review/src`, which is copied into the **base** image
+> The `AI_REVIEW_MOCK_SCENARIO` reviewer support and the posting/state code live
+> in `ai-review/src`, which is copied into the **base** image
 > (`ai-review/images/base.Dockerfile`); the reviewer image is built `FROM` the base
-> and inherits it, and the base runs the `prepare`/`consensus`/`post`/`gate` jobs
+> and inherits it, and the base runs the `prepare`/`consensus`/`post` jobs
 > while the reviewer runs `review`/`critique`. So building only a reviewer image
-> atop an older base contains neither change. Whenever the pair is rebuilt: rebuild
+> atop an older base contains no source change. Whenever the pair is rebuilt: rebuild
 > the **base** from a commit that includes the code under test, build the
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
 > the image-pin rotation procedure in [operations](../operations.md)), and re-run
 > Step 0 verification/attestation against the new digests. Republishing is an
-> operator/CI action. Because the gate/mock code ships inside the product image,
+> operator/CI action. Because the posting/mock code ships inside the product image,
 > **both** chains must run against the digests named above, so the evidence matches
 > the exact images that ship.
 
@@ -116,6 +118,27 @@ also hides CLI plugins, so read the revision labels with the normal config via
 `docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
 
 Confirm the digests match the values above before running any smoke.
+
+## Step 0b — Candidate Canary (before any consumer repin)
+
+Dispatch the protected `Candidate Canary` workflow from `main` with `R` and the
+two digest-pinned subjects, as described in
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary). It re-verifies image
+identity, OCI labels, and provenance, then runs one four-seat (Claude, Codex,
+OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
+result blocks repinning; rerun only after a concrete fix.
+
+The canary retains only the redacted `candidate-canary-<platform>-summary`
+artifacts and writes nothing under `docs/evidence/`. Record the green pair in a
+new `record-candidate-canary.md`, copied from [the record template](record-template.md), with the
+workflow run ID, both summary artifacts, and the three `Release-*` binding
+fields. That record is the release's real-panel (Chain A) row on **both**
+platforms, so Chain A below is needed only when the canary cannot run.
+
+When the posted-body format changed, confirm before the repin that a bot thread
+in the **previous** format survives on the demo (see the preserved threads in
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md#threads-that-must-not-be-deleted));
+without one there is nothing older to refresh.
 
 ## What only you (the operator) can do
 
@@ -269,7 +292,7 @@ and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. These are
 part of the prepare-stamped effective-config digest — so set them consistently on
 the **review and critique** jobs (project-wide is simplest). If you also change a
 config-affecting override for Chain B (`AI_REVIEW_CRITIQUE_ENABLED`,
-`AI_REVIEW_<R>_ENABLED/MODEL/EFFORT`), that *does* feed the effective-config digest,
+`AI_REVIEW_REVIEWERS`, `AI_REVIEW_<R>_MODEL/EFFORT`), that *does* feed the effective-config digest,
 so scope it identically across **all** jobs or consensus fails closed on divergence
 (SPEC-33). Never edit a production template.
 
@@ -380,14 +403,14 @@ discovered, so the next release starts here instead of rediscovering it.
 
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
-| Added-file lifecycle | blocked at 1.0.0 by the `/dev/null` anchor defect, so every fixture was modify-only. The fix ships in 1.0.1; shipping it does not by itself close the gap | run Chain B with an **adding** fixture on GitHub and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion — queued as the 1.0.1 headline run |
-| `render-body.v3` refresh of a pre-v3 thread | the format changed after `v1.0.0`, so no run has re-reviewed a thread authored by an older image | re-review a change request whose bot thread predates v3 (the 1.0.0 threads GitHub comment `3650942127` / GitLab note `3601861614` still exist) and assert `updated_discussions=1`, `created=0`, same `issue_id` |
+| Added-file lifecycle on GitLab | closed on GitHub at 1.0.1 ([lifecycle record](record-github-current-image.md)); GitLab renders added files differently and has not run an adding fixture | run Chain B with an **adding** fixture on GitLab and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion |
+| `render-body.v4` refresh of a v3 thread | the footer changed from `Consensus:` to `Support:` after 1.0.2; the v3 refresh was proven on GitHub only ([v3 record](record-render-body-v3-refresh.md)) | re-review a change request whose bot thread was authored by the 1.0.2 image and assert `updated_discussions=1`, `created=0`, same `issue_id`; GitLab too if a 1.0.2-authored note exists |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor reviewer | the route was outside the 1.0.0 release matrix | [the supplemental record](record-cursor-real-runs.md) is historical supporting evidence bound to older coordinates. Cursor is a supported seat and needs nothing further to enable; a release shipping it on the default roster would want its own gating row, and no check covers the pinned CLI's runtime honouring of the deny policy |
+| Cursor deny policy | the Candidate Canary exercises Cursor with `auto` on both platforms, but an ordinary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -397,14 +420,15 @@ Actual result / Audit / Verdict.
 
 | # | Run | Record | Tier | Real tokens |
 |---|---|---|---|---|
-| 1 | Default-model + current-image lifecycle (GitHub) | [default-model record](record-github-default-model-smoke.md) and [lifecycle record](record-github-current-image.md) | release-gating | one 3-model panel (Chain A only) |
-| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | one 3-model panel (Chain A only) |
+| 0b | Candidate Canary real panel (both platforms) | `record-candidate-canary.md` | release-gating | one 4-seat panel per platform |
+| 1 | Current-image lifecycle (GitHub) | [lifecycle record](record-github-current-image.md); historical [default-model record](record-github-default-model-smoke.md) | release-gating | none when the canary ran (Chain B only) |
+| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | none when the canary ran (Chain B only) |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / gate forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
+| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / artifact forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
 | 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run |
 
-Run 1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
+Runs 0b/1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
 logic is proven by `make quality` (see the [evidence index](README.md)), so a
 live pass is optional and **not** a release gate. Run 5 is historical supporting
 evidence; Run 6 is optional and gates nothing.
@@ -417,8 +441,9 @@ identity: the real panel emits a model-authored finding whose identity you do no
 control, so continuing it with the mock would open a new discussion rather than
 update the same one. Capture run/job IDs and platform object IDs at every step.
 
-**Chain A — real default-model smoke (the only token spend).** On its own change
-request, leave all model overrides unset, keep all three OpenRouter seats enabled,
+**Chain A — real default-model smoke.** The Candidate Canary record (Step 0b)
+satisfies this chain on both platforms; run it manually only when the canary
+cannot. On its own change request, leave all model overrides unset, keep all three OpenRouter seats enabled,
 Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
 panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.6-luna`,
 OpenCode `google/gemini-3.5-flash-lite`, Cursor `auto` skipped, `panel_status:
@@ -480,13 +505,14 @@ tokens. Exercise the genuinely live-only probes:
 2. From a trusted checkout, audit composition with
    `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
 3. Attempt the override/forgery probes that touch a credential-bearing boundary
-   (template/job replacement, trusted image/config override, forged `out/gate/*`).
+   (template/job replacement, trusted image/config override, forged
+   `out/consensus/*` or `out/post/*`).
    Confirm the trusted composition is retained or the pipeline fails closed, and
    audit every trace/artifact for credential *values*.
 
-The SPEC-31 symlink variants and the SPEC-33 forged-gate integrity binding are
-regression-covered (`ai-review/tests/unit/test_input_bundle.py` and
-`test_gate.py`); confirm at most one representative symlink variant live and rely
+The SPEC-31 symlink variants and the SPEC-33 forged-artifact integrity binding
+are regression-covered (`ai-review/tests/unit/test_input_bundle.py` and
+`test_consensus_integrity.py`); confirm at most one representative symlink variant live and rely
 on the regression suite for the rest.
 
 ### Run 4 — structural fail-closed confirmations (optional, not release-gating)
@@ -533,11 +559,10 @@ reviewer image and reported `model: auto`.
    or model content.
 3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that
    explicitly; otherwise change the invocation and repeat the read/permission
-   validation. If blocking behavior is required, use a blocking fixture and
-   verify the required check genuinely blocks.
+   validation.
 4. Run the fresh real-key fixture review/critique under the chosen contract and
    record exact model, counts, config digest, runtime/image coordinates,
-   provenance, job IDs, and consensus/post/gate outcomes without secrets or model
+   provenance, job IDs, and consensus/post outcomes without secrets or model
    text.
 5. Add the sanitized supplemental record only after all required paths are scoped
    `Status: passed` against the same `R` and final image pair. Repin the
@@ -549,8 +574,8 @@ reviewer image and reported `model: auto`.
 ## After the release-gating runs pass
 
 > **Completed for 1.0.0** on 2026-07-25 against `R = 88bc941` (release commit
-> `3ad443e`, tag `v1.0.0`). The steps below are retained as the reusable sequence
-> for 1.0.1; the parenthetical notes record how 1.0.0 satisfied each.
+> `3ad443e`, tag `v1.0.0`). The steps below are the reusable sequence for every
+> later release; the parenthetical notes record how 1.0.0 satisfied each.
 
 1. Mark each release-gating record `Status: passed` with a scoped verdict, and
    record the per-run token/cost for the one real panel per platform. (1.0.0: all
@@ -581,6 +606,6 @@ reviewer image and reported `model: auto`.
    release commit, and either tag `P` exactly or rebuild the manifest against the
    merge commit; see the tagging section of the release notes.
 
-Do not describe 1.0 as "stable" or "credential isolated" until every
+Do not describe a release as "stable" or "credential isolated" until every
 release-gating row is a scoped pass against the exact rebuilt RC source and image
 digests.
