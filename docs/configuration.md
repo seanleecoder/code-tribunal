@@ -328,8 +328,8 @@ rejected. Native Anthropic routing is not supported.
 | `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
-| `GITLAB_READ_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
-| `GITLAB_WRITE_TOKEN` | Retired split-token path; configure one protected `GITLAB_TOKEN`. |
+| `GITLAB_READ_TOKEN` | Retired split-token path, no longer read; configure one protected `GITLAB_TOKEN`. |
+| `GITLAB_WRITE_TOKEN` | Retired split-token path, no longer read; configure one protected `GITLAB_TOKEN`. |
 
 ### Template and internal runtime variables
 

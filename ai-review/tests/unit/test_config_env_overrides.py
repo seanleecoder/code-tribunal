@@ -9,6 +9,7 @@ from unittest import mock
 
 from ai_review.config import (
     CONFIG_SCHEMA_VERSION,
+    RETIRED_CONFIG_SCHEMA_VERSIONS,
     RETIRED_ENV_OVERRIDES,
     V3_REMOVED_CONFIG_KEYS,
     ConfigError,
@@ -584,7 +585,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
 class ConfigVersionMigrationTests(unittest.TestCase):
     """Retired schemas are rejected once, by name, with the whole removal list."""
 
-    def _v2_document(self, extra: str = "", version: str = "review_config.v2") -> str:
+    def _retired_document(self, extra: str = "", version: str = "review_config.v2") -> str:
         text = _REPO_CONFIG.read_text(encoding="utf-8").replace(
             f"schema_version: {CONFIG_SCHEMA_VERSION}", f"schema_version: {version}", 1
         )
@@ -597,12 +598,12 @@ class ConfigVersionMigrationTests(unittest.TestCase):
             with mock.patch.dict("os.environ", {}, clear=True):
                 load_config(path)
 
-    def test_v2_is_rejected_and_the_message_names_every_removed_key(self) -> None:
+    def test_retired_versions_are_rejected_and_the_message_names_every_removed_key(self) -> None:
         # v1 is what the tagged 1.x releases shipped, so it gets the same guidance.
-        for version in ("review_config.v1", "review_config.v2"):
+        for version in RETIRED_CONFIG_SCHEMA_VERSIONS:
             with self.subTest(version=version):
                 with self.assertRaises(ConfigError) as raised:
-                    self._load(self._v2_document(version=version))
+                    self._load(self._retired_document(version=version))
 
                 message = str(raised.exception)
                 self.assertIn(f"{version} is retired", message)

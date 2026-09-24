@@ -29,15 +29,10 @@ configuration together, in this order.
    `AI_REVIEW_REVIEWERS` names `cursor`, so enabling Cursor in YAML alone
    leaves it without a credential.
 5. **Migrate custom configuration to `review_config.v3`.** Every 1.x release
-   shipped `review_config.v1`. A v1 document is rejected once with the complete
-   list of removed keys: `severity_policy`, `merge_gate`, `state.backend`,
-   `panel.grouping`, `panel.quorum`,
-   `panel.min_successful_reviewers_for_blocking`, `critique.rounds`,
-   `critique.can_add_quorum_votes`, `critique.allow_advisory_escalation`,
-   `posting.fallback_to_summary_comment`, `limits.max_posted_surface_findings`,
-   and per-reviewer `adapter` and `credential_variable`. Delete them and set
-   `schema_version: review_config.v3`. See
-   [the configuration reference](configuration.md#1x-migration-summary).
+   shipped `review_config.v1`, which is rejected once with the complete list of
+   removed keys. Delete the keys listed in
+   [the 1.x migration summary](configuration.md#1x-migration-summary) and set
+   `schema_version: review_config.v3`.
 6. **Update the template and both images together:** the complete canonical
    GitHub workflow, or the protected GitLab template SHA with its base image,
    reviewer image, and trusted source SHA.

@@ -17,8 +17,8 @@ class ConfigError(ValueError):
 # migration table in CHANGELOG.md.
 CONFIG_SCHEMA_VERSION = "review_config.v3"
 
-# Every key removed between v2 and v3, in the order the migration message names
-# them, each mapped to what the operator should do instead. SPEC-54 opens the
+# Every key removed on the way to v3 (from v1 or v2), in the order the migration
+# message names them, each mapped to what the operator should do instead. SPEC-54 opens the
 # list; each later spec in the v3 series appends its own entries here, and a test
 # asserts the rejection message names every one — so an appended removal without
 # an appended message line fails rather than leaving an operator to discover the
@@ -43,7 +43,7 @@ V3_REMOVED_CONFIG_KEYS = {
         "semantic similarity grouping was removed; findings group by anchor, so "
         "delete the object"
     ),
-    "critique.rounds": ("there is exactly one critique round; delete the key"),
+    "critique.rounds": "there is exactly one critique round; delete the key",
     "critique.can_add_quorum_votes": (
         "an agreeing independent critic is counted as support by definition; "
         "delete the key"
@@ -516,12 +516,6 @@ def validate_config(config: dict[str, Any]) -> None:
         # release shipped; v2 existed only on main between releases. Checked
         # before the key sets, so a retired document's removed top-level objects
         # are reported as one migration rather than the first unknown key.
-        # A version string whose accepted shape changes is not a contract. v3
-        # names the shape without the keys that only tuned merge behavior, so a
-        # document can be checked against the runtime that will read it instead
-        # of being diagnosed one unknown key at a time. There is no v2-and-v3
-        # acceptance window: a migration message is preferable to a permanent
-        # compatibility adapter.
         raise ConfigError(
             f"schema_version {declared_version} is retired: delete "
             + ", ".join(V3_REMOVED_CONFIG_KEYS)
