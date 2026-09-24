@@ -40,6 +40,8 @@ versioning.
 - The configuration authority is `review_config.v3`, with one three-or-four-seat
   roster, fixed trusted adapter/credential/endpoint routes, independently bounded
   review and critique timeouts, and strict rejection of retired overrides.
+- Images are tagged `2.0-<runtime source>`. The tag series is one constant in the
+  release tooling, checked against the publish workflow.
 - Cursor is a supported peer seat, selected explicitly because it introduces a
   second credential and egress destination. `auto` remains a valid model selector.
 - Image publication uses the curated packaged smoke suite instead of a mounted

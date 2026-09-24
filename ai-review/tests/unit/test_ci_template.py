@@ -521,7 +521,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("GITHUB_TOKEN", text)
         self.assertIn("ghcr.io", text)
         self.assertIn("seanleecoder/code-tribunal", text)
-        self.assertIn('IMAGE_VERSION: "1.0"', text)
+        self.assertRegex(text, r'\n  IMAGE_VERSION: "[0-9]+\.[0-9]+"\n')
         self.assertIn("Validate supply-chain pins", build_preflight)
         self.assertIn("python scripts/check_supply_chain_pins.py", build_preflight)
         self.assertNotIn("vars.AI_REVIEW_", text)
