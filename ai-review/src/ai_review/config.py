@@ -29,7 +29,7 @@ CONFIG_SCHEMA_VERSION = "review_config.v3"
 # a removed key is told the key was deleted and why, rather than being left to
 # read `unknown config keys at state: ['backend']` as a typo. One data row per
 # removal, no code per removal.
-# COMPAT-002: review_config.v2-to-v3 targeted migration diagnostics.
+# COMPAT-002: review_config.v1/v2-to-v3 targeted migration diagnostics.
 V3_REMOVED_CONFIG_KEYS = {
     "severity_policy": "severity no longer affects any decision; delete the object",
     "panel.min_successful_reviewers_for_blocking": (
@@ -38,6 +38,15 @@ V3_REMOVED_CONFIG_KEYS = {
     "panel.quorum": (
         "the support threshold is a product invariant, not an operator setting; "
         "delete the object"
+    ),
+    "panel.grouping": (
+        "semantic similarity grouping was removed; findings group by anchor, so "
+        "delete the object"
+    ),
+    "critique.rounds": ("there is exactly one critique round; delete the key"),
+    "critique.can_add_quorum_votes": (
+        "an agreeing independent critic is counted as support by definition; "
+        "delete the key"
     ),
     "critique.allow_advisory_escalation": (
         "an agreeing independent critic is simply a second supporter and there is "
@@ -67,6 +76,8 @@ V3_REMOVED_CONFIG_KEYS = {
         "adapter that stores it; delete the key"
     ),
 }
+
+RETIRED_CONFIG_SCHEMA_VERSIONS = ("review_config.v1", "review_config.v2")
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -499,10 +510,12 @@ def _validate_state(config: dict[str, Any]) -> None:
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     declared_version = config.get("schema_version")
-    if declared_version == "review_config.v2":
-        # COMPAT-002: targeted v2-to-v3 diagnostic.
+    if declared_version in RETIRED_CONFIG_SCHEMA_VERSIONS:
+        # COMPAT-002: targeted v1/v2-to-v3 diagnostic. v1 is what every tagged 1.x
+        # release shipped; v2 existed only on main between releases. Checked
+        # before the key sets, so a retired document's removed top-level objects
+        # are reported as one migration rather than the first unknown key.
         # A version string whose accepted shape changes is not a contract. v3
         # names the shape without the keys that only tuned merge behavior, so a
         # document can be checked against the runtime that will read it instead
@@ -510,13 +523,14 @@ def validate_config(config: dict[str, Any]) -> None:
         # acceptance window: a migration message is preferable to a permanent
         # compatibility adapter.
         raise ConfigError(
-            "schema_version review_config.v2 is retired: delete "
+            f"schema_version {declared_version} is retired: delete "
             + ", ".join(V3_REMOVED_CONFIG_KEYS)
             + f", ensure at least {_MINIMUM_PANEL_REVIEWERS} reviewer seats are "
             f"enabled, then set schema_version to {CONFIG_SCHEMA_VERSION}; "
             "findings are informational in v3 and severity no longer affects any "
-            "decision. See the v2 to v3 table in CHANGELOG.md"
+            "decision. See the Migration table in CHANGELOG.md"
         )
+    _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     _validate_posting(config)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -581,11 +582,11 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
 
 class ConfigVersionMigrationTests(unittest.TestCase):
-    """review_config.v2 is rejected once, by name, with the whole removal list."""
+    """Retired schemas are rejected once, by name, with the whole removal list."""
 
-    def _v2_document(self, extra: str = "") -> str:
+    def _v2_document(self, extra: str = "", version: str = "review_config.v2") -> str:
         text = _REPO_CONFIG.read_text(encoding="utf-8").replace(
-            f"schema_version: {CONFIG_SCHEMA_VERSION}", "schema_version: review_config.v2", 1
+            f"schema_version: {CONFIG_SCHEMA_VERSION}", f"schema_version: {version}", 1
         )
         return text + extra
 
@@ -597,15 +598,40 @@ class ConfigVersionMigrationTests(unittest.TestCase):
                 load_config(path)
 
     def test_v2_is_rejected_and_the_message_names_every_removed_key(self) -> None:
-        with self.assertRaises(ConfigError) as raised:
-            self._load(self._v2_document())
+        # v1 is what the tagged 1.x releases shipped, so it gets the same guidance.
+        for version in ("review_config.v1", "review_config.v2"):
+            with self.subTest(version=version):
+                with self.assertRaises(ConfigError) as raised:
+                    self._load(self._v2_document(version=version))
 
-        message = str(raised.exception)
-        for key in V3_REMOVED_CONFIG_KEYS:
-            with self.subTest(key=key):
-                self.assertIn(key, message)
-        self.assertIn(CONFIG_SCHEMA_VERSION, message)
-        self.assertIn("CHANGELOG.md", message)
+                message = str(raised.exception)
+                self.assertIn(f"{version} is retired", message)
+                for key in V3_REMOVED_CONFIG_KEYS:
+                    self.assertIn(key, message)
+                self.assertIn(CONFIG_SCHEMA_VERSION, message)
+                self.assertIn("CHANGELOG.md", message)
+
+    def test_the_shipped_1_0_2_config_is_diagnosed_not_reported_as_unknown(self) -> None:
+        """A byte-for-byte 1.0.2 review.yaml reaches the migration message."""
+        try:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(_REPO_CONFIG.parent),
+                    "show",
+                    "v1.0.2:ai-review/config/review.yaml",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            self.skipTest("git is not available")
+        if completed.returncode != 0:
+            self.skipTest("v1.0.2 is not available in this checkout")
+        with self.assertRaisesRegex(ConfigError, r"review_config\.v1 is retired"):
+            self._load(completed.stdout)
 
     def test_a_v3_document_still_carrying_a_removed_key_is_rejected(self) -> None:
         for key, text in (
