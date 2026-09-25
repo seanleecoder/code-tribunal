@@ -120,9 +120,83 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     return state
 
 
+def _run_fields(run_id: str, fields: str) -> dict[str, Any]:
+    return json.loads(
+        _run("gh", "run", "view", run_id, "--repo", DEMO_REPOSITORY, "--json", fields)
+    )
+
+
+def _executing_pull_request_run(branch: str, deadline: float) -> dict[str, Any] | None:
+    """Return the canary PR's own review run, or None when it skipped.
+
+    Opening the pull request always starts the demo's `pull_request` run. It
+    executes the whole panel unless the demo sets `AI_REVIEW_MANUAL=true`, in
+    which case every job skips. Using that run when it executes, and dispatching
+    only when it skipped, yields exactly one executed panel whatever the demo's
+    manual setting; dispatching unconditionally ran and billed the panel twice.
+    """
+    run: dict[str, Any] | None = None
+    while run is None and time.monotonic() < deadline:
+        runs = json.loads(
+            _run(
+                "gh",
+                "run",
+                "list",
+                "--repo",
+                DEMO_REPOSITORY,
+                "--workflow",
+                "ai-review.yml",
+                "--branch",
+                branch,
+                "--event",
+                "pull_request",
+                "--limit",
+                "1",
+                "--json",
+                "databaseId,url,status,conclusion",
+            )
+        )
+        if runs:
+            run = runs[0]
+        else:
+            time.sleep(5)
+    if run is None:
+        raise GitHubCanaryError("the canary pull request's review run did not appear")
+    run_id = str(run["databaseId"])
+    while time.monotonic() < deadline:
+        run = _run_fields(run_id, "databaseId,url,status,conclusion,jobs")
+        if run.get("status") == "completed":
+            return None if run.get("conclusion") == "skipped" else run
+        if any(
+            job.get("status") != "queued" and job.get("conclusion") != "skipped"
+            for job in run.get("jobs") or []
+        ):
+            return run
+        time.sleep(5)
+    raise GitHubCanaryError("timed out deciding whether the pull request run executes")
+
+
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
+    run = _executing_pull_request_run(state["branch"], deadline)
+    if run is None:
+        run = _dispatched_run(state, deadline)
+    run_id = str(run["databaseId"])
+    while time.monotonic() < deadline:
+        run = _run_fields(run_id, "databaseId,url,status,conclusion")
+        if run.get("status") == "completed":
+            conclusion = str(run.get("conclusion") or "unknown")
+            if conclusion != "success":
+                raise GitHubCanaryError(f"GitHub candidate run ended with {conclusion}")
+            break
+        time.sleep(15)
+    else:
+        raise GitHubCanaryError("timed out waiting for GitHub candidate run")
+    return _collect_artifacts(args, state, run_id, run)
+
+
+def _dispatched_run(state: dict[str, Any], deadline: float) -> dict[str, Any]:
     _run(
         "gh",
         "workflow",
@@ -135,7 +209,6 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         "-f",
         f"pr_number={state['pr_number']}",
     )
-    run: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         runs = json.loads(
             _run(
@@ -157,34 +230,14 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         if runs:
-            run = runs[0]
-            break
+            return dict(runs[0])
         time.sleep(5)
-    if run is None:
-        raise GitHubCanaryError("dispatched GitHub canary run did not appear")
-    run_id = str(run["databaseId"])
-    while time.monotonic() < deadline:
-        run = json.loads(
-            _run(
-                "gh",
-                "run",
-                "view",
-                run_id,
-                "--repo",
-                DEMO_REPOSITORY,
-                "--json",
-                "databaseId,url,status,conclusion",
-            )
-        )
-        if run.get("status") == "completed":
-            conclusion = str(run.get("conclusion") or "unknown")
-            if conclusion != "success":
-                raise GitHubCanaryError(f"GitHub candidate run ended with {conclusion}")
-            break
-        time.sleep(15)
-    else:
-        raise GitHubCanaryError("timed out waiting for GitHub candidate run")
+    raise GitHubCanaryError("dispatched GitHub canary run did not appear")
 
+
+def _collect_artifacts(
+    args: argparse.Namespace, state: dict[str, Any], run_id: str, run: dict[str, Any]
+) -> dict[str, Any]:
     destination = Path(args.destination)
     artifacts = destination / "artifacts"
     _run(

@@ -303,6 +303,99 @@ class CandidateCollectionTests(unittest.TestCase):
             self.assertTrue(any(command[:3] == ("gh", "run", "view") for command in commands))
             self.assertFalse(any("watch" in command for command in commands))
 
+    def _collect_github(self, pull_request_run: dict[str, object]) -> tuple[dict, list]:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(
+                json.dumps({"branch": "candidate", "pr_number": "7"}), encoding="utf-8"
+            )
+            commands: list[tuple[str, ...]] = []
+            pull_request_views = 0
+
+            def run(*command: str, **_kwargs: object) -> str:
+                nonlocal pull_request_views
+                commands.append(command)
+                if command[:3] == ("gh", "run", "list"):
+                    event = command[command.index("--event") + 1]
+                    run_id = 5 if event == "pull_request" else 9
+                    return json.dumps([{"databaseId": run_id, "url": f"run-{run_id}"}])
+                if command[:3] == ("gh", "run", "view"):
+                    if command[3] == "5":
+                        pull_request_views += 1
+                        # The first view decides; later views see the run finish.
+                        view = (
+                            pull_request_run
+                            if pull_request_views == 1
+                            else {"status": "completed", "conclusion": "success"}
+                        )
+                        return json.dumps({"databaseId": 5, "url": "run-5", **view})
+                    return json.dumps(
+                        {
+                            "databaseId": 9,
+                            "url": "run-9",
+                            "status": "completed",
+                            "conclusion": "success",
+                        }
+                    )
+                return ""
+
+            args = argparse.Namespace(
+                state=str(state), destination=str(Path(tmp) / "result"), timeout_seconds=7200
+            )
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                mock.patch.object(self.github.shutil, "copytree"),
+                mock.patch.object(self.github.time, "sleep"),
+            ):
+                result = self.github.collect_campaign(args)
+            return result, commands
+
+    def test_github_uses_the_executing_pull_request_run_without_dispatching(self) -> None:
+        result, commands = self._collect_github(
+            {
+                "status": "in_progress",
+                "conclusion": "",
+                "jobs": [{"name": "prepare", "status": "in_progress", "conclusion": ""}],
+            }
+        )
+        self.assertEqual(result["run_id"], "5")
+        self.assertFalse(any(command[:3] == ("gh", "workflow", "run") for command in commands))
+
+    def test_github_dispatches_only_when_the_pull_request_run_skipped(self) -> None:
+        result, commands = self._collect_github(
+            {
+                "status": "completed",
+                "conclusion": "skipped",
+                "jobs": [{"name": "prepare", "status": "completed", "conclusion": "skipped"}],
+            }
+        )
+        self.assertEqual(result["run_id"], "9")
+        dispatches = [command for command in commands if command[:3] == ("gh", "workflow", "run")]
+        self.assertEqual(len(dispatches), 1)
+
+    def test_github_waits_while_the_pull_request_run_is_only_queued(self) -> None:
+        views = iter(
+            [
+                {"status": "queued", "conclusion": "", "jobs": []},
+                {
+                    "status": "in_progress",
+                    "conclusion": "",
+                    "jobs": [{"name": "prepare", "status": "queued", "conclusion": ""}],
+                },
+                {"status": "completed", "conclusion": "skipped", "jobs": []},
+            ]
+        )
+        listed = json.dumps([{"databaseId": 5}])
+        with (
+            mock.patch.object(self.github, "_run_fields", side_effect=lambda *_: next(views)),
+            mock.patch.object(self.github, "_run", return_value=listed),
+            mock.patch.object(self.github.time, "sleep"),
+        ):
+            selected = self.github._executing_pull_request_run(
+                "candidate", self.github.time.monotonic() + 60
+            )
+        self.assertIsNone(selected)
+
     def test_gitlab_discovers_child_once_then_polls_only_that_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state.json"
