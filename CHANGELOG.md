@@ -91,6 +91,14 @@ versioning.
 - Removed duplicated reducer test modules after mapping their unique cases into
   `test_consensus_reducer.py`.
 
+### Fixed
+
+- The GitHub Candidate Canary executes the review panel once per campaign.
+  Opening its demo pull request already starts a review run, and the canary
+  also dispatched one, so the panel ran and was billed twice whenever the demo
+  had `AI_REVIEW_MANUAL` unset or `false`. It now uses the pull request's run and
+  dispatches only when that run skipped in manual mode.
+
 ### Migration
 
 | Previous surface | Current action |

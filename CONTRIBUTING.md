@@ -80,7 +80,10 @@ with a roster that includes `cursor`; the canonical workflow consults that
 trusted variable before exposing `CURSOR_API_KEY` to the Cursor seat. GitLab has
 no equivalent credential gate.
 
-One dispatch runs exactly one GitHub and one GitLab campaign. Each enables
+One dispatch runs exactly one GitHub and one GitLab campaign, and each campaign
+executes the review panel once. On GitHub the canary uses the review run that
+its pull request starts, and dispatches one itself only when that run skipped
+because the demo sets `AI_REVIEW_MANUAL=true`. Each campaign enables
 Claude, Codex, OpenCode, and Cursor with shipped default effort, one review and
 one critique per seat. A pass requires all eight stage results on each platform,
 four resolution-eligible review seats, a full panel, a successfully posted
