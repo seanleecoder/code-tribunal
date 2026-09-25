@@ -43,6 +43,7 @@ from .schema import (
     SchemaValidationError,
     finalize_critique_batch,
     finalize_finding_batch,
+    load_json_file,
     now_iso,
     validate_instance,
     write_canonical_json,
@@ -235,11 +236,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
+                pooled = load_json_file(output_dir / "pooled_findings" / f"{reviewer}.json")
                 finalized = finalize_critique_batch(
                     raw,
                     critic=reviewer,
                     run_id=run_id,
                     effective_config_sha256=config_digest,
+                    pooled_finding_ids={
+                        str(finding["source_finding_id"]) for finding in pooled["findings"]
+                    },
                 )
                 validate_instance(finalized, "critique_batch.schema.json")
             else:

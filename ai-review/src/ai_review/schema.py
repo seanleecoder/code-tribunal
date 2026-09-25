@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -177,7 +178,16 @@ def finalize_critique_batch(
     critic: str,
     run_id: str,
     effective_config_sha256: str,
+    pooled_finding_ids: Collection[str],
 ) -> dict[str, Any]:
+    """Bind a critic's raw batch to this run, keeping only critiques of pooled findings.
+
+    ``pooled_finding_ids`` is the exact pool the critic was shown. A model that
+    miscopies a 64-hex id produces a critique consensus cannot place; consensus
+    treats an unknown target as forged evidence and fails the run, so a single
+    transcription slip must be dropped here, like a malformed review finding,
+    rather than reach it.
+    """
     status = str(batch.get("adapter_status", "success"))
     if status != "success":
         finalized = empty_critique_batch(
@@ -190,8 +200,10 @@ def finalize_critique_batch(
         validate_instance(finalized, "critique_batch.schema.json")
         return finalized
 
+    pooled = frozenset(pooled_finding_ids)
     critiques = []
-    for critique in batch.get("critiques", []):
+    dropped = 0
+    for index, critique in enumerate(batch.get("critiques", []), start=1):
         if not isinstance(critique, dict):
             raise SchemaValidationError("critique entries must be objects")
         normalized = dict(critique)
@@ -200,7 +212,30 @@ def finalize_critique_batch(
             normalized["duplicate_of_source_finding_id"] = None
         if "confidence" not in normalized:
             normalized["confidence"] = 1.0
+        # Only a well-formed id that names no pooled finding is a transcription
+        # slip. A missing or malformed id stays on the schema path below, which
+        # fails the batch closed.
+        target = normalized.get("target_source_finding_id")
+        duplicate_of = normalized["duplicate_of_source_finding_id"]
+        if (is_sha256(target) and target not in pooled) or (
+            is_sha256(duplicate_of) and duplicate_of not in pooled
+        ):
+            dropped += 1
+            sys.stderr.write(
+                redact_text(
+                    f"ai-review: dropped {critic} critique {index}: it references a "
+                    "finding id that is not in the pooled findings\n"
+                )
+            )
+            continue
         critiques.append(normalized)
+    if dropped:
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {critic} kept {len(critiques)} critique(s), dropped "
+                f"{dropped} referencing unknown finding ids\n"
+            )
+        )
     finalized = {
         "schema_version": "critique_batch.v1",
         "run_id": run_id,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import os
 import stat
 import sys
@@ -322,6 +324,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="codex",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["schema_version"], "critique_batch.v1")
@@ -330,6 +333,53 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertEqual(finalized["adapter_status"], "success")
         self.assertEqual(finalized["critiques"][0]["critic"], "codex")
         self.assertIsNone(finalized["critiques"][0]["duplicate_of_source_finding_id"])
+        validate_instance(finalized, "critique_batch.schema.json")
+
+    def test_finalize_critique_batch_drops_critiques_of_unpooled_finding_ids(self) -> None:
+        # Observed live (2026-09-25 candidate canary): a critic transcribed a
+        # pooled 64-hex id with three characters displaced. Consensus rejects an
+        # unknown target as forged evidence, so one slip failed the whole run.
+        pooled = "b360cd3caf1001162dd989843348b3ae076ddfc422a754b0fa85fd6c15177f74"
+        miscopied = "b360cd3caf1001162dd989843b3ae076ddfc422a754b0fa85fd6c15177f74c3b"
+        other = "2" * 64
+
+        def critique(target: str, *, verdict: str = "agree", duplicate_of=None):
+            return {
+                "target_source_finding_id": target,
+                "verdict": verdict,
+                "duplicate_of_source_finding_id": duplicate_of,
+                "rationale": "reviewed",
+                "adjusted_severity": None,
+                "confidence": 0.8,
+            }
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            finalized = finalize_critique_batch(
+                {
+                    "critiques": [
+                        critique(pooled),
+                        critique(miscopied),
+                        critique(other, verdict="duplicate", duplicate_of=miscopied),
+                        critique(other, verdict="duplicate", duplicate_of=pooled),
+                    ]
+                },
+                critic="codex",
+                run_id="local",
+                effective_config_sha256="0" * 64,
+                pooled_finding_ids={pooled, other},
+            )
+
+        self.assertEqual(finalized["adapter_status"], "success")
+        self.assertEqual(
+            [
+                (item["target_source_finding_id"], item["duplicate_of_source_finding_id"])
+                for item in finalized["critiques"]
+            ],
+            [(pooled, None), (other, pooled)],
+        )
+        self.assertIn("codex kept 2 critique(s), dropped 2", stderr.getvalue())
+        self.assertNotIn(miscopied, stderr.getvalue())
         validate_instance(finalized, "critique_batch.schema.json")
 
     def test_finalize_critique_batch_preserves_non_success_status_and_discards_critiques(
@@ -354,6 +404,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="claude",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["adapter_status"], "model_error")
@@ -380,6 +431,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="claude",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["adapter_status"], "schema_error")
