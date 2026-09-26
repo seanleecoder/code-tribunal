@@ -608,6 +608,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
             critic="claude",
             run_id="test-run",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={critique["target_source_finding_id"]},
         )
         self.assertEqual(finalized_critique["critiques"][0]["verdict"], "agree")
 
@@ -702,6 +703,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                 critic="claude",
                 run_id="test-run",
                 effective_config_sha256="0" * 64,
+                pooled_finding_ids=set(),
             )
 
     def test_no_stage_failure_batches_and_envelopes_are_unchanged(self) -> None:
@@ -898,7 +900,29 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
     }
 
 
-def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: int = 30) -> Path:
+def _write_author_findings(output_dir: Path, *, title: str) -> None:
+    write_canonical_json(
+        output_dir / "findings" / "author.json",
+        {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local-test",
+            "reviewer": "author",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [{"source_finding_id": "1" * 64, "title": title}],
+        },
+    )
+
+
+def _write_reviewer_config(
+    config_dir: Path,
+    reviewer: str,
+    *,
+    timeout_seconds: int = 30,
+    critique_enabled: bool = False,
+) -> Path:
     config_path = config_dir / "review.yaml"
     config_path.write_text(
         "\n".join(
@@ -911,7 +935,7 @@ def _write_reviewer_config(config_dir: Path, reviewer: str, *, timeout_seconds: 
                 f"    timeout_seconds: {timeout_seconds}",
                 "    max_findings: 50",
                 *panel_filler(reviewer),
-                *_CONFIG_TAIL,
+                *config_tail(critique_enabled=critique_enabled),
             ]
         ),
         encoding="utf-8",
@@ -1415,41 +1439,10 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = paths["config_dir"] / "review.yaml"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "schema_version: review_config.v3",
-                        "reviewers:",
-                        "  codex:",
-                        "    enabled: true",
-                        "    model: critic-model",
-                        "    timeout_seconds: 30",
-                        "    max_findings: 50",
-                        *panel_filler("codex"),
-                        *config_tail(critique_enabled=True),
-                    ]
-                ),
-                encoding="utf-8",
+            config_path = _write_reviewer_config(
+                paths["config_dir"], "codex", critique_enabled=True
             )
-            write_canonical_json(
-                paths["output_dir"] / "findings" / "author.json",
-                {
-                    "schema_version": "finding_batch.v1",
-                    "run_id": "local-test",
-                    "reviewer": "author",
-                    "adapter_status": "success",
-                    "model": "model",
-                    "started_at": "2026-06-29T00:00:00Z",
-                    "completed_at": "2026-06-29T00:00:01Z",
-                    "findings": [
-                        {
-                            "source_finding_id": "1" * 64,
-                            "title": "Preserve this finding",
-                        }
-                    ],
-                },
-            )
+            _write_author_findings(paths["output_dir"], title="Preserve this finding")
             _write_adapter(
                 paths["adapter_dir"],
                 "codex",
@@ -1469,6 +1462,74 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(pooled["findings"][0]["source_finding_id"], "1" * 64)
             status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
             self.assertEqual(status["status"], "success")
+
+    def test_critique_of_an_unpooled_finding_id_is_dropped_not_fatal(self) -> None:
+        # A critic that miscopies a pooled id must lose that one critique; it must
+        # not emit a target that later fails consensus for the whole run.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(
+                paths["config_dir"], "codex", critique_enabled=True
+            )
+            _write_author_findings(paths["output_dir"], title="Pooled")
+            critiques = [
+                {
+                    "target_source_finding_id": target,
+                    "verdict": "agree",
+                    "rationale": "reviewed",
+                    "adjusted_severity": None,
+                    "confidence": 0.8,
+                }
+                for target in ("1" * 64, "3" * 64)
+            ]
+            payload = json.dumps({"critiques": critiques})
+            _write_adapter(
+                paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n"
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "critique"), 0)
+
+            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "success")
+            self.assertEqual(
+                [item["target_source_finding_id"] for item in batch["critiques"]], ["1" * 64]
+            )
+
+    def test_malformed_critique_with_unknown_id_emits_schema_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(
+                paths["config_dir"], "codex", critique_enabled=True
+            )
+            _write_author_findings(paths["output_dir"], title="Pooled")
+            payload = json.dumps(
+                {
+                    "critiques": [
+                        {
+                            "target_source_finding_id": "2" * 64,
+                            "duplicate_of_source_finding_id": "bad",
+                            "verdict": "duplicate",
+                            "rationale": "reviewed",
+                            "adjusted_severity": None,
+                            "confidence": 0.8,
+                        }
+                    ]
+                }
+            )
+            _write_adapter(
+                paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n"
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "critique"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
+            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            self.assertEqual(batch["critiques"], [])
+            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["error_class"], "SchemaValidationError")
 
 
 if __name__ == "__main__":

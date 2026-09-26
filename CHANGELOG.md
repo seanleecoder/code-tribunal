@@ -91,6 +91,17 @@ versioning.
 - Removed duplicated reducer test modules after mapping their unique cases into
   `test_consensus_reducer.py`.
 
+### Fixed
+
+- A critic that miscopies a pooled finding id no longer fails the whole run.
+  Critique finalization now drops a critique whose well-formed target or
+  `duplicate_of` id is not in the pool that critic was shown, and logs one
+  redacted line. Before, the critique reached consensus, which rejects any
+  unknown target as forged evidence and exited 3. The 2.0.0 candidate canary hit
+  this when a critic displaced three characters of a 64-hex id. A missing or
+  malformed id still fails the batch closed, and consensus keeps its integrity
+  check for forged artifacts.
+
 ### Migration
 
 | Previous surface | Current action |
