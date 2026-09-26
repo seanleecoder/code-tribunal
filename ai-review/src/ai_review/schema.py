@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -177,7 +178,16 @@ def finalize_critique_batch(
     critic: str,
     run_id: str,
     effective_config_sha256: str,
+    pooled_finding_ids: Collection[str],
 ) -> dict[str, Any]:
+    """Bind a critic's raw batch to this run, keeping only critiques of pooled findings.
+
+    ``pooled_finding_ids`` is the exact pool the critic was shown. A model that
+    miscopies a 64-hex id produces a critique consensus cannot place; consensus
+    treats an unknown target as forged evidence and fails the run, so a single
+    transcription slip is dropped here before it reaches consensus. The critique
+    must still be schema-valid before its references are checked.
+    """
     status = str(batch.get("adapter_status", "success"))
     if status != "success":
         finalized = empty_critique_batch(
@@ -190,8 +200,12 @@ def finalize_critique_batch(
         validate_instance(finalized, "critique_batch.schema.json")
         return finalized
 
-    critiques = []
-    for critique in batch.get("critiques", []):
+    raw_critiques = batch.get("critiques")
+    if not isinstance(raw_critiques, list):
+        raise SchemaValidationError("adapter output critiques must be an array")
+
+    normalized_critiques = []
+    for critique in raw_critiques:
         if not isinstance(critique, dict):
             raise SchemaValidationError("critique entries must be objects")
         normalized = dict(critique)
@@ -200,16 +214,48 @@ def finalize_critique_batch(
             normalized["duplicate_of_source_finding_id"] = None
         if "confidence" not in normalized:
             normalized["confidence"] = 1.0
-        critiques.append(normalized)
+        normalized_critiques.append(normalized)
+
     finalized = {
         "schema_version": "critique_batch.v1",
         "run_id": run_id,
         "critic": critic,
         "adapter_status": "success",
         "effective_config_sha256": effective_config_sha256,
-        "critiques": critiques,
+        "critiques": normalized_critiques,
     }
+    # Validate every item before filtering: an unknown reference must not hide
+    # a malformed id or any other schema error in the same critique.
     validate_instance(finalized, "critique_batch.schema.json")
+
+    pooled = frozenset(pooled_finding_ids)
+    critiques = []
+    for index, normalized in enumerate(normalized_critiques, start=1):
+        target = normalized["target_source_finding_id"]
+        duplicate_of = normalized["duplicate_of_source_finding_id"]
+        # The schema pattern's `$` admits a trailing newline; only a fully
+        # well-formed id can be a transcription slip rather than malformed output.
+        if not is_sha256(target) or (duplicate_of is not None and not is_sha256(duplicate_of)):
+            raise SchemaValidationError("critique finding ids must be 64 lowercase hex characters")
+        if target not in pooled or (duplicate_of is not None and duplicate_of not in pooled):
+            sys.stderr.write(
+                redact_text(
+                    f"ai-review: dropped {critic} critique {index}: it references a "
+                    "finding id that is not in the pooled findings\n"
+                )
+            )
+            continue
+        critiques.append(normalized)
+    dropped = len(normalized_critiques) - len(critiques)
+    if dropped:
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {critic} kept {len(critiques)} critique(s), dropped "
+                f"{dropped} referencing unknown finding ids\n"
+            )
+        )
+    # Dropping items from a validated batch cannot make it invalid.
+    finalized["critiques"] = critiques
     return finalized
 
 

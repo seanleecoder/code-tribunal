@@ -19,8 +19,8 @@ versioning.
 
 ### Changed
 
-- Upgraded reviewer CLIs to Claude Code 2.1.280, Codex 0.156.1, OpenCode
-  1.18.32, and Cursor Agent 2026.09.18-9a7762b; refreshed Python packages and
+- Upgraded reviewer CLIs to Claude Code 2.1.283, Codex 0.157.1, OpenCode
+  1.18.32, and Cursor Agent 2026.09.26-dd393fe; refreshed Python packages and
   GitHub Actions. Images and contributor tooling now target Python 3.14 and
   Node 26 on Debian Trixie, with pinned pip; the reviewer image no longer
   ships Node, npm, or npx. OpenCode retains its upstream-compatible ripgrep
@@ -98,6 +98,14 @@ versioning.
   also dispatched one, so the panel ran and was billed twice whenever the demo
   had `AI_REVIEW_MANUAL` unset or `false`. It now uses the pull request's run and
   dispatches only when that run skipped in manual mode.
+- A critic that miscopies a pooled finding id no longer fails the whole run.
+  Critique finalization now drops a critique whose well-formed target or
+  `duplicate_of` id is not in the pool that critic was shown, and logs one
+  redacted line. Before, the critique reached consensus, which rejects any
+  unknown target as forged evidence and exited 3. The 2.0.0 candidate canary hit
+  this when a critic displaced three characters of a 64-hex id. A missing or
+  malformed id still fails the batch closed, and consensus keeps its integrity
+  check for forged artifacts.
 
 ### Migration
 

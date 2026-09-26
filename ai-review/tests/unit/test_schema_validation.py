@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import os
 import stat
 import sys
@@ -32,6 +34,22 @@ _GOLDEN_CONSENSUS = (
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import CONFIG_TAIL, panel_filler  # noqa: E402
+
+
+def _critique(
+    target: str,
+    *,
+    verdict: str = "agree",
+    duplicate_of: str | None = None,
+) -> dict[str, object]:
+    return {
+        "target_source_finding_id": target,
+        "verdict": verdict,
+        "duplicate_of_source_finding_id": duplicate_of,
+        "rationale": "reviewed",
+        "adjusted_severity": None,
+        "confidence": 0.8,
+    }
 
 
 class SchemaValidationTests(unittest.TestCase):
@@ -322,6 +340,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="codex",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["schema_version"], "critique_batch.v1")
@@ -331,6 +350,105 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertEqual(finalized["critiques"][0]["critic"], "codex")
         self.assertIsNone(finalized["critiques"][0]["duplicate_of_source_finding_id"])
         validate_instance(finalized, "critique_batch.schema.json")
+
+    def test_finalize_critique_batch_drops_critiques_of_unpooled_finding_ids(self) -> None:
+        # Observed live (2026-09-25 candidate canary): a critic transcribed a
+        # pooled 64-hex id with three characters displaced. Consensus rejects an
+        # unknown target as forged evidence, so one slip failed the whole run.
+        pooled = "b360cd3caf1001162dd989843348b3ae076ddfc422a754b0fa85fd6c15177f74"
+        miscopied = "b360cd3caf1001162dd989843b3ae076ddfc422a754b0fa85fd6c15177f74c3b"
+        other = "2" * 64
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            finalized = finalize_critique_batch(
+                {
+                    "critiques": [
+                        _critique(pooled),
+                        _critique(miscopied),
+                        _critique(other, verdict="duplicate", duplicate_of=miscopied),
+                        _critique(other, verdict="duplicate", duplicate_of=pooled),
+                    ]
+                },
+                critic="codex",
+                run_id="local",
+                effective_config_sha256="0" * 64,
+                pooled_finding_ids={pooled, other},
+            )
+
+        self.assertEqual(finalized["adapter_status"], "success")
+        self.assertEqual(
+            [
+                (item["target_source_finding_id"], item["duplicate_of_source_finding_id"])
+                for item in finalized["critiques"]
+            ],
+            [(pooled, None), (other, pooled)],
+        )
+        self.assertIn("codex kept 2 critique(s), dropped 2", stderr.getvalue())
+        self.assertNotIn(miscopied, stderr.getvalue())
+        validate_instance(finalized, "critique_batch.schema.json")
+
+    def test_finalize_critique_batch_rejects_malformed_items_before_unknown_id_drop(
+        self,
+    ) -> None:
+        pooled = "1" * 64
+        unknown = "2" * 64
+        valid = _critique(pooled)
+        missing_target = {
+            key: value for key, value in valid.items() if key != "target_source_finding_id"
+        }
+        missing_target["duplicate_of_source_finding_id"] = unknown
+        malformed = [
+            ("missing target", missing_target),
+            (
+                "malformed duplicate",
+                _critique(unknown, duplicate_of="bad"),
+            ),
+            ("invalid verdict", _critique(unknown, verdict="maybe")),
+            ("newline target", _critique(pooled + "\n")),
+            (
+                "newline duplicate",
+                _critique(pooled, verdict="duplicate", duplicate_of=pooled + "\n"),
+            ),
+        ]
+
+        for label, critique in malformed:
+            with self.subTest(label=label):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SchemaValidationError):
+                    finalize_critique_batch(
+                        {"critiques": [valid, critique]},
+                        critic="codex",
+                        run_id="local",
+                        effective_config_sha256="0" * 64,
+                        pooled_finding_ids={pooled},
+                    )
+                self.assertEqual(stderr.getvalue(), "")
+
+    def test_finalize_critique_batch_requires_an_explicit_array(self) -> None:
+        for label, batch in (
+            ("missing", {}),
+            ("empty object", {"critiques": {}}),
+            ("empty string", {"critiques": ""}),
+        ):
+            with self.subTest(label=label), self.assertRaises(SchemaValidationError):
+                finalize_critique_batch(
+                    batch,
+                    critic="codex",
+                    run_id="local",
+                    effective_config_sha256="0" * 64,
+                    pooled_finding_ids=set(),
+                )
+
+        finalized = finalize_critique_batch(
+            {"critiques": []},
+            critic="codex",
+            run_id="local",
+            effective_config_sha256="0" * 64,
+            pooled_finding_ids=set(),
+        )
+        self.assertEqual(finalized["adapter_status"], "success")
+        self.assertEqual(finalized["critiques"], [])
 
     def test_finalize_critique_batch_preserves_non_success_status_and_discards_critiques(
         self,
@@ -354,6 +472,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="claude",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["adapter_status"], "model_error")
@@ -380,6 +499,7 @@ class SchemaValidationTests(unittest.TestCase):
             critic="claude",
             run_id="local",
             effective_config_sha256="0" * 64,
+            pooled_finding_ids={"1" * 64},
         )
 
         self.assertEqual(finalized["adapter_status"], "schema_error")
