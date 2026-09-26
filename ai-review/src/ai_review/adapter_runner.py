@@ -236,7 +236,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
-                pooled = load_json_file(output_dir / "pooled_findings" / f"{reviewer}.json")
+                pooled = load_json_file(pooled_out)
                 finalized = finalize_critique_batch(
                     raw,
                     critic=reviewer,

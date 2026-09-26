@@ -496,7 +496,7 @@ env | sort > "$trace_dir/cli.env"
 printf '%s\n' "$CURSOR_API_KEY" > "$trace_dir/cli.key"
 pwd > "$trace_dir/cli.pwd"
 find . -mindepth 1 > "$trace_dir/cli.tree"
-if [ "$AI_REVIEW_STAGE" = critique ]; then
+if grep -q '^<CRITIC>$'; then
   result='{"critiques":[]}'
 else
   result='{"findings":[]}'
@@ -593,7 +593,11 @@ PY
                 "            if unknown:\n"
                 "                write_json(self, 400, {'error': 'unknown message keys: ' + ','.join(unknown)})\n"  # noqa: E501
                 "                return\n"
-                "            structured = {'critiques': []} if os.environ.get('AI_REVIEW_STAGE') == 'critique' else {'findings': []}\n"  # noqa: E501
+                "            properties = body['format']['schema']['properties']\n"
+                "            if 'critiques' in properties:\n"
+                "                structured = {'critiques': []}\n"
+                "            else:\n"
+                "                structured = {'findings': []}\n"
                 "            write_json(self, 200, {'info': {'role': 'assistant', 'structured': structured}, 'parts': [{'type': 'text', 'text': 'conflicting text'}]})\n"  # noqa: E501
                 "            return\n"
                 "        write_json(self, 404, {'error': 'not found'})\n"
@@ -609,7 +613,7 @@ PY
             "#!/bin/sh\n"
             'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
-            'if [ "$AI_REVIEW_STAGE" = critique ]; then payload=\'{"critiques":[]}\'; fi\n'
+            'case "$args" in *critique_batch.schema.json*) payload=\'{"critiques":[]}\' ;; esac\n'
             'trace_dir="${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}"\n'
             'if [ -n "$trace_dir" ]; then\n'
             '  mkdir -p "$trace_dir"\n'

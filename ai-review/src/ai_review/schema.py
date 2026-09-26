@@ -185,8 +185,8 @@ def finalize_critique_batch(
     ``pooled_finding_ids`` is the exact pool the critic was shown. A model that
     miscopies a 64-hex id produces a critique consensus cannot place; consensus
     treats an unknown target as forged evidence and fails the run, so a single
-    transcription slip must be dropped here, like a malformed review finding,
-    rather than reach it.
+    transcription slip is dropped here before it reaches consensus. The critique
+    must still be schema-valid before its references are checked.
     """
     status = str(batch.get("adapter_status", "success"))
     if status != "success":
@@ -200,10 +200,12 @@ def finalize_critique_batch(
         validate_instance(finalized, "critique_batch.schema.json")
         return finalized
 
-    pooled = frozenset(pooled_finding_ids)
-    critiques = []
-    dropped = 0
-    for index, critique in enumerate(batch.get("critiques", []), start=1):
+    raw_critiques = batch.get("critiques")
+    if not isinstance(raw_critiques, list):
+        raise SchemaValidationError("adapter output critiques must be an array")
+
+    normalized_critiques = []
+    for critique in raw_critiques:
         if not isinstance(critique, dict):
             raise SchemaValidationError("critique entries must be objects")
         normalized = dict(critique)
@@ -212,15 +214,30 @@ def finalize_critique_batch(
             normalized["duplicate_of_source_finding_id"] = None
         if "confidence" not in normalized:
             normalized["confidence"] = 1.0
-        # Only a well-formed id that names no pooled finding is a transcription
-        # slip. A missing or malformed id stays on the schema path below, which
-        # fails the batch closed.
-        target = normalized.get("target_source_finding_id")
+        normalized_critiques.append(normalized)
+
+    finalized = {
+        "schema_version": "critique_batch.v1",
+        "run_id": run_id,
+        "critic": critic,
+        "adapter_status": "success",
+        "effective_config_sha256": effective_config_sha256,
+        "critiques": normalized_critiques,
+    }
+    # Validate every item before filtering: an unknown reference must not hide
+    # a malformed id or any other schema error in the same critique.
+    validate_instance(finalized, "critique_batch.schema.json")
+
+    pooled = frozenset(pooled_finding_ids)
+    critiques = []
+    for index, normalized in enumerate(normalized_critiques, start=1):
+        target = normalized["target_source_finding_id"]
         duplicate_of = normalized["duplicate_of_source_finding_id"]
-        if (is_sha256(target) and target not in pooled) or (
-            is_sha256(duplicate_of) and duplicate_of not in pooled
-        ):
-            dropped += 1
+        # The schema pattern's `$` admits a trailing newline; only a fully
+        # well-formed id can be a transcription slip rather than malformed output.
+        if not is_sha256(target) or (duplicate_of is not None and not is_sha256(duplicate_of)):
+            raise SchemaValidationError("critique finding ids must be 64 lowercase hex characters")
+        if target not in pooled or (duplicate_of is not None and duplicate_of not in pooled):
             sys.stderr.write(
                 redact_text(
                     f"ai-review: dropped {critic} critique {index}: it references a "
@@ -229,6 +246,7 @@ def finalize_critique_batch(
             )
             continue
         critiques.append(normalized)
+    dropped = len(normalized_critiques) - len(critiques)
     if dropped:
         sys.stderr.write(
             redact_text(
@@ -236,15 +254,8 @@ def finalize_critique_batch(
                 f"{dropped} referencing unknown finding ids\n"
             )
         )
-    finalized = {
-        "schema_version": "critique_batch.v1",
-        "run_id": run_id,
-        "critic": critic,
-        "adapter_status": "success",
-        "effective_config_sha256": effective_config_sha256,
-        "critiques": critiques,
-    }
-    validate_instance(finalized, "critique_batch.schema.json")
+    # Dropping items from a validated batch cannot make it invalid.
+    finalized["critiques"] = critiques
     return finalized
 
 
