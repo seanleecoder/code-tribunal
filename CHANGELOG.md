@@ -19,8 +19,8 @@ versioning.
 
 ### Changed
 
-- Upgraded reviewer CLIs to Claude Code 2.1.280, Codex 0.156.1, OpenCode
-  1.18.32, and Cursor Agent 2026.09.18-9a7762b; refreshed Python packages and
+- Upgraded reviewer CLIs to Claude Code 2.1.283, Codex 0.157.1, OpenCode
+  1.18.32, and Cursor Agent 2026.09.26-dd393fe; refreshed Python packages and
   GitHub Actions. Images and contributor tooling now target Python 3.14 and
   Node 26 on Debian Trixie, with pinned pip; the reviewer image no longer
   ships Node, npm, or npx. OpenCode retains its upstream-compatible ripgrep
