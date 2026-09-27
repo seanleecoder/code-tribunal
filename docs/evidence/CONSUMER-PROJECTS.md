@@ -29,9 +29,11 @@ repo's canonical template.
 
 - **Secrets:** `OPENROUTER_API_KEY`, `CURSOR_API_KEY`,
   `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
-- **No branch ruleset.** The "Require AI Review gate" ruleset (id `19420757`)
-  required the retired `gate` check and was deleted on 2026-09-24; Code Tribunal
-  informs and never gates merges. `main` accepts direct pushes, but land a
+- **No branch ruleset and no required status check.** The "Require AI Review gate"
+  ruleset (id `19420757`) was deleted on 2026-09-24, and the separate classic branch
+  protection on `main`, which also required `gate`, had its required status checks
+  removed on 2026-09-27; Code Tribunal informs and never gates merges. Classic
+  protection otherwise remains (no force pushes, no deletions). `main` accepts direct pushes, but land a
   workflow adoption as a PR anyway so the new copy runs once before it is merged.
 - **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
   `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
@@ -59,8 +61,9 @@ repo's canonical template.
 
 **What changes per release:** the five container digest pins in the workflow (jobs
 `prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of
-2026-09-24 `main` pins the unreleased `1.0-451472d2ed0a8bc5d870409b224a69199570c843`
-pair (base `sha256:bb32fdb8…`, reviewer `sha256:8b1a1bd1…`), adopted by PR #17. Copy the workflow from the new `R`
+2026-09-27 `main` pins the 2.0.0 pair `2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f`
+(base `sha256:f7028a5a…`, reviewer `sha256:292142b7…`), adopted by PR #24 (merge
+`b44ab38`). Copy the workflow from the new `R`
 rather than hand-editing pins: an older copy can carry env keys that a newer `R`
 rejects (the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides were one such case).
 
@@ -81,7 +84,8 @@ Existing branches, all worth keeping:
 1.0.0 used PR #4 to adopt the workflow at `R = 88bc941`, PRs #5/#6 for Chain B, and
 PR #7 for Chain A. 1.0.2 used PR #14 for Chain A. PRs #15/#16 validated SPEC-39 at
 `09f4e65`, PR #17 adopted `451472d`, PR #18 is its Chain A, and PRs #19–#21 were
-opened and closed by the Candidate Canary. Chain A and Chain B must use **separate** PRs and separate finding
+opened and closed by the Candidate Canary. 2.0.0 used canary PR #23, adoption PR
+#24, Chain B PR #25, and reopened PR #6 for the `render-body.v4` refresh. Chain A and Chain B must use **separate** PRs and separate finding
 identities: the real panel emits a model-authored finding whose identity you do not
 control, so continuing it with the mock opens a new discussion instead of updating
 one.
@@ -120,7 +124,8 @@ Public, project id `84667714`. Verified present:
   with `inherit.variables: false`, `strategy: mirror`, both
   `forward.yaml_variables` and `forward.pipeline_variables` false, and exactly two
   same-project includes — `review-child.gitlab-ci.yml` and `review.gitlab-ci.yml` —
-  at **one identical SHA**, currently `97e05fddf9f5466ccee385344a7aaeac500e4aa2`.
+  at **one identical SHA**, currently `f8ae2138261d03447f68e5a30ff9ac44ac202bcb`
+  (2.0.0, consumer commit `5900e34`).
 
 The **three GitLab pin variables** live in the template project's
 `ai-review/ci/review.gitlab-ci.yml` `variables:` block, not in the consumer, and must
@@ -150,7 +155,9 @@ a symlink entry. That is the recorded way to close the live symlink-variant gap
 without SSH push access.
 
 MR history: 1.0.0 used `!10` (Chain A, protected), `!11` (Chain B, protected), and
-`!12` (hostile, unprotected `hostile/unprotected-88bc941`). `!1`–`!9` are the earlier
+`!12` (hostile, unprotected `hostile/unprotected-88bc941`). 2.0.0 used canary `!21`,
+`!22` (Chain B, protected `evidence/chain-b-71dfabc`), and `!23` (hostile,
+unprotected `hostile/unprotected-71dfabc`). `!1`–`!9` are the earlier
 P0 symlink and hostile-forwarding fixtures. All are closed; none should be deleted.
 
 Mock toggles go in as **project** CI/CD variables, not manual "Run pipeline"

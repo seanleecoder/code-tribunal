@@ -403,8 +403,8 @@ discovered, so the next release starts here instead of rediscovering it.
 
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
-| Added-file lifecycle on GitLab | closed on GitHub at 1.0.1 ([lifecycle record](record-github-current-image.md)); GitLab renders added files differently and has not run an adding fixture | run Chain B with an **adding** fixture on GitLab and assert `accepted_finding_count == raw_finding_count` plus a posted inline discussion |
-| `render-body.v4` refresh of a v3 thread | the footer changed from `Consensus:` to `Support:` after 1.0.2; the v3 refresh was proven on GitHub only ([v3 record](record-render-body-v3-refresh.md)) | re-review a change request whose bot thread was authored by the 1.0.2 image and assert `updated_discussions=1`, `created=0`, same `issue_id`; GitLab too if a 1.0.2-authored note exists |
+| GitLab refresh of an older-format note | v3→v4 was proven on GitHub at 2.0.0 ([record](record-render-body-v4-refresh.md)); no GitLab note has been migrated live | refresh the 1.0.0-format note `3601861614` on MR !11 after merging `main` into its branch, and assert `updated_discussions=1`, `created=0`, same `issue_id` |
+| Failed resolution is only a warning | at 2.0.0 an expired GitHub resolve token left `post` green while `wontfix` never applied ([record](record-github-current-image.md)) | decide whether a failed resolution should fail `post`; until then, check `post_result.warnings` in every Chain B |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |

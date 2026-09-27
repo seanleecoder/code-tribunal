@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-27
+
 ### Added
 
 - Added a protected, manually approved candidate canary that verifies
