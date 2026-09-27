@@ -36,7 +36,7 @@ the operator from them.
   `composer-2.5`. Cursor ran the demo consumers' pinned slug, not the shipped
   `auto` selector.
 - GitHub demo `AI_REVIEW_MANUAL=false`, so the pull request's own run was the
-  campaign run and the canary dispatched nothing (the #132 behavior).
+  campaign run and the canary dispatched nothing.
 
 ## Actual result
 
@@ -65,11 +65,12 @@ Exactly one AI Review run executed on the GitHub demo for this campaign.
 
 ## Superseded attempt
 
-The first 2.0.0 candidate (`R = d42559a`, run `36113026891`) failed: on GitHub a
-critic miscopied a pooled finding id and consensus exited 3. PR #131 fixed that
-at critique finalization, and PR #132 removed a duplicate GitHub panel run the
-same attempt exposed. That attempt is retained as failed validation and
-certifies nothing.
+The first 2.0.0 candidate
+(`R = d42559aa55f1bd9396d0a157f1c8268e6743e709`, Candidate Canary run
+`36113026891`) failed: on GitHub a critic miscopied a pooled finding id and
+consensus exited 3. PR #131 fixed that at critique finalization, and PR #132
+removed a duplicate GitHub panel run the same attempt exposed. That attempt is
+retained as failed validation and certifies nothing.
 
 ## Verdict
 

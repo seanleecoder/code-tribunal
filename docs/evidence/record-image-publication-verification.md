@@ -27,10 +27,6 @@ release by construction.
 `ai-review/src` is copied into the **base** image and the reviewer is built `FROM`
 that base, so both images were rebuilt from `R` together by one publication run.
 
-A first 2.0.0 candidate, `R = d42559aa55f1bd9396d0a157f1c8268e6743e709` (publication
-run `36002446475`), verified identically but failed its Candidate Canary. It is
-superseded and certifies nothing for this release.
-
 ## Actual result
 
 | Check | base | reviewer |
@@ -58,6 +54,13 @@ superseded and certifies nothing for this release.
 - **Known unexercised paths:** registry tags are mutable pointers and were not
   relied on; consumers must pin by `sha256:` digest. Only `linux/amd64` was
   inspected. The manifest was resolved, not pulled layer by layer.
+
+## Superseded attempt
+
+The first 2.0.0 candidate,
+`R = d42559aa55f1bd9396d0a157f1c8268e6743e709` (publication run
+`36002446475`), verified identically but failed its Candidate Canary. It
+certifies nothing for this release.
 
 ## Verdict
 
