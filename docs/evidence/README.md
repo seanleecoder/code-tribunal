@@ -5,7 +5,35 @@ only sanitized identifiers, digests, expected/actual outcomes, and audit results
 Never store credentials, CLI session material, proprietary source, or sensitive
 model content.
 
-## 1.0.2 release evidence
+## 2.0.0 release evidence
+
+The 2.0.0 release binds every cited row to one frozen runtime and immutable image
+pair. `scripts/check_release_inputs.py` rejects activation when a cited record is
+not a matching scoped pass or does not carry an explicit waiver identical to its
+`verification.evidence_waivers` entry.
+
+All rows below bind to `R = 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f`, base
+`sha256:f7028a5a…`, and reviewer `sha256:292142b7…`. The diff since `v1.0.2`
+touches every impact set of the
+[change-impact triage table](../development/release-process.md#scoping-the-live-campaign),
+so every release-gating row re-ran live; the rationale is in
+[`release/2.0.0.md`](../../release/2.0.0.md).
+
+| Suite | Tier | Status |
+|---|---|---|
+| Image publication verification | release-gating | **Passed** 2026-09-27 — both subjects resolve anonymously, both OCI revision labels equal `R`, both provenance attestations verify against `refs/heads/main` and `R`. Publication run `36312633309`; quality run `36312633166`. [record](record-image-publication-verification.md) |
+| Real four-seat panel (Candidate Canary) | release-gating | **Passed** 2026-09-27 — run `36313164907`; GitHub PR #23 and GitLab MR !21 each completed 8/8 stages with a full panel, four resolution-eligible seats, successful posting, and clean teardown. [record](record-candidate-canary.md) |
+| GitHub current-image lifecycle (Chain B) | release-gating | **Passed** 2026-09-27 — PR #25, adding fixture: create on the added file, unchanged rerun, in-place body change, `wontfix` with persistence, reopen, stale-head no-op, and a `blocker` thread leaving the PR mergeable. [record](record-github-current-image.md) |
+| GitLab current-image lifecycle (Chain B) | release-gating | **Passed** 2026-09-27 — MR !22, hardened child, adding fixture: create, unchanged rerun, in-place body change, `wontfix` with persistence, reopen, and a `blocker` thread leaving the MR mergeable. [record](record-gitlab-current-image.md) |
+| `render-body.v3` → v4 refresh | release-gating | **Passed** 2026-09-27 — GitHub comment `3650942127` on PR #6 updated once in place from `Consensus:` to `Support:`, same `issue_id`, no duplicate. [record](record-render-body-v4-refresh.md) |
+| GitLab hostile-MR credential/enforcement boundary | release-gating | **Passed** 2026-09-27 — MR !23 from an unprotected branch: `OPENROUTER_API_KEY`, `GITLAB_TOKEN`, and `CURSOR_API_KEY` withheld, prepare failed closed with no bundle, forged publication artifacts unconsumed, auditor rejected the hostile composition. The hostile config **did** substitute the pipeline image. [record](record-gitlab-hostile-mr.md) |
+| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — the bound-revision refactor preserved the three SHA checks and the 406 path, covered by the SPEC-34 cases; the stale-head boundary was reproduced live in the GitHub Chain B. [record](record-github-revision-failures.md) |
+| Model effort routes | release-gating | **Waived** — model and effort defaults are unchanged since `v1.0.2`; the canary exercised shipped default effort on all four seats. [record](record-model-effort-routes.md) |
+
+The first 2.0.0 candidate (`d42559a`, canary run `36113026891`) failed and is
+retained as superseded validation; #131 and #132 fixed what it found.
+
+## 1.0.2 release evidence (historical)
 
 The 1.0.2 release binds every cited row to one frozen runtime and immutable image
 pair. `scripts/check_release_inputs.py` rejects activation when a cited record is
@@ -32,7 +60,7 @@ repeatable string item inside OpenCode's schema-backed findings array. PR #116
 closed that gap, the runtime and images were refrozen, and only the final pair above
 was used for release evidence.
 
-## Operator checklist (1.0.2 final image pair)
+### Operator checklist (1.0.2 final image pair, historical)
 
 1. Runtime source, publication, public resolution, revision labels, and
    attestations: complete.
@@ -41,8 +69,8 @@ was used for release evidence.
 4. Waived rows stamped and registered with identical reasons: complete.
 5. Downloaded live artifacts scanned with pattern/entropy detectors: complete;
    exact-value audit not performed and not claimed.
-6. Release inputs, changelog, historical snapshot, manifest, signed tag, and
-   published release: completed by the final release sequence.
+6. Release inputs, changelog, manifest, signed tag, and published release:
+   completed by the final release sequence.
 
 ## 1.0 historical evidence matrix
 
@@ -124,19 +152,14 @@ retains them.
   `Shell(*)` and write denies at runtime — only that the policy reaches every
   invocation; see
   [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
-- **The added-file path is proven live on GitHub only.** The 1.0.0 matrix used
-  modify-only fixtures to work around the GitHub `/dev/null` anchor defect. The
-  1.0.1 GitHub Chain B ran an **adding** fixture
-  ([lifecycle record](record-github-current-image.md)); GitLab renders added files
-  differently and has not. See the carried coverage-gap table in the
-  [runbook](RUNBOOK.md).
-- **`render-body.v4` has no live rendering or migration evidence.** The
-  `render-body.v3` refresh was proven on GitHub at 1.0.1
-  ([record](record-render-body-v3-refresh.md)). The v4 `Support:` footer changed
-  after 1.0.2, so no live run has yet confirmed that a thread authored by the
-  1.0.2 image receives exactly one body update (`updated_discussions=1`,
-  `created=0`, same `issue_id`). Goldens prove generation; only a real comment
-  proves rendering.
+- **The added-file path is proven live on both platforms — closed 2026-09-27.**
+  The 2.0.0 Chain B ran an **adding** fixture on GitHub and GitLab, with every seat
+  accepting its finding on the added file
+  ([GitHub](record-github-current-image.md), [GitLab](record-gitlab-current-image.md)).
+- **`render-body.v4` refresh is proven on GitHub only.** A v3 thread was
+  refreshed exactly once to v4 at 2.0.0 ([record](record-render-body-v4-refresh.md)),
+  and new v4 bodies rendered on both platforms in Chain B. No GitLab note has been
+  migrated from an older format live.
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable

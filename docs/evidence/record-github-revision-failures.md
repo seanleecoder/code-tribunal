@@ -2,10 +2,15 @@
 
 Status: waived
 
-Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
-Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
-Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
-Release-evidence-waived: platform/github.py and input_bundle.py carry no revision-race behavior change; covered by SPEC-34 cases in test_input_bundle.py and test_github_platform.py.
+Release-runtime-source: 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f
+Release-base-digest: sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02
+Release-reviewer-digest: sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c
+Release-evidence-waived: input_bundle.py was refactored into one bound-revision pipeline, but GitHub's three SHA checks and the HTTP 406 path are unchanged and covered by the SPEC-34 cases in test_input_bundle.py and test_github_platform.py; the stale-head boundary was reproduced live in record-github-current-image.md step 7, and the other race windows are milliseconds wide and not reproducible live.
+
+> **2.0.0 disposition: waived, not re-run.** The binding above is the 2.0.0
+> candidate; the live observations below are historical and bound to the
+> coordinates they name. `scripts/check_release_inputs.py` matches the waiver
+> reason against `verification.evidence_waivers` verbatim.
 
 > **Reading this record:** the historical live probes below are partial. For
 > 1.0.2 the row is explicitly waived under the current source/image binding and

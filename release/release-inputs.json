@@ -1,22 +1,34 @@
 {
   "images": {
     "base": {
-      "digest": null,
+      "digest": "sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": null,
+      "digest": "sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c",
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
   "release_version": "2.0.0",
-  "runtime_source": null,
+  "runtime_source": "71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f",
   "schema_version": "code_tribunal.release_inputs.v2",
-  "status": "draft",
+  "status": "active",
   "verification": {
-    "ci_run_id": null,
-    "evidence_record_ids": [],
-    "evidence_waivers": {},
-    "publication_run_id": null
+    "ci_run_id": "36312633166",
+    "evidence_record_ids": [
+      "record-image-publication-verification.md",
+      "record-candidate-canary.md",
+      "record-github-current-image.md",
+      "record-gitlab-current-image.md",
+      "record-render-body-v4-refresh.md",
+      "record-gitlab-hostile-mr.md",
+      "record-github-revision-failures.md",
+      "record-model-effort-routes.md"
+    ],
+    "evidence_waivers": {
+      "record-github-revision-failures.md": "input_bundle.py was refactored into one bound-revision pipeline, but GitHub's three SHA checks and the HTTP 406 path are unchanged and covered by the SPEC-34 cases in test_input_bundle.py and test_github_platform.py; the stale-head boundary was reproduced live in record-github-current-image.md step 7, and the other race windows are milliseconds wide and not reproducible live.",
+      "record-model-effort-routes.md": "Model and effort defaults in config/review.yaml are unchanged since v1.0.2 (only comments changed) and no effort profile changed; the Candidate Canary exercised shipped default effort on all four seats (record-candidate-canary.md), so the non-default max/xhigh route checks were not rerun."
+    },
+    "publication_run_id": "36312633309"
   }
 }

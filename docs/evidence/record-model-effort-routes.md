@@ -2,10 +2,15 @@
 
 Status: waived
 
-Release-runtime-source: 54dffa130be5c921602f264a2123fda4b1895f13
-Release-base-digest: sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
-Release-reviewer-digest: sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
-Release-evidence-waived: OpenCode max effort was already accepted in real runs on an operator-controlled project; those runs are operator attestation rather than source-bound public evidence, and the final runtime change only normalizes a returned structured item after provider execution, so the operator accepted skipping a duplicate 1.0.2 rerun.
+Release-runtime-source: 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f
+Release-base-digest: sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02
+Release-reviewer-digest: sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c
+Release-evidence-waived: Model and effort defaults in config/review.yaml are unchanged since v1.0.2 (only comments changed) and no effort profile changed; the Candidate Canary exercised shipped default effort on all four seats (record-candidate-canary.md), so the non-default max/xhigh route checks were not rerun.
+
+> **2.0.0 disposition: waived, not re-run.** The binding above is the 2.0.0
+> candidate; the live observations below are historical and bound to the
+> coordinates they name. `scripts/check_release_inputs.py` matches the waiver
+> reason against `verification.evidence_waivers` verbatim.
 
 > Sanitized record. Never record credentials, CLI session material, proprietary
 > source, or sensitive model content.
