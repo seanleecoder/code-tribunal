@@ -46,10 +46,13 @@ bookkeeping, hand-driven steps, and drift discovered mid-campaign:
    both digests, OCI revision labels, and provenance from protected `main`. Record
    those results in `record-candidate-canary.md`. Retire the separate
    image-publication record and the manual Step 0.
-2. **Single-source waiver reasons** (option B). A waived record carries only
-   `Release-evidence-waived: registered`. The reason lives only in
-   `verification.evidence_waivers`. The checker requires marker ⇔ declaration and a
-   non-empty declared reason. No `release_inputs` schema or manifest change, and
+2. **Single-source waiver reasons** (option B). A waived record carries exactly one
+   `Release-evidence-waived: <release_version>` line. The reason lives only in
+   `verification.evidence_waivers`. The checker requires:
+   - marker ⇔ declaration
+   - a marker naming the release being activated, so re-waiving a row in a later
+     release changes the record too
+   - a non-empty declared reason No `release_inputs` schema or manifest change, and
    waived records are no longer stamped with `Release-*` fields.
 
    Rejected alternatives:
@@ -109,8 +112,12 @@ bookkeeping, hand-driven steps, and drift discovered mid-campaign:
 
 - Phase 1:
   - A waived row needs one reason, written once, in `release-inputs.json`.
-  - `check_release_inputs.py` rejects a marker without a declaration, a declaration
-    without a marker, an empty reason, and a legacy reason-bearing line.
+  - `check_release_inputs.py` rejects:
+    - a marker without a declaration, and a declaration without a marker
+    - a marker naming another release
+    - more than one waiver line
+    - an empty reason
+    - a legacy reason-bearing line
   - The evidence index has no per-release section.
   - The preflight exits non-zero on each drift observed in 2.0.0.
 - Each later phase lands with its own acceptance criteria.
