@@ -63,6 +63,11 @@ supply-chain:
 release-inputs:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_release_inputs.py
 
+# Read-only check of both demo consumers before a live campaign. Needs network
+# and authenticated gh and glab, so it is not part of `quality`.
+demo-preflight:
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/demo_preflight.py
+
 # Pass CHECK=1 to verify without writing.
 sync-workflows:
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/sync_workflows.py $(if $(CHECK),--check,)

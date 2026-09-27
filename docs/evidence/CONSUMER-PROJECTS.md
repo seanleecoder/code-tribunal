@@ -176,6 +176,10 @@ refresh surface.
 
 ## Per-release setup checklist
 
+0. Run `make demo-preflight` (read-only; needs authenticated `gh` and `glab`). It
+   fails on a required status check, a mock or retired variable, `AI_REVIEW_MANUAL=true`,
+   a roster without `cursor`, or a missing or unprotected credential, and warns when
+   the GitHub resolve token is more than 60 days old. Fix every `FAIL` first.
 1. Confirm the mock variables are absent on **both** consumers. Both are currently
    clean; verify anyway, because a leftover toggle turns a real run into a fake one.
    Then dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
