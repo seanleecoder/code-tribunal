@@ -7,6 +7,14 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Evidence waivers state their reason once. A waived record carries only
+  `Release-evidence-waived: registered`, and the reason lives only in
+  `verification.evidence_waivers`; waived records no longer carry `Release-*`
+  bindings. `check_release_inputs.py` rejects a waiver line that restates a
+  reason. The `release_inputs` schema and the manifest are unchanged (SPEC-61).
+
 ## [2.0.0] - 2026-09-27
 
 ### Added

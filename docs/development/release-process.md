@@ -55,9 +55,9 @@ and remove completed spec files from the active
 5. Run the GitHub and GitLab live evidence matrix. Each cited record under
    `docs/evidence/` must either declare exact `Status: passed` with
    matching `Release-runtime-source` / `Release-base-digest` /
-   `Release-reviewer-digest` fields, or an explicit
-   `Release-evidence-waived: <reason>` line whose reason is also registered
-   under `verification.evidence_waivers` in `release/release-inputs.json`.
+   `Release-reviewer-digest` fields, or the marker
+   `Release-evidence-waived: registered` with its reason declared under
+   `verification.evidence_waivers` in `release/release-inputs.json`.
    Only then set `release-inputs.status` to `active` and re-run
    `python scripts/check_release_inputs.py` (active status rejects partial,
    SHA/digest-mismatched, or undeclared-waiver evidence).
@@ -95,12 +95,14 @@ expensive rows feel routine. The rule:
 > ship under an evidence waiver whose registered reason names the unchanged modules
 > and the regression tests that cover the row.
 
-Waivers are explicit, not silent: each waived record carries a literal
-`Release-evidence-waived: <reason>` line, the same reason is registered under
-`verification.evidence_waivers` in `release/release-inputs.json`, and the matrix row
-in [`docs/evidence/README.md`](../evidence/README.md) says waived rather than passed.
-`scripts/check_release_inputs.py` rejects `status: active` if any of those three is
-missing.
+Waivers are explicit, not silent, and need two deliberate changes: the waived
+record carries the marker `Release-evidence-waived: registered`, and
+`verification.evidence_waivers` in `release/release-inputs.json` declares that record
+with its reason. The reason is written **only** there; records, release notes, and
+the evidence index link to it rather than restating it. A waived record carries no
+`Release-*` binding. `scripts/check_release_inputs.py` rejects `status: active` for
+a marker without a declaration, a declaration without a marker, an empty reason, or
+a record that restates a reason on its waiver line.
 
 Stamp both halves **at activation**, not while drafting: a draft artifact must carry
 an empty `verification` block — no run IDs, no cited records, no waivers — which
