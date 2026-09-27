@@ -35,9 +35,8 @@ repo's canonical template.
   workflow adoption as a PR anyway so the new copy runs once before it is merged.
 - **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
   `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
-  `pull_request` runs, which manual mode skips; the Candidate Canary works with
-  either value), `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and
-  `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`. The roster variable must
+  `pull_request` runs, which manual mode skips),
+  `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`. The roster variable must
   include `cursor`: the canonical workflow reads it before exposing
   `CURSOR_API_KEY`. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
   `AI_REVIEW_MERGE_GATE_ENABLED` were deleted; a current image fails at config
