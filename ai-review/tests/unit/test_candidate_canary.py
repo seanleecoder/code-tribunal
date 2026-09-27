@@ -302,6 +302,8 @@ class CandidateCollectionTests(unittest.TestCase):
             self.assertEqual(result["external_run_url"], "run")
             self.assertTrue(any(command[:3] == ("gh", "run", "view") for command in commands))
             self.assertFalse(any("watch" in command for command in commands))
+            # Opening the PR already started the one review run; dispatching bills a second.
+            self.assertFalse(any(command[:3] == ("gh", "workflow", "run") for command in commands))
 
     def test_gitlab_discovers_child_once_then_polls_only_that_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -410,6 +412,10 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 json.loads(state.read_text(encoding="utf-8")),
                 {"branch": "candidate-test"},
             )
+            workflow = (root / "work/demo/.github/workflows/ai-review.yml").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("AI_REVIEW_MANUAL", workflow)
             # The runner has no git credentials; only gh's helper can authenticate the push.
             self.assertIn(
                 (

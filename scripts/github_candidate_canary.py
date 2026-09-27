@@ -74,6 +74,11 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         workflow, count = re.subn(rf"(?m)^  {variable}:.*$", f'  {variable}: ""', workflow)
         if count != 1:
             raise GitHubCanaryError(f"canonical workflow must declare {variable} once")
+    # Opening the PR is the campaign's only review trigger, so the copy's
+    # pull_request run must execute whatever the demo's AI_REVIEW_MANUAL says.
+    workflow, manual_count = re.subn(r"\n *vars\.AI_REVIEW_MANUAL != 'true' &&", "", workflow)
+    if manual_count != 1:
+        raise GitHubCanaryError("canonical workflow must check AI_REVIEW_MANUAL once")
     (demo / ".github/workflows/ai-review.yml").write_text(workflow, encoding="utf-8")
 
     access_path = demo / "src/access.py"
@@ -123,18 +128,6 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
-    _run(
-        "gh",
-        "workflow",
-        "run",
-        "ai-review.yml",
-        "--repo",
-        DEMO_REPOSITORY,
-        "--ref",
-        state["branch"],
-        "-f",
-        f"pr_number={state['pr_number']}",
-    )
     run: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         runs = json.loads(
@@ -149,11 +142,11 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
                 "--branch",
                 state["branch"],
                 "--event",
-                "workflow_dispatch",
+                "pull_request",
                 "--limit",
                 "1",
                 "--json",
-                "databaseId,url,status,conclusion",
+                "databaseId",
             )
         )
         if runs:
@@ -161,7 +154,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
             break
         time.sleep(5)
     if run is None:
-        raise GitHubCanaryError("dispatched GitHub canary run did not appear")
+        raise GitHubCanaryError("the canary pull request's review run did not appear")
     run_id = str(run["databaseId"])
     while time.monotonic() < deadline:
         run = json.loads(

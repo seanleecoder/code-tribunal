@@ -93,6 +93,12 @@ versioning.
 
 ### Fixed
 
+- The GitHub Candidate Canary executes the review panel once per campaign.
+  Opening its demo pull request already starts a review run, and the canary
+  also dispatched one, so the panel ran and was billed twice whenever the demo
+  had `AI_REVIEW_MANUAL` unset or `false`. The canary's workflow copy now pins
+  the automatic pull request run on, and the canary collects that run without
+  dispatching.
 - A critic that miscopies a pooled finding id no longer fails the whole run.
   Critique finalization now drops a critique whose well-formed target or
   `duplicate_of` id is not in the pool that critic was shown, and logs one
