@@ -124,7 +124,8 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
         for item in _github_inventory(runner, f"{repo}/actions/variables", "variables")
     }
     checks.extend(_variable_checks("github", set(variables)))
-    if variables.get("AI_REVIEW_MANUAL") == "true":
+    # GitHub Actions compares strings case-insensitively in workflow conditions.
+    if variables.get("AI_REVIEW_MANUAL", "").lower() == "true":
         checks.append(
             Check("FAIL", "github: AI_REVIEW_MANUAL=true skips the automatic pull-request "
                   "runs the Chain B procedure re-runs")
