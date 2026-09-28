@@ -64,6 +64,15 @@ def _json(runner: Runner, *args: str) -> Any:
     return json.loads(runner(*args) or "null")
 
 
+def _github_inventory(
+    runner: Runner, path: str, key: str | None = None
+) -> list[dict[str, Any]]:
+    pages = _json(
+        runner, "gh", "api", path, "--hostname", "github.com", "--paginate", "--slurp"
+    ) or []
+    return [item for page in pages for item in (page[key] if key else page)]
+
+
 def _age_days(timestamp: str, now: datetime) -> int:
     return (now - datetime.fromisoformat(timestamp.replace("Z", "+00:00"))).days
 
@@ -87,7 +96,9 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
     checks: list[Check] = []
 
     try:
-        protection = _json(runner, "gh", "api", f"{repo}/branches/main/protection", "--jq", ".")
+        protection = _json(
+            runner, "gh", "api", f"{repo}/branches/main/protection", "--hostname", "github.com"
+        )
     except PreflightError as exc:
         if "Branch not protected" not in str(exc):
             raise
@@ -98,7 +109,7 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
         checks.append(
             Check("FAIL", f"github: main requires status checks {contexts}; none report in 2.0")
         )
-    rulesets = _json(runner, "gh", "api", f"{repo}/rulesets", "--jq", ".") or []
+    rulesets = _github_inventory(runner, f"{repo}/rulesets")
     for ruleset in rulesets:
         if ruleset.get("enforcement") == "active":
             checks.append(
@@ -108,8 +119,7 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
 
     variables = {
         item["name"]: item["value"]
-        for item in _json(runner, "gh", "api", f"{repo}/actions/variables", "--jq", ".variables")
-        or []
+        for item in _github_inventory(runner, f"{repo}/actions/variables", "variables")
     }
     checks.extend(_variable_checks("github", variables))
     if variables.get("AI_REVIEW_MANUAL") == "true":
@@ -125,8 +135,7 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
 
     secrets = {
         item["name"]: item["updated_at"]
-        for item in _json(runner, "gh", "api", f"{repo}/actions/secrets", "--jq", ".secrets")
-        or []
+        for item in _github_inventory(runner, f"{repo}/actions/secrets", "secrets")
     }
     for name in GITHUB_SECRETS:
         if name not in secrets:
@@ -143,14 +152,23 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
 
 def gitlab_checks(runner: Runner) -> list[Check]:
     variables = _json(
-        runner, "glab", "api", f"projects/{DEMO_PROJECT}/variables?per_page=100"
+        runner, "glab", "api", f"projects/{DEMO_PROJECT}/variables?per_page=100",
+        "--hostname", "gitlab.com", "--paginate", "--output", "json",
     ) or []
-    by_name = {item["key"]: item for item in variables}
-    checks = _variable_checks("gitlab", by_name)
+    # Review jobs declare no environment, so only wildcard entries are available.
+    by_name = {item["key"]: item for item in variables if item.get("environment_scope") == "*"}
+    checks = _variable_checks("gitlab", (item["key"] for item in variables))
+    if by_name.get("AI_REVIEW_MANUAL", {}).get("value") == "true":
+        checks.append(
+            Check("FAIL", "gitlab: AI_REVIEW_MANUAL=true makes prepare_ai_review manual; "
+                  "automatic campaigns require it to start without manual intervention")
+        )
     for name in GITLAB_SECRETS:
         item = by_name.get(name)
         if item is None:
-            checks.append(Check("FAIL", f"gitlab: variable {name} is missing"))
+            checks.append(
+                Check("FAIL", f"gitlab: variable {name} is missing for environment_scope='*'")
+            )
         elif not (item.get("protected") and item.get("masked")):
             checks.append(Check("FAIL", f"gitlab: variable {name} must be protected and masked"))
     return checks
