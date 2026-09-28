@@ -7,6 +7,13 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `make demo-preflight`: a read-only check of both demo consumers before a live
+  campaign. It reports required status checks, sticky mock or retired variables,
+  manual mode, a roster without Cursor, missing or unprotected credentials, and an
+  aging GitHub resolve token (SPEC-61).
+
 ### Changed
 
 - Evidence waivers state their reason once. A waived record carries only
