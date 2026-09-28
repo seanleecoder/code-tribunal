@@ -2,15 +2,11 @@
 
 Status: waived
 
-Release-runtime-source: 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f
-Release-base-digest: sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02
-Release-reviewer-digest: sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c
-Release-evidence-waived: Model and effort defaults in config/review.yaml are unchanged since v1.0.2 (only comments changed) and no effort profile changed; the Candidate Canary exercised shipped default effort on all four seats (record-candidate-canary.md), so the non-default max/xhigh route checks were not rerun.
+Release-evidence-waived: registered
 
-> **2.0.0 disposition: waived, not re-run.** The binding above is the 2.0.0
-> candidate; the live observations below are historical and bound to the
-> coordinates they name. `scripts/check_release_inputs.py` matches the waiver
-> reason against `verification.evidence_waivers` verbatim.
+> **Waived row.** The reason for the current release is stated once, in
+> `verification.evidence_waivers` in `release/release-inputs.json`. The live
+> observations below are historical and bound to the coordinates they name.
 
 > Sanitized record. Never record credentials, CLI session material, proprietary
 > source, or sensitive model content.

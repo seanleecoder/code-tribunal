@@ -119,9 +119,7 @@ class ReleaseToolTests(unittest.TestCase):
         for record_id in record_ids:
             lines = [f"Status: {status}", ""]
             if waived:
-                lines.append(
-                    "Release-evidence-waived: operator accepted residual risk for this row"
-                )
+                lines.append("Release-evidence-waived: registered")
                 lines.append("")
             else:
                 lines.extend(
@@ -579,7 +577,43 @@ class ReleaseToolTests(unittest.TestCase):
             ):
                 validate_release_inputs(data, root)
 
-    def test_active_rejects_mismatched_waiver_reason(self) -> None:
+    def test_active_rejects_a_reason_bearing_waiver_line(self) -> None:
+        # The reason is stated once, in evidence_waivers; a record that restates
+        # it is the pre-SPEC-61 shape and must be migrated, not accepted.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            (root / "docs/evidence" / record_id).write_text(
+                "Status: waived\n\n"
+                "Release-evidence-waived: operator accepted residual risk for this row\n",
+                encoding="utf-8",
+            )
+            data["verification"]["evidence_waivers"] = {
+                record_id: "operator accepted residual risk for this row"
+            }
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "must declare exactly 'Release-evidence-waived: registered'"
+            ):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_an_empty_waiver_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"][0]
+            (root / "docs/evidence" / record_id).write_text(
+                "Status: partial\n\nRelease-evidence-waived:\n", encoding="utf-8"
+            )
+            data["verification"]["evidence_waivers"] = {
+                record_id: "operator accepted residual risk for this row"
+            }
+            with self.assertRaisesRegex(ReleaseValidationError, "must declare exactly"):
+                validate_release_inputs(data, root)
+
+    def test_active_rejects_an_empty_declared_reason(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._tree(root)
@@ -591,34 +625,13 @@ class ReleaseToolTests(unittest.TestCase):
                 base_digest=data["images"]["base"]["digest"],
                 reviewer_digest=data["images"]["reviewer"]["digest"],
                 record_ids=record_ids,
-                status="partial",
+                status="waived",
                 waived=True,
             )
             data["verification"]["evidence_waivers"] = {
-                record_id: "different declared reason" for record_id in record_ids
+                record_id: "  " for record_id in record_ids
             }
-            with self.assertRaisesRegex(
-                ReleaseValidationError, "does not match verification.evidence_waivers"
-            ):
-                validate_release_inputs(data, root)
-
-    def test_active_rejects_empty_waiver_reason(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            record_id = data["verification"]["evidence_record_ids"][0]
-            evidence_path = root / "docs/evidence" / record_id
-            evidence_path.write_text(
-                "Status: partial\n\nRelease-evidence-waived:\n",
-                encoding="utf-8",
-            )
-            data["verification"]["evidence_waivers"] = {
-                record_id: "operator accepted residual risk for this row"
-            }
-            with self.assertRaisesRegex(
-                ReleaseValidationError, "empty Release-evidence-waived reason"
-            ):
+            with self.assertRaisesRegex(ReleaseValidationError, "must be a non-empty string"):
                 validate_release_inputs(data, root)
 
     def test_active_ignores_html_commented_waiver_example(self) -> None:

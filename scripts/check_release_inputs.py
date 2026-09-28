@@ -85,17 +85,24 @@ def _strip_html_comments(text: str) -> str:
     return _HTML_COMMENT_RE.sub("", text)
 
 
-def _parse_waiver_reason(text: str, record_id: str) -> str | None:
+# A waived record only marks itself; the reason lives once, in
+# verification.evidence_waivers, so the record and the release authority must both
+# change to waive a row without restating the reason in two places.
+WAIVER_MARKER = "registered"
+
+
+def _has_waiver_marker(text: str, record_id: str) -> bool:
     match = _WAIVED_LINE_RE.search(text)
     if match is None:
-        return None
-    reason = match.group(1).strip()
-    if not reason:
+        return False
+    value = match.group(1).strip()
+    if value != WAIVER_MARKER:
         raise ReleaseValidationError(
-            f"evidence record {record_id} has an empty Release-evidence-waived "
-            "reason; provide a non-empty reason or remove the line"
+            f"evidence record {record_id} must declare exactly "
+            f"'Release-evidence-waived: {WAIVER_MARKER}' (got {value!r}); the reason "
+            "belongs only in verification.evidence_waivers"
         )
-    return reason
+    return True
 
 
 def validate_evidence_records(
@@ -108,9 +115,9 @@ def validate_evidence_records(
 
     - declare ``Status: passed`` (exact) and bind the claimed runtime source plus
       both image digests; or
-    - declare ``Release-evidence-waived: <reason>`` with a non-empty reason that
-      is also registered under ``verification.evidence_waivers`` in the hashed
-      release-inputs artifact.
+    - declare ``Release-evidence-waived: registered`` and be declared, with its
+      non-empty reason, under ``verification.evidence_waivers``. The reason is
+      stated only there; a waived record carries no release binding.
 
     Non-waived records must use the explicit ``Release-runtime-source`` and
     ``Release-*-digest`` fields. Historical Identity-section prose is not a
@@ -169,29 +176,21 @@ def validate_evidence_records(
                 f"cannot read evidence record {record_id}: {exc}"
             ) from exc
 
-        waiver = _parse_waiver_reason(text, record_id)
+        waived = _has_waiver_marker(text, record_id)
         declared_reason = declared_waivers.get(record_id)
-        declared_reason = (
-            declared_reason.strip() if isinstance(declared_reason, str) else None
-        )
 
-        if waiver is not None and declared_reason is None:
+        if waived and declared_reason is None:
             raise ReleaseValidationError(
                 f"evidence record {record_id} has Release-evidence-waived but is "
                 "not declared in verification.evidence_waivers"
             )
-        if declared_reason is not None and waiver is None:
+        if declared_reason is not None and not waived:
             raise ReleaseValidationError(
                 f"verification.evidence_waivers declares {record_id} but the "
                 "evidence record has no Release-evidence-waived line"
             )
-        if waiver is not None and declared_reason is not None:
-            if waiver != declared_reason:
-                raise ReleaseValidationError(
-                    f"evidence record {record_id} waiver reason {waiver!r} does "
-                    f"not match verification.evidence_waivers ({declared_reason!r})"
-                )
-            waivers.append((record_id, waiver))
+        if waived:
+            waivers.append((record_id, str(declared_reason).strip()))
             continue
 
         status = _first_match(_STATUS_RE, text)
@@ -203,7 +202,7 @@ def validate_evidence_records(
             raise ReleaseValidationError(
                 f"evidence record {record_id} status must be exact 'passed' for "
                 f"active release inputs (got {status!r}); use "
-                f"Release-evidence-waived: <reason> to waive"
+                f"Release-evidence-waived: {WAIVER_MARKER} plus a declared reason to waive"
             )
 
         record_source = _first_match(_RUNTIME_SOURCE_RE, text)

@@ -44,9 +44,12 @@ against `git diff v<previous>..R`. Rows re-run live:
 
 Rows shipping under a registered waiver:
 
-| Row | Waiver reason (must match `verification.evidence_waivers` verbatim) |
+| Row | Record |
 |---|---|
 |  |  |
+
+Waiver reasons are stated once, in `verification.evidence_waivers` in
+`release/release-inputs.json`; do not restate them here.
 
 ## Release gates
 
