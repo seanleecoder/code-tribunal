@@ -176,15 +176,10 @@ refresh surface.
 
 ## Per-release setup checklist
 
-0. Run `make demo-preflight` (read-only; needs authenticated `gh` and `glab`). It
-   fails on a required status check, a mock or retired variable, `AI_REVIEW_MANUAL=true`
-   on either consumer, a GitHub roster without `cursor`, or a missing credential.
-   GitLab credentials must have `environment_scope="*"` and be protected and masked;
-   its manual-mode check also uses the wildcard scope. It warns when the GitHub
-   resolve token is more than 60 days old. Fix every `FAIL` first.
-1. Confirm the mock variables are absent on **both** consumers. Both are currently
-   clean; verify anyway, because a leftover toggle turns a real run into a fake one.
-   Then dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
+0. Run `make demo-preflight` (read-only; needs authenticated `gh` and `glab`) and
+   fix every `FAIL`. The docstring in `scripts/demo_preflight.py` lists what it
+   checks, including leftover mock variables on **both** consumers.
+1. Dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
    against the new pair. It needs no repin: it pushes its own temporary branch and
    closes its PR/MR afterwards. Do not repin until it is green.
 2. Copy the workflow / CI template from the new `R`; repin the five GitHub container

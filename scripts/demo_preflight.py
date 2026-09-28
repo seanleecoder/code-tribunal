@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Read-only preflight of the demo consumers before a live evidence campaign.
 
-Checks the drift that surfaced mid-campaign during 2.0.0: a required status
-check nothing reports any more, sticky mock variables, a retired variable that
-fails config load, a manual-mode flag that suppresses automatic pull-request
-runs, and missing or unprotected credentials. It changes nothing. It needs an
+Checks the drift that surfaced mid-campaign during 2.0.0. It fails on a
+required status check nothing reports any more, a sticky mock variable, a
+retired variable that fails config load, ``AI_REVIEW_MANUAL=true`` on either
+consumer, a GitHub roster without ``cursor``, and a missing credential. GitLab
+credentials and the GitLab manual flag are read at ``environment_scope="*"``,
+and those credentials must be protected and masked. It warns when the GitHub
+resolve token is more than 60 days old. It changes nothing. It needs an
 authenticated ``gh`` and ``glab``.
 """
 
@@ -14,26 +17,28 @@ import argparse
 import json
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from ai_review.config import RETIRED_ENV_OVERRIDES
+from ai_review.reviewers import REVIEWERS
+from candidate_canary_common import require_real_controls
 from github_candidate_canary import DEMO_REPOSITORY
 from gitlab_candidate_canary import DEMO_PROJECT
 
-MOCK_VARIABLES = (
+MOCK_VARIABLES = frozenset({
     "AI_REVIEW_LOCAL_MOCK",
     "AI_REVIEW_ALLOW_LOCAL_MOCK",
     "AI_REVIEW_MOCK_SCENARIO",
-    "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
-    "AI_REVIEW_REQUIRE_REAL_CLAUDE",
-    "AI_REVIEW_REQUIRE_REAL_OPENCODE",
-    "AI_REVIEW_REQUIRE_REAL_CURSOR",
-)
-GITHUB_SECRETS = ("OPENROUTER_API_KEY", "CURSOR_API_KEY", "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
-GITLAB_SECRETS = ("OPENROUTER_API_KEY", "GITLAB_TOKEN", "CURSOR_API_KEY")
+    *require_real_controls(),
+})
+REVIEWER_CREDENTIALS = tuple(sorted(
+    {name for definition in REVIEWERS.values() for name in definition.credential_variables}
+))
+GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
+GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 # The resolve token is a fine-grained GitHub token, which expires, and an expired
 # one only produces a post_result warning, so its age is surfaced before a run.
 EXPIRING_SECRET = "AI_REVIEW_GITHUB_RESOLVE_TOKEN"
@@ -48,7 +53,7 @@ class PreflightError(RuntimeError):
 
 @dataclass(frozen=True)
 class Check:
-    level: str  # "FAIL", "WARN", or "OK"
+    level: str  # "FAIL" or "WARN"
     message: str
 
 
@@ -56,7 +61,7 @@ def _cli(*args: str) -> str:
     completed = subprocess.run(list(args), text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
-        raise PreflightError(f"{args[0]} {args[1]} {args[2]} failed: {detail}")
+        raise PreflightError(f"{' '.join(args[:3])} failed: {detail}")
     return completed.stdout
 
 
@@ -77,18 +82,15 @@ def _age_days(timestamp: str, now: datetime) -> int:
     return (now - datetime.fromisoformat(timestamp.replace("Z", "+00:00"))).days
 
 
-def _variable_checks(platform: str, names: Iterable[str]) -> list[Check]:
-    present = set(names)
-    checks = []
-    for name in sorted(present & set(MOCK_VARIABLES)):
-        checks.append(
-            Check("FAIL", f"{platform}: mock variable {name} is set; delete it before a run")
+def _variable_checks(platform: str, names: set[str]) -> list[Check]:
+    return [
+        Check("FAIL", f"{platform}: {kind} variable {name} is set; {consequence}")
+        for kind, known, consequence in (
+            ("mock", MOCK_VARIABLES, "delete it before a run"),
+            ("retired", RETIRED_ENV_OVERRIDES, "it fails config load"),
         )
-    for name in sorted(present & set(RETIRED_ENV_OVERRIDES)):
-        checks.append(
-            Check("FAIL", f"{platform}: retired variable {name} is set and fails config load")
-        )
-    return checks
+        for name in sorted(names & set(known))
+    ]
 
 
 def github_checks(runner: Runner, now: datetime) -> list[Check]:
@@ -102,8 +104,8 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
     except PreflightError as exc:
         if "Branch not protected" not in str(exc):
             raise
-        protection = None
-    required = (protection or {}).get("required_status_checks") or {}
+        protection = {}
+    required = protection.get("required_status_checks") or {}
     contexts = required.get("contexts") or []
     if contexts:
         checks.append(
@@ -121,13 +123,14 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
         item["name"]: item["value"]
         for item in _github_inventory(runner, f"{repo}/actions/variables", "variables")
     }
-    checks.extend(_variable_checks("github", variables))
+    checks.extend(_variable_checks("github", set(variables)))
     if variables.get("AI_REVIEW_MANUAL") == "true":
         checks.append(
             Check("FAIL", "github: AI_REVIEW_MANUAL=true skips the automatic pull-request "
                   "runs the Chain B procedure re-runs")
         )
-    if "cursor" not in variables.get("AI_REVIEW_REVIEWERS", ""):
+    roster = {name.strip() for name in variables.get("AI_REVIEW_REVIEWERS", "").split(",")}
+    if "cursor" not in roster:
         checks.append(
             Check("FAIL", "github: AI_REVIEW_REVIEWERS must name cursor, or the canary's "
                   "Cursor seat never receives CURSOR_API_KEY")
@@ -137,16 +140,18 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
         item["name"]: item["updated_at"]
         for item in _github_inventory(runner, f"{repo}/actions/secrets", "secrets")
     }
-    for name in GITHUB_SECRETS:
-        if name not in secrets:
-            checks.append(Check("FAIL", f"github: secret {name} is missing"))
-        elif name == EXPIRING_SECRET and (
-            age := _age_days(secrets[name], now)
-        ) > SECRET_AGE_WARNING_DAYS:
-            checks.append(
-                Check("WARN", f"github: secret {name} last set {age} days ago; confirm the "
-                      "token has not expired")
-            )
+    checks.extend(
+        Check("FAIL", f"github: secret {name} is missing")
+        for name in GITHUB_SECRETS
+        if name not in secrets
+    )
+    if EXPIRING_SECRET in secrets and (
+        age := _age_days(secrets[EXPIRING_SECRET], now)
+    ) > SECRET_AGE_WARNING_DAYS:
+        checks.append(
+            Check("WARN", f"github: secret {EXPIRING_SECRET} last set {age} days ago; "
+                  "confirm the token has not expired")
+        )
     return checks
 
 
@@ -157,7 +162,7 @@ def gitlab_checks(runner: Runner) -> list[Check]:
     ) or []
     # Review jobs declare no environment, so only wildcard entries are available.
     by_name = {item["key"]: item for item in variables if item.get("environment_scope") == "*"}
-    checks = _variable_checks("gitlab", (item["key"] for item in variables))
+    checks = _variable_checks("gitlab", {item["key"] for item in variables})
     if by_name.get("AI_REVIEW_MANUAL", {}).get("value") == "true":
         checks.append(
             Check("FAIL", "gitlab: AI_REVIEW_MANUAL=true makes prepare_ai_review manual; "
@@ -175,9 +180,7 @@ def gitlab_checks(runner: Runner) -> list[Check]:
 
 
 def run(runner: Runner = _cli, now: datetime | None = None) -> list[Check]:
-    now = now or datetime.now(UTC)
-    checks = github_checks(runner, now) + gitlab_checks(runner)
-    return checks or [Check("OK", "both demo consumers are ready for a live campaign")]
+    return github_checks(runner, now or datetime.now(UTC)) + gitlab_checks(runner)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for check in checks:
         print(f"{check.level}: {check.message}")
+    if not checks:
+        print("OK: both demo consumers are ready for a live campaign")
     return 1 if any(check.level == "FAIL" for check in checks) else 0
 
 

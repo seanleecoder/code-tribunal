@@ -16,6 +16,7 @@ preflight = load_repository_script("demo_preflight", ROOT / "scripts/demo_prefli
 
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
 RECENT = "2026-09-20T00:00:00Z"
+ROSTER = "claude,codex,opencode,cursor"
 
 
 def _gitlab_variable(
@@ -34,7 +35,7 @@ def _state(**overrides: object) -> dict[str, object]:
         "rulesets": [],
         "github_variables": {
             "AI_REVIEW_MANUAL": "false",
-            "AI_REVIEW_REVIEWERS": "claude,codex,opencode,cursor",
+            "AI_REVIEW_REVIEWERS": ROSTER,
         },
         "github_secrets": {name: RECENT for name in preflight.GITHUB_SECRETS},
         "gitlab_variables": [
@@ -52,12 +53,9 @@ def _runner(state: dict[str, object]):
         def github_pages(items, key=None):
             pages = [items[start:start + 30] for start in range(0, len(items), 30)] or [[]]
             if key:
-                pages = [{"total_count": len(items), key: page} for page in pages]
-            if "--paginate" not in command:
-                pages = pages[:1]
-            if "--slurp" in command:
-                return json.dumps(pages)
-            return "\n".join(json.dumps(page) for page in pages)
+                pages = [{key: page} for page in pages]
+            # --slurp is asserted separately; --paginate decides whether later pages exist.
+            return json.dumps(pages if "--paginate" in command else pages[:1])
 
         if path.endswith("/branches/main/protection"):
             if state["protection"] is None:
@@ -80,13 +78,12 @@ def _runner(state: dict[str, object]):
 
 
 def _failures(state: dict[str, object]) -> list[str]:
-    return [c.message for c in preflight.run(_runner(state), NOW) if c.level != "OK"]
+    return [c.message for c in preflight.run(_runner(state), NOW)]
 
 
 class DemoPreflightTests(unittest.TestCase):
     def test_clean_demos_pass(self) -> None:
-        checks = preflight.run(_runner(_state()), NOW)
-        self.assertEqual([c.level for c in checks], ["OK"])
+        self.assertEqual(preflight.run(_runner(_state()), NOW), [])
 
     def test_unprotected_branch_is_not_an_error(self) -> None:
         self.assertEqual(_failures(_state(protection=None)), [])
@@ -99,14 +96,14 @@ class DemoPreflightTests(unittest.TestCase):
             "mock variable AI_REVIEW_MOCK_SCENARIO": _state(
                 github_variables={
                     "AI_REVIEW_MANUAL": "false",
-                    "AI_REVIEW_REVIEWERS": "claude,codex,opencode,cursor",
+                    "AI_REVIEW_REVIEWERS": ROSTER,
                     "AI_REVIEW_MOCK_SCENARIO": "blocking",
                 }
             ),
             "AI_REVIEW_MANUAL=true": _state(
                 github_variables={
                     "AI_REVIEW_MANUAL": "true",
-                    "AI_REVIEW_REVIEWERS": "claude,codex,opencode,cursor",
+                    "AI_REVIEW_REVIEWERS": ROSTER,
                 }
             ),
             "must name cursor": _state(
@@ -167,7 +164,7 @@ class DemoPreflightTests(unittest.TestCase):
         state = _state(
             github_variables={
                 **{f"FILLER_{i}": "unused" for i in range(30)},
-                "AI_REVIEW_REVIEWERS": "claude,codex,opencode,cursor",
+                "AI_REVIEW_REVIEWERS": ROSTER,
             },
             github_secrets={
                 **{f"FILLER_{i}": RECENT for i in range(30)},
@@ -258,7 +255,7 @@ class DemoPreflightTests(unittest.TestCase):
                     state = _state()
                     state["gitlab_variables"].extend(ordered)
                     checks = preflight.run(_runner(state), NOW)
-                    self.assertEqual([c.level for c in checks], ["FAIL" if fails else "OK"])
+                    self.assertEqual([c.level for c in checks], ["FAIL"] if fails else [])
                     if fails:
                         self.assertIn("gitlab: AI_REVIEW_MANUAL=true", checks[0].message)
 
