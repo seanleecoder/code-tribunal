@@ -33,9 +33,9 @@ and remove completed spec files from the active
    on the push to `main`). Do not verify them by hand: the canary's
    `verify-candidate` job checks both digests, OCI revision labels, and provenance
    from protected `main`, and its record carries the result.
-   Run `make demo-preflight` first; it is read-only and catches demo drift before
-   any tokens are spent. Before changing any consumer pin, run the protected manual `Candidate Canary`
-   workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
+   Before changing any consumer pin, run the read-only `make demo-preflight`,
+   which catches demo drift before any tokens are spent, and then the protected
+   manual `Candidate Canary` workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
    with `R` and the two digest-pinned subjects. A red result blocks promotion or
    repinning. It does not gate ordinary pull requests. One green GitHub run and
    one green GitLab run are the complete canary campaign; repeat only after a
