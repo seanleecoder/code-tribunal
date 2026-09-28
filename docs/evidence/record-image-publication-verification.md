@@ -1,5 +1,10 @@
 # Evidence record: registry / image publication verification / 2026-09-27
 
+> **Retired after 2.0.0 (SPEC-61).** The Candidate Canary's `verify-candidate` job
+> performs these checks, and [`record-candidate-canary.md`](record-candidate-canary.md)
+> records them. This file keeps its 2.0.0 binding for history and is no longer
+> cited by new releases.
+
 Status: passed
 
 Release-runtime-source: 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f

@@ -39,7 +39,7 @@ against `git diff v<previous>..R`. Rows re-run live:
 
 | Row | Why it must re-run | Record |
 |---|---|---|
-| Image publication verification | digests always change | `docs/evidence/record-image-publication-verification.md` |
+| Image identity + real four-seat panel (Candidate Canary) | digests always change | `docs/evidence/record-candidate-canary.md` |
 |  |  |  |
 
 Rows shipping under a registered waiver:

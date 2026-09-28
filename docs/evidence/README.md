@@ -5,72 +5,22 @@ only sanitized identifiers, digests, expected/actual outcomes, and audit results
 Never store credentials, CLI session material, proprietary source, or sensitive
 model content.
 
-## 2.0.0 release evidence
+## Per-release evidence
 
-The 2.0.0 release binds every cited row to one frozen runtime and immutable image
-pair. `scripts/check_release_inputs.py` rejects activation when a cited record is
-not a matching scoped pass or does not carry an explicit waiver identical to its
-`verification.evidence_waivers` entry.
+Each release's evidence table lives in one place: the **Live campaign** section of
+its notes, [`release/<version>.md`](../../release/), which is pinned byte-identical
+to the release tag. This index does not restate it. The cited records and any
+waivers, with their reasons, are listed in `release/release-inputs.json` at that
+release's tag.
 
-All rows below bind to `R = 71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f`, base
-`sha256:f7028a5a…`, and reviewer `sha256:292142b7…`. The diff since `v1.0.2`
-touches every impact set of the
-[change-impact triage table](../development/release-process.md#scoping-the-live-campaign),
-so every release-gating row re-ran live; the rationale is in
-[`release/2.0.0.md`](../../release/2.0.0.md).
+- Latest: [2.0.0](../../release/2.0.0.md)
+- Earlier: [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
+  [1.0.0](../../release/1.0.0.md)
 
-| Suite | Tier | Status |
-|---|---|---|
-| Image publication verification | release-gating | **Passed** 2026-09-27 — both subjects resolve anonymously, both OCI revision labels equal `R`, both provenance attestations verify against `refs/heads/main` and `R`. Publication run `36312633309`; quality run `36312633166`. [record](record-image-publication-verification.md) |
-| Real four-seat panel (Candidate Canary) | release-gating | **Passed** 2026-09-27 — run `36313164907`; GitHub PR #23 and GitLab MR !21 each completed 8/8 stages with a full panel, four resolution-eligible seats, successful posting, and clean teardown. [record](record-candidate-canary.md) |
-| GitHub current-image lifecycle (Chain B) | release-gating | **Passed** 2026-09-27 — PR #25, adding fixture: create on the added file, unchanged rerun, in-place body change, `wontfix` with persistence, reopen, stale-head no-op, and a `blocker` thread leaving the PR mergeable. [record](record-github-current-image.md) |
-| GitLab current-image lifecycle (Chain B) | release-gating | **Passed** 2026-09-27 — MR !22, hardened child, adding fixture: create, unchanged rerun, in-place body change, `wontfix` with persistence, reopen, and a `blocker` thread leaving the MR mergeable. [record](record-gitlab-current-image.md) |
-| `render-body.v3` → v4 refresh | release-gating | **Passed** 2026-09-27 — GitHub comment `3650942127` on PR #6 updated once in place from `Consensus:` to `Support:`, same `issue_id`, no duplicate. [record](record-render-body-v4-refresh.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | **Passed** 2026-09-27 — MR !23 from an unprotected branch: `OPENROUTER_API_KEY`, `GITLAB_TOKEN`, and `CURSOR_API_KEY` withheld, prepare failed closed with no bundle, forged publication artifacts unconsumed, auditor rejected the hostile composition. The hostile config **did** substitute the pipeline image. [record](record-gitlab-hostile-mr.md) |
-| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — the bound-revision refactor preserved the three SHA checks and the 406 path, covered by the SPEC-34 cases; the stale-head boundary was reproduced live in the GitHub Chain B. [record](record-github-revision-failures.md) |
-| Model effort routes | release-gating | **Waived** — model and effort defaults are unchanged since `v1.0.2`; the canary exercised shipped default effort on all four seats. [record](record-model-effort-routes.md) |
-
-The first 2.0.0 candidate (`d42559a`, canary run `36113026891`) failed and is
-retained as superseded validation; #131 and #132 fixed what it found.
-
-## 1.0.2 release evidence (historical)
-
-The 1.0.2 release binds every cited row to one frozen runtime and immutable image
-pair. `scripts/check_release_inputs.py` rejects activation when a cited record is
-not a matching scoped pass or does not carry an explicit waiver identical to its
-`verification.evidence_waivers` entry.
-
-All rows below bind to `R = 54dffa130be5c921602f264a2123fda4b1895f13`, base
-`sha256:960600d3…`, and reviewer `sha256:6bf8fdfb…`. The campaign was scoped by
-the [change-impact triage table](../development/release-process.md#scoping-the-live-campaign),
-with the rationale recorded in [`release/1.0.2.md`](../../release/1.0.2.md).
-
-| Suite | Tier | Status |
-|---|---|---|
-| Image publication verification | release-gating | **Passed** 2026-08-10 — public anonymous pulls resolved both tags to the recorded digests, both OCI revision labels equal `R`, and both provenance attestations verified against `refs/heads/main`, source digest `R`, and the publish workflow. Run `31369496025`; quality run `31369496045`. [record](record-image-publication-verification.md) |
-| GitHub default-model panel | release-gating | **Passed** 2026-08-10 — demo PR #14, run `31370873644`. Claude, Codex, and OpenCode resolved at the real provider; all three were resolution-eligible; `panel_status: full`; three findings posted; the required gate exited 7 on a genuine blocker. [record](record-github-default-model-smoke.md) |
-| OpenCode `max` effort | release-gating | **Waived** — the operator reports prior acceptance in real runs on a real project, but those runs are not a public exact-image binding. The final runtime delta is post-provider structured-item normalization, so a duplicate rerun was skipped under an explicit residual-risk waiver. [record](record-model-effort-routes.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | **Waived** — trust-boundary code is unchanged and remains covered by `test_verify_pipeline_trust.py` plus fork-secret withholding cases in `test_input_bundle.py`; the historical live pass stays supporting evidence only. [record](record-gitlab-hostile-mr.md) |
-| GitHub revision failures (SPEC-34) | regression-covered | **Waived** — revision-race behavior is unchanged and the three boundaries plus oversized-diff 406 path remain covered by `test_input_bundle.py` and `test_github_platform.py`. [record](record-github-revision-failures.md) |
-| Cursor reviewer | not release-gating | **Not exercised.** Cursor was off in the default roster for this campaign and the publication job retained the `auto`-model skip annotation, so 1.0.2 carries no Cursor evidence. |
-
-The first candidate campaign (`f21418f…`, demo PR #12, run `31367545101`,
-attempts 1 and 2) is retained as a superseded failed validation. It exposed a
-repeatable string item inside OpenCode's schema-backed findings array. PR #116
-closed that gap, the runtime and images were refrozen, and only the final pair above
-was used for release evidence.
-
-### Operator checklist (1.0.2 final image pair, historical)
-
-1. Runtime source, publication, public resolution, revision labels, and
-   attestations: complete.
-2. Canonical GitHub and GitLab consumers repinned together: complete.
-3. Real default-model panel with fail-closed required gate: complete.
-4. Waived rows stamped and registered with identical reasons: complete.
-5. Downloaded live artifacts scanned with pattern/entropy detectors: complete;
-   exact-value audit not performed and not claimed.
-6. Release inputs, changelog, manifest, signed tag, and published release:
-   completed by the final release sequence.
+`scripts/check_release_inputs.py` rejects activation when a cited record is not a
+matching scoped pass or is not a registered waiver. Row tiers (release-gating
+versus regression-covered) and the regression tests behind each row are
+classified below.
 
 ## 1.0 historical evidence matrix
 

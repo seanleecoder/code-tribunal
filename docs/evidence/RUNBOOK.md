@@ -93,15 +93,17 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
 > **both** chains must run against the digests named above, so the evidence matches
 > the exact images that ship.
 
-## Step 0 — Verify the RC images (do this first)
+## Step 0 — Image identity (owned by the canary)
 
-> **Done for the final pair** on 2026-07-25. Both subjects resolved anonymously to
-> the pinned digests, both OCI revision labels equal `R`, and both provenance
-> attestations verified against publication run `30125524008`. Full detail is in
-> the [image-verification record](record-image-publication-verification.md). Re-run
-> this step only if the pair is rebuilt.
+Image identity is not verified by hand. The Candidate Canary's `verify-candidate`
+job (Step 0b) checks both digests, OCI revision labels, and provenance attestations
+from protected `main` before any campaign runs, and
+[`record-candidate-canary.md`](record-candidate-canary.md) records the result. Through
+2.0.0 this step was a separate manual check with its own
+[record](record-image-publication-verification.md), now retired (SPEC-61).
 
-From any machine with registry access (anonymous pulls should work — GHCR public):
+The commands below remain for **diagnosing** a `verify-candidate` failure only.
+The example digests are the historical 1.0.0 pair:
 
 ```bash
 docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
@@ -116,8 +118,6 @@ To confirm anonymous resolution without touching stored credentials, point
 `docker manifest inspect --verbose <ref>` — note that an empty `DOCKER_CONFIG`
 also hides CLI plugins, so read the revision labels with the normal config via
 `docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
-
-Confirm the digests match the values above before running any smoke.
 
 ## Step 0b — Candidate Canary (before any consumer repin)
 
@@ -583,9 +583,9 @@ reviewer image and reported `model: auto`.
    non-gating SPEC-34 row carries a registered `Release-evidence-waived` reason
    instead. Token/cost is **not** in any artifact — read it from the OpenRouter
    dashboard or leave it unasserted, as 1.0.0 did.)
-2. Flip the pending rows in [the evidence matrix](README.md) to scoped passes
-   referencing the new run IDs, including the re-verified image-publication row for
-   the rebuilt pair; leave the regression-covered rows classified as such.
+2. Fill the **Live campaign** table in `release/<version>.md` with the scoped
+   results and record links; it is the only per-release copy. The
+   [evidence index](README.md) is not edited per release.
 3. **Retarget the release inputs to the pair under test (release-blocking).**
    Update `runtime_source`, both image digests, the canonical template pins, the
    recorded publication and CI run IDs, and the evidence references together, then
