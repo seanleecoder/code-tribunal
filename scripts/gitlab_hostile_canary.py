@@ -17,9 +17,12 @@ against: in-pipeline image enforcement is a known, documented gap (SPEC-43).
 from __future__ import annotations
 
 import argparse
+import io
 import re
+import stat
 import time
 import urllib.parse
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -151,13 +154,15 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
             }
         ],
     )
-    protected = _request(
+    # The repository branch reports effective protection, including wildcard rules.
+    branch = _request(
         "GET",
-        f"projects/{DEMO_PROJECT}/protected_branches/{urllib.parse.quote(args.branch, safe='')}",
-        allow_missing=True,
+        f"projects/{DEMO_PROJECT}/repository/branches/{urllib.parse.quote(args.branch, safe='')}",
     )
-    if protected is not None:
-        raise GitLabCanaryError("the hostile probe branch is protected; the probe would be void")
+    if not isinstance(branch, dict) or branch.get("protected") is not False:
+        raise GitLabCanaryError(
+            "the hostile probe branch is not confirmed unprotected; the probe would be void"
+        )
     mr = _request(
         "POST",
         f"projects/{DEMO_PROJECT}/merge_requests",
@@ -214,6 +219,40 @@ class HostileProbe:
     def _trace(self, job: dict[str, Any]) -> str:
         raw = _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/trace", raw=True)
         return raw.decode("utf-8", errors="replace")
+
+    def _verify_empty_input_bundle(self, prepare: dict[str, Any], trace: str) -> None:
+        raw = _request(
+            "GET",
+            f"projects/{DEMO_PROJECT}/jobs/{prepare['id']}/artifacts",
+            raw=True,
+            allow_missing=True,
+        )
+        if raw is None:
+            advertised = prepare.get("artifacts_file") or {}
+            self._expect(
+                isinstance(advertised, dict)
+                and not advertised.get("filename")
+                and "inputs/: no matching files" in trace
+                and "No files to upload" in trace,
+                "prepare input bundle absence could not be verified",
+            )
+            return
+
+        # Inspect metadata without extracting files or recording archive contents.
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                empty = all(
+                    entry.is_dir()
+                    and entry.file_size == 0
+                    and stat.S_IFMT(entry.external_attr >> 16) in (0, stat.S_IFDIR)
+                    and entry.filename.startswith("inputs/")
+                    and "\\" not in entry.filename
+                    and all(part not in {"", ".", ".."} for part in entry.filename[:-1].split("/"))
+                    for entry in archive.infolist()
+                )
+        except (zipfile.BadZipFile, UnicodeDecodeError):
+            raise HostileFailure("prepare input artifact is not a valid ZIP archive") from None
+        self._expect(empty, "prepare input artifact is not an empty inputs/ tree")
 
     def run(self) -> list[dict[str, Any]]:
         while not (
@@ -274,6 +313,7 @@ class HostileProbe:
             f"a stage ran after the failed prepare: {downstream_statuses}",
         )
         prepare_trace = self._trace(prepare)
+        self._verify_empty_input_bundle(prepare, prepare_trace)
         checks.append(
             {
                 "name": "prepare_fails_closed",
@@ -281,7 +321,7 @@ class HostileProbe:
                 "observed": {
                     "prepare": prepare["status"],
                     "downstream": sorted(set(downstream_statuses.values())),
-                    "empty_input_bundle": "No files to upload" in prepare_trace,
+                    "empty_input_bundle": True,
                 },
             }
         )

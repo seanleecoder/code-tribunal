@@ -520,9 +520,17 @@ paths are regression-covered and are not part of this live chain.
 This run fails closed in `prepare` and never reaches a reviewer, so it spends no
 tokens. Exercise the genuinely live-only probes:
 
-1. Open an MR from an **unprotected** source branch/fork → protected
-   `OPENROUTER_API_KEY`/`GITLAB_TOKEN` are withheld; prepare fails closed and the
-   uploaded artifact contains only an empty `inputs/` tree.
+1. Open an MR from an **unprotected** source branch/fork. Confirm the source
+   branch's effective `protected` flag is false through the repository branches
+   API, including protection inherited from wildcard rules. Protected
+   `OPENROUTER_API_KEY`/`GITLAB_TOKEN` are withheld; prepare fails closed, every
+   later stage is skipped, and no input files are uploaded. Accept an empty
+   artifact archive or one containing only empty directories under `inputs/`.
+   If no archive exists, require job metadata to advertise no archive and the
+   trace to report both `inputs/: no matching files` and `No files to upload`.
+   Any file (including a zero-byte file), symlink, unexpected path, corrupt
+   archive, or unavailable advertised archive fails the probe; an upload log
+   alone does not establish that a bundle is empty.
 2. From a trusted checkout, audit composition with
    `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
 3. Attempt the override/forgery probes that touch a credential-bearing boundary
