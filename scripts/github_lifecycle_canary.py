@@ -17,13 +17,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ai_review.schema import write_canonical_json
+from ai_review.memory import decode_state_note_body, state_note_candidates
+from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from candidate_canary_common import (
     DEFAULT_TIMEOUT_SECONDS,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
     read_state,
     require_real_controls,
+    reviewer_ids,
 )
 from github_candidate_canary import (
     DEMO_REPOSITORY,
@@ -261,6 +263,60 @@ class GitHubLifecycle:
             ]
         )
 
+    def _saved_wontfix(self) -> dict[str, Any]:
+        pages = self._json(
+            "gh",
+            "api",
+            "--hostname",
+            "github.com",
+            f"repos/{DEMO_REPOSITORY}/issues/{self.pr}/comments",
+            "--paginate",
+            "--slurp",
+        )
+        notes = [
+            note
+            for page in pages
+            for note in page
+            if note.get("user", {}).get("login") == BOT_LOGIN
+        ]
+        candidates, _, _ = state_note_candidates(notes)
+        self._expect(len(candidates) == 1, "expected one bot-owned state note")
+        note = candidates[0]
+        try:
+            state = decode_state_note_body(note["body"])
+            validate_instance(state, "state.schema.json")
+        except ValueError:
+            raise LifecycleFailure(
+                "saved state note failed checksum or schema validation"
+            ) from None
+        self._expect(
+            state["project_id"] == DEMO_REPOSITORY and state["merge_request_iid"] == self.pr,
+            "saved state belongs to a different pull request",
+        )
+        records = [
+            record for record in state["records"] if record["root_note_id"] == self.comment_id
+        ]
+        self._expect(len(records) == 1, "expected one saved record for the finding thread")
+        record = records[0]
+        self._expect(bool(record["discussion_id"]), "saved record has no discussion identity")
+        self._expect(
+            record["status"] == "wontfix" and record["human_disposition"] == "wontfix",
+            "saved record does not retain the wontfix status and human disposition",
+        )
+        return {
+            "state_note_id": note["id"],
+            **{
+                key: record[key]
+                for key in (
+                    "issue_id",
+                    "discussion_id",
+                    "root_note_id",
+                    "status",
+                    "human_disposition",
+                )
+            },
+        }
+
     # -- assertions --------------------------------------------------------
     @staticmethod
     def _expect(condition: bool, message: str) -> None:
@@ -288,6 +344,62 @@ class GitHubLifecycle:
         )
         return {key: post.get(key) for key in keys} | {"warnings": len(post.get("warnings", []))}
 
+    def _reviewer_results(self, reviews: Path) -> dict[str, Any]:
+        reviewers = reviewer_ids()
+        artifacts: dict[str, dict[str, Any]] = {}
+        for directory, schema in (
+            ("findings", "finding_batch.schema.json"),
+            ("status", "adapter_status.schema.json"),
+        ):
+            paths = {
+                reviewer: reviews / f"ai-review-review-{reviewer}" / directory / f"{reviewer}.json"
+                for reviewer in reviewers
+            }
+            actual = set(reviews.glob(f"*/{directory}/*.json"))
+            missing = [reviewer for reviewer, path in paths.items() if path not in actual]
+            unexpected = len(actual - set(paths.values()))
+            self._expect(
+                not missing and not unexpected,
+                f"expected one {directory} artifact per reviewer; "
+                f"missing={missing}, unexpected={unexpected}",
+            )
+            artifacts[directory] = {}
+            for reviewer, path in paths.items():
+                try:
+                    artifact = load_json_file(path)
+                    validate_instance(artifact, schema)
+                except OSError, ValueError:
+                    raise LifecycleFailure(f"invalid {reviewer} {directory} artifact") from None
+                self._expect(
+                    artifact["reviewer"] == reviewer,
+                    f"{reviewer} {directory} artifact has a mismatched reviewer identity",
+                )
+                artifacts[directory][reviewer] = artifact
+        results = {}
+        for reviewer in reviewers:
+            batch = artifacts["findings"][reviewer]
+            status = artifacts["status"][reviewer]
+            self._expect(
+                status["stage"] == "review"
+                and status["status"] == "success"
+                and batch["adapter_status"] == "success",
+                f"{reviewer} review did not succeed in both artifacts",
+            )
+            self._expect(
+                batch["raw_finding_count"] == batch["accepted_finding_count"] == 1
+                and len(batch["findings"]) == 1
+                and batch["dropped_finding_count"] == 0
+                and batch["usable_for_resolution"] is True,
+                f"{reviewer} did not retain exactly one mock finding",
+            )
+            results[reviewer] = {
+                "status": status["status"],
+                "adapter_status": batch["adapter_status"],
+                "raw_finding_count": batch["raw_finding_count"],
+                "accepted_finding_count": batch["accepted_finding_count"],
+            }
+        return results
+
     # -- steps -------------------------------------------------------------
     def step_create(self) -> dict[str, Any]:
         run_id = self._new_run("pull_request", set())
@@ -297,7 +409,6 @@ class GitHubLifecycle:
         self._expect(len(roots) == 1, f"expected one finding thread, found {len(roots)}")
         self._expect(roots[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
         self.comment_id = int(roots[0]["id"])
-        accepted = {}
         reviews = self.downloads / str(run_id) / "reviews"
         _run(
             "gh",
@@ -311,16 +422,10 @@ class GitHubLifecycle:
             "--dir",
             str(reviews),
         )
-        for path in sorted(reviews.glob("*/findings/*.json")):
-            batch = json.loads(path.read_text(encoding="utf-8"))
-            accepted[batch["reviewer"]] = (
-                batch["accepted_finding_count"] == batch["raw_finding_count"]
-            )
-        self._expect(accepted and all(accepted.values()), "a seat dropped its added-file finding")
         return {
             "run_id": run_id,
             "thread": self.comment_id,
-            "accepted_equals_raw": accepted,
+            "reviewers": self._reviewer_results(reviews),
             **self._counts(post),
         }
 
@@ -355,14 +460,27 @@ class GitHubLifecycle:
         self._expect(not post.get("warnings"), "post reported warnings; check the resolve token")
         self._expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
         self._expect(self._thread_resolved(), "thread is not resolved after wontfix")
+        saved = self._saved_wontfix()
         persist = self._dispatch("blocking")
         persisted = self._run_step(persist)
+        self._expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
+        self._expect(
+            all(
+                persisted.get(key) == 0
+                for key in ("created_discussions", "updated_discussions", "resolved_discussions")
+            ),
+            "wontfix rerun mutated the review instead of preserving the disposition",
+        )
+        saved_after = self._saved_wontfix()
+        self._expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
         self._expect(self._thread_resolved(), "wontfix did not persist")
         return {
             "run_id": run_id,
             "persist_run_id": persist,
+            "state": saved,
             **self._counts(post),
             "persisted": self._counts(persisted),
+            "persisted_state": saved_after,
         }
 
     def step_reopen(self) -> dict[str, Any]:
@@ -406,17 +524,34 @@ class GitHubLifecycle:
         self._expect(post.get("created_discussions") == 0, "new head created a new thread")
         self._expect("BLOCKER" in self._body(), "the thread is not blocker severity")
         mergeable = "UNKNOWN"
-        for _ in range(12):
-            mergeable = str(
-                self._json(
-                    "gh", "pr", "view", self.pr, "--repo", DEMO_REPOSITORY, "--json", "mergeable"
-                )["mergeable"]
+        policy = "UNKNOWN"
+        for attempt in range(12):
+            pr = self._json(
+                "gh",
+                "pr",
+                "view",
+                self.pr,
+                "--repo",
+                DEMO_REPOSITORY,
+                "--json",
+                "mergeable,mergeStateStatus",
             )
-            if mergeable != "UNKNOWN":
+            mergeable = str(pr.get("mergeable", "UNKNOWN"))
+            policy = str(pr.get("mergeStateStatus", "UNKNOWN"))
+            if mergeable == "MERGEABLE" and policy == "CLEAN":
                 break
-            self._sleep(5)
-        self._expect(mergeable == "MERGEABLE", f"pull request is {mergeable}")
-        return {"run_id": run_id, "mergeable": mergeable, **self._counts(post)}
+            if attempt < 11:
+                self._sleep(5)
+        self._expect(
+            mergeable == "MERGEABLE" and policy == "CLEAN",
+            f"pull request is {mergeable} / {policy}, expected MERGEABLE / CLEAN",
+        )
+        return {
+            "run_id": run_id,
+            "mergeable": mergeable,
+            "mergeStateStatus": policy,
+            **self._counts(post),
+        }
 
     def steps(self) -> tuple[tuple[str, Any], ...]:
         return (
