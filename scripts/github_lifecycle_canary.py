@@ -17,29 +17,45 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ai_review.consensus import batch_usable_for_panel
 from ai_review.memory import decode_state_note_body, state_note_candidates
+from ai_review.notes import parse_marker
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from candidate_canary_common import (
-    DEFAULT_TIMEOUT_SECONDS,
-    LIFECYCLE_FIXTURE,
-    LIFECYCLE_FIXTURE_PATH,
+    build_campaign_parser,
     read_state,
     require_real_controls,
     reviewer_ids,
+    write_state,
 )
 from github_candidate_canary import (
     DEMO_REPOSITORY,
-    GH_CREDENTIAL_HELPER,
     GitHubCanaryError,
+    _configure_create,
     _run,
     candidate_workflow,
     cleanup_campaign,
+    commit_and_push,
+    download_run,
     push_candidate_branch,
 )
 
 BOT_LOGIN = "github-actions[bot]"
 SUMMARY_SCHEMA = "candidate_canary_lifecycle_summary.v1"
-_BODY_HASH_RE = re.compile(r"body_hash=([0-9a-f]{64})")
+_MUTATIONS = ("created_discussions", "updated_discussions", "resolved_discussions")
+
+# The fixture adds one file whose `records[0]` line is the mock reviewer's
+# preferred anchor, so the finding's identity does not depend on any other
+# change on the branch (the pinned workflow).
+LIFECYCLE_FIXTURE_PATH = "src/audit.py"
+LIFECYCLE_FIXTURE = (
+    '"""Audit trail helpers for the demo consumer."""\n'
+    "\n"
+    "\n"
+    "def first_actor(records):\n"
+    '    """Return the first actor without validating the payload."""\n'
+    '    return records[0]["actor"]\n'
+)
 
 
 class LifecycleFailure(RuntimeError):
@@ -89,13 +105,20 @@ def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
         (demo / LIFECYCLE_FIXTURE_PATH).write_text(LIFECYCLE_FIXTURE, encoding="utf-8")
         return [LIFECYCLE_FIXTURE_PATH]
 
-    return push_candidate_branch(
+    state = push_candidate_branch(
         args,
         workflow=workflow,
         edit=add_fixture,
         message="candidate canary lifecycle fixture",
         title=f"Candidate canary lifecycle {args.runtime_source[:12]}",
     )
+    state["candidate"] = {
+        "runtime_source": args.runtime_source,
+        "base_image": args.base_image,
+        "reviewer_image": args.reviewer_image,
+    }
+    write_state(args.state, state)
+    return state
 
 
 class GitHubLifecycle:
@@ -106,32 +129,29 @@ class GitHubLifecycle:
         self.downloads = workdir / "downloads"
         self.deadline = deadline
         self.comment_id: int | None = None
-        self._next_head_run = 0
+        self._next_head_run: int | None = None
 
     # -- platform access -------------------------------------------------
     def _json(self, *args: str) -> Any:
         return json.loads(_run(*args) or "null")
 
     def _runs(self, event: str) -> list[dict[str, Any]]:
-        return (
-            self._json(
-                "gh",
-                "run",
-                "list",
-                "--repo",
-                DEMO_REPOSITORY,
-                "--workflow",
-                "ai-review.yml",
-                "--branch",
-                self.branch,
-                "--event",
-                event,
-                "--limit",
-                "20",
-                "--json",
-                "databaseId,headSha,status,conclusion",
-            )
-            or []
+        return self._json(
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            DEMO_REPOSITORY,
+            "--workflow",
+            "ai-review.yml",
+            "--branch",
+            self.branch,
+            "--event",
+            event,
+            "--limit",
+            "20",
+            "--json",
+            "databaseId,headSha,status,conclusion",
         )
 
     def _sleep(self, seconds: int) -> None:
@@ -148,16 +168,9 @@ class GitHubLifecycle:
                     return int(run["databaseId"])
             self._sleep(5)
 
-    def _view(self, run_id: int) -> dict[str, Any]:
+    def _view(self, run_id: int, fields: str = "status,conclusion") -> dict[str, Any]:
         return self._json(
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--repo",
-            DEMO_REPOSITORY,
-            "--json",
-            "status,conclusion,jobs",
+            "gh", "run", "view", str(run_id), "--repo", DEMO_REPOSITORY, "--json", fields
         )
 
     def _complete(self, run_id: int) -> str:
@@ -165,28 +178,11 @@ class GitHubLifecycle:
             self._sleep(15)
         return str(run.get("conclusion") or "unknown")
 
-    def _artifact(self, run_id: int, name: str) -> Path:
-        destination = self.downloads / str(run_id) / name
-        _run(
-            "gh",
-            "run",
-            "download",
-            str(run_id),
-            "--repo",
-            DEMO_REPOSITORY,
-            "--name",
-            name,
-            "--dir",
-            str(destination),
-        )
-        return destination
-
     def _post_result(self, run_id: int) -> dict[str, Any]:
-        return json.loads(
-            (self._artifact(run_id, "ai-review-post") / "post_result.json").read_text(
-                encoding="utf-8"
-            )
+        post = download_run(
+            run_id, self.downloads / str(run_id) / "ai-review-post", "--name", "ai-review-post"
         )
+        return json.loads((post / "post_result.json").read_text(encoding="utf-8"))
 
     def _dispatch(self, scenario: str) -> int:
         known = {int(run["databaseId"]) for run in self._runs("workflow_dispatch")}
@@ -207,11 +203,8 @@ class GitHubLifecycle:
         return self._new_run("workflow_dispatch", known)
 
     def _root_comments(self) -> list[dict[str, Any]]:
-        comments = (
-            self._json(
-                "gh", "api", f"repos/{DEMO_REPOSITORY}/pulls/{self.pr}/comments", "--paginate"
-            )
-            or []
+        comments = self._json(
+            "gh", "api", f"repos/{DEMO_REPOSITORY}/pulls/{self.pr}/comments", "--paginate"
         )
         return [
             c
@@ -335,14 +328,12 @@ class GitHubLifecycle:
 
     @staticmethod
     def _counts(post: dict[str, Any]) -> dict[str, Any]:
-        keys = (
-            "status",
-            "created_discussions",
-            "updated_discussions",
-            "resolved_discussions",
-            "skipped_unchanged",
-        )
+        keys = ("status", *_MUTATIONS, "skipped_unchanged")
         return {key: post.get(key) for key in keys} | {"warnings": len(post.get("warnings", []))}
+
+    @staticmethod
+    def _mutated(post: dict[str, Any]) -> bool:
+        return any(post.get(key) for key in _MUTATIONS)
 
     def _reviewer_results(self, reviews: Path) -> dict[str, Any]:
         reviewers = reviewer_ids()
@@ -382,14 +373,13 @@ class GitHubLifecycle:
             self._expect(
                 status["stage"] == "review"
                 and status["status"] == "success"
-                and batch["adapter_status"] == "success",
+                and batch_usable_for_panel(batch),
                 f"{reviewer} review did not succeed in both artifacts",
             )
             self._expect(
                 batch["raw_finding_count"] == batch["accepted_finding_count"] == 1
                 and len(batch["findings"]) == 1
-                and batch["dropped_finding_count"] == 0
-                and batch["usable_for_resolution"] is True,
+                and batch["dropped_finding_count"] == 0,
                 f"{reviewer} did not retain exactly one mock finding",
             )
             results[reviewer] = {
@@ -409,18 +399,8 @@ class GitHubLifecycle:
         self._expect(len(roots) == 1, f"expected one finding thread, found {len(roots)}")
         self._expect(roots[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
         self.comment_id = int(roots[0]["id"])
-        reviews = self.downloads / str(run_id) / "reviews"
-        _run(
-            "gh",
-            "run",
-            "download",
-            str(run_id),
-            "--repo",
-            DEMO_REPOSITORY,
-            "--pattern",
-            "ai-review-review-*",
-            "--dir",
-            str(reviews),
+        reviews = download_run(
+            run_id, self.downloads / str(run_id) / "reviews", "--pattern", "ai-review-review-*"
         )
         return {
             "run_id": run_id,
@@ -437,15 +417,15 @@ class GitHubLifecycle:
         return {"run_id": run_id, **self._counts(post)}
 
     def step_changed_body(self) -> dict[str, Any]:
-        before = _BODY_HASH_RE.search(self._body())
+        before = parse_marker(self._body())
         run_id = self._dispatch("blocking_alt")
         post = self._run_step(run_id)
         after_body = self._body()
-        after = _BODY_HASH_RE.search(after_body)
+        after = parse_marker(after_body)
         self._expect(post.get("updated_discussions") == 1, "changed body did not update in place")
         self._expect(len(self._root_comments()) == 1, "changed body duplicated the thread")
         self._expect(
-            bool(before and after and before.group(1) != after.group(1)),
+            bool(before and after and before["body_hash"] != after["body_hash"]),
             "body_hash did not change",
         )
         self._expect("\nSupport:" in after_body, "updated body lacks the Support: footer")
@@ -465,10 +445,7 @@ class GitHubLifecycle:
         persisted = self._run_step(persist)
         self._expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
         self._expect(
-            all(
-                persisted.get(key) == 0
-                for key in ("created_discussions", "updated_discussions", "resolved_discussions")
-            ),
+            not self._mutated(persisted),
             "wontfix rerun mutated the review instead of preserving the disposition",
         )
         saved_after = self._saved_wontfix()
@@ -495,7 +472,7 @@ class GitHubLifecycle:
         run_id = self._dispatch("blocking")
         while not any(
             job["name"].startswith("review") and job.get("status") != "queued"
-            for job in self._view(run_id).get("jobs") or []
+            for job in self._view(run_id, "jobs").get("jobs") or []
         ):
             self._sleep(5)
         known = {int(run["databaseId"]) for run in self._runs("pull_request")}
@@ -503,29 +480,28 @@ class GitHubLifecycle:
         (self.demo / "docs/canary-stale-head.txt").write_text(
             "stale-head probe\n", encoding="utf-8"
         )
-        _run("git", "add", "docs/canary-stale-head.txt", cwd=self.demo)
-        _run("git", "commit", "-m", "candidate canary: move the head", cwd=self.demo)
-        _run("git", *GH_CREDENTIAL_HELPER, "push", "origin", f"HEAD:{self.branch}", cwd=self.demo)
+        commit_and_push(
+            self.demo,
+            ["docs/canary-stale-head.txt"],
+            "candidate canary: move the head",
+            self.branch,
+        )
         head = _run("git", "rev-parse", "HEAD", cwd=self.demo)
         post = self._run_step(run_id, expect_status="stale_head")
-        self._expect(
-            not any(
-                post.get(k)
-                for k in ("created_discussions", "updated_discussions", "resolved_discussions")
-            ),
-            "stale-head run mutated the review",
-        )
+        self._expect(not self._mutated(post), "stale-head run mutated the review")
         self._next_head_run = self._new_run("pull_request", known, head_sha=head)
         return {"run_id": run_id, **self._counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
         run_id = self._next_head_run
+        if run_id is None:
+            raise LifecycleFailure("the stale-head step did not find the new head's run")
         post = self._run_step(run_id)
         self._expect(post.get("created_discussions") == 0, "new head created a new thread")
         self._expect("BLOCKER" in self._body(), "the thread is not blocker severity")
-        mergeable = "UNKNOWN"
-        policy = "UNKNOWN"
         for attempt in range(12):
+            if attempt:
+                self._sleep(5)
             pr = self._json(
                 "gh",
                 "pr",
@@ -540,8 +516,6 @@ class GitHubLifecycle:
             policy = str(pr.get("mergeStateStatus", "UNKNOWN"))
             if mergeable == "MERGEABLE" and policy == "CLEAN":
                 break
-            if attempt < 11:
-                self._sleep(5)
         self._expect(
             mergeable == "MERGEABLE" and policy == "CLEAN",
             f"pull request is {mergeable} / {policy}, expected MERGEABLE / CLEAN",
@@ -580,11 +554,7 @@ def run_lifecycle(args: argparse.Namespace) -> int:
     summary = {
         "schema_version": SUMMARY_SCHEMA,
         "platform": "github",
-        "candidate": {
-            "runtime_source": args.runtime_source,
-            "base_image": args.base_image,
-            "reviewer_image": args.reviewer_image,
-        },
+        "candidate": state.get("candidate", "unavailable"),
         "change_url": state.get("change_url", "unavailable"),
         "passed": passed,
         "steps": results,
@@ -593,23 +563,13 @@ def run_lifecycle(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def _configure_run(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--workdir", required=True)
+    parser.add_argument("--summary-out", required=True)
+
+
 def cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    create = commands.add_parser("create")
-    run = commands.add_parser("run")
-    for sub in (create, run):
-        sub.add_argument("--state", required=True)
-        sub.add_argument("--workdir", required=True)
-        sub.add_argument("--runtime-source", required=True)
-        sub.add_argument("--base-image", required=True)
-        sub.add_argument("--reviewer-image", required=True)
-    create.add_argument("--branch", required=True)
-    create.add_argument("--workflow", required=True)
-    run.add_argument("--summary-out", required=True)
-    run.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
-    cleanup = commands.add_parser("cleanup")
-    cleanup.add_argument("--state", required=True)
+    parser = build_campaign_parser(__doc__, _configure_create, drive=("run", _configure_run))
     args = parser.parse_args(argv)
     if args.command == "create":
         create_lifecycle(args)

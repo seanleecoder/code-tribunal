@@ -95,7 +95,9 @@ class CreateStepTests(unittest.TestCase):
         self.driver = _lifecycle(self.tmp)
         self.reviews = Path(self.tmp) / "downloads/5/reviews"
         _review_artifacts(self.reviews)
-        self.enterContext(mock.patch.object(lifecycle, "_run", return_value=""))
+        self.enterContext(
+            mock.patch.object(lifecycle, "download_run", side_effect=lambda _id, dest, *_: dest)
+        )
         self.enterContext(mock.patch.object(self.driver, "_new_run", return_value=5))
         self.enterContext(
             mock.patch.object(self.driver, "_run_step", return_value={"created_discussions": 1})
@@ -199,9 +201,6 @@ class CreateStepTests(unittest.TestCase):
                     workdir=self.tmp,
                     timeout_seconds=60,
                     summary_out=summary,
-                    runtime_source="a" * 40,
-                    base_image=BASE,
-                    reviewer_image=REVIEWER,
                 )
                 with mock.patch.object(lifecycle, "GitHubLifecycle", return_value=self.driver):
                     self.assertEqual(lifecycle.run_lifecycle(args), 1)
@@ -217,7 +216,7 @@ class WontfixStepTests(unittest.TestCase):
         self.driver = _lifecycle(self.enterContext(tempfile.TemporaryDirectory()))
         self.driver.comment_id = 11
         self.enterContext(mock.patch.object(self.driver, "_reply"))
-        self.enterContext(mock.patch.object(self.driver, "_dispatch", side_effect=[5, 6]))
+        self.dispatch = self.enterContext(mock.patch.object(self.driver, "_dispatch"))
         self.first = {"resolved_discussions": 1, "warnings": []}
         self.persisted = {
             "created_discussions": 0,
@@ -225,9 +224,8 @@ class WontfixStepTests(unittest.TestCase):
             "resolved_discussions": 0,
             "warnings": [],
         }
-        self.enterContext(
-            mock.patch.object(self.driver, "_run_step", side_effect=[self.first, self.persisted])
-        )
+        self.run_step = self.enterContext(mock.patch.object(self.driver, "_run_step"))
+        self._rerun(self.persisted)
         self.enterContext(mock.patch.object(self.driver, "_thread_resolved", return_value=True))
         # gh --paginate --slurp returns one array per page. Ignore human-authored state.
         forged = dict(_state_note(status="resolved"), user={"login": "contributor"})
@@ -238,6 +236,10 @@ class WontfixStepTests(unittest.TestCase):
         self.json = self.enterContext(
             mock.patch.object(self.driver, "_json", side_effect=[self.pages, self.pages])
         )
+
+    def _rerun(self, persisted: dict[str, object]) -> None:
+        self.dispatch.side_effect = [5, 6]
+        self.run_step.side_effect = [self.first, persisted]
 
     def test_same_saved_wontfix_record_survives_without_another_resolution(self) -> None:
         observed = self.driver.step_wontfix()
@@ -266,13 +268,8 @@ class WontfixStepTests(unittest.TestCase):
         ):
             with self.subTest(changes=changes):
                 self.json.side_effect = [self.pages, [[_state_note(**changes)]]]
-                with (
-                    mock.patch.object(self.driver, "_dispatch", side_effect=[5, 6]),
-                    mock.patch.object(
-                        self.driver, "_run_step", side_effect=[self.first, self.persisted]
-                    ),
-                    self.assertRaises(lifecycle.LifecycleFailure),
-                ):
+                self._rerun(self.persisted)
+                with self.assertRaises(lifecycle.LifecycleFailure):
                     self.driver.step_wontfix()
 
     def test_persistence_rerun_must_be_warning_free_and_have_no_mutations(self) -> None:
@@ -284,15 +281,8 @@ class WontfixStepTests(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 self.json.side_effect = [self.pages, self.pages]
-                with (
-                    mock.patch.object(self.driver, "_dispatch", side_effect=[5, 6]),
-                    mock.patch.object(
-                        self.driver,
-                        "_run_step",
-                        side_effect=[self.first, self.persisted | {field: value}],
-                    ),
-                    self.assertRaises(lifecycle.LifecycleFailure),
-                ):
+                self._rerun(self.persisted | {field: value})
+                with self.assertRaises(lifecycle.LifecycleFailure):
                     self.driver.step_wontfix()
 
     def test_missing_corrupt_or_ambiguous_state_fails(self) -> None:
@@ -303,17 +293,15 @@ class WontfixStepTests(unittest.TestCase):
         for pages in ([[]], [[corrupt]], [[_state_note(), _state_note()]]):
             with self.subTest(pages=pages):
                 self.json.side_effect = [pages]
-                with (
-                    mock.patch.object(self.driver, "_dispatch", return_value=5),
-                    mock.patch.object(self.driver, "_run_step", return_value=self.first),
-                    self.assertRaises(lifecycle.LifecycleFailure),
-                ):
+                self._rerun(self.persisted)
+                with self.assertRaises(lifecycle.LifecycleFailure):
                     self.driver.step_wontfix()
 
 
 class MergePolicyStepTests(unittest.TestCase):
     def setUp(self) -> None:
         self.driver = _lifecycle(self.enterContext(tempfile.TemporaryDirectory()))
+        self.driver._next_head_run = 9
         self.enterContext(
             mock.patch.object(self.driver, "_run_step", return_value={"created_discussions": 0})
         )
@@ -461,9 +449,6 @@ class LifecycleStepTests(unittest.TestCase):
                 workdir=tmp,
                 timeout_seconds=60,
                 summary_out=str(summary),
-                runtime_source="a" * 40,
-                base_image=BASE,
-                reviewer_image=REVIEWER,
             )
             with mock.patch.object(
                 lifecycle.GitHubLifecycle,

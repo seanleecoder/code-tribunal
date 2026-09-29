@@ -78,6 +78,28 @@ def candidate_workflow(workflow: str, *, base_image: str, reviewer_image: str) -
     return workflow
 
 
+def commit_and_push(demo: Path, paths: list[str], message: str, branch: str) -> None:
+    _run("git", "add", *paths, cwd=demo)
+    _run("git", "commit", "-m", message, cwd=demo)
+    _run("git", *GH_CREDENTIAL_HELPER, "push", "origin", f"HEAD:{branch}", cwd=demo)
+
+
+def download_run(run_id: str | int, destination: Path, *selector: str) -> Path:
+    """Download ``run_id``'s artifacts, optionally narrowed by ``--name``/``--pattern``."""
+    _run(
+        "gh",
+        "run",
+        "download",
+        str(run_id),
+        "--repo",
+        DEMO_REPOSITORY,
+        *selector,
+        "--dir",
+        str(destination),
+    )
+    return destination
+
+
 def push_candidate_branch(
     args: argparse.Namespace,
     *,
@@ -96,9 +118,7 @@ def push_candidate_branch(
     paths = [".github/workflows/ai-review.yml", *edit(demo)]
     _run("git", "config", "user.name", "code-tribunal-canary", cwd=demo)
     _run("git", "config", "user.email", "canary@users.noreply.github.com", cwd=demo)
-    _run("git", "add", *paths, cwd=demo)
-    _run("git", "commit", "-m", message, cwd=demo)
-    _run("git", *GH_CREDENTIAL_HELPER, "push", "origin", f"HEAD:{args.branch}", cwd=demo)
+    commit_and_push(demo, paths, message, args.branch)
     state: dict[str, Any] = {"branch": args.branch}
     write_state(args.state, state)
     _run(
@@ -211,17 +231,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         raise GitHubCanaryError("timed out waiting for GitHub candidate run")
 
     destination = Path(args.destination)
-    artifacts = destination / "artifacts"
-    _run(
-        "gh",
-        "run",
-        "download",
-        run_id,
-        "--repo",
-        DEMO_REPOSITORY,
-        "--dir",
-        str(artifacts),
-    )
+    artifacts = download_run(run_id, destination / "artifacts")
     inputs = destination / "inputs"
     output = destination / "out"
     shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
