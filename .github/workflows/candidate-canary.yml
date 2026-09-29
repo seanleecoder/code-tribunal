@@ -18,9 +18,10 @@ on:
       campaigns:
         description: >-
           Comma-separated campaigns to run: panel (real four-seat panel, spends
-          tokens) and lifecycle (zero-token mock Chain B)
+          tokens), lifecycle (zero-token mock Chain B), and hostile (zero-token
+          GitLab hostile-MR credential boundary)
         required: false
-        default: panel,lifecycle
+        default: panel,lifecycle,hostile
         type: string
 
 permissions:
@@ -54,7 +55,7 @@ jobs:
           [[ ${#selected[@]} -gt 0 ]] || { echo "::error::no campaign selected"; exit 1; }
           for campaign in "${selected[@]}"; do
             case "$campaign" in
-              panel|lifecycle) ;;
+              panel|lifecycle|hostile) ;;
               *) echo "::error::unknown campaign '$campaign'"; exit 1 ;;
             esac
           done
@@ -304,4 +305,61 @@ jobs:
         with:
           name: candidate-canary-${{ matrix.platform }}-lifecycle-summary
           path: ${{ matrix.platform }}-lifecycle-summary.json
+          if-no-files-found: error
+
+  hostile:
+    needs: verify-candidate
+    if: contains(format(',{0},', inputs.campaigns), ',hostile,')
+    runs-on: ubuntu-latest
+    environment: candidate-canary
+    env:
+      PYTHONPATH: ai-review/src:scripts
+    steps:
+      - name: Check out protected orchestration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install validation dependency
+        run: >-
+          python -m pip install
+          --constraint ai-review/images/python-constraints.txt
+          jsonschema pyyaml
+      - name: Open the unprotected hostile merge request
+        env:
+          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
+        run: |
+          python scripts/gitlab_hostile_canary.py create \
+            --branch "${{ needs.verify-candidate.outputs.branch }}-gitlab-hostile" \
+            --state "$RUNNER_TEMP/gitlab-hostile-state.json" \
+            --runtime-source "${{ inputs.runtime_source }}" \
+            --base-image "${{ inputs.base_image }}" \
+            --reviewer-image "${{ inputs.reviewer_image }}" \
+            --template ai-review/ci/review.gitlab-ci.yml \
+            --child-template ai-review/ci/review-child.gitlab-ci.yml
+      - name: Check the credential boundary
+        env:
+          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
+        run: |
+          python scripts/gitlab_hostile_canary.py run \
+            --state "$RUNNER_TEMP/gitlab-hostile-state.json" \
+            --summary-out gitlab-hostile-summary.json
+      - name: Clean up demo
+        if: always()
+        env:
+          GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
+        run: |
+          python scripts/gitlab_hostile_canary.py cleanup \
+            --state "$RUNNER_TEMP/gitlab-hostile-state.json"
+      - name: Upload redacted hostile-MR summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-canary-gitlab-hostile-summary
+          path: gitlab-hostile-summary.json
           if-no-files-found: error

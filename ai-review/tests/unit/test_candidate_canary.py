@@ -41,8 +41,10 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         self.assertEqual(set(inputs), required | {"campaigns"})
         self.assertTrue(all(inputs[name]["required"] == "true" for name in required))
         self.assertEqual(inputs["campaigns"]["required"], "false")
-        self.assertEqual(inputs["campaigns"]["default"], "panel,lifecycle")
-        self.assertEqual(set(workflow["jobs"]), {"verify-candidate", "campaign", "lifecycle"})
+        self.assertEqual(inputs["campaigns"]["default"], "panel,lifecycle,hostile")
+        self.assertEqual(
+            set(workflow["jobs"]), {"verify-candidate", "campaign", "lifecycle", "hostile"}
+        )
         self.assertEqual(
             workflow["jobs"]["verify-candidate"]["if"],
             "github.ref == 'refs/heads/main'",
@@ -102,6 +104,16 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
                     self.assertEqual(env["CANARY_TOKEN"], "${{ secrets[matrix.token_secret] }}")
                     self.assertIn("unset CANARY_TOKEN", step["run"])
 
+    def test_hostile_probe_receives_only_the_gitlab_token(self) -> None:
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for step in workflow["jobs"]["hostile"]["steps"]:
+            env = step.get("env") or {}
+            with self.subTest(step=step["name"]):
+                self.assertNotIn("GH_TOKEN", env)
+                for value in env.values():
+                    if "secrets." in value:
+                        self.assertEqual(value, "${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}")
+
     def test_campaign_requires_full_image_verification_after_pulls(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         verification = workflow["jobs"]["verify-candidate"]
@@ -131,7 +143,11 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         # Each campaign is gated only on the selection. An `if` with no status
         # function keeps GitHub's implicit success(), so a failed identity check
         # still stops every campaign; always()/failure()/cancelled() would not.
-        for name, token in (("campaign", "panel"), ("lifecycle", "lifecycle")):
+        for name, token in (
+            ("campaign", "panel"),
+            ("lifecycle", "lifecycle"),
+            ("hostile", "hostile"),
+        ):
             with self.subTest(job=name):
                 job = workflow["jobs"][name]
                 self.assertEqual(job["needs"], "verify-candidate")

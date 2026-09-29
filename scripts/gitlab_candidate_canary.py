@@ -27,6 +27,7 @@ from candidate_canary_common import (
 API = "https://gitlab.com/api/v4"
 DEMO_PROJECT = "84667714"
 TEMPLATE_PROJECT = "84667707"
+TEMPLATE_PROJECT_PATH = "seanleecoder/code-tribunal-ci-template"
 
 
 class GitLabCanaryError(RuntimeError):

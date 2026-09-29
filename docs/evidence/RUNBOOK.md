@@ -511,6 +511,12 @@ paths are regression-covered and are not part of this live chain.
 
 ### Run 3 — GitLab hostile-MR credential & enforcement boundary
 
+> **Automated.** The Candidate Canary's `hostile` campaign (see
+> [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)) runs probes 1–3
+> below and the auditor check against the candidate template, and uploads a
+> redacted summary. The manual procedure remains for diagnosis and for a
+> fork-based variant.
+
 This run fails closed in `prepare` and never reaches a reviewer, so it spends no
 tokens. Exercise the genuinely live-only probes:
 
