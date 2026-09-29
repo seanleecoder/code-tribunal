@@ -257,25 +257,36 @@ class CandidateIdentityTests(unittest.TestCase):
             "--reviewer-image", self.reviewer,
         ]
 
-    def test_cli_verifies_both_images_with_source_and_signer_constraints(self) -> None:
+    def _verify_outputs(
+        self, rejected_role: str | None = None
+    ) -> list[subprocess.CompletedProcess[str]]:
+        """Revision label, RepoDigests, and gh result per image, in call order."""
         outputs = []
         for role, digest in (("base", "b" * 64), ("reviewer", "c" * 64)):
-            outputs.extend(
-                [
-                    self.source,
-                    f"ghcr.io/seanleecoder/code-tribunal/ai-review-{role}@sha256:{digest}",
-                    "Verified",  # Successful verification needs no JSON or source in stdout.
-                ]
-            )
+            rejected = role == rejected_role
+            outputs += [
+                subprocess.CompletedProcess([], 0, stdout=self.source, stderr=""),
+                subprocess.CompletedProcess(
+                    [],
+                    0,
+                    stdout=f"ghcr.io/seanleecoder/code-tribunal/ai-review-{role}@sha256:{digest}",
+                    stderr="",
+                ),
+                # Success needs no source in stdout; a rejection carries R in unrelated output.
+                subprocess.CompletedProcess(
+                    [],
+                    1 if rejected else 0,
+                    stdout=json.dumps({"unrelated": self.source}) if rejected else "Verified",
+                    stderr="signer identity mismatch" if rejected else "",
+                ),
+            ]
+        return outputs
+
+    def test_cli_verifies_both_images_with_source_and_signer_constraints(self) -> None:
         with (
             mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
             mock.patch.object(
-                self.identity.subprocess,
-                "run",
-                side_effect=[
-                    subprocess.CompletedProcess([], 0, stdout=output, stderr="")
-                    for output in outputs
-                ],
+                self.identity.subprocess, "run", side_effect=self._verify_outputs()
             ) as run,
         ):
             self.assertEqual(self.identity.cli([*self._cli_args(), "--verify-images"]), 0)
@@ -313,34 +324,17 @@ class CandidateIdentityTests(unittest.TestCase):
 
     def test_attestation_failures_cannot_pass_with_source_in_unrelated_output(self) -> None:
         for role in ("base", "reviewer"):
-            for mismatch in ("source ref", "source digest", "signer identity"):
-                with self.subTest(role=role, mismatch=mismatch):
-                    outputs = []
-                    for image_role, digest in (("base", "b" * 64), ("reviewer", "c" * 64)):
-                        outputs.extend(
-                            subprocess.CompletedProcess([], 0, stdout=output, stderr="")
-                            for output in (
-                                self.source,
-                                "ghcr.io/seanleecoder/code-tribunal/"
-                                f"ai-review-{image_role}@sha256:{digest}",
-                            )
-                        )
-                        rejected = image_role == role
-                        outputs.append(
-                            subprocess.CompletedProcess(
-                                [], 1 if rejected else 0,
-                                stdout=json.dumps({"unrelated": self.source}),
-                                stderr=f"{mismatch} mismatch" if rejected else "",
-                            )
-                        )
-                    with (
-                        mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
-                        mock.patch.object(self.identity.subprocess, "run", side_effect=outputs),
-                        self.assertRaisesRegex(
-                            self.identity.CandidateIdentityError, f"{mismatch} mismatch"
-                        ),
-                    ):
-                        self.identity.cli([*self._cli_args(), "--verify-images"])
+            with (
+                self.subTest(role=role),
+                mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+                mock.patch.object(
+                    self.identity.subprocess, "run", side_effect=self._verify_outputs(role)
+                ),
+                self.assertRaisesRegex(
+                    self.identity.CandidateIdentityError, "signer identity mismatch"
+                ),
+            ):
+                self.identity.cli([*self._cli_args(), "--verify-images"])
 
     def test_wrong_revision_label_fails(self) -> None:
         with (

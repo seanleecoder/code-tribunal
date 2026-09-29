@@ -114,9 +114,8 @@ bookkeeping, hand-driven steps, and drift discovered mid-campaign:
 
 - Phase 1:
   - Both images must pass provenance verification for source ref `refs/heads/main`,
-    source digest `R`, and signer identity
-    `https://github.com/seanleecoder/code-tribunal/.github/workflows/publish-ai-review-images.yml@refs/heads/main`
-    before any canary campaign starts. A matching source string in unrelated
+    source digest `R`, and the publication-workflow signer identity
+    (`SIGNER_IDENTITY` in `scripts/validate_candidate_identity.py`) before any canary campaign starts. A matching source string in unrelated
     metadata cannot satisfy verification.
   - A waived row needs one reason, written once, in `release-inputs.json`.
   - `check_release_inputs.py` rejects a marker without a declaration, a declaration

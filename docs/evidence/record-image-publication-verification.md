@@ -2,8 +2,8 @@
 
 > **Historical 2.0.0 evidence (SPEC-61).** New releases consolidate these checks
 > into [`record-candidate-canary.md`](record-candidate-canary.md) once protected
-> `main` enforces the source ref, source digest, and exact publication-workflow
-> signer identity. This file retains the manual provenance evidence for 2.0.0;
+> `main` enforces the provenance constraints in
+> [Step 0](RUNBOOK.md#step-0--image-identity-owned-by-the-canary). This file retains the manual provenance evidence for 2.0.0;
 > that release's canary did not enforce those constraints.
 
 Status: passed

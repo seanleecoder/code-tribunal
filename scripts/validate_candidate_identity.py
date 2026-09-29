@@ -16,9 +16,13 @@ from release_common import (
     image_ref,
 )
 
+REPOSITORY = "seanleecoder/code-tribunal"
+SOURCE_REF = "refs/heads/main"
+SIGNER_IDENTITY = (
+    f"https://github.com/{REPOSITORY}/.github/workflows/publish-ai-review-images.yml@{SOURCE_REF}"
+)
 EXPECTED_IMAGE_NAMES = {
-    "base": "ghcr.io/seanleecoder/code-tribunal/ai-review-base",
-    "reviewer": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer",
+    role: f"ghcr.io/{REPOSITORY}/ai-review-{role}" for role in ("base", "reviewer")
 }
 
 
@@ -96,16 +100,15 @@ def verify_pulled_image(*, role: str, image: str, runtime_source: str) -> None:
         "verify",
         f"oci://{image}",
         "--repo",
-        "seanleecoder/code-tribunal",
+        REPOSITORY,
         "--predicate-type",
         "https://slsa.dev/provenance/v1",
         "--source-ref",
-        "refs/heads/main",
+        SOURCE_REF,
         "--source-digest",
         runtime_source,
         "--cert-identity",
-        "https://github.com/seanleecoder/code-tribunal/"
-        ".github/workflows/publish-ai-review-images.yml@refs/heads/main",
+        SIGNER_IDENTITY,
     )
 
 

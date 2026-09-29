@@ -43,8 +43,8 @@ Base image:        ghcr.io/<org>/code-tribunal/ai-review-base@sha256:<digest>
 Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest>
 ```
 
-> **Historical: the activated 1.0.0 pair.** Retained because Step 0's example
-> commands and several 1.0.0 result notes below reference it. It is **not** the
+> **Historical: the activated 1.0.0 pair.** Retained because several 1.0.0
+> result notes below reference it. It is **not** the
 > current candidate: `release/release-inputs.json` names the release under
 > preparation (`status: draft`, runtime source and digests unset until the
 > candidate pair is published).
@@ -88,41 +88,37 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
 > the image-pin rotation procedure in [operations](../operations.md)), and re-run
-> Step 0 verification/attestation against the new digests. Republishing is an
+> the Candidate Canary (Step 0b) against the new digests. Republishing is an
 > operator/CI action. Because the posting/mock code ships inside the product image,
 > **both** chains must run against the digests named above, so the evidence matches
 > the exact images that ship.
 
 ## Step 0 — Image identity (owned by the canary)
 
-The Candidate Canary's `verify-candidate` job (Step 0b) checks both digests and OCI
-revision labels, then verifies each provenance attestation against source ref
-`refs/heads/main`, source digest `R`, and the exact publication-workflow signer
-identity shown below. Any failure prevents the campaign from starting.
+The Candidate Canary's `verify-candidate` job (Step 0b) runs
+[`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py),
+which checks both digests and OCI revision labels, then verifies each provenance
+attestation against source ref `refs/heads/main`, source digest `R`, and the
+exact publication-workflow signer identity (`SIGNER_IDENTITY` in that script).
+Any failure prevents the campaign from starting.
 [`record-candidate-canary.md`](record-candidate-canary.md) records the result.
 
 Retire the separate manual provenance check only once this enforcement is on
-protected `main`. Older orchestration requires the constrained checks below,
+protected `main`. Older orchestration requires running the check below by hand,
 with their results and the exact `Release-*` bindings recorded alongside the
 canary results. The 2.0.0 provenance evidence remains in the historical manual
 [record](record-image-publication-verification.md); its canary did not enforce
 these source and signer constraints.
 
-With the hardened canary, these commands are for diagnosing a `verify-candidate`
-failure. Set `R`, `BASE_IMAGE`, and `REVIEWER_IMAGE` to the candidate's full source
-commit and two digest-pinned image references:
+With the hardened canary, run the same check locally to diagnose a
+`verify-candidate` failure. From a checkout with `origin/main` fetched, set `R`,
+`BASE_IMAGE`, and `REVIEWER_IMAGE` to the candidate's full source commit and two
+digest-pinned image references:
 
 ```bash
-for image in "$BASE_IMAGE" "$REVIEWER_IMAGE"; do
-  docker pull "$image" || exit 1
-  gh attestation verify "oci://$image" \
-    --repo seanleecoder/code-tribunal \
-    --predicate-type https://slsa.dev/provenance/v1 \
-    --source-ref refs/heads/main \
-    --source-digest "$R" \
-    --cert-identity https://github.com/seanleecoder/code-tribunal/.github/workflows/publish-ai-review-images.yml@refs/heads/main \
-    || exit 1
-done
+docker pull "$BASE_IMAGE" && docker pull "$REVIEWER_IMAGE" &&
+  python scripts/validate_candidate_identity.py --runtime-source "$R" \
+    --base-image "$BASE_IMAGE" --reviewer-image "$REVIEWER_IMAGE" --verify-images
 ```
 
 To confirm anonymous resolution without touching stored credentials, point
@@ -144,8 +140,7 @@ The canary retains only the redacted `candidate-canary-<platform>-summary`
 artifacts and writes nothing under `docs/evidence/`. Record the green pair in a
 new `record-candidate-canary.md`, copied from [the record template](record-template.md), with the
 workflow run ID, both summary artifacts, and the three `Release-*` binding
-fields. Include the `verify-candidate` job result for both images and its source
-ref, source digest, and publication-workflow signer constraints. That record is
+fields. Include the `verify-candidate` job result for both images. That record is
 the release's real-panel (Chain A) row on **both**
 platforms, so Chain A below is needed only when the canary cannot run.
 
