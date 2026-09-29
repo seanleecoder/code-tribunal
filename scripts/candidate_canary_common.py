@@ -23,6 +23,20 @@ DEMO_CANARY_DEFECT = (
 )
 DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
 
+# The mock-lifecycle fixture adds one file whose `records[0]` line is the mock
+# reviewer's preferred anchor, so the finding's identity does not depend on any
+# other change on the branch (the pinned workflow or CI include) and is the same
+# on both platforms.
+LIFECYCLE_FIXTURE_PATH = "src/audit.py"
+LIFECYCLE_FIXTURE = (
+    '"""Audit trail helpers for the demo consumer."""\n'
+    "\n"
+    "\n"
+    "def first_actor(records):\n"
+    '    """Return the first actor without validating the payload."""\n'
+    '    return records[0]["actor"]\n'
+)
+
 CreateParser = Callable[[argparse.ArgumentParser], None]
 
 
