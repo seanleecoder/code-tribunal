@@ -17,15 +17,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ai_review.consensus import batch_usable_for_panel
-from ai_review.memory import decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
-from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.schema import load_json_file, write_canonical_json
 from candidate_canary_common import (
+    LIFECYCLE_FIXTURE,
+    LIFECYCLE_FIXTURE_PATH,
     build_campaign_parser,
+    lifecycle_reviewer_results,
     read_state,
     require_real_controls,
-    reviewer_ids,
+    saved_wontfix,
     write_state,
 )
 from github_candidate_canary import (
@@ -43,19 +44,6 @@ from github_candidate_canary import (
 BOT_LOGIN = "github-actions[bot]"
 SUMMARY_SCHEMA = "candidate_canary_lifecycle_summary.v1"
 _MUTATIONS = ("created_discussions", "updated_discussions", "resolved_discussions")
-
-# The fixture adds one file whose `records[0]` line is the mock reviewer's
-# preferred anchor, so the finding's identity does not depend on any other
-# change on the branch (the pinned workflow).
-LIFECYCLE_FIXTURE_PATH = "src/audit.py"
-LIFECYCLE_FIXTURE = (
-    '"""Audit trail helpers for the demo consumer."""\n'
-    "\n"
-    "\n"
-    "def first_actor(records):\n"
-    '    """Return the first actor without validating the payload."""\n'
-    '    return records[0]["actor"]\n'
-)
 
 
 class LifecycleFailure(RuntimeError):
@@ -272,43 +260,15 @@ class GitHubLifecycle:
             for note in page
             if note.get("user", {}).get("login") == BOT_LOGIN
         ]
-        candidates, _, _ = state_note_candidates(notes)
-        self._expect(len(candidates) == 1, "expected one bot-owned state note")
-        note = candidates[0]
         try:
-            state = decode_state_note_body(note["body"])
-            validate_instance(state, "state.schema.json")
-        except ValueError:
-            raise LifecycleFailure(
-                "saved state note failed checksum or schema validation"
-            ) from None
-        self._expect(
-            state["project_id"] == DEMO_REPOSITORY and state["merge_request_iid"] == self.pr,
-            "saved state belongs to a different pull request",
-        )
-        records = [
-            record for record in state["records"] if record["root_note_id"] == self.comment_id
-        ]
-        self._expect(len(records) == 1, "expected one saved record for the finding thread")
-        record = records[0]
-        self._expect(bool(record["discussion_id"]), "saved record has no discussion identity")
-        self._expect(
-            record["status"] == "wontfix" and record["human_disposition"] == "wontfix",
-            "saved record does not retain the wontfix status and human disposition",
-        )
-        return {
-            "state_note_id": note["id"],
-            **{
-                key: record[key]
-                for key in (
-                    "issue_id",
-                    "discussion_id",
-                    "root_note_id",
-                    "status",
-                    "human_disposition",
-                )
-            },
-        }
+            return saved_wontfix(
+                notes,
+                project_id=DEMO_REPOSITORY,
+                change_id=self.pr,
+                root_note_id=int(self.comment_id or 0),
+            )
+        except ValueError as exc:
+            raise LifecycleFailure(str(exc)) from None
 
     # -- assertions --------------------------------------------------------
     @staticmethod
@@ -336,59 +296,22 @@ class GitHubLifecycle:
         return any(post.get(key) for key in _MUTATIONS)
 
     def _reviewer_results(self, reviews: Path) -> dict[str, Any]:
-        reviewers = reviewer_ids()
-        artifacts: dict[str, dict[str, Any]] = {}
-        for directory, schema in (
-            ("findings", "finding_batch.schema.json"),
-            ("status", "adapter_status.schema.json"),
-        ):
-            paths = {
-                reviewer: reviews / f"ai-review-review-{reviewer}" / directory / f"{reviewer}.json"
-                for reviewer in reviewers
-            }
-            actual = set(reviews.glob(f"*/{directory}/*.json"))
-            missing = [reviewer for reviewer, path in paths.items() if path not in actual]
-            unexpected = len(actual - set(paths.values()))
-            self._expect(
-                not missing and not unexpected,
-                f"expected one {directory} artifact per reviewer; "
-                f"missing={missing}, unexpected={unexpected}",
-            )
-            artifacts[directory] = {}
-            for reviewer, path in paths.items():
+        loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
+        for directory in loaded:
+            for path in sorted(reviews.glob(f"*/{directory}/*.json")):
                 try:
                     artifact = load_json_file(path)
-                    validate_instance(artifact, schema)
                 except OSError, ValueError:
-                    raise LifecycleFailure(f"invalid {reviewer} {directory} artifact") from None
-                self._expect(
-                    artifact["reviewer"] == reviewer,
-                    f"{reviewer} {directory} artifact has a mismatched reviewer identity",
-                )
-                artifacts[directory][reviewer] = artifact
-        results = {}
-        for reviewer in reviewers:
-            batch = artifacts["findings"][reviewer]
-            status = artifacts["status"][reviewer]
-            self._expect(
-                status["stage"] == "review"
-                and status["status"] == "success"
-                and batch_usable_for_panel(batch),
-                f"{reviewer} review did not succeed in both artifacts",
-            )
-            self._expect(
-                batch["raw_finding_count"] == batch["accepted_finding_count"] == 1
-                and len(batch["findings"]) == 1
-                and batch["dropped_finding_count"] == 0,
-                f"{reviewer} did not retain exactly one mock finding",
-            )
-            results[reviewer] = {
-                "status": status["status"],
-                "adapter_status": batch["adapter_status"],
-                "raw_finding_count": batch["raw_finding_count"],
-                "accepted_finding_count": batch["accepted_finding_count"],
-            }
-        return results
+                    raise LifecycleFailure(f"unreadable review artifact {path.name}") from None
+                if path.parent.parent.name != f"ai-review-review-{path.stem}":
+                    raise LifecycleFailure(f"{path.name} is in the wrong artifact")
+                if path.stem in loaded[directory]:
+                    raise LifecycleFailure(f"duplicate {directory} artifact for {path.stem}")
+                loaded[directory][path.stem] = artifact
+        try:
+            return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
+        except ValueError as exc:
+            raise LifecycleFailure(str(exc)) from None
 
     # -- steps -------------------------------------------------------------
     def step_create(self) -> dict[str, Any]:

@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -92,9 +93,8 @@ def _commit(
     )
 
 
-def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
-    template = Path(args.template).read_text(encoding="utf-8")
-    child = Path(args.child_template).read_text(encoding="utf-8")
+def candidate_template(template: str, args: argparse.Namespace, *, mock: bool = False) -> str:
+    """Pin the canonical template to the candidate pair and the canary environment."""
     replacements = {
         "AI_REVIEW_BASE_IMAGE": args.base_image,
         "AI_REVIEW_REVIEWER_IMAGE": args.reviewer_image,
@@ -108,7 +108,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     # Candidate acceptance deliberately exercises the shipped effort defaults,
     # regardless of any ordinary demo-project overrides. Apply the same process
     # environment to every stage so the effective-config digest remains bound.
-    canary_env = canary_stage_environment()
+    canary_env = canary_stage_environment(mock=mock)
     template, python_count = re.subn(
         r"(?m)^(\s*- )(python -m ai_review\.)", rf"\g<1>{canary_env} \g<2>", template
     )
@@ -119,7 +119,19 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
     if python_count < 3 or adapter_count != 2:
         raise GitLabCanaryError("candidate template no longer exposes the expected stage commands")
+    return template
 
+
+def push_candidate_change(
+    args: argparse.Namespace,
+    *,
+    template: str,
+    fixture: Callable[[], list[dict[str, str]]],
+    message: str,
+    title: str,
+) -> dict[str, Any]:
+    """Push the template branch and a protected demo branch, then open the MR."""
+    child = Path(args.child_template).read_text(encoding="utf-8")
     template_commit = _commit(
         TEMPLATE_PROJECT,
         args.branch,
@@ -147,16 +159,11 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
     if ref_count != 2:
         raise GitLabCanaryError(f"demo CI has {ref_count} trusted template refs, expected 2")
-    access = _raw_file(DEMO_PROJECT, "src/access.py")
-    access = inject_demo_defect(access, GitLabCanaryError)
     _commit(
         DEMO_PROJECT,
         args.branch,
-        "candidate canary fixture",
-        [
-            {"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci},
-            {"action": "update", "file_path": "src/access.py", "content": access},
-        ],
+        message,
+        [{"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci}, *fixture()],
     )
     _request(
         "POST",
@@ -173,13 +180,29 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         payload={
             "source_branch": args.branch,
             "target_branch": "main",
-            "title": f"Candidate canary {args.runtime_source[:12]}",
+            "title": title,
             "remove_source_branch": False,
         },
     )
     result.update({"mr_iid": str(mr["iid"]), "change_url": str(mr["web_url"])})
     write_state(args.state, result)
     return result
+
+
+def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
+    template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
+
+    def inject_defect() -> list[dict[str, str]]:
+        access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
+        return [{"action": "update", "file_path": "src/access.py", "content": access}]
+
+    return push_candidate_change(
+        args,
+        template=template,
+        fixture=inject_defect,
+        message="candidate canary fixture",
+        title=f"Candidate canary {args.runtime_source[:12]}",
+    )
 
 
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:

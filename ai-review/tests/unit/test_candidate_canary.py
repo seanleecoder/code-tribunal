@@ -87,6 +87,21 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         self.assertEqual(upload["if"], "always()")
         self.assertEqual(upload["with"]["if-no-files-found"], "error")
 
+    def test_lifecycle_routes_each_platform_token_like_the_panel(self) -> None:
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        lifecycle = workflow["jobs"]["lifecycle"]
+        self.assertEqual(lifecycle["strategy"]["fail-fast"], "false")
+        self.assertEqual(
+            lifecycle["strategy"]["matrix"]["include"],
+            workflow["jobs"]["campaign"]["strategy"]["matrix"]["include"],
+        )
+        for step in lifecycle["steps"]:
+            env = step.get("env") or {}
+            if "CANARY_TOKEN" in env:
+                with self.subTest(step=step["name"]):
+                    self.assertEqual(env["CANARY_TOKEN"], "${{ secrets[matrix.token_secret] }}")
+                    self.assertIn("unset CANARY_TOKEN", step["run"])
+
     def test_campaign_requires_full_image_verification_after_pulls(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         verification = workflow["jobs"]["verify-candidate"]

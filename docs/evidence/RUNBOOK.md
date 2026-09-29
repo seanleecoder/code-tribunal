@@ -460,10 +460,11 @@ full`, and that a finding was posted. **This doubles as the default-model smoke 
 do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
 (see [operations cost controls](../operations.md)). This chain ends here.
 
-> **GitHub Chain B is automated.** The Candidate Canary's `lifecycle` campaign
-> (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)) drives steps
-> 1–5, 7, and 8 below on a temporary branch and uploads a redacted step summary.
-> Run the manual procedure only on GitLab, or when diagnosing a failed campaign.
+> **Chain B is automated on both platforms.** The Candidate Canary's `lifecycle`
+> campaign (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary))
+> drives steps 1–5 and 8 below on each platform, plus step 7 on GitHub. It runs on
+> temporary branches and uploads a redacted step summary per platform. Run the
+> manual procedure only when diagnosing a failed campaign.
 
 **Chain B — deterministic mock lifecycle (zero tokens).** On a second change
 request, enable the mock via the platform-specific mock enablement above (GitLab

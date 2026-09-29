@@ -9,7 +9,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ai_review.consensus import batch_usable_for_panel
+from ai_review.memory import decode_state_note_body, state_note_candidates
 from ai_review.reviewers import REVIEWERS
+from ai_review.schema import validate_instance
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
@@ -22,6 +25,20 @@ DEMO_CANARY_DEFECT = (
     "    )"
 )
 DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
+
+# The mock-lifecycle fixture adds one file whose `records[0]` line is the mock
+# reviewer's preferred anchor, so the finding's identity does not depend on any
+# other change on the branch (the pinned workflow or CI include) and is the same
+# on both platforms.
+LIFECYCLE_FIXTURE_PATH = "src/audit.py"
+LIFECYCLE_FIXTURE = (
+    '"""Audit trail helpers for the demo consumer."""\n'
+    "\n"
+    "\n"
+    "def first_actor(records):\n"
+    '    """Return the first actor without validating the payload."""\n'
+    '    return records[0]["actor"]\n'
+)
 
 CreateParser = Callable[[argparse.ArgumentParser], None]
 
@@ -61,11 +78,19 @@ def require_real_controls() -> tuple[str, ...]:
     )
 
 
-def canary_stage_environment() -> str:
+def canary_stage_environment(*, mock: bool = False) -> str:
+    """Process environment prefixed to every GitLab stage command.
+
+    ``mock`` switches every seat to the deterministic mock. The scenario is not
+    set here: it comes from the demo's temporary AI_REVIEW_MOCK_SCENARIO project
+    variable, so a lifecycle step can change it without a commit.
+    """
     unsets = " ".join(f"-u {name}" for name in effort_variables())
     roster = ",".join(reviewer_ids())
-    controls = " ".join(f"{name}=1" for name in require_real_controls())
-    return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {controls}"
+    required = "0" if mock else "1"
+    controls = " ".join(f"{name}={required}" for name in require_real_controls())
+    mock_switches = " AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true" if mock else ""
+    return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {controls}{mock_switches}"
 
 
 def _configure_collect(parser: argparse.ArgumentParser) -> None:
@@ -95,3 +120,84 @@ def build_campaign_parser(
     cleanup = subparsers.add_parser("cleanup")
     cleanup.add_argument("--state", required=True)
     return parser
+
+
+def lifecycle_reviewer_results(
+    findings: dict[str, Any], statuses: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Check that every seat retained exactly one mock finding in both artifacts.
+
+    ``findings`` and ``statuses`` map reviewer ids to the parsed review-stage
+    finding batch and adapter status. Raises ``ValueError`` naming the first
+    violation.
+    """
+    reviewers = reviewer_ids()
+    for label, artifacts in (("findings", findings), ("status", statuses)):
+        missing = sorted(set(reviewers) - set(artifacts))
+        unexpected = sorted(set(artifacts) - set(reviewers))
+        if missing or unexpected:
+            raise ValueError(
+                f"expected one {label} artifact per reviewer; "
+                f"missing={missing}, unexpected={len(unexpected)}"
+            )
+    results = {}
+    for reviewer in reviewers:
+        batch, status = findings[reviewer], statuses[reviewer]
+        try:
+            validate_instance(batch, "finding_batch.schema.json")
+            validate_instance(status, "adapter_status.schema.json")
+        except ValueError:
+            raise ValueError(f"invalid {reviewer} review artifacts") from None
+        if batch["reviewer"] != reviewer or status["reviewer"] != reviewer:
+            raise ValueError(f"{reviewer} review artifacts have a mismatched reviewer identity")
+        if not (
+            status["stage"] == "review"
+            and status["status"] == "success"
+            and batch_usable_for_panel(batch)
+        ):
+            raise ValueError(f"{reviewer} review did not succeed in both artifacts")
+        if not (
+            batch["raw_finding_count"] == batch["accepted_finding_count"] == 1
+            and len(batch["findings"]) == 1
+            and batch["dropped_finding_count"] == 0
+        ):
+            raise ValueError(f"{reviewer} did not retain exactly one mock finding")
+        results[reviewer] = {
+            "status": status["status"],
+            "adapter_status": batch["adapter_status"],
+            "raw_finding_count": batch["raw_finding_count"],
+            "accepted_finding_count": batch["accepted_finding_count"],
+        }
+    return results
+
+
+def saved_wontfix(
+    notes: list[dict[str, Any]], *, project_id: str, change_id: str, root_note_id: int
+) -> dict[str, Any]:
+    """Return the persisted wontfix record for one finding thread.
+
+    ``notes`` must already be limited to the review bot's own notes. Raises
+    ``ValueError`` unless exactly one state note decodes, validates, belongs to
+    this change, and records a human wontfix disposition for ``root_note_id``.
+    """
+    candidates, _, _ = state_note_candidates(notes)
+    if len(candidates) != 1:
+        raise ValueError("expected one bot-owned state note")
+    note = candidates[0]
+    try:
+        state = decode_state_note_body(note["body"])
+        validate_instance(state, "state.schema.json")
+    except ValueError:
+        raise ValueError("saved state note failed checksum or schema validation") from None
+    if str(state["project_id"]) != project_id or str(state["merge_request_iid"]) != change_id:
+        raise ValueError("saved state belongs to a different change request")
+    records = [r for r in state["records"] if r["root_note_id"] == root_note_id]
+    if len(records) != 1:
+        raise ValueError("expected one saved record for the finding thread")
+    record = records[0]
+    if not record["discussion_id"]:
+        raise ValueError("saved record has no discussion identity")
+    if record["status"] != "wontfix" or record["human_disposition"] != "wontfix":
+        raise ValueError("saved record does not retain the wontfix status and human disposition")
+    keys = ("issue_id", "discussion_id", "root_note_id", "status", "human_disposition")
+    return {"state_note_id": note["id"], **{key: record[key] for key in keys}}
