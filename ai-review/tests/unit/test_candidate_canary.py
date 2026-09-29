@@ -37,9 +37,12 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
     def test_manual_inputs_and_protected_orchestration_are_fixed(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-        self.assertEqual(set(inputs), {"runtime_source", "base_image", "reviewer_image"})
-        self.assertTrue(all(value["required"] == "true" for value in inputs.values()))
-        self.assertEqual(set(workflow["jobs"]), {"verify-candidate", "campaign"})
+        required = {"runtime_source", "base_image", "reviewer_image"}
+        self.assertEqual(set(inputs), required | {"campaigns"})
+        self.assertTrue(all(inputs[name]["required"] == "true" for name in required))
+        self.assertEqual(inputs["campaigns"]["required"], "false")
+        self.assertEqual(inputs["campaigns"]["default"], "panel,lifecycle")
+        self.assertEqual(set(workflow["jobs"]), {"verify-candidate", "campaign", "lifecycle"})
         self.assertEqual(
             workflow["jobs"]["verify-candidate"]["if"],
             "github.ref == 'refs/heads/main'",
@@ -110,9 +113,18 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", verify)
         self.assertNotIn("if", verify)
         self.assertNotIn("continue-on-error", verification)
-        campaign = workflow["jobs"]["campaign"]
-        self.assertEqual(campaign["needs"], "verify-candidate")
-        self.assertNotIn("if", campaign)
+        # Each campaign is gated only on the selection. An `if` with no status
+        # function keeps GitHub's implicit success(), so a failed identity check
+        # still stops every campaign; always()/failure()/cancelled() would not.
+        for name, token in (("campaign", "panel"), ("lifecycle", "lifecycle")):
+            with self.subTest(job=name):
+                job = workflow["jobs"][name]
+                self.assertEqual(job["needs"], "verify-candidate")
+                self.assertEqual(
+                    job["if"], f"contains(format(',{{0}},', inputs.campaigns), ',{token},')"
+                )
+                for status in ("always()", "failure()", "cancelled()", "success()"):
+                    self.assertNotIn(status, job["if"])
 
     def test_demo_coordinates_and_gitlab_artifact_authority_are_fixed(self) -> None:
         github = load_repository_script("github_candidate_canary", GITHUB_ORCHESTRATOR)

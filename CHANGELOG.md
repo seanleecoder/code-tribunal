@@ -9,6 +9,12 @@ versioning.
 
 ### Added
 
+- The Candidate Canary takes a `campaigns` input and gains a zero-token
+  `lifecycle` campaign that drives the GitHub mock Chain B end to end: create on an
+  added file, unchanged rerun, in-place body change, `wontfix` with persistence,
+  reopen, stale-head no-op, and a `blocker` thread leaving the pull request
+  mergeable. The `wontfix` step fails on any `post_result` warning, so an expired
+  resolve token is caught (SPEC-61).
 - `make demo-preflight`: a read-only check of both demo consumers before a live
   campaign. It reports required status checks, sticky mock or retired variables,
   manual mode, a roster without Cursor, missing or unprotected credentials, and an

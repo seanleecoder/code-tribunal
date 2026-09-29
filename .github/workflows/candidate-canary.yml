@@ -15,6 +15,13 @@ on:
         description: Digest-pinned ai-review-reviewer image reference
         required: true
         type: string
+      campaigns:
+        description: >-
+          Comma-separated campaigns to run: panel (real four-seat panel, spends
+          tokens) and lifecycle (zero-token mock Chain B)
+        required: false
+        default: panel,lifecycle
+        type: string
 
 permissions:
   contents: read
@@ -39,6 +46,18 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+      - name: Validate campaign selection
+        env:
+          CAMPAIGNS: ${{ inputs.campaigns }}
+        run: |
+          IFS=, read -ra selected <<< "$CAMPAIGNS"
+          [[ ${#selected[@]} -gt 0 ]] || { echo "::error::no campaign selected"; exit 1; }
+          for campaign in "${selected[@]}"; do
+            case "$campaign" in
+              panel|lifecycle) ;;
+              *) echo "::error::unknown campaign '$campaign'"; exit 1 ;;
+            esac
+          done
       - name: Validate source and image inputs
         id: identity
         env:
@@ -73,6 +92,7 @@ jobs:
 
   campaign:
     needs: verify-candidate
+    if: contains(format(',{0},', inputs.campaigns), ',panel,')
     runs-on: ubuntu-latest
     environment: candidate-canary
     strategy:
@@ -192,4 +212,62 @@ jobs:
         with:
           name: candidate-canary-${{ matrix.platform }}-summary
           path: ${{ matrix.platform }}-summary.json
+          if-no-files-found: error
+
+  lifecycle:
+    needs: verify-candidate
+    if: contains(format(',{0},', inputs.campaigns), ',lifecycle,')
+    runs-on: ubuntu-latest
+    environment: candidate-canary
+    env:
+      PYTHONPATH: ai-review/src:scripts
+    steps:
+      - name: Check out protected orchestration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install validation dependency
+        run: >-
+          python -m pip install
+          --constraint ai-review/images/python-constraints.txt
+          jsonschema
+      - name: Create isolated mock lifecycle change
+        env:
+          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+        run: |
+          python scripts/github_lifecycle_canary.py create \
+            --branch "${{ needs.verify-candidate.outputs.branch }}-github-lifecycle" \
+            --workflow .github/workflows/ai-review.yml \
+            --workdir "$RUNNER_TEMP/github-lifecycle" \
+            --state "$RUNNER_TEMP/github-lifecycle-state.json" \
+            --runtime-source "${{ inputs.runtime_source }}" \
+            --base-image "${{ inputs.base_image }}" \
+            --reviewer-image "${{ inputs.reviewer_image }}"
+      - name: Drive the lifecycle steps
+        env:
+          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+        run: |
+          python scripts/github_lifecycle_canary.py run \
+            --workdir "$RUNNER_TEMP/github-lifecycle" \
+            --state "$RUNNER_TEMP/github-lifecycle-state.json" \
+            --summary-out github-lifecycle-summary.json
+      - name: Clean up demo
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+        run: |
+          python scripts/github_lifecycle_canary.py cleanup \
+            --state "$RUNNER_TEMP/github-lifecycle-state.json"
+      - name: Upload redacted lifecycle summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-canary-github-lifecycle-summary
+          path: github-lifecycle-summary.json
           if-no-files-found: error

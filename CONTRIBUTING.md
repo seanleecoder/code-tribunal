@@ -92,6 +92,22 @@ bodies and credentials are never uploaded by the orchestration workflow. The
 demo PR and MR are closed and temporary branches removed after diagnostics are
 collected; their closed discussions and external run URLs remain available.
 
+The `campaigns` input selects what runs. It defaults to `panel,lifecycle`:
+
+- `panel`: the real four-seat review and critique above. It spends tokens.
+- `lifecycle`: a zero-token GitHub mock Chain B on its own temporary branch.
+  - The canary's workflow copy runs every seat in mock mode and adds a
+    `mock_scenario` dispatch input, so each step re-runs the same head without a
+    commit.
+  - The steps are create on an added file, unchanged rerun, changed body in place,
+    `wontfix` (a `post_result` warning fails the step, which catches an expired
+    resolve token), reopen, a stale-head no-op, and a `blocker` thread that leaves
+    the pull request mergeable.
+  - It uploads `candidate-canary-github-lifecycle-summary`.
+
+Dispatch `campaigns=lifecycle` to validate posting and state changes without
+spending tokens.
+
 Do not rerun a green campaign for extra evidence. A failed campaign may be rerun
 only after its diagnostics produce a concrete fix. This canary is a candidate
 promotion gate, not an ordinary pull-request gate.

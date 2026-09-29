@@ -68,8 +68,15 @@ def canary_stage_environment() -> str:
     return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {controls}"
 
 
+def _configure_collect(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--destination", required=True)
+
+
 def build_campaign_parser(
-    description: str, configure_create: CreateParser
+    description: str,
+    configure_create: CreateParser,
+    *,
+    drive: tuple[str, CreateParser] = ("collect", _configure_collect),
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=description)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -80,10 +87,11 @@ def build_campaign_parser(
     create.add_argument("--reviewer-image", required=True)
     create.add_argument("--state", required=True)
     configure_create(create)
-    collect = subparsers.add_parser("collect")
-    collect.add_argument("--state", required=True)
-    collect.add_argument("--destination", required=True)
-    collect.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    drive_name, configure_drive = drive
+    drive_parser = subparsers.add_parser(drive_name)
+    drive_parser.add_argument("--state", required=True)
+    drive_parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    configure_drive(drive_parser)
     cleanup = subparsers.add_parser("cleanup")
     cleanup.add_argument("--state", required=True)
     return parser
