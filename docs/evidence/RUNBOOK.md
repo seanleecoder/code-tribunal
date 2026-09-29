@@ -95,22 +95,34 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
 
 ## Step 0 — Image identity (owned by the canary)
 
-Image identity is not verified by hand. The Candidate Canary's `verify-candidate`
-job (Step 0b) checks both digests, OCI revision labels, and provenance attestations
-from protected `main` before any campaign runs, and
-[`record-candidate-canary.md`](record-candidate-canary.md) records the result. Through
-2.0.0 this step was a separate manual check with its own
-[record](record-image-publication-verification.md), now retired (SPEC-61).
+The Candidate Canary's `verify-candidate` job (Step 0b) checks both digests and OCI
+revision labels, then verifies each provenance attestation against source ref
+`refs/heads/main`, source digest `R`, and the exact publication-workflow signer
+identity shown below. Any failure prevents the campaign from starting.
+[`record-candidate-canary.md`](record-candidate-canary.md) records the result.
 
-The commands below remain for **diagnosing** a `verify-candidate` failure only.
-The example digests are the historical 1.0.0 pair:
+Retire the separate manual provenance check only once this enforcement is on
+protected `main`. Older orchestration requires the constrained checks below,
+with their results and the exact `Release-*` bindings recorded alongside the
+canary results. The 2.0.0 provenance evidence remains in the historical manual
+[record](record-image-publication-verification.md); its canary did not enforce
+these source and signer constraints.
+
+With the hardened canary, these commands are for diagnosing a `verify-candidate`
+failure. Set `R`, `BASE_IMAGE`, and `REVIEWER_IMAGE` to the candidate's full source
+commit and two digest-pinned image references:
 
 ```bash
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
-# Verify build provenance attestation (both subjects)
-gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe \
-  --repo seanleecoder/code-tribunal
+for image in "$BASE_IMAGE" "$REVIEWER_IMAGE"; do
+  docker pull "$image" || exit 1
+  gh attestation verify "oci://$image" \
+    --repo seanleecoder/code-tribunal \
+    --predicate-type https://slsa.dev/provenance/v1 \
+    --source-ref refs/heads/main \
+    --source-digest "$R" \
+    --cert-identity https://github.com/seanleecoder/code-tribunal/.github/workflows/publish-ai-review-images.yml@refs/heads/main \
+    || exit 1
+done
 ```
 
 To confirm anonymous resolution without touching stored credentials, point
@@ -132,7 +144,9 @@ The canary retains only the redacted `candidate-canary-<platform>-summary`
 artifacts and writes nothing under `docs/evidence/`. Record the green pair in a
 new `record-candidate-canary.md`, copied from [the record template](record-template.md), with the
 workflow run ID, both summary artifacts, and the three `Release-*` binding
-fields. That record is the release's real-panel (Chain A) row on **both**
+fields. Include the `verify-candidate` job result for both images and its source
+ref, source digest, and publication-workflow signer constraints. That record is
+the release's real-panel (Chain A) row on **both**
 platforms, so Chain A below is needed only when the canary cannot run.
 
 When the posted-body format changed, confirm before the repin that a bot thread

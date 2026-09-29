@@ -38,14 +38,20 @@ the operator from them.
 - GitHub demo `AI_REVIEW_MANUAL=false`, so the pull request's own run was the
   campaign run and the canary dispatched nothing.
 
-## Image identity (`verify-candidate`)
+## Image identity
+
+The canary verified image digests, source reachability, OCI labels, and
+repository-scoped attestations. The stronger publication-workflow, source-ref,
+and source-digest provenance checks in this table come from the matching
+[manual publication record](record-image-publication-verification.md), not from
+this historical canary's enforcement.
 
 | Check | base | reviewer |
 |---|---|---|
 | Digest | `sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02` | `sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c` |
 | Source reachable from protected `main` | yes | yes |
 | `org.opencontainers.image.revision` | `= R` | `= R` |
-| Provenance attestation (publish workflow, `refs/heads/main`, `R`) | verified | verified |
+| Provenance attestation (manual: publish workflow, `refs/heads/main`, `R`) | verified | verified |
 
 Publication run `36312633309`; quality run `36312633166`.
 

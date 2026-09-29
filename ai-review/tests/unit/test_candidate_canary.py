@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -82,6 +83,36 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         upload = next(step for step in steps if step["name"] == "Upload redacted summary")
         self.assertEqual(upload["if"], "always()")
         self.assertEqual(upload["with"]["if-no-files-found"], "error")
+
+    def test_campaign_requires_full_image_verification_after_pulls(self) -> None:
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        verification = workflow["jobs"]["verify-candidate"]
+        steps = verification["steps"]
+        validators = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if "python scripts/validate_candidate_identity.py" in step.get("run", "")
+        ]
+        self.assertEqual(len(validators), 2)
+        (input_index, inputs), (verify_index, verify) = validators
+        self.assertNotIn("--verify-images", inputs["run"])
+        self.assertIn("--verify-images", verify["run"])
+        self.assertIn('--runtime-source "$RUNTIME_SOURCE"', verify["run"])
+        self.assertIn('--base-image "$BASE_IMAGE"', verify["run"])
+        self.assertIn('--reviewer-image "$REVIEWER_IMAGE"', verify["run"])
+        self.assertEqual(verify["env"]["RUNTIME_SOURCE"], "${{ inputs.runtime_source }}")
+        self.assertEqual(verify["env"]["BASE_IMAGE"], "${{ inputs.base_image }}")
+        self.assertEqual(verify["env"]["REVIEWER_IMAGE"], "${{ inputs.reviewer_image }}")
+        self.assertEqual(verify["env"]["GH_TOKEN"], "${{ github.token }}")
+        pulls = "\n".join(step.get("run", "") for step in steps[input_index + 1 : verify_index])
+        self.assertIn('docker pull "$BASE_IMAGE"', pulls)
+        self.assertIn('docker pull "$REVIEWER_IMAGE"', pulls)
+        self.assertNotIn("continue-on-error", verify)
+        self.assertNotIn("if", verify)
+        self.assertNotIn("continue-on-error", verification)
+        campaign = workflow["jobs"]["campaign"]
+        self.assertEqual(campaign["needs"], "verify-candidate")
+        self.assertNotIn("if", campaign)
 
     def test_demo_coordinates_and_gitlab_artifact_authority_are_fixed(self) -> None:
         github = load_repository_script("github_candidate_canary", GITHUB_ORCHESTRATOR)
@@ -219,43 +250,119 @@ class CandidateIdentityTests(unittest.TestCase):
         ancestor.assert_called_once_with(self.source, "origin/main")
         self.assertEqual(coordinates["base"]["digest"], "sha256:" + "b" * 64)
 
-    def test_pulled_image_checks_label_digest_and_attestation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            attestation = Path(tmp) / "attestation.json"
-            attestation.write_text(
-                json.dumps({"predicate": {"materials": [self.source]}}),
-                encoding="utf-8",
-            )
-            outputs = iter(
+    def _cli_args(self) -> list[str]:
+        return [
+            "--runtime-source", self.source,
+            "--base-image", self.base,
+            "--reviewer-image", self.reviewer,
+        ]
+
+    def test_cli_verifies_both_images_with_source_and_signer_constraints(self) -> None:
+        outputs = []
+        for role, digest in (("base", "b" * 64), ("reviewer", "c" * 64)):
+            outputs.extend(
                 [
                     self.source,
-                    "ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:" + "b" * 64,
+                    f"ghcr.io/seanleecoder/code-tribunal/ai-review-{role}@sha256:{digest}",
+                    "Verified",  # Successful verification needs no JSON or source in stdout.
                 ]
             )
-            with mock.patch.object(self.identity, "_run", side_effect=lambda *_args: next(outputs)):
-                self.identity.verify_pulled_image(
-                    role="base",
-                    image=self.base,
-                    runtime_source=self.source,
-                    attestation_path=attestation,
+        with (
+            mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+            mock.patch.object(
+                self.identity.subprocess,
+                "run",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+                    for output in outputs
+                ],
+            ) as run,
+        ):
+            self.assertEqual(self.identity.cli([*self._cli_args(), "--verify-images"]), 0)
+        self.assertEqual(run.call_count, 6)
+        verifications = [call for call in run.call_args_list if call.args[0][0] == "gh"]
+        self.assertEqual(
+            verifications,
+            [
+                mock.call(
+                    [
+                        "gh", "attestation", "verify", f"oci://{image}",
+                        "--repo", "seanleecoder/code-tribunal",
+                        "--predicate-type", "https://slsa.dev/provenance/v1",
+                        "--source-ref", "refs/heads/main",
+                        "--source-digest", self.source,
+                        "--cert-identity",
+                        "https://github.com/seanleecoder/code-tribunal/"
+                        ".github/workflows/publish-ai-review-images.yml@refs/heads/main",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
                 )
+                for image in (self.base, self.reviewer)
+            ],
+        )
+
+    def test_input_only_cli_does_not_verify_unpulled_images(self) -> None:
+        with (
+            mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+            mock.patch.object(self.identity.subprocess, "run") as run,
+        ):
+            self.assertEqual(self.identity.cli(self._cli_args()), 0)
+        run.assert_not_called()
+
+    def test_attestation_failures_cannot_pass_with_source_in_unrelated_output(self) -> None:
+        for role in ("base", "reviewer"):
+            for mismatch in ("source ref", "source digest", "signer identity"):
+                with self.subTest(role=role, mismatch=mismatch):
+                    outputs = []
+                    for image_role, digest in (("base", "b" * 64), ("reviewer", "c" * 64)):
+                        outputs.extend(
+                            subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+                            for output in (
+                                self.source,
+                                "ghcr.io/seanleecoder/code-tribunal/"
+                                f"ai-review-{image_role}@sha256:{digest}",
+                            )
+                        )
+                        rejected = image_role == role
+                        outputs.append(
+                            subprocess.CompletedProcess(
+                                [], 1 if rejected else 0,
+                                stdout=json.dumps({"unrelated": self.source}),
+                                stderr=f"{mismatch} mismatch" if rejected else "",
+                            )
+                        )
+                    with (
+                        mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+                        mock.patch.object(self.identity.subprocess, "run", side_effect=outputs),
+                        self.assertRaisesRegex(
+                            self.identity.CandidateIdentityError, f"{mismatch} mismatch"
+                        ),
+                    ):
+                        self.identity.cli([*self._cli_args(), "--verify-images"])
+
+    def test_wrong_revision_label_fails(self) -> None:
+        with (
+            mock.patch.object(self.identity, "_run", return_value="d" * 40) as run,
+            self.assertRaisesRegex(self.identity.CandidateIdentityError, "revision label"),
+        ):
+            self.identity.verify_pulled_image(
+                role="base", image=self.base, runtime_source=self.source
+            )
+        self.assertEqual(run.call_count, 1)
 
     def test_wrong_registry_digest_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            attestation = Path(tmp) / "attestation.json"
-            attestation.write_text(json.dumps([self.source]), encoding="utf-8")
-            with (
-                mock.patch.object(
-                    self.identity, "_run", side_effect=[self.source, "different@sha256:value"]
-                ),
-                self.assertRaisesRegex(self.identity.CandidateIdentityError, "RepoDigests"),
-            ):
-                self.identity.verify_pulled_image(
-                    role="base",
-                    image=self.base,
-                    runtime_source=self.source,
-                    attestation_path=attestation,
-                )
+        with (
+            mock.patch.object(
+                self.identity, "_run", side_effect=[self.source, "different@sha256:value"]
+            ) as run,
+            self.assertRaisesRegex(self.identity.CandidateIdentityError, "RepoDigests"),
+        ):
+            self.identity.verify_pulled_image(
+                role="base", image=self.base, runtime_source=self.source
+            )
+        self.assertEqual(run.call_count, 2)
 
 
 class CandidateCollectionTests(unittest.TestCase):

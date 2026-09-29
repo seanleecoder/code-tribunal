@@ -1,9 +1,10 @@
 # Evidence record: registry / image publication verification / 2026-09-27
 
-> **Retired after 2.0.0 (SPEC-61).** The Candidate Canary's `verify-candidate` job
-> performs these checks, and [`record-candidate-canary.md`](record-candidate-canary.md)
-> records them. This file keeps its 2.0.0 binding for history and is no longer
-> cited by new releases.
+> **Historical 2.0.0 evidence (SPEC-61).** New releases consolidate these checks
+> into [`record-candidate-canary.md`](record-candidate-canary.md) once protected
+> `main` enforces the source ref, source digest, and exact publication-workflow
+> signer identity. This file retains the manual provenance evidence for 2.0.0;
+> that release's canary did not enforce those constraints.
 
 Status: passed
 
@@ -51,7 +52,9 @@ that base, so both images were rebuilt from `R` together by one publication run.
   returned one verified statement whose build configuration is
   `seanleecoder/code-tribunal/.github/workflows/publish-ai-review-images.yml@refs/heads/main`.
 - The Candidate Canary's `verify-candidate` job (run `36313164907`) independently
-  re-verified both digests, labels, and attestations from protected `main`.
+  re-verified both digests, labels, and repository-scoped attestations while
+  running from protected `main`. The source-ref, source-digest, and publication
+  workflow checks above were manual; that canary did not enforce them.
 
 ## Audit
 

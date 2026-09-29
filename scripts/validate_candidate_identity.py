@@ -4,11 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from release_common import (
     DIGEST_RE,
@@ -67,19 +65,7 @@ def validate_inputs(
     }
 
 
-def _contains_exact_string(value: Any, expected: str) -> bool:
-    if isinstance(value, str):
-        return value == expected
-    if isinstance(value, list):
-        return any(_contains_exact_string(item, expected) for item in value)
-    if isinstance(value, dict):
-        return any(_contains_exact_string(item, expected) for item in value.values())
-    return False
-
-
-def verify_pulled_image(
-    *, role: str, image: str, runtime_source: str, attestation_path: Path
-) -> None:
+def verify_pulled_image(*, role: str, image: str, runtime_source: str) -> None:
     coordinates = _coordinates(image, role=role, runtime_source=runtime_source)
     revision = _run(
         "docker",
@@ -102,12 +88,25 @@ def verify_pulled_image(
         raise CandidateIdentityError(
             f"{role} image local RepoDigests do not contain {expected_digest}"
         )
-    try:
-        attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise CandidateIdentityError(f"cannot read {role} attestation JSON: {exc}") from exc
-    if not _contains_exact_string(attestation, runtime_source):
-        raise CandidateIdentityError(f"{role} attestation does not bind the runtime source")
+    # gh enforces these identities against the signed certificate. Searching the
+    # statement's metadata for R would not establish source or signer identity.
+    _run(
+        "gh",
+        "attestation",
+        "verify",
+        f"oci://{image}",
+        "--repo",
+        "seanleecoder/code-tribunal",
+        "--predicate-type",
+        "https://slsa.dev/provenance/v1",
+        "--source-ref",
+        "refs/heads/main",
+        "--source-digest",
+        runtime_source,
+        "--cert-identity",
+        "https://github.com/seanleecoder/code-tribunal/"
+        ".github/workflows/publish-ai-review-images.yml@refs/heads/main",
+    )
 
 
 def _branch_name() -> str:
@@ -124,29 +123,15 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-image", required=True)
     parser.add_argument("--reviewer-image", required=True)
     parser.add_argument("--github-output", type=Path)
-    parser.add_argument("--base-attestation", type=Path)
-    parser.add_argument("--reviewer-attestation", type=Path)
+    parser.add_argument("--verify-images", action="store_true")
     args = parser.parse_args(argv)
     validate_inputs(args.runtime_source, args.base_image, args.reviewer_image)
     if args.github_output is not None:
         with args.github_output.open("a", encoding="utf-8") as output:
             output.write(f"branch={_branch_name()}\n")
-    attestations = {
-        "base": (args.base_image, args.base_attestation),
-        "reviewer": (args.reviewer_image, args.reviewer_attestation),
-    }
-    if any(path is None for _image, path in attestations.values()) and any(
-        path is not None for _image, path in attestations.values()
-    ):
-        parser.error("both attestation paths must be supplied together")
-    for role, (image, attestation_path) in attestations.items():
-        if attestation_path is not None:
-            verify_pulled_image(
-                role=role,
-                image=image,
-                runtime_source=args.runtime_source,
-                attestation_path=attestation_path,
-            )
+    if args.verify_images:
+        for role, image in (("base", args.base_image), ("reviewer", args.reviewer_image)):
+            verify_pulled_image(role=role, image=image, runtime_source=args.runtime_source)
     return 0
 
 

@@ -30,9 +30,13 @@ and remove completed spec files from the active
    the live campaign with the triage table below and update the carried
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
 3. Build base and reviewer images from exactly `R` (the publish workflow does this
-   on the push to `main`). Do not verify them by hand: the canary's
-   `verify-candidate` job checks both digests, OCI revision labels, and provenance
-   from protected `main`, and its record carries the result.
+   on the push to `main`). The canary's `verify-candidate` job checks both digests
+   and OCI revision labels, then verifies provenance with source ref
+   `refs/heads/main`, source digest `R`, and the exact signer identity
+   `https://github.com/seanleecoder/code-tribunal/.github/workflows/publish-ai-review-images.yml@refs/heads/main`.
+   Its record carries the result. Retire manual provenance verification only
+   once this enforcement is on protected `main`; older orchestration still
+   requires the constrained manual checks in [Step 0](../evidence/RUNBOOK.md#step-0--image-identity-owned-by-the-canary).
    Before changing any consumer pin, run the read-only `make demo-preflight`,
    which catches demo drift before any tokens are spent, and then the protected
    manual `Candidate Canary` workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
