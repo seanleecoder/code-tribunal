@@ -100,10 +100,16 @@ class FakeGitLab:
         raise AssertionError(f"unexpected {method} {path}")
 
 
-def _probe() -> object:
-    return hostile.HostileProbe(
+def _run(fake: FakeGitLab) -> dict[str, dict[str, Any]]:
+    """Run every probe step against ``fake`` and return each step's observation."""
+    probe = hostile.HostileProbe(
         {"mr_iid": "5", "template_sha": TEMPLATE_SHA}, time.monotonic() + 60
     )
+    with (
+        mock.patch.object(hostile, "_request", side_effect=fake),
+        mock.patch.object(hostile, "_raw_file", return_value=CONSUMER),
+    ):
+        return {name: step() for name, step in probe.steps()}
 
 
 def _archive(*entries: tuple[str | zipfile.ZipInfo, bytes]) -> bytes:
@@ -126,14 +132,12 @@ def _create_args(directory: Path, branch: str) -> argparse.Namespace:
     )
 
 
-def _creation_api(branch: str, response: object, *, exact_rule: bool = False) -> mock.Mock:
+def _creation_api(response: object) -> mock.Mock:
     def request(method: str, path: str, **kwargs: object) -> object:
         if "/repository/branches/" in path:
             if isinstance(response, Exception):
                 raise response
             return response
-        if "/protected_branches/" in path:
-            return {"name": branch} if exact_rule else None
         if method == "POST" and path.endswith("/merge_requests"):
             return {"iid": 5, "web_url": "https://gitlab.example.test/demo/-/merge_requests/5"}
         raise AssertionError(f"unexpected {method} {path}")
@@ -157,33 +161,47 @@ class HostileConfigTests(unittest.TestCase):
         )
         self.assertEqual(len(issues), 2)
 
-    def test_create_refuses_a_protected_probe_branch(self) -> None:
-        branch = "candidate-canary-probe"
-        for protection_rule in (branch, "candidate-canary-*"):
-            with self.subTest(rule=protection_rule), tempfile.TemporaryDirectory() as tmp:
-                request = _creation_api(
-                    branch,
-                    {"name": branch, "protected": True},
-                    exact_rule=protection_rule == branch,
-                )
+    def test_create_refuses_unless_the_branch_is_confirmed_unprotected(self) -> None:
+        responses = (
+            {"name": "probe", "protected": True},
+            None,
+            [],
+            {},
+            {"protected": None},
+            {"protected": 0},
+            {"protected": "false"},
+            *(
+                hostile.GitLabCanaryError(f"HTTP {status}", status=status)
+                for status in (404, 403, 500)
+            ),
+        )
+        for response in responses:
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as tmp:
+                request = _creation_api(response)
                 with (
                     mock.patch.object(hostile, "_request", request),
-                    mock.patch.object(hostile, "_commit", return_value={"id": "c" * 40}),
-                    self.assertRaisesRegex(hostile.GitLabCanaryError, "protected"),
+                    mock.patch.object(hostile, "_commit"),
+                    mock.patch.object(
+                        hostile, "push_template_branch", return_value={"template_sha": "c" * 40}
+                    ),
+                    self.assertRaises(hostile.GitLabCanaryError),
                 ):
-                    hostile.create_probe(_create_args(Path(tmp), branch))
+                    hostile.create_probe(_create_args(Path(tmp), "probe"))
                 request.assert_called_once_with(
-                    "GET", f"projects/{hostile.DEMO_PROJECT}/repository/branches/{branch}"
+                    "GET", f"projects/{hostile.DEMO_PROJECT}/repository/branches/probe"
                 )
 
     def test_create_accepts_an_unprotected_branch_and_encodes_its_name(self) -> None:
         branch = "hostile/unprotected-probe"
-        request = _creation_api(branch, {"name": branch, "protected": False})
+        request = _creation_api({"name": branch, "protected": False})
         with tempfile.TemporaryDirectory() as tmp:
             args = _create_args(Path(tmp), branch)
             with (
                 mock.patch.object(hostile, "_request", request),
-                mock.patch.object(hostile, "_commit", return_value={"id": "c" * 40}),
+                mock.patch.object(hostile, "_commit"),
+                mock.patch.object(
+                    hostile, "push_template_branch", return_value={"template_sha": "c" * 40}
+                ),
             ):
                 state = hostile.create_probe(args)
             self.assertEqual(state["mr_iid"], "5")
@@ -198,62 +216,24 @@ class HostileConfigTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].args[0], "POST")
         self.assertEqual(request.call_args_list[1].kwargs["payload"]["source_branch"], branch)
 
-    def test_create_fails_if_branch_protection_is_unknown(self) -> None:
-        responses = (None, [], {}, {"protected": None}, {"protected": 0}, {"protected": "false"})
-        for response in responses:
-            with self.subTest(response=response), tempfile.TemporaryDirectory() as tmp:
-                request = _creation_api("probe", response)
-                with (
-                    mock.patch.object(hostile, "_request", request),
-                    mock.patch.object(hostile, "_commit", return_value={"id": "c" * 40}),
-                    self.assertRaises(hostile.GitLabCanaryError),
-                ):
-                    hostile.create_probe(_create_args(Path(tmp), "probe"))
-                request.assert_called_once_with(
-                    "GET", f"projects/{hostile.DEMO_PROJECT}/repository/branches/probe"
-                )
-
-    def test_create_aborts_on_branch_lookup_errors(self) -> None:
-        for status in (404, 403, 500):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
-                request = _creation_api(
-                    "probe", hostile.GitLabCanaryError(f"HTTP {status}", status=status)
-                )
-                with (
-                    mock.patch.object(hostile, "_request", request),
-                    mock.patch.object(hostile, "_commit", return_value={"id": "c" * 40}),
-                    self.assertRaises(hostile.GitLabCanaryError),
-                ):
-                    hostile.create_probe(_create_args(Path(tmp), "probe"))
-                request.assert_called_once_with(
-                    "GET", f"projects/{hostile.DEMO_PROJECT}/repository/branches/probe"
-                )
-
 
 class HostileProbeTests(unittest.TestCase):
     def test_the_boundary_holds(self) -> None:
-        probe = _probe()
-        with (
-            mock.patch.object(hostile, "_request", side_effect=FakeGitLab()),
-            mock.patch.object(hostile, "_raw_file", return_value=CONSUMER),
-        ):
-            probe.run()
-        names = [check["name"] for check in probe.checks]
+        observed = _run(FakeGitLab())
         self.assertEqual(
-            names,
+            list(observed),
             [
+                "auditor_rejects_hostile",
                 "credentials_withheld",
                 "prepare_fails_closed",
                 "forgery_unconsumed",
-                "auditor_rejects_hostile",
                 "image_substituted",
             ],
         )
-        self.assertTrue(all(check["passed"] for check in probe.checks))
-        self.assertTrue(probe.checks[1]["observed"]["empty_input_bundle"])
-        self.assertTrue(probe.checks[-1]["observed"]["hostile_image_pulled"])
+        self.assertTrue(observed["prepare_fails_closed"]["empty_input_bundle"])
+        self.assertTrue(observed["image_substituted"]["hostile_image_pulled"])
 
-    def _assert_failed_summary(self, fake: FakeGitLab) -> dict[str, Any]:
+    def _run_probe(self, fake: FakeGitLab) -> dict[str, Any]:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state.json"
             state.write_text(
@@ -271,30 +251,26 @@ class HostileProbeTests(unittest.TestCase):
             written = json.loads(summary.read_text(encoding="utf-8"))
         self.assertFalse(written["passed"])
         self.assertEqual(written["schema_version"], "candidate_canary_hostile_summary.v1")
-        self.assertEqual(
-            [check["name"] for check in written["checks"]], ["credentials_withheld", "boundary"]
-        )
-        self.assertTrue(written["checks"][0]["passed"])
-        self.assertFalse(written["checks"][-1]["passed"])
+        self.assertTrue(all(step["passed"] for step in written["steps"][:-1]))
+        self.assertFalse(written["steps"][-1]["passed"])
         self.assertNotIn(fake.prepare_trace, json.dumps(written))
+        return written
+
+    def _assert_failed_summary(self, fake: FakeGitLab) -> dict[str, Any]:
+        written = self._run_probe(fake)
+        self.assertEqual(
+            [step["name"] for step in written["steps"]],
+            ["auditor_rejects_hostile", "credentials_withheld", "prepare_fails_closed"],
+        )
         return written
 
     def test_empty_archives_pass_without_absence_markers(self) -> None:
         for archive in (_archive(), _archive(("inputs/", b""), ("inputs/repo/", b""))):
             with self.subTest(archive=archive):
-                probe = _probe()
-                with (
-                    mock.patch.object(
-                        hostile,
-                        "_request",
-                        side_effect=FakeGitLab(
-                            archive=archive, prepare_upload="Uploading artifacts... 201 Created"
-                        ),
-                    ),
-                    mock.patch.object(hostile, "_raw_file", return_value=CONSUMER),
-                ):
-                    probe.run()
-                self.assertTrue(probe.checks[1]["observed"]["empty_input_bundle"])
+                observed = _run(
+                    FakeGitLab(archive=archive, prepare_upload="Uploading artifacts... 201 Created")
+                )
+                self.assertTrue(observed["prepare_fails_closed"]["empty_input_bundle"])
 
     def test_nonempty_or_unexpected_archives_fail_despite_absence_markers(self) -> None:
         cases = {
@@ -309,7 +285,7 @@ class HostileProbeTests(unittest.TestCase):
         for name, entry in cases.items():
             with self.subTest(case=name):
                 written = self._assert_failed_summary(FakeGitLab(archive=_archive(entry)))
-                self.assertIn("prepare", written["checks"][-1]["error"])
+                self.assertIn("prepare", written["steps"][-1]["error"])
                 self.assertNotIn("private-file", json.dumps(written))
                 self.assertNotIn("credential-sentinel", json.dumps(written))
 
@@ -328,7 +304,7 @@ class HostileProbeTests(unittest.TestCase):
             with self.subTest(archive=archive):
                 written = self._assert_failed_summary(FakeGitLab(archive=archive))
                 self.assertEqual(
-                    written["checks"][-1]["error"],
+                    written["steps"][-1]["error"],
                     "prepare input artifact is not a valid ZIP archive",
                 )
                 self.assertNotIn("credential-sentinel", json.dumps(written))
@@ -351,26 +327,15 @@ class HostileProbeTests(unittest.TestCase):
         for status in (401, 403, 500):
             with self.subTest(status=status):
                 written = self._assert_failed_summary(FakeGitLab(archive_error=status))
-                self.assertIn(f"HTTP {status}", written["checks"][-1]["error"])
+                self.assertIn(f"HTTP {status}", written["steps"][-1]["error"])
 
-    def test_a_present_credential_fails_and_keeps_earlier_checks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            state = Path(tmp) / "state.json"
-            state.write_text(
-                json.dumps({"mr_iid": "5", "template_sha": TEMPLATE_SHA}), encoding="utf-8"
-            )
-            summary = Path(tmp) / "summary.json"
-            args = argparse.Namespace(
-                state=str(state), timeout_seconds=60, summary_out=str(summary)
-            )
-            with mock.patch.object(
-                hostile, "_request", side_effect=FakeGitLab(present=("GITLAB_TOKEN",))
-            ):
-                self.assertEqual(hostile.run_probe(args), 1)
-            written = json.loads(summary.read_text(encoding="utf-8"))
-        self.assertFalse(written["passed"])
-        self.assertIn("GITLAB_TOKEN", written["checks"][-1]["error"])
-        self.assertEqual(written["schema_version"], "candidate_canary_hostile_summary.v1")
+    def test_a_present_credential_fails_and_keeps_earlier_steps(self) -> None:
+        written = self._run_probe(FakeGitLab(present=("GITLAB_TOKEN",)))
+        self.assertEqual(
+            [step["name"] for step in written["steps"]],
+            ["auditor_rejects_hostile", "credentials_withheld"],
+        )
+        self.assertIn("GITLAB_TOKEN", written["steps"][-1]["error"])
 
 
 if __name__ == "__main__":

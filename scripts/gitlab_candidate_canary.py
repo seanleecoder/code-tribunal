@@ -28,6 +28,7 @@ API = "https://gitlab.com/api/v4"
 DEMO_PROJECT = "84667714"
 TEMPLATE_PROJECT = "84667707"
 TEMPLATE_PROJECT_PATH = "seanleecoder/code-tribunal-ci-template"
+SETTLED_STATUSES = frozenset({"success", "failed", "canceled", "skipped", "manual"})
 
 
 class GitLabCanaryError(RuntimeError):
@@ -122,20 +123,15 @@ def candidate_template(template: str, args: argparse.Namespace, *, mock: bool = 
     return template
 
 
-def push_candidate_change(
-    args: argparse.Namespace,
-    *,
-    template: str,
-    fixture: list[dict[str, str]],
-    message: str,
-    title: str,
+def push_template_branch(
+    args: argparse.Namespace, template: str, message: str = "candidate canary template"
 ) -> dict[str, Any]:
-    """Push the template branch and a protected demo branch, then open the MR."""
+    """Commit both template files to the template branch and record the first state."""
     child = Path(args.child_template).read_text(encoding="utf-8")
     template_commit = _commit(
         TEMPLATE_PROJECT,
         args.branch,
-        "candidate canary template",
+        message,
         [
             {
                 "action": "update",
@@ -149,9 +145,22 @@ def push_candidate_change(
             },
         ],
     )
-    template_sha = str(template_commit["id"])
-    result: dict[str, Any] = {"branch": args.branch, "template_sha": template_sha}
-    write_state(args.state, result)
+    state: dict[str, Any] = {"branch": args.branch, "template_sha": str(template_commit["id"])}
+    write_state(args.state, state)
+    return state
+
+
+def push_candidate_change(
+    args: argparse.Namespace,
+    *,
+    template: str,
+    fixture: list[dict[str, str]],
+    message: str,
+    title: str,
+) -> dict[str, Any]:
+    """Push the template branch and a protected demo branch, then open the MR."""
+    result = push_template_branch(args, template)
+    template_sha = result["template_sha"]
 
     demo_ci = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
     demo_ci, ref_count = re.subn(
@@ -224,7 +233,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
             if status == "success":
                 child = pipeline
                 break
-            if status in {"failed", "canceled", "skipped", "manual"}:
+            if status in SETTLED_STATUSES:
                 raise GitLabCanaryError(f"GitLab child pipeline ended with {status}")
         time.sleep(15)
     else:

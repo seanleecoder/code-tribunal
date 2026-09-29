@@ -23,16 +23,24 @@ import stat
 import time
 import urllib.parse
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
-from ai_review.schema import write_canonical_json
-from candidate_canary_common import build_campaign_parser, read_state, write_state
+from candidate_canary_common import (
+    LifecycleFailure,
+    build_campaign_parser,
+    candidate_identity,
+    expect,
+    read_state,
+    run_lifecycle_steps,
+    write_state,
+)
 from demo_preflight import GITLAB_SECRETS
 from gitlab_candidate_canary import (
     DEMO_PROJECT,
-    TEMPLATE_PROJECT,
+    SETTLED_STATUSES,
     TEMPLATE_PROJECT_PATH,
     GitLabCanaryError,
     _commit,
@@ -41,6 +49,7 @@ from gitlab_candidate_canary import (
     _request,
     candidate_template,
     cleanup_campaign,
+    push_template_branch,
 )
 from pipeline_trust import find_trust_issues
 
@@ -50,11 +59,6 @@ HOSTILE_IMAGE = "docker.io/library/alpine:3.20"
 # chain may consume them; the consensus integrity binding rejects them anyway.
 FORGED_CONSENSUS = '{"schema_version":"consensus.v2","run_id":"forged","groups":[]}'
 FORGED_POST = '{"schema_version":"post_result.v1","run_id":"forged","status":"success"}'
-_SETTLED = {"success", "failed", "canceled", "skipped", "manual"}
-
-
-class HostileFailure(RuntimeError):
-    """The boundary behaved differently from the documented expectation."""
 
 
 def hostile_config(template_sha: str) -> str:
@@ -119,27 +123,7 @@ hostile_forge_publication:
 
 def create_probe(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
-    child = Path(args.child_template).read_text(encoding="utf-8")
-    template_commit = _commit(
-        TEMPLATE_PROJECT,
-        args.branch,
-        "candidate canary template (hostile probe)",
-        [
-            {
-                "action": "update",
-                "file_path": "ai-review/ci/review.gitlab-ci.yml",
-                "content": template,
-            },
-            {
-                "action": "update",
-                "file_path": "ai-review/ci/review-child.gitlab-ci.yml",
-                "content": child,
-            },
-        ],
-    )
-    template_sha = str(template_commit["id"])
-    state: dict[str, Any] = {"branch": args.branch, "template_sha": template_sha}
-    write_state(args.state, state)
+    state = push_template_branch(args, template, "candidate canary template (hostile probe)")
     # The demo branch is deliberately left unprotected: withholding protected
     # credentials from it is the property under test.
     _commit(
@@ -150,7 +134,7 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "action": "update",
                 "file_path": ".gitlab-ci.yml",
-                "content": hostile_config(template_sha),
+                "content": hostile_config(state["template_sha"]),
             }
         ],
     )
@@ -177,11 +161,7 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
         {
             "mr_iid": str(mr["iid"]),
             "change_url": str(mr["web_url"]),
-            "candidate": {
-                "runtime_source": args.runtime_source,
-                "base_image": args.base_image,
-                "reviewer_image": args.reviewer_image,
-            },
+            "candidate": candidate_identity(args),
         }
     )
     write_state(args.state, state)
@@ -193,22 +173,19 @@ class HostileProbe:
         self.mr = str(state["mr_iid"])
         self.template_sha = str(state["template_sha"])
         self.deadline = deadline
-        self.checks: list[dict[str, Any]] = []
+        self.parent = 0
+        self.parent_jobs: dict[str, dict[str, Any]] = {}
+        self.child_jobs: dict[str, dict[str, Any]] = {}
+        self.prepare_trace = ""
 
     def _sleep(self, seconds: int) -> None:
-        if time.monotonic() >= self.deadline:
-            raise HostileFailure("timed out")
+        expect(time.monotonic() < self.deadline, "timed out")
         time.sleep(seconds)
-
-    @staticmethod
-    def _expect(condition: bool, message: str) -> None:
-        if not condition:
-            raise HostileFailure(message)
 
     def _settled(self, pipeline: int) -> None:
         while (
             str(_request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")["status"])
-            not in _SETTLED
+            not in SETTLED_STATUSES
         ):
             self._sleep(15)
 
@@ -229,7 +206,7 @@ class HostileProbe:
         )
         if raw is None:
             advertised = prepare.get("artifacts_file") or {}
-            self._expect(
+            expect(
                 isinstance(advertised, dict)
                 and not advertised.get("filename")
                 and "inputs/: no matching files" in trace
@@ -251,100 +228,22 @@ class HostileProbe:
                     for entry in archive.infolist()
                 )
         except (zipfile.BadZipFile, UnicodeDecodeError):
-            raise HostileFailure("prepare input artifact is not a valid ZIP archive") from None
-        self._expect(empty, "prepare input artifact is not an empty inputs/ tree")
+            raise LifecycleFailure("prepare input artifact is not a valid ZIP archive") from None
+        expect(empty, "prepare input artifact is not an empty inputs/ tree")
 
-    def run(self) -> list[dict[str, Any]]:
-        while not (
-            pipelines := _request(
-                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines"
-            )
-        ):
-            self._sleep(5)
-        parent = int(pipelines[-1]["id"])
-        self._settled(parent)
-        parent_jobs = self._jobs(parent)
-        checks = self.checks
+    def steps(self) -> list[tuple[str, Callable[[], dict[str, Any]]]]:
+        # The auditor check needs no pipeline, so it runs before any polling.
+        return [
+            ("auditor_rejects_hostile", self.auditor_rejects_hostile),
+            ("credentials_withheld", self.credentials_withheld),
+            ("prepare_fails_closed", self.prepare_fails_closed),
+            ("forgery_unconsumed", self.forgery_unconsumed),
+            ("image_substituted", self.image_substituted),
+        ]
 
-        # 1. Protected credentials are withheld from the unprotected ref. Only the
-        #    presence lines are read; the trace itself is never retained.
-        enumerate_job = parent_jobs.get("hostile_enumerate_credentials")
-        self._expect(
-            enumerate_job is not None and enumerate_job["status"] == "success",
-            "credential enumeration job did not run",
-        )
-        trace = self._trace(enumerate_job)
-        presence = {
-            name: (
-                "present"
-                if re.search(rf"(?m){name} IS PRESENT\s*$", trace)
-                else "absent"
-                if re.search(rf"(?m){name} absent\s*$", trace)
-                else "unknown"
-            )
-            for name in GITLAB_SECRETS
-        }
-        self._expect(
-            all(value == "absent" for value in presence.values()),
-            f"protected credential presence on an unprotected ref: {presence}",
-        )
-        checks.append({"name": "credentials_withheld", "passed": True, "observed": presence})
-
-        # 2. The child chain fails closed at prepare.
-        bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent}/bridges")
-        downstream = next(
-            (b["downstream_pipeline"] for b in bridges if b.get("downstream_pipeline")), None
-        )
-        self._expect(downstream is not None, "the hostile trigger started no child pipeline")
-        child = int(downstream["id"])
-        self._settled(child)
-        child_jobs = self._jobs(child)
-        prepare = child_jobs.get("prepare_ai_review")
-        self._expect(
-            prepare is not None and prepare["status"] == "failed",
-            "prepare did not fail closed",
-        )
-        downstream_statuses = {
-            name: job["status"] for name, job in child_jobs.items() if name != "prepare_ai_review"
-        }
-        self._expect(
-            bool(downstream_statuses)
-            and all(status == "skipped" for status in downstream_statuses.values()),
-            f"a stage ran after the failed prepare: {downstream_statuses}",
-        )
-        prepare_trace = self._trace(prepare)
-        self._verify_empty_input_bundle(prepare, prepare_trace)
-        checks.append(
-            {
-                "name": "prepare_fails_closed",
-                "passed": True,
-                "observed": {
-                    "prepare": prepare["status"],
-                    "downstream": sorted(set(downstream_statuses.values())),
-                    "empty_input_bundle": True,
-                },
-            }
-        )
-
-        # 3. The forged publication artifacts exist but nothing consumed them.
-        forge = parent_jobs.get("hostile_forge_publication")
-        self._expect(
-            forge is not None and forge["status"] == "success",
-            "the forging job did not upload its artifacts",
-        )
-        consumers = {
-            name: child_jobs[name]["status"]
-            for name in ("consensus_ai_review", "post_ai_review")
-            if name in child_jobs
-        }
-        self._expect(
-            consumers and all(status == "skipped" for status in consumers.values()),
-            f"a publication stage ran: {consumers}",
-        )
-        checks.append({"name": "forgery_unconsumed", "passed": True, "observed": consumers})
-
-        # 4. The trust auditor rejects the hostile composition and accepts the
-        #    demo's own default-branch composition at its pinned template.
+    def auditor_rejects_hostile(self) -> dict[str, Any]:
+        """The auditor rejects the hostile composition and accepts the demo's own
+        default-branch composition at its pinned template."""
         hostile = find_trust_issues(
             yaml.safe_load(hostile_config(self.template_sha)),
             mode="child",
@@ -353,62 +252,113 @@ class HostileProbe:
         )
         consumer_text = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
         consumer_refs = set(re.findall(r'(?m)^\s*ref:\s*"([0-9a-f]{40})"$', consumer_text))
-        self._expect(len(consumer_refs) == 1, "the demo's default branch pins no single template")
+        expect(len(consumer_refs) == 1, "the demo's default branch pins no single template")
         legitimate = find_trust_issues(
             yaml.safe_load(consumer_text),
             mode="child",
             expected_template_project=TEMPLATE_PROJECT_PATH,
             expected_template_sha=consumer_refs.pop(),
         )
-        self._expect(bool(hostile), "the trust auditor accepted the hostile composition")
-        self._expect(
-            not legitimate, f"the trust auditor rejected the demo's own config: {legitimate}"
-        )
-        checks.append(
-            {
-                "name": "auditor_rejects_hostile",
-                "passed": True,
-                "observed": {"hostile_issues": len(hostile), "legitimate_issues": 0},
-            }
-        )
+        expect(bool(hostile), "the trust auditor accepted the hostile composition")
+        expect(not legitimate, f"the trust auditor rejected the demo's own config: {legitimate}")
+        return {"hostile_issues": len(hostile), "legitimate_issues": 0}
 
-        # Known limitation, recorded rather than asserted.
-        checks.append(
-            {
-                "name": "image_substituted",
-                "passed": True,
-                "observed": {
-                    "hostile_image_pulled": f"Pulling docker image {HOSTILE_IMAGE}" in prepare_trace
-                },
-                "note": "in-pipeline image enforcement is not implemented (SPEC-43)",
-            }
+    def credentials_withheld(self) -> dict[str, Any]:
+        """Protected credentials are withheld from the unprotected ref. Only the
+        presence lines are read; the trace itself is never retained."""
+        while not (
+            pipelines := _request(
+                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines"
+            )
+        ):
+            self._sleep(5)
+        self.parent = int(pipelines[-1]["id"])
+        self._settled(self.parent)
+        self.parent_jobs = self._jobs(self.parent)
+        enumerate_job = self.parent_jobs.get("hostile_enumerate_credentials")
+        expect(
+            enumerate_job is not None and enumerate_job["status"] == "success",
+            "credential enumeration job did not run",
         )
-        return checks
+        lines = {line.strip() for line in self._trace(enumerate_job).splitlines()}
+        presence = {
+            name: (
+                "present"
+                if f"{name} IS PRESENT" in lines
+                else "absent"
+                if f"{name} absent" in lines
+                else "unknown"
+            )
+            for name in GITLAB_SECRETS
+        }
+        expect(
+            all(value == "absent" for value in presence.values()),
+            f"protected credential presence on an unprotected ref: {presence}",
+        )
+        return presence
+
+    def prepare_fails_closed(self) -> dict[str, Any]:
+        """The child chain fails closed at prepare and every later stage is skipped."""
+        bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{self.parent}/bridges")
+        downstream = next(
+            (b["downstream_pipeline"] for b in bridges if b.get("downstream_pipeline")), None
+        )
+        expect(downstream is not None, "the hostile trigger started no child pipeline")
+        child = int(downstream["id"])
+        self._settled(child)
+        self.child_jobs = self._jobs(child)
+        prepare = self.child_jobs.get("prepare_ai_review")
+        expect(prepare is not None and prepare["status"] == "failed", "prepare did not fail closed")
+        downstream_statuses = {
+            name: job["status"]
+            for name, job in self.child_jobs.items()
+            if name != "prepare_ai_review"
+        }
+        expect(
+            bool(downstream_statuses)
+            and all(status == "skipped" for status in downstream_statuses.values()),
+            f"a stage ran after the failed prepare: {downstream_statuses}",
+        )
+        self.prepare_trace = self._trace(prepare)
+        self._verify_empty_input_bundle(prepare, self.prepare_trace)
+        return {
+            "prepare": prepare["status"],
+            "downstream": sorted(set(downstream_statuses.values())),
+            "empty_input_bundle": True,
+        }
+
+    def forgery_unconsumed(self) -> dict[str, Any]:
+        """The forged publication artifacts exist but no publication stage ran;
+        prepare_fails_closed already proved every child stage was skipped."""
+        forge = self.parent_jobs.get("hostile_forge_publication")
+        expect(
+            forge is not None and forge["status"] == "success",
+            "the forging job did not upload its artifacts",
+        )
+        consumers = ("consensus_ai_review", "post_ai_review")
+        missing = [name for name in consumers if name not in self.child_jobs]
+        expect(not missing, f"publication stages are missing from the child: {missing}")
+        return {name: self.child_jobs[name]["status"] for name in consumers}
+
+    def image_substituted(self) -> dict[str, Any]:
+        """Known limitation, recorded rather than asserted."""
+        return {
+            "hostile_image_pulled": f"Pulling docker image {HOSTILE_IMAGE}" in self.prepare_trace,
+            "note": "in-pipeline image enforcement is not implemented (SPEC-43)",
+        }
 
 
 def run_probe(args: argparse.Namespace) -> int:
     state = read_state(args.state)
     probe = HostileProbe(state, time.monotonic() + args.timeout_seconds)
-    passed = True
-    try:
-        probe.run()
-    except (HostileFailure, GitLabCanaryError) as exc:
-        # Checks that already passed stay in the summary before the failure.
-        probe.checks.append({"name": "boundary", "passed": False, "error": str(exc)})
-        passed = False
-    checks = probe.checks
-    write_canonical_json(
-        args.summary_out,
-        {
-            "schema_version": SUMMARY_SCHEMA,
-            "platform": "gitlab",
-            "candidate": state.get("candidate", "unavailable"),
-            "change_url": state.get("change_url", "unavailable"),
-            "passed": passed,
-            "checks": checks,
-        },
+    return run_lifecycle_steps(
+        probe.steps(),
+        platform="gitlab",
+        state=state,
+        summary_out=args.summary_out,
+        errors=(GitLabCanaryError,),
+        schema_version=SUMMARY_SCHEMA,
     )
-    return 0 if passed else 1
 
 
 def _configure_run(parser: argparse.ArgumentParser) -> None:
