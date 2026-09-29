@@ -13,7 +13,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +125,7 @@ def push_candidate_change(
     args: argparse.Namespace,
     *,
     template: str,
-    fixture: Callable[[], list[dict[str, str]]],
+    fixture: list[dict[str, str]],
     message: str,
     title: str,
 ) -> dict[str, Any]:
@@ -163,7 +162,7 @@ def push_candidate_change(
         DEMO_PROJECT,
         args.branch,
         message,
-        [{"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci}, *fixture()],
+        [{"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci}, *fixture],
     )
     _request(
         "POST",
@@ -191,15 +190,11 @@ def push_candidate_change(
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
-
-    def inject_defect() -> list[dict[str, str]]:
-        access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
-        return [{"action": "update", "file_path": "src/access.py", "content": access}]
-
+    access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
     return push_candidate_change(
         args,
         template=template,
-        fixture=inject_defect,
+        fixture=[{"action": "update", "file_path": "src/access.py", "content": access}],
         message="candidate canary fixture",
         title=f"Candidate canary {args.runtime_source[:12]}",
     )

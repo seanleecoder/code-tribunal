@@ -57,7 +57,7 @@ class ScenarioVariableTests(unittest.TestCase):
 
         def request(method: str, path: str, **kwargs: object) -> object:
             calls.append((method, path))
-            if method == "GET":
+            if method == "PUT":
                 return None if len(calls) == 1 else {"key": lifecycle.SCENARIO_VARIABLE}
             return {}
 
@@ -65,7 +65,7 @@ class ScenarioVariableTests(unittest.TestCase):
             lifecycle.set_scenario("blocking")
             lifecycle.set_scenario("blocking_alt")
         methods = [method for method, _ in calls]
-        self.assertEqual(methods, ["GET", "POST", "GET", "PUT"])
+        self.assertEqual(methods, ["PUT", "POST", "PUT"])
 
     def test_cleanup_deletes_the_variable_and_still_tears_down_branches(self) -> None:
         with (

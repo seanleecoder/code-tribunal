@@ -17,17 +17,23 @@ import io
 import json
 import time
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from ai_review.notes import parse_marker
-from ai_review.schema import write_canonical_json
 from candidate_canary_common import (
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    LifecycleFailure,
     build_campaign_parser,
+    candidate_identity,
+    expect,
     lifecycle_reviewer_results,
+    post_counts,
+    post_mutated,
     read_state,
+    run_lifecycle_steps,
     saved_wontfix,
     write_state,
 )
@@ -42,50 +48,34 @@ from gitlab_candidate_canary import (
 )
 
 SCENARIO_VARIABLE = "AI_REVIEW_MOCK_SCENARIO"
-SUMMARY_SCHEMA = "candidate_canary_lifecycle_summary.v1"
-_MUTATIONS = ("created_discussions", "updated_discussions", "resolved_discussions")
 _SETTLED = {"success", "failed", "canceled", "skipped", "manual"}
-
-
-class LifecycleFailure(RuntimeError):
-    """A lifecycle step observed something other than the expected outcome."""
 
 
 def set_scenario(scenario: str) -> None:
     path = f"projects/{DEMO_PROJECT}/variables/{SCENARIO_VARIABLE}"
     payload = {"value": scenario, "protected": False, "masked": False}
-    if _request("GET", path, allow_missing=True) is None:
+    if _request("PUT", path, payload=payload, allow_missing=True) is None:
         _request(
             "POST",
             f"projects/{DEMO_PROJECT}/variables",
             payload={"key": SCENARIO_VARIABLE, **payload},
         )
-    else:
-        _request("PUT", path, payload=payload)
 
 
 def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args, mock=True)
     # Opening the MR starts the first pipeline, so the scenario must exist first.
     set_scenario("blocking")
-
-    def add_fixture() -> list[dict[str, str]]:
-        return [
-            {"action": "create", "file_path": LIFECYCLE_FIXTURE_PATH, "content": LIFECYCLE_FIXTURE}
-        ]
-
     state = push_candidate_change(
         args,
         template=template,
-        fixture=add_fixture,
+        fixture=[
+            {"action": "create", "file_path": LIFECYCLE_FIXTURE_PATH, "content": LIFECYCLE_FIXTURE}
+        ],
         message="candidate canary lifecycle fixture",
         title=f"Candidate canary lifecycle {args.runtime_source[:12]}",
     )
-    state["candidate"] = {
-        "runtime_source": args.runtime_source,
-        "base_image": args.base_image,
-        "reviewer_image": args.reviewer_image,
-    }
+    state["candidate"] = candidate_identity(args)
     write_state(args.state, state)
     return state
 
@@ -151,17 +141,12 @@ class GitLabLifecycle:
             self._sleep(15)
         return status
 
-    def _archives(self, child: int, name_prefix: str) -> list[zipfile.ZipFile]:
+    def _archives(self, child: int, name_prefix: str) -> Iterator[zipfile.ZipFile]:
         jobs = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child}/jobs?per_page=100")
-        return [
-            zipfile.ZipFile(
-                io.BytesIO(
-                    _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts", raw=True)
-                )
-            )
-            for job in jobs
-            if job["name"].startswith(name_prefix) and job.get("artifacts_file")
-        ]
+        for job in jobs:
+            if job["name"].startswith(name_prefix) and job.get("artifacts_file"):
+                path = f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts"
+                yield zipfile.ZipFile(io.BytesIO(_request("GET", path, raw=True)))
 
     def _post_result(self, child: int) -> dict[str, Any]:
         for archive in self._archives(child, "post_ai_review"):
@@ -171,22 +156,17 @@ class GitLabLifecycle:
     def _reviewer_results(self, child: int) -> dict[str, Any]:
         loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
         for archive in self._archives(child, "AI review"):
-            for directory, found in loaded.items():
-                for name in archive.namelist():
-                    parts = name.split("/")
-                    if (
-                        len(parts) == 3
-                        and parts[:2] == ["out", directory]
-                        and name.endswith(".json")
-                    ):
-                        reviewer = parts[2].removesuffix(".json")
-                        if reviewer in found:
-                            raise LifecycleFailure(f"duplicate {directory} artifact for {reviewer}")
-                        found[reviewer] = json.loads(archive.read(name))
-        try:
-            return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
-        except ValueError as exc:
-            raise LifecycleFailure(str(exc)) from None
+            for name in archive.namelist():
+                parts = name.split("/")
+                if len(parts) != 3 or parts[0] != "out" or not name.endswith(".json"):
+                    continue
+                directory, reviewer = parts[1], parts[2].removesuffix(".json")
+                if directory not in loaded:
+                    continue
+                if reviewer in loaded[directory]:
+                    raise LifecycleFailure(f"duplicate {directory} artifact for {reviewer}")
+                loaded[directory][reviewer] = json.loads(archive.read(name))
+        return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
 
     # -- discussions -------------------------------------------------------
     def _discussions(self) -> list[dict[str, Any]]:
@@ -199,8 +179,8 @@ class GitLabLifecycle:
             if d["notes"][0].get("position")
         ]
 
-    def _thread(self) -> dict[str, Any]:
-        for discussion in self._discussions():
+    def _thread(self, discussions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        for discussion in self._discussions() if discussions is None else discussions:
             if discussion["id"] == self.discussion_id:
                 return dict(discussion["notes"][0])
         raise LifecycleFailure("the finding discussion is missing")
@@ -221,50 +201,33 @@ class GitLabLifecycle:
             )
             if note.get("author", {}).get("id") == self.bot_id
         ]
-        try:
-            return saved_wontfix(
-                notes,
-                project_id=DEMO_PROJECT,
-                change_id=self.mr,
-                root_note_id=int(self.root_note_id or 0),
-            )
-        except ValueError as exc:
-            raise LifecycleFailure(str(exc)) from None
+        return saved_wontfix(
+            notes,
+            project_id=DEMO_PROJECT,
+            change_id=self.mr,
+            root_note_id=int(self.root_note_id or 0),
+        )
 
     # -- assertions --------------------------------------------------------
-    @staticmethod
-    def _expect(condition: bool, message: str) -> None:
-        if not condition:
-            raise LifecycleFailure(message)
-
     def _run_step(self, parent: int) -> tuple[int, dict[str, Any]]:
         child = self._child(parent)
         status = self._complete(child)
-        self._expect(status == "success", f"child pipeline {child} ended {status}")
+        expect(status == "success", f"child pipeline {child} ended {status}")
         # GitLab can finish the child before updating its mirrored parent.
         status = self._complete(parent)
-        self._expect(status == "success", f"parent pipeline {parent} ended {status}")
+        expect(status == "success", f"parent pipeline {parent} ended {status}")
         post = self._post_result(child)
-        self._expect(post.get("status") == "success", f"post status {post.get('status')!r}")
+        expect(post.get("status") == "success", f"post status {post.get('status')!r}")
         return child, post
-
-    @staticmethod
-    def _counts(post: dict[str, Any]) -> dict[str, Any]:
-        keys = ("status", *_MUTATIONS, "skipped_unchanged")
-        return {key: post.get(key) for key in keys} | {"warnings": len(post.get("warnings", []))}
-
-    @staticmethod
-    def _mutated(post: dict[str, Any]) -> bool:
-        return any(post.get(key) for key in _MUTATIONS)
 
     # -- steps -------------------------------------------------------------
     def step_create(self) -> dict[str, Any]:
         child, post = self._run_step(self._first_pipeline())
-        self._expect(post.get("created_discussions") == 1, "expected one created discussion")
+        expect(post.get("created_discussions") == 1, "expected one created discussion")
         discussions = self._discussions()
-        self._expect(len(discussions) == 1, f"expected one discussion, found {len(discussions)}")
+        expect(len(discussions) == 1, f"expected one discussion, found {len(discussions)}")
         root = discussions[0]["notes"][0]
-        self._expect(
+        expect(
             root["position"].get("new_path") == LIFECYCLE_FIXTURE_PATH,
             "discussion is not on the added file",
         )
@@ -275,65 +238,69 @@ class GitLabLifecycle:
             "pipeline": child,
             "thread": self.root_note_id,
             "reviewers": self._reviewer_results(child),
-            **self._counts(post),
+            **post_counts(post),
         }
 
     def step_unchanged(self) -> dict[str, Any]:
         child, post = self._run_step(self._new_pipeline())
-        self._expect(post.get("created_discussions") == 0, "unchanged rerun created a discussion")
-        self._expect((post.get("skipped_unchanged") or 0) >= 1, "unchanged rerun skipped nothing")
-        return {"pipeline": child, **self._counts(post)}
+        expect(post.get("created_discussions") == 0, "unchanged rerun created a discussion")
+        expect((post.get("skipped_unchanged") or 0) >= 1, "unchanged rerun skipped nothing")
+        return {"pipeline": child, **post_counts(post)}
 
     def step_changed_body(self) -> dict[str, Any]:
         before = parse_marker(str(self._thread()["body"]))
         set_scenario("blocking_alt")
         child, post = self._run_step(self._new_pipeline())
-        body = str(self._thread()["body"])
+        discussions = self._discussions()
+        body = str(self._thread(discussions)["body"])
         after = parse_marker(body)
-        self._expect(post.get("updated_discussions") == 1, "changed body did not update in place")
-        self._expect(len(self._discussions()) == 1, "changed body duplicated the discussion")
-        self._expect(
+        expect(post.get("updated_discussions") == 1, "changed body did not update in place")
+        expect(len(discussions) == 1, "changed body duplicated the discussion")
+        expect(
             bool(before and after and before["body_hash"] != after["body_hash"]),
             "body_hash did not change",
         )
-        self._expect("\nSupport:" in body, "updated body lacks the Support: footer")
-        return {"pipeline": child, **self._counts(post)}
+        expect("\nSupport:" in body, "updated body lacks the Support: footer")
+        return {"pipeline": child, **post_counts(post)}
 
     def step_wontfix(self) -> dict[str, Any]:
         set_scenario("blocking")
         self._reply("/ai-review wontfix")
         child, post = self._run_step(self._new_pipeline())
-        self._expect(not post.get("warnings"), "post reported warnings")
-        self._expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
-        self._expect(bool(self._thread().get("resolved")), "discussion not resolved after wontfix")
+        expect(not post.get("warnings"), "post reported warnings")
+        expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
+        expect(bool(self._thread().get("resolved")), "discussion not resolved after wontfix")
         saved = self._saved_wontfix()
         persist, persisted = self._run_step(self._new_pipeline())
-        self._expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
-        self._expect(
-            not self._mutated(persisted),
+        expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
+        expect(
+            not post_mutated(persisted),
             "wontfix rerun mutated the review instead of preserving the disposition",
         )
         saved_after = self._saved_wontfix()
-        self._expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
-        self._expect(bool(self._thread().get("resolved")), "wontfix did not persist")
+        expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
+        expect(bool(self._thread().get("resolved")), "wontfix did not persist")
         return {
             "pipeline": child,
             "persist_pipeline": persist,
             "state": saved,
-            **self._counts(post),
-            "persisted": self._counts(persisted),
+            **post_counts(post),
+            "persisted": post_counts(persisted),
             "persisted_state": saved_after,
         }
 
     def step_reopen(self) -> dict[str, Any]:
         self._reply("/ai-review reopen")
         child, post = self._run_step(self._new_pipeline())
-        self._expect(not self._thread().get("resolved"), "discussion still resolved after reopen")
-        self._expect(len(self._discussions()) == 1, "reopen created a new discussion")
-        return {"pipeline": child, **self._counts(post)}
+        discussions = self._discussions()
+        expect(
+            not self._thread(discussions).get("resolved"), "discussion still resolved after reopen"
+        )
+        expect(len(discussions) == 1, "reopen created a new discussion")
+        return {"pipeline": child, **post_counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
-        self._expect("BLOCKER" in str(self._thread()["body"]), "discussion is not blocker severity")
+        expect("BLOCKER" in str(self._thread()["body"]), "discussion is not blocker severity")
         status = "checking"
         for attempt in range(12):
             if attempt:
@@ -345,7 +312,7 @@ class GitLabLifecycle:
             )
             if status not in {"checking", "unchecked", "preparing", "ci_still_running"}:
                 break
-        self._expect(status == "mergeable", f"merge request is {status}, expected mergeable")
+        expect(status == "mergeable", f"merge request is {status}, expected mergeable")
         return {"detailed_merge_status": status}
 
     def steps(self) -> tuple[tuple[str, Any], ...]:
@@ -362,27 +329,13 @@ class GitLabLifecycle:
 def run_lifecycle(args: argparse.Namespace) -> int:
     state = read_state(args.state)
     lifecycle = GitLabLifecycle(state, time.monotonic() + args.timeout_seconds)
-    results: list[dict[str, Any]] = []
-    passed = True
-    for name, step in lifecycle.steps():
-        try:
-            results.append({"name": name, "passed": True, "observed": step()})
-        except (LifecycleFailure, GitLabCanaryError) as exc:
-            results.append({"name": name, "passed": False, "error": str(exc)})
-            passed = False
-            break
-    write_canonical_json(
-        args.summary_out,
-        {
-            "schema_version": SUMMARY_SCHEMA,
-            "platform": "gitlab",
-            "candidate": state.get("candidate", "unavailable"),
-            "change_url": state.get("change_url", "unavailable"),
-            "passed": passed,
-            "steps": results,
-        },
+    return run_lifecycle_steps(
+        lifecycle.steps(),
+        platform="gitlab",
+        state=state,
+        summary_out=args.summary_out,
+        errors=(GitLabCanaryError,),
     )
-    return 0 if passed else 1
 
 
 def _configure_run(parser: argparse.ArgumentParser) -> None:
