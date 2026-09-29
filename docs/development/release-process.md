@@ -29,8 +29,12 @@ and remove completed spec files from the active
 2. Run `make quality` and the required hostile/local regression suites. Then scope
    the live campaign with the triage table below and update the carried
    coverage-gap table in [`docs/evidence/RUNBOOK.md`](../evidence/RUNBOOK.md).
-3. Build base and reviewer images from exactly `R`; record the immutable image
-   subjects, digests, publication run, attestations, and anonymous pulls.
+3. Build base and reviewer images from exactly `R` (the publish workflow does this
+   on the push to `main`). The canary's `verify-candidate` job checks both digests,
+   OCI revision labels, and source- and signer-constrained provenance as described
+   in [Step 0](../evidence/RUNBOOK.md#step-0--image-identity-owned-by-the-canary),
+   which also covers when manual verification is still required. Its record
+   carries the result.
    Before changing any consumer pin, run the read-only `make demo-preflight`,
    which catches demo drift before any tokens are spent, and then the protected
    manual `Candidate Canary` workflow described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)
@@ -121,7 +125,7 @@ record belong in the next release's notes, never in the shipped one.
 | `input_bundle.py`, `platform/gitlab.py`, `platform/runtime.py`, `scripts/pipeline_trust.py`, CI-template trust topology | GitLab hostile-MR credential/enforcement boundary | yes — `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
 | `consensus.py`, `consensus_policy.py`, `grouping.py`, `critique.py` | the surfacing/decision step of Chain B | yes — `test_consensus_reducer.py`, `test_consensus_integrity.py` |
 | `input_bundle.py`, `platform/github.py` | GitHub revision-race / stale-head steps | yes — the SPEC-34 cases in `test_input_bundle.py` and `test_github_platform.py`; the windows are milliseconds wide and two were never reproducible live |
-| any image recipe, or `ai-review/src` at all | image publication verification | **never** — the digests always change |
+| any image recipe, or `ai-review/src` at all | image identity, recorded in `record-candidate-canary.md` | **never** — the digests always change |
 | the posted-body format version (`render-body.vN`) | one refresh run against a bot thread in the **previous** body format, authored by a released image | no |
 
 Two invariants that have caught operators out, and that no path-level check proves:

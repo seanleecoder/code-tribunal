@@ -58,26 +58,18 @@ jobs:
         run: |
           docker pull "$BASE_IMAGE"
           docker pull "$REVIEWER_IMAGE"
-      - name: Verify candidate attestations
+      - name: Verify candidate image identity and provenance
         env:
           GH_TOKEN: ${{ github.token }}
+          RUNTIME_SOURCE: ${{ inputs.runtime_source }}
           BASE_IMAGE: ${{ inputs.base_image }}
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
         run: |
-          gh attestation verify "oci://$BASE_IMAGE" \
-            --repo seanleecoder/code-tribunal \
-            --predicate-type https://slsa.dev/provenance/v1 \
-            --format json > base-attestation.json
-          gh attestation verify "oci://$REVIEWER_IMAGE" \
-            --repo seanleecoder/code-tribunal \
-            --predicate-type https://slsa.dev/provenance/v1 \
-            --format json > reviewer-attestation.json
           python scripts/validate_candidate_identity.py \
-            --runtime-source "${{ inputs.runtime_source }}" \
+            --runtime-source "$RUNTIME_SOURCE" \
             --base-image "$BASE_IMAGE" \
             --reviewer-image "$REVIEWER_IMAGE" \
-            --base-attestation base-attestation.json \
-            --reviewer-attestation reviewer-attestation.json
+            --verify-images
 
   campaign:
     needs: verify-candidate

@@ -38,6 +38,13 @@ the operator from them.
 - GitHub demo `AI_REVIEW_MANUAL=false`, so the pull request's own run was the
   campaign run and the canary dispatched nothing.
 
+## Image identity
+
+The canary verified both digests, source reachability, OCI labels, and
+repository-scoped attestations. For 2.0.0, source, digest, and signer provenance
+was verified manually; see the
+[publication record](record-image-publication-verification.md).
+
 ## Actual result
 
 | | GitHub | GitLab |

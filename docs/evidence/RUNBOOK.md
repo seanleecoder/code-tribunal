@@ -43,8 +43,8 @@ Base image:        ghcr.io/<org>/code-tribunal/ai-review-base@sha256:<digest>
 Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest>
 ```
 
-> **Historical: the activated 1.0.0 pair.** Retained because Step 0's example
-> commands and several 1.0.0 result notes below reference it. It is **not** the
+> **Historical: the activated 1.0.0 pair.** Retained because several 1.0.0
+> result notes below reference it. It is **not** the
 > current candidate: `release/release-inputs.json` names the release under
 > preparation (`status: draft`, runtime source and digests unset until the
 > candidate pair is published).
@@ -88,27 +88,37 @@ Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest
 > **reviewer** `FROM` that exact base, then update **both** digests,
 > `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
 > the image-pin rotation procedure in [operations](../operations.md)), and re-run
-> Step 0 verification/attestation against the new digests. Republishing is an
+> the Candidate Canary (Step 0b) against the new digests. Republishing is an
 > operator/CI action. Because the posting/mock code ships inside the product image,
 > **both** chains must run against the digests named above, so the evidence matches
 > the exact images that ship.
 
-## Step 0 — Verify the RC images (do this first)
+## Step 0 — Image identity (owned by the canary)
 
-> **Done for the final pair** on 2026-07-25. Both subjects resolved anonymously to
-> the pinned digests, both OCI revision labels equal `R`, and both provenance
-> attestations verified against publication run `30125524008`. Full detail is in
-> the [image-verification record](record-image-publication-verification.md). Re-run
-> this step only if the pair is rebuilt.
+The Candidate Canary's `verify-candidate` job (Step 0b) runs
+[`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py),
+which checks both digests and OCI revision labels, then verifies each provenance
+attestation against source ref `refs/heads/main`, source digest `R`, and the
+exact publication-workflow signer identity (`SIGNER_IDENTITY` in that script).
+Any failure prevents the campaign from starting.
+[`record-candidate-canary.md`](record-candidate-canary.md) records the result.
 
-From any machine with registry access (anonymous pulls should work — GHCR public):
+Retire the separate manual provenance check only once this enforcement is on
+protected `main`. Older orchestration requires running the check below by hand,
+with their results and the exact `Release-*` bindings recorded alongside the
+canary results. The 2.0.0 provenance evidence remains in the historical manual
+[record](record-image-publication-verification.md); its canary did not enforce
+these source and signer constraints.
+
+With the hardened canary, run the same check locally to diagnose a
+`verify-candidate` failure. From a checkout with `origin/main` fetched, set `R`,
+`BASE_IMAGE`, and `REVIEWER_IMAGE` to the candidate's full source commit and two
+digest-pinned image references:
 
 ```bash
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896
-docker pull ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe
-# Verify build provenance attestation (both subjects)
-gh attestation verify oci://ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe \
-  --repo seanleecoder/code-tribunal
+docker pull "$BASE_IMAGE" && docker pull "$REVIEWER_IMAGE" &&
+  python scripts/validate_candidate_identity.py --runtime-source "$R" \
+    --base-image "$BASE_IMAGE" --reviewer-image "$REVIEWER_IMAGE" --verify-images
 ```
 
 To confirm anonymous resolution without touching stored credentials, point
@@ -116,8 +126,6 @@ To confirm anonymous resolution without touching stored credentials, point
 `docker manifest inspect --verbose <ref>` — note that an empty `DOCKER_CONFIG`
 also hides CLI plugins, so read the revision labels with the normal config via
 `docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
-
-Confirm the digests match the values above before running any smoke.
 
 ## Step 0b — Candidate Canary (before any consumer repin)
 
@@ -132,7 +140,8 @@ The canary retains only the redacted `candidate-canary-<platform>-summary`
 artifacts and writes nothing under `docs/evidence/`. Record the green pair in a
 new `record-candidate-canary.md`, copied from [the record template](record-template.md), with the
 workflow run ID, both summary artifacts, and the three `Release-*` binding
-fields. That record is the release's real-panel (Chain A) row on **both**
+fields. Include the `verify-candidate` job result for both images. That record is
+the release's real-panel (Chain A) row on **both**
 platforms, so Chain A below is needed only when the canary cannot run.
 
 When the posted-body format changed, confirm before the repin that a bot thread
@@ -583,9 +592,9 @@ reviewer image and reported `model: auto`.
    non-gating SPEC-34 row carries a registered `Release-evidence-waived` reason
    instead. Token/cost is **not** in any artifact — read it from the OpenRouter
    dashboard or leave it unasserted, as 1.0.0 did.)
-2. Flip the pending rows in [the evidence matrix](README.md) to scoped passes
-   referencing the new run IDs, including the re-verified image-publication row for
-   the rebuilt pair; leave the regression-covered rows classified as such.
+2. Fill the **Live campaign** table in `release/<version>.md` with the scoped
+   results and record links; it is the only per-release copy. The
+   [evidence index](README.md) is not edited per release.
 3. **Retarget the release inputs to the pair under test (release-blocking).**
    Update `runtime_source`, both image digests, the canonical template pins, the
    recorded publication and CI run IDs, and the evidence references together, then

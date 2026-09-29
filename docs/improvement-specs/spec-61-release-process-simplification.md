@@ -12,8 +12,10 @@ doubled GitHub panel (#132). The lifecycle chain exposed an expired resolve toke
 that silently disabled `wontfix`. Most of the time, however, went to redundant
 bookkeeping, hand-driven steps, and drift discovered mid-campaign:
 
-- **Redundant checks.** Image identity was verified by hand. Then the canary's
-  `verify-candidate` job verified the same digests, labels, and attestations again.
+- **Overlapping checks.** Image identity was verified by hand. Then the canary's
+  `verify-candidate` job checked the same digests, labels, and repository-scoped
+  attestations, but without the manual source-ref, source-digest, and publication
+  workflow constraints.
 - **The same content, copied by hand.** A waiver reason had to match byte for byte
   in the record and in `verification.evidence_waivers`. It was also repeated,
   unchecked, in the evidence index and release notes. Waived records were stamped
@@ -42,10 +44,13 @@ bookkeeping, hand-driven steps, and drift discovered mid-campaign:
 
 ### Phase 1 — cut ceremony
 
-1. **Fold image verification into the canary record.** The canary already verifies
-   both digests, OCI revision labels, and provenance from protected `main`. Record
+1. **Fold image verification into the canary record.** Verify both digests and OCI
+   revision labels, and require provenance from source ref `refs/heads/main`,
+   source digest `R`, and the exact publication-workflow signer on `main`. Record
    those results in `record-candidate-canary.md`. Retire the separate
-   image-publication record and the manual Step 0.
+   image-publication record and manual Step 0 only once those constraints are
+   enforced on protected `main`; retain the historical manual provenance record
+   for 2.0.0.
 2. **Single-source waiver reasons** (option B). A waived record carries only
    `Release-evidence-waived: registered`. The reason lives only in
    `verification.evidence_waivers`. The checker requires marker ⇔ declaration and a
@@ -108,6 +113,10 @@ bookkeeping, hand-driven steps, and drift discovered mid-campaign:
 ## Acceptance
 
 - Phase 1:
+  - Both images must pass provenance verification for source ref `refs/heads/main`,
+    source digest `R`, and the publication-workflow signer identity
+    (`SIGNER_IDENTITY` in `scripts/validate_candidate_identity.py`) before any canary campaign starts. A matching source string in unrelated
+    metadata cannot satisfy verification.
   - A waived row needs one reason, written once, in `release-inputs.json`.
   - `check_release_inputs.py` rejects a marker without a declaration, a declaration
     without a marker, an empty reason, and a legacy reason-bearing line.
