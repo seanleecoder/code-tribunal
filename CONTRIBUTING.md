@@ -92,7 +92,7 @@ bodies and credentials are never uploaded by the orchestration workflow. The
 demo PR and MR are closed and temporary branches removed after diagnostics are
 collected; their closed discussions and external run URLs remain available.
 
-The `campaigns` input selects what runs. It defaults to `panel,lifecycle`:
+The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile`:
 
 - `panel`: the real four-seat review and critique above. It spends tokens.
 - `lifecycle`: a zero-token mock Chain B on each platform, on its own temporary
@@ -110,8 +110,20 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle`:
     There is no stale-head step, because that step is GitHub-specific.
   - It uploads `candidate-canary-<platform>-lifecycle-summary`.
 
-Dispatch `campaigns=lifecycle` to validate posting and state changes without
-spending tokens.
+- `hostile`: a zero-token GitLab hostile-MR probe.
+  - It opens a merge request from an **unprotected** demo branch whose
+    `.gitlab-ci.yml` overrides the image pins, turns inheritance and forwarding
+    on, and forges publication artifacts.
+  - It passes when every protected credential is withheld (it reads presence
+    lines only, never values), prepare fails closed with every later stage
+    skipped, the forgery goes unconsumed, and `pipeline_trust.py` rejects the
+    composition while accepting the demo's own.
+  - The image substitution itself is recorded, not asserted, because
+    in-pipeline image enforcement is not implemented (SPEC-43).
+  - It uploads `candidate-canary-gitlab-hostile-summary`.
+
+Dispatch `campaigns=lifecycle,hostile` to validate posting, state, and the
+credential boundary without spending tokens.
 
 Do not rerun a green campaign for extra evidence. A failed campaign may be rerun
 only after its diagnostics produce a concrete fix. This canary is a candidate

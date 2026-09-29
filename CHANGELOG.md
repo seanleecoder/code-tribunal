@@ -19,6 +19,11 @@ versioning.
   temporary mock-mode template branch. The scenario switches through a temporary
   `AI_REVIEW_MOCK_SCENARIO` project variable that cleanup deletes. Both platforms
   share one fixture and one set of reviewer-artifact and saved-`wontfix` checks.
+- A zero-token `hostile` canary campaign automates the GitLab hostile-MR probe on
+  an unprotected demo branch. It checks credential withholding (presence only),
+  fail-closed prepare, unconsumed forged publication artifacts, and the trust
+  auditor's verdicts. The known image substitution is recorded, not asserted
+  (SPEC-43). The default campaign selection is now `panel,lifecycle,hostile`.
 - `make demo-preflight`: a read-only check of both demo consumers before a live
   campaign. It reports required status checks, sticky mock or retired variables,
   manual mode, a roster without Cursor, missing or unprotected credentials, and an

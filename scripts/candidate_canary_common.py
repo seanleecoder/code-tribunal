@@ -159,6 +159,7 @@ def run_lifecycle_steps(
     state: dict[str, Any],
     summary_out: str | Path,
     errors: tuple[type[Exception], ...],
+    schema_version: str = LIFECYCLE_SUMMARY_SCHEMA,
 ) -> int:
     """Run steps in order until the first failure and write the redacted summary."""
     results: list[dict[str, Any]] = []
@@ -173,7 +174,7 @@ def run_lifecycle_steps(
     write_canonical_json(
         summary_out,
         {
-            "schema_version": LIFECYCLE_SUMMARY_SCHEMA,
+            "schema_version": schema_version,
             "platform": platform,
             "candidate": state.get("candidate", "unavailable"),
             "change_url": state.get("change_url", "unavailable"),

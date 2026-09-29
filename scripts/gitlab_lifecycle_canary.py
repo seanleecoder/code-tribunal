@@ -39,6 +39,7 @@ from candidate_canary_common import (
 )
 from gitlab_candidate_canary import (
     DEMO_PROJECT,
+    SETTLED_STATUSES,
     GitLabCanaryError,
     _configure_create,
     _request,
@@ -48,7 +49,6 @@ from gitlab_candidate_canary import (
 )
 
 SCENARIO_VARIABLE = "AI_REVIEW_MOCK_SCENARIO"
-_SETTLED = {"success", "failed", "canceled", "skipped", "manual"}
 
 
 def set_scenario(scenario: str) -> None:
@@ -133,13 +133,13 @@ class GitLabLifecycle:
                 if bridge.get("downstream_pipeline"):
                     return int(bridge["downstream_pipeline"]["id"])
             for bridge in bridges:
-                if bridge.get("status") in _SETTLED:
+                if bridge.get("status") in SETTLED_STATUSES:
                     raise LifecycleFailure(
                         f"parent pipeline {parent} bridge {bridge['id']} ended "
                         f"{bridge['status']} without a child pipeline"
                     )
             status = str(_request("GET", path)["status"])
-            if status in _SETTLED:
+            if status in SETTLED_STATUSES:
                 # A child may have appeared between reading the bridges and the parent.
                 for bridge in _request("GET", f"{path}/bridges"):
                     if bridge.get("downstream_pipeline"):
@@ -154,7 +154,7 @@ class GitLabLifecycle:
             status := str(
                 _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")["status"]
             )
-        ) not in _SETTLED:
+        ) not in SETTLED_STATUSES:
             self._sleep(15)
         return status
 
