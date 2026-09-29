@@ -95,7 +95,8 @@ collected; their closed discussions and external run URLs remain available.
 The `campaigns` input selects what runs. It defaults to `panel,lifecycle`:
 
 - `panel`: the real four-seat review and critique above. It spends tokens.
-- `lifecycle`: a zero-token GitHub mock Chain B on its own temporary branch.
+- `lifecycle`: a zero-token mock Chain B on each platform, on its own temporary
+  branch.
   - The canary's workflow copy runs every seat in mock mode and adds a
     `mock_scenario` dispatch input, so each step re-runs the same head without a
     commit.
@@ -103,7 +104,11 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle`:
     `wontfix` (a `post_result` warning fails the step, which catches an expired
     resolve token), reopen, a stale-head no-op, and a `blocker` thread that leaves
     the pull request mergeable.
-  - It uploads `candidate-canary-github-lifecycle-summary`.
+  - On GitLab the temporary template branch runs every seat in mock mode. The
+    scenario is a temporary `AI_REVIEW_MOCK_SCENARIO` project variable on the demo,
+    deleted at cleanup (so the canary's GitLab token needs Maintainer access).
+    There is no stale-head step, because that step is GitHub-specific.
+  - It uploads `candidate-canary-<platform>-lifecycle-summary`.
 
 Dispatch `campaigns=lifecycle` to validate posting and state changes without
 spending tokens.

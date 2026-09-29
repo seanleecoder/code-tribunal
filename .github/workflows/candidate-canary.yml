@@ -219,6 +219,16 @@ jobs:
     if: contains(format(',{0},', inputs.campaigns), ',lifecycle,')
     runs-on: ubuntu-latest
     environment: candidate-canary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: github
+            token_secret: CANDIDATE_CANARY_GITHUB_TOKEN
+            token_env: GH_TOKEN
+          - platform: gitlab
+            token_secret: CANDIDATE_CANARY_GITLAB_TOKEN
+            token_env: GITLAB_CANARY_TOKEN
     env:
       PYTHONPATH: ai-review/src:scripts
     steps:
@@ -239,35 +249,59 @@ jobs:
           jsonschema
       - name: Create isolated mock lifecycle change
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_lifecycle_canary.py create \
-            --branch "${{ needs.verify-candidate.outputs.branch }}-github-lifecycle" \
-            --workflow .github/workflows/ai-review.yml \
-            --workdir "$RUNNER_TEMP/github-lifecycle" \
-            --state "$RUNNER_TEMP/github-lifecycle-state.json" \
-            --runtime-source "${{ inputs.runtime_source }}" \
-            --base-image "${{ inputs.base_image }}" \
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          common=(
+            --branch "${{ needs.verify-candidate.outputs.branch }}-${PLATFORM}-lifecycle"
+            --state "$RUNNER_TEMP/${PLATFORM}-lifecycle-state.json"
+            --runtime-source "${{ inputs.runtime_source }}"
+            --base-image "${{ inputs.base_image }}"
             --reviewer-image "${{ inputs.reviewer_image }}"
+          )
+          if [[ "$PLATFORM" == github ]]; then
+            env "$TOKEN_ENV=$token_value" python scripts/github_lifecycle_canary.py create \
+              "${common[@]}" \
+              --workflow .github/workflows/ai-review.yml \
+              --workdir "$RUNNER_TEMP/github-lifecycle"
+          else
+            env "$TOKEN_ENV=$token_value" python scripts/gitlab_lifecycle_canary.py create \
+              "${common[@]}" \
+              --template ai-review/ci/review.gitlab-ci.yml \
+              --child-template ai-review/ci/review-child.gitlab-ci.yml
+          fi
       - name: Drive the lifecycle steps
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_lifecycle_canary.py run \
-            --workdir "$RUNNER_TEMP/github-lifecycle" \
-            --state "$RUNNER_TEMP/github-lifecycle-state.json" \
-            --summary-out github-lifecycle-summary.json
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          extra=()
+          [[ "$PLATFORM" == github ]] && extra=(--workdir "$RUNNER_TEMP/github-lifecycle")
+          env "$TOKEN_ENV=$token_value" python "scripts/${PLATFORM}_lifecycle_canary.py" run \
+            --state "$RUNNER_TEMP/${PLATFORM}-lifecycle-state.json" \
+            --summary-out "${PLATFORM}-lifecycle-summary.json" \
+            "${extra[@]}"
       - name: Clean up demo
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITHUB_TOKEN }}
+          CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
+          PLATFORM: ${{ matrix.platform }}
+          TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          python scripts/github_lifecycle_canary.py cleanup \
-            --state "$RUNNER_TEMP/github-lifecycle-state.json"
+          token_value="$CANARY_TOKEN"
+          unset CANARY_TOKEN
+          env "$TOKEN_ENV=$token_value" python "scripts/${PLATFORM}_lifecycle_canary.py" cleanup \
+            --state "$RUNNER_TEMP/${PLATFORM}-lifecycle-state.json"
       - name: Upload redacted lifecycle summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: candidate-canary-github-lifecycle-summary
-          path: github-lifecycle-summary.json
+          name: candidate-canary-${{ matrix.platform }}-lifecycle-summary
+          path: ${{ matrix.platform }}-lifecycle-summary.json
           if-no-files-found: error

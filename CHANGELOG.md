@@ -15,6 +15,10 @@ versioning.
   reopen, stale-head no-op, and a `blocker` thread leaving the pull request
   mergeable. The `wontfix` step fails on any `post_result` warning, so an expired
   resolve token is caught (SPEC-61).
+- The lifecycle campaign also runs on GitLab, in the hardened child topology, on a
+  temporary mock-mode template branch. The scenario switches through a temporary
+  `AI_REVIEW_MOCK_SCENARIO` project variable that cleanup deletes. Both platforms
+  share one fixture and one set of reviewer-artifact and saved-`wontfix` checks.
 - `make demo-preflight`: a read-only check of both demo consumers before a live
   campaign. It reports required status checks, sticky mock or retired variables,
   manual mode, a roster without Cursor, missing or unprotected credentials, and an
