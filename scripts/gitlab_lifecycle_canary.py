@@ -126,10 +126,27 @@ class GitLabLifecycle:
         return int(pipeline["id"])
 
     def _child(self, parent: int) -> int:
+        path = f"projects/{DEMO_PROJECT}/pipelines/{parent}"
         while True:
-            for bridge in _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent}/bridges"):
+            bridges = _request("GET", f"{path}/bridges")
+            for bridge in bridges:
                 if bridge.get("downstream_pipeline"):
                     return int(bridge["downstream_pipeline"]["id"])
+            for bridge in bridges:
+                if bridge.get("status") in _SETTLED:
+                    raise LifecycleFailure(
+                        f"parent pipeline {parent} bridge {bridge['id']} ended "
+                        f"{bridge['status']} without a child pipeline"
+                    )
+            status = str(_request("GET", path)["status"])
+            if status in _SETTLED:
+                # A child may have appeared between reading the bridges and the parent.
+                for bridge in _request("GET", f"{path}/bridges"):
+                    if bridge.get("downstream_pipeline"):
+                        return int(bridge["downstream_pipeline"]["id"])
+                raise LifecycleFailure(
+                    f"parent pipeline {parent} ended {status} without a child pipeline"
+                )
             self._sleep(10)
 
     def _complete(self, pipeline: int) -> str:
@@ -165,7 +182,10 @@ class GitLabLifecycle:
                     continue
                 if reviewer in loaded[directory]:
                     raise LifecycleFailure(f"duplicate {directory} artifact for {reviewer}")
-                loaded[directory][reviewer] = json.loads(archive.read(name))
+                try:
+                    loaded[directory][reviewer] = json.loads(archive.read(name))
+                except json.JSONDecodeError, UnicodeDecodeError:
+                    raise LifecycleFailure(f"unreadable {directory} review artifact") from None
         return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
 
     # -- discussions -------------------------------------------------------
