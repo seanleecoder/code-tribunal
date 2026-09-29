@@ -85,6 +85,160 @@ class LifecycleStepTests(unittest.TestCase):
         driver.discussion_id = "d1"
         return driver
 
+    def test_run_step_waits_for_parent_success_before_reading_post_result(self) -> None:
+        driver = self._driver()
+        post = {"status": "success"}
+
+        def post_result(child: int) -> dict[str, str]:
+            self.assertEqual(child, 10)
+            self.assertEqual(request.call_count, 3)
+            return post
+
+        with (
+            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(
+                lifecycle,
+                "_request",
+                side_effect=[
+                    {"status": "success"},
+                    {"status": "running"},
+                    {"status": "success"},
+                ],
+            ) as request,
+            mock.patch.object(lifecycle.time, "sleep") as sleep,
+            mock.patch.object(driver, "_post_result", side_effect=post_result),
+        ):
+            self.assertEqual(driver._run_step(9), (10, post))
+        self.assertEqual(
+            request.call_args_list,
+            [
+                mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/{pipeline}")
+                for pipeline in (10, 9, 9)
+            ],
+        )
+        sleep.assert_called_once_with(15)
+
+    def test_run_step_rejects_unsuccessful_parent(self) -> None:
+        for status in ("failed", "canceled", "skipped", "manual"):
+            with self.subTest(status=status):
+                driver = self._driver()
+                with (
+                    mock.patch.object(driver, "_child", return_value=10),
+                    mock.patch.object(
+                        lifecycle,
+                        "_request",
+                        side_effect=[{"status": "success"}, {"status": status}],
+                    ),
+                    mock.patch.object(
+                        driver, "_post_result", return_value={"status": "success"}
+                    ) as post_result,
+                    self.assertRaisesRegex(
+                        lifecycle.LifecycleFailure, f"parent pipeline 9 ended {status}"
+                    ),
+                ):
+                    driver._run_step(9)
+                post_result.assert_not_called()
+
+    def test_run_step_stops_immediately_on_child_failure(self) -> None:
+        driver = self._driver()
+        with (
+            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(lifecycle, "_request", return_value={"status": "failed"}) as request,
+            mock.patch.object(
+                driver, "_post_result", return_value={"status": "success"}
+            ) as post_result,
+            self.assertRaisesRegex(lifecycle.LifecycleFailure, "child pipeline 10 ended failed"),
+        ):
+            driver._run_step(9)
+        request.assert_called_once_with("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/10")
+        post_result.assert_not_called()
+
+    def test_parent_polling_stops_at_campaign_deadline(self) -> None:
+        driver = self._driver()
+        with (
+            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(
+                lifecycle,
+                "_request",
+                side_effect=[
+                    {"status": "success"},
+                    {"status": "running"},
+                    {"status": "running"},
+                ],
+            ) as request,
+            mock.patch.object(
+                lifecycle.time, "monotonic", side_effect=[driver.deadline - 1, driver.deadline]
+            ),
+            mock.patch.object(lifecycle.time, "sleep") as sleep,
+            mock.patch.object(
+                driver, "_post_result", return_value={"status": "success"}
+            ) as post_result,
+            self.assertRaisesRegex(lifecycle.LifecycleFailure, "timed out"),
+        ):
+            driver._run_step(9)
+        self.assertEqual(request.call_count, 3)
+        sleep.assert_called_once_with(15)
+        post_result.assert_not_called()
+
+    def test_mergeability_waits_for_ci_and_status_propagation(self) -> None:
+        driver = self._driver()
+        with (
+            mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+            mock.patch.object(
+                lifecycle,
+                "_request",
+                side_effect=[
+                    {"detailed_merge_status": status}
+                    for status in (
+                        "ci_still_running",
+                        "checking",
+                        "unchecked",
+                        "preparing",
+                        "mergeable",
+                    )
+                ],
+            ),
+            mock.patch.object(lifecycle.time, "sleep") as sleep,
+        ):
+            self.assertEqual(
+                driver.step_blocker_does_not_block(), {"detailed_merge_status": "mergeable"}
+            )
+        self.assertEqual(sleep.call_args_list, [mock.call(5)] * 4)
+
+    def test_mergeability_fails_after_bounded_polling(self) -> None:
+        driver = self._driver()
+        with (
+            mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+            mock.patch.object(
+                lifecycle, "_request", return_value={"detailed_merge_status": "ci_still_running"}
+            ) as request,
+            mock.patch.object(lifecycle.time, "sleep") as sleep,
+            self.assertRaisesRegex(
+                lifecycle.LifecycleFailure, "merge request is ci_still_running, expected mergeable"
+            ),
+        ):
+            driver.step_blocker_does_not_block()
+        self.assertEqual(request.call_count, 12)
+        self.assertEqual(sleep.call_args_list, [mock.call(5)] * 11)
+
+    def test_mergeability_rejects_blockers_without_retrying(self) -> None:
+        for status in ("ci_must_pass", "conflict", "discussions_not_resolved"):
+            with self.subTest(status=status):
+                driver = self._driver()
+                with (
+                    mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+                    mock.patch.object(
+                        lifecycle, "_request", return_value={"detailed_merge_status": status}
+                    ) as request,
+                    mock.patch.object(lifecycle.time, "sleep") as sleep,
+                    self.assertRaisesRegex(
+                        lifecycle.LifecycleFailure, f"merge request is {status}, expected mergeable"
+                    ),
+                ):
+                    driver.step_blocker_does_not_block()
+                request.assert_called_once()
+                sleep.assert_not_called()
+
     def test_wontfix_fails_on_a_post_warning(self) -> None:
         driver = self._driver()
         with (

@@ -142,9 +142,11 @@ class GitLabLifecycle:
                     return int(bridge["downstream_pipeline"]["id"])
             self._sleep(10)
 
-    def _complete(self, child: int) -> str:
+    def _complete(self, pipeline: int) -> str:
         while (
-            status := str(_request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child}")["status"])
+            status := str(
+                _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")["status"]
+            )
         ) not in _SETTLED:
             self._sleep(15)
         return status
@@ -239,6 +241,9 @@ class GitLabLifecycle:
         child = self._child(parent)
         status = self._complete(child)
         self._expect(status == "success", f"child pipeline {child} ended {status}")
+        # GitLab can finish the child before updating its mirrored parent.
+        status = self._complete(parent)
+        self._expect(status == "success", f"parent pipeline {parent} ended {status}")
         post = self._post_result(child)
         self._expect(post.get("status") == "success", f"post status {post.get('status')!r}")
         return child, post
@@ -338,7 +343,7 @@ class GitLabLifecycle:
                     "detailed_merge_status"
                 ]
             )
-            if status not in {"checking", "unchecked", "preparing"}:
+            if status not in {"checking", "unchecked", "preparing", "ci_still_running"}:
                 break
         self._expect(status == "mergeable", f"merge request is {status}, expected mergeable")
         return {"detailed_merge_status": status}
