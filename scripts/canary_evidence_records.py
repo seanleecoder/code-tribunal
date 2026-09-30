@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Write the release evidence records from one Candidate Canary run.
 
-Reads the run's redacted summaries (panel, lifecycle, hostile), refuses unless
-every one binds the same candidate, passed, and scans clean, and only then
+Reads a successful run's redacted summaries (panel, lifecycle, hostile), refuses
+unless every one binds the same candidate, passed, and scans clean, and only then
 rewrites the records under ``docs/evidence/`` with the ``Release-*`` binding
 that ``check_release_inputs.py`` validates. Results are generated; the only
 hand-written part of a record is its **Operator notes** section.
@@ -230,7 +230,7 @@ def hostile_record(run: CanaryRun, candidate: dict[str, str]) -> str:
             "passed" if check["passed"] else "failed",
             json.dumps(check.get("observed", {}), sort_keys=True).replace("|", "\\|"),
         )
-        for check in summary["checks"]
+        for check in summary["steps"]
     ]
     lines = _header("GitLab hostile-MR deployment boundary", run, candidate)
     lines += [
@@ -289,6 +289,11 @@ def _gh(*args: str) -> str:
 
 def load_run(run_id: str, workdir: Path) -> CanaryRun:
     meta = json.loads(_gh("run", "view", run_id, "--json", "url,createdAt,conclusion,jobs"))
+    conclusion = meta.get("conclusion")
+    if conclusion != "success":
+        raise RecordError(
+            f"Candidate Canary run {run_id} concluded {conclusion!r}; expected success"
+        )
     verify = next(
         (job["conclusion"] for job in meta["jobs"] if job["name"] == "verify-candidate"),
         "missing",

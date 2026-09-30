@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import copy
+import io
+import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from tests.support.repository_script import load_repository_script
 
@@ -13,6 +18,9 @@ records = load_repository_script(
 )
 release_inputs = load_repository_script(
     "check_release_inputs", ROOT / "scripts/check_release_inputs.py"
+)
+hostile_canary = load_repository_script(
+    "gitlab_hostile_canary", ROOT / "scripts/gitlab_hostile_canary.py"
 )
 R = "a" * 40
 BASE = "sha256:" + "b" * 64
@@ -68,7 +76,7 @@ def _hostile() -> dict:
         "candidate": dict(CANDIDATE),
         "change_url": "https://gitlab.example/change/3",
         "passed": True,
-        "checks": [
+        "steps": [
             {
                 "name": "credentials_withheld",
                 "passed": True,
@@ -102,6 +110,22 @@ def _run(**summaries: dict) -> object:
     )
 
 
+def _metadata() -> dict:
+    return {
+        "url": "https://github.example/runs/99",
+        "createdAt": "2026-09-30T00:00:00Z",
+        "conclusion": "success",
+        "jobs": [{"name": "verify-candidate", "conclusion": "success"}],
+    }
+
+
+def _write_artifacts(directory: Path, summaries: dict) -> None:
+    for key, summary in summaries.items():
+        artifact = directory / records.DEMO_ARTIFACTS[key]
+        artifact.mkdir()
+        (artifact / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
 class RecordRenderingTests(unittest.TestCase):
     def test_every_record_binds_the_candidate_for_the_release_validator(self) -> None:
         rendered = records.render_records(_run())
@@ -133,11 +157,127 @@ class RecordRenderingTests(unittest.TestCase):
 
     def test_observed_values_cannot_break_the_table(self) -> None:
         hostile = _hostile()
-        hostile["checks"][0]["observed"] = {"note": "a|b"}
+        hostile["steps"][0]["observed"] = {"note": "a|b"}
         text = records.render_records(_run(**{"hostile-gitlab": hostile}))[
             "record-gitlab-hostile-mr.md"
         ]
         self.assertIn("a\\|b", text)
+
+    def test_hostile_producer_summary_renders_its_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "candidate": CANDIDATE,
+                        "change_url": _hostile()["change_url"],
+                        "mr_iid": "5",
+                        "template_sha": R,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summary = Path(tmp) / "summary.json"
+            args = argparse.Namespace(state=state, summary_out=summary, timeout_seconds=60)
+            with mock.patch.object(
+                hostile_canary.HostileProbe,
+                "steps",
+                return_value=[
+                    ("credentials_withheld", lambda: {"GITLAB_TOKEN": "absent"}),
+                    ("image_substituted", lambda: {"hostile_image_pulled": True}),
+                ],
+            ):
+                self.assertEqual(hostile_canary.run_probe(args), 0)
+            produced = json.loads(summary.read_text(encoding="utf-8"))
+        text = records.render_records(_run(**{"hostile-gitlab": produced}))[
+            "record-gitlab-hostile-mr.md"
+        ]
+        self.assertIn('| `credentials_withheld` | passed | {"GITLAB_TOKEN": "absent"} |', text)
+        self.assertIn('| `image_substituted` | passed | {"hostile_image_pulled": true} |', text)
+
+
+class RecordLoadingTests(unittest.TestCase):
+    def test_successful_full_and_partial_runs_render_their_campaigns(self) -> None:
+        cases = (
+            (_run(), set(records.RECORDS)),
+            (
+                _run(**{"hostile-gitlab": None}),
+                set(records.RECORDS) - {"record-gitlab-hostile-mr.md"},
+            ),
+        )
+        for expected, filenames in cases:
+            with (
+                self.subTest(filenames=filenames),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.object(records, "_gh", return_value=json.dumps(_metadata())) as gh,
+            ):
+                directory = Path(tmp)
+                _write_artifacts(directory, expected.summaries)
+                loaded = records.load_run("99", directory)
+                self.assertEqual(set(records.render_records(loaded)), filenames)
+                self.assertEqual(loaded.summaries, expected.summaries)
+                self.assertEqual(loaded.scanned_files, len(expected.summaries))
+                self.assertEqual(
+                    gh.call_args_list,
+                    [
+                        mock.call("run", "view", "99", "--json", "url,createdAt,conclusion,jobs"),
+                        mock.call("run", "download", "99", "--dir", str(directory)),
+                    ],
+                )
+
+    def test_unsuccessful_runs_refuse_even_with_passing_summaries(self) -> None:
+        conclusions = (
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "neutral",
+            "skipped",
+            "stale",
+            "unknown",
+            "",
+            None,
+        )
+        cases = [_metadata() | {"conclusion": conclusion} for conclusion in conclusions]
+        cases.append({key: value for key, value in _metadata().items() if key != "conclusion"})
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write_artifacts(directory, _run(**{"hostile-gitlab": None}).summaries)
+            for meta in cases:
+                with (
+                    self.subTest(meta=meta),
+                    mock.patch.object(records, "_gh", return_value=json.dumps(meta)) as gh,
+                    mock.patch.object(records, "scan") as scan,
+                    self.assertRaisesRegex(
+                        records.RecordError, "run 99 concluded .*expected success"
+                    ),
+                ):
+                    records.load_run("99", directory)
+                gh.assert_called_once_with(
+                    "run", "view", "99", "--json", "url,createdAt,conclusion,jobs"
+                )
+                scan.assert_not_called()
+
+    def test_cleanup_failure_exits_without_writing_records(self) -> None:
+        meta = _metadata() | {"conclusion": "failure"}
+        meta["jobs"].append({"name": "lifecycle (github)", "conclusion": "failure"})
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "evidence"
+            output.mkdir()
+            existing = output / "record-github-current-image.md"
+            existing.write_bytes(b"existing release evidence\n")
+            before = {path.name: path.read_bytes() for path in output.iterdir()}
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(records, "_gh", return_value=json.dumps(meta)) as gh,
+                redirect_stdout(stdout),
+            ):
+                self.assertEqual(records.main(["99", "--out", str(output)]), 1)
+            self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, before)
+            gh.assert_called_once_with(
+                "run", "view", "99", "--json", "url,createdAt,conclusion,jobs"
+            )
+        self.assertIn("ERROR: Candidate Canary run 99 concluded 'failure'", stdout.getvalue())
 
 
 class RecordRefusalTests(unittest.TestCase):

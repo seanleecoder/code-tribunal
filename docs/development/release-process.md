@@ -44,9 +44,10 @@ and remove completed spec files from the active
    failure has led to a concrete fix. The canary retains only redacted summary
    artifacts. `make evidence-records RUN=<run id>` turns a green run's summaries
    into the panel, both lifecycle, and hostile-MR records, with the `Release-*`
-   binding. It refuses to write anything if the summaries disagree on the
-   candidate, a campaign failed, or the leak scan hits. Only each record's
-   **Operator notes** section is written by hand.
+   binding. It requires overall workflow success, including cleanup, and refuses
+   to write anything if the summaries disagree on the candidate, a campaign
+   failed, or the leak scan hits. Only each record's **Operator notes** section is
+   written by hand.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
