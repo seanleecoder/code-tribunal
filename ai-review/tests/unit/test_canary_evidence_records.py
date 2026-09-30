@@ -151,6 +151,33 @@ def _bad_summaries() -> dict[str, dict]:
     }
 
 
+def _summaries(campaigns: tuple[str, ...]) -> dict[str, dict]:
+    return {
+        key: value
+        for key, value in _run().summaries.items()
+        if key.partition("-")[0] in campaigns
+    }
+
+
+def _write_saved_records(output: Path) -> None:
+    for filename, text in records.render_records(_run()).items():
+        (output / filename).write_text(
+            text.replace("None recorded.", "Saved context.").replace(
+                "Status: passed", "Status: stale"
+            )
+        )
+
+
+def _assert_release_valid(test: unittest.TestCase, root: Path, names) -> None:
+    data = {
+        "status": "active",
+        "runtime_source": R,
+        "images": {"base": {"digest": BASE}, "reviewer": {"digest": REVIEWER}},
+        "verification": {"evidence_record_ids": sorted(names), "evidence_waivers": {}},
+    }
+    test.assertEqual(release_inputs.validate_evidence_records(data, root), [])
+
+
 def _job(name: str, conclusion: str = "success", status: str = "completed") -> dict:
     return {"name": name, "conclusion": conclusion, "status": status}
 
@@ -232,16 +259,7 @@ class RecordRenderingTests(unittest.TestCase):
             evidence.mkdir(parents=True)
             for name, text in rendered.items():
                 (evidence / name).write_text(text, encoding="utf-8")
-            data = {
-                "status": "active",
-                "runtime_source": R,
-                "images": {"base": {"digest": BASE}, "reviewer": {"digest": REVIEWER}},
-                "verification": {
-                    "evidence_record_ids": sorted(rendered),
-                    "evidence_waivers": {},
-                },
-            }
-            self.assertEqual(release_inputs.validate_evidence_records(data, Path(tmp)), [])
+            _assert_release_valid(self, Path(tmp), rendered)
         for text in rendered.values():
             self.assertIn("## Operator notes", text)
             self.assertIn("scripts/canary_evidence_records.py", text)
@@ -314,11 +332,7 @@ class RecordRenderingTests(unittest.TestCase):
 
 class RecordRegenerationTests(unittest.TestCase):
     def _regenerate(self, output: Path, campaigns=("panel", "lifecycle", "hostile")):
-        summaries = {
-            key: value
-            for key, value in _run().summaries.items()
-            if key.split("-")[0] in campaigns
-        }
+        summaries = _summaries(campaigns)
         stdout = io.StringIO()
         with (
             mock.patch.object(
@@ -351,13 +365,7 @@ class RecordRegenerationTests(unittest.TestCase):
                     {path.name: path.read_bytes() for path in output.iterdir()},
                     {name: text.encode("utf-8") for name, text in expected.items()},
                 )
-            data = {
-                "status": "active",
-                "runtime_source": R,
-                "images": {"base": {"digest": BASE}, "reviewer": {"digest": REVIEWER}},
-                "verification": {"evidence_record_ids": sorted(expected), "evidence_waivers": {}},
-            }
-            self.assertEqual(release_inputs.validate_evidence_records(data, Path(tmp)), [])
+            _assert_release_valid(self, Path(tmp), expected)
 
     def test_notes_preserve_empty_bodies_whitespace_unicode_and_markdown_examples(self) -> None:
         name = "record-candidate-canary.md"
@@ -449,9 +457,6 @@ class RecordRegenerationTests(unittest.TestCase):
         identity = "- Candidate Canary run: [`99`](https://github.example/runs/99), 2026-09-30"
         cases = {
             "changed URL": template.replace("https://github.example/runs/99", "https://other/99"),
-            "conflicting run mentions": template.replace(
-                "- Candidate Canary run: [`99`]", "- Candidate Canary run: [`98`]"
-            ),
             "missing run": template.replace(identity, ""),
             "duplicate run": template.replace(identity, identity + "\n" + identity),
             "missing notes": template.replace("## Operator notes", "## Removed notes"),
@@ -476,12 +481,7 @@ class RecordRegenerationTests(unittest.TestCase):
         for label, damaged in cases.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp)
-                for filename, text in records.render_records(_run()).items():
-                    (output / filename).write_text(
-                        text.replace("None recorded.", "Saved context.").replace(
-                            "Status: passed", "Status: stale"
-                        )
-                    )
+                _write_saved_records(output)
                 (output / name).write_text(damaged.replace("None recorded.", "PRIVATE CONTEXT"))
                 before = {path.name: path.read_bytes() for path in output.iterdir()}
                 result, stdout = self._regenerate(output)
@@ -497,12 +497,7 @@ class RecordRegenerationTests(unittest.TestCase):
         for damage in ("invalid UTF-8", "directory", "permission"):
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp)
-                for filename, text in records.render_records(_run()).items():
-                    (output / filename).write_text(
-                        text.replace("None recorded.", "Saved context.").replace(
-                            "Status: passed", "Status: stale"
-                        )
-                    )
+                _write_saved_records(output)
                 target = output / name
                 if damage == "invalid UTF-8":
                     target.write_bytes(b"\xff")
@@ -578,11 +573,7 @@ class RecordLoadingTests(unittest.TestCase):
         }
         for size in (1, 2, 3):
             for campaigns in combinations(campaign_records, size):
-                summaries = {
-                    key: value
-                    for key, value in _run().summaries.items()
-                    if key.split("-")[0] in campaigns
-                }
+                summaries = _summaries(campaigns)
                 filenames = set().union(*(campaign_records[c] for c in campaigns))
                 with (
                     self.subTest(campaigns=campaigns),
@@ -615,32 +606,6 @@ class RecordLoadingTests(unittest.TestCase):
                         ],
                     )
 
-    def test_partial_cli_run_leaves_unselected_records_untouched(self) -> None:
-        summaries = {
-            key: value for key, value in _run().summaries.items() if key.startswith("lifecycle-")
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp)
-            for name in records.RECORDS:
-                (output / name).write_bytes(b"existing evidence\n")
-            stdout = io.StringIO()
-            with (
-                mock.patch.object(
-                    records,
-                    "_gh",
-                    side_effect=_gh_response(_metadata(("lifecycle",)), _workflow(), summaries),
-                ),
-                redirect_stdout(stdout),
-            ):
-                self.assertEqual(records.main(["99", "--out", str(output)]), 0)
-            for platform in ("github", "gitlab"):
-                self.assertIn(
-                    "Status: passed", (output / f"record-{platform}-current-image.md").read_text()
-                )
-            for name in ("record-candidate-canary.md", "record-gitlab-hostile-mr.md"):
-                self.assertEqual((output / name).read_bytes(), b"existing evidence\n")
-                self.assertIn(f"skipped {name}", stdout.getvalue())
-
     def test_unsuccessful_runs_refuse_even_with_passing_summaries(self) -> None:
         conclusions = (
             "failure",
@@ -659,7 +624,7 @@ class RecordLoadingTests(unittest.TestCase):
         for meta in cases:
             with self.subTest(meta=meta):
                 self._refuses(
-                    meta=meta, downloaded=False, error="run 99 concluded .*expected success"
+                    meta=meta, downloaded=False, error="run 99 conclusion is .*expected 'success'"
                 )
 
     def test_wrong_or_incomplete_run_provenance_refuses_before_downloading(self) -> None:

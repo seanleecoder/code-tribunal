@@ -44,22 +44,13 @@ and remove completed spec files from the active
    failure has led to a concrete fix. The canary retains only redacted summary
    artifacts. `make evidence-records RUN=<run id>` turns a green run's summaries
    into the panel, both lifecycle, and hostile-MR records, with the `Release-*`
-   binding. It accepts only the canonical canary workflow in this repository,
-   dispatched from protected `main`, with overall success including cleanup and
-   one successful `verify-candidate` job. Job metadata determines which campaigns
-   ran: every successful platform job requires exactly one summary JSON file;
-   missing, ambiguous, or malformed summaries are errors. Intentionally skipped
-   campaigns leave their records untouched, and artifacts for skipped campaigns
-   are rejected. It refuses to write anything if metadata is incomplete, the
-   summaries disagree on the candidate, a campaign failed, or the leak scan hits.
-   Lifecycle records retain consumer-run, persistence-run, thread, and saved-state
-   identifiers alongside their step results. Only each record's **Operator notes**
-   section is written by hand. Regenerating the same run preserves that section
-   verbatim when the run URL and all three release bindings match; a different
-   run starts with `None recorded.` Conflicting identity, missing or ambiguous
-   notes boundaries, and unreadable selected records are errors checked before
-   any record is written. Historical records without an operator-notes section
-   are replaced normally.
+   binding. It accepts only a fully successful run of the canonical canary
+   workflow dispatched from protected `main`, reads which campaigns ran from the
+   job metadata, and refuses to write anything on any inconsistency (see
+   `scripts/canary_evidence_records.py`). Skipped campaigns leave their records
+   untouched. Only each record's **Operator notes** section is hand-written;
+   regenerating the same run preserves it verbatim, and a different run starts
+   with `None recorded.`
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:

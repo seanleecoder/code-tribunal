@@ -35,13 +35,13 @@ GITHUB_CONTAINER_ROLES = {
 EVIDENCE_DIR = Path("docs/evidence")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
-_RUNTIME_SOURCE_RE = re.compile(
+RUNTIME_SOURCE_RE = re.compile(
     r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$"
 )
-_BASE_DIGEST_RE = re.compile(
+BASE_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-base-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
-_REVIEWER_DIGEST_RE = re.compile(
+REVIEWER_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-reviewer-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
 _WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.*?)\s*$")
@@ -205,7 +205,7 @@ def validate_evidence_records(
                 f"Release-evidence-waived: {WAIVER_MARKER} plus a declared reason to waive"
             )
 
-        record_source = _first_match(_RUNTIME_SOURCE_RE, text)
+        record_source = _first_match(RUNTIME_SOURCE_RE, text)
         if record_source is None:
             raise ReleaseValidationError(
                 f"evidence record {record_id} must declare Release-runtime-source"
@@ -216,8 +216,8 @@ def validate_evidence_records(
                 f"{record_source!r} does not match release inputs"
             )
 
-        base_digest = _first_match(_BASE_DIGEST_RE, text)
-        reviewer_digest = _first_match(_REVIEWER_DIGEST_RE, text)
+        base_digest = _first_match(BASE_DIGEST_RE, text)
+        reviewer_digest = _first_match(REVIEWER_DIGEST_RE, text)
         if base_digest is None:
             raise ReleaseValidationError(
                 f"evidence record {record_id} must declare Release-base-digest"
