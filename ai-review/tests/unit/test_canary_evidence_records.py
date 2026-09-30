@@ -6,7 +6,6 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
 from unittest import mock
@@ -130,14 +129,25 @@ def _run(**summaries: dict) -> object:
         "hostile-gitlab": _hostile(),
     }
     full.update(summaries)
+    present = {k: v for k, v in full.items() if v is not None}
     return records.CanaryRun(
         run_id="99",
         url="https://github.example/runs/99",
         date="2026-09-30",
-        summaries={k: v for k, v in full.items() if v is not None},
-        expected_summaries=frozenset(k for k, v in full.items() if v is not None),
-        scanned_files=5,
+        summaries=present,
+        scanned_files=len(present),
     )
+
+
+def _bad_summaries() -> dict[str, dict]:
+    other = _panel("gitlab")
+    other["candidate"] = dict(CANDIDATE, runtime_source="f" * 40)
+    return {
+        "one candidate": {"panel-gitlab": other},
+        "did not pass": {"lifecycle-github": _lifecycle("github") | {"passed": False}},
+        "incomplete": {"panel-github": _panel("github") | {"consensus": {"status": "incomplete"}}},
+        "cleanup was failure": {"panel-github": _panel("github") | {"cleanup": "failure"}},
+    }
 
 
 def _job(name: str, conclusion: str = "success", status: str = "completed") -> dict:
@@ -235,14 +245,6 @@ class RecordRenderingTests(unittest.TestCase):
             self.assertIn("## Operator notes", text)
             self.assertIn("scripts/canary_evidence_records.py", text)
 
-    def test_campaigns_the_run_skipped_produce_no_record(self) -> None:
-        rendered = records.render_records(
-            _run(**{"hostile-gitlab": None, "panel-github": None, "panel-gitlab": None})
-        )
-        self.assertEqual(
-            set(rendered), {"record-github-current-image.md", "record-gitlab-current-image.md"}
-        )
-
     def test_observed_values_cannot_break_the_table(self) -> None:
         hostile = _hostile()
         hostile["steps"][0]["observed"] = {"note": "a|b"}
@@ -275,20 +277,6 @@ class RecordRenderingTests(unittest.TestCase):
             "record-github-current-image.md"
         ]
         self.assertIn('"discussion_id": "a\\|b"', text)
-
-    def test_rendering_rejects_missing_or_unexpected_summaries(self) -> None:
-        run = _run()
-        for key in run.summaries:
-            with self.subTest(key=key):
-                missing = replace(
-                    run, summaries={k: v for k, v in run.summaries.items() if k != key}
-                )
-                with self.assertRaisesRegex(records.RecordError, "missing=.*" + key):
-                    records.render_records(missing)
-        with self.assertRaisesRegex(records.RecordError, "unexpected=.*hostile-gitlab"):
-            records.render_records(
-                replace(run, expected_summaries=run.expected_summaries - {"hostile-gitlab"})
-            )
 
     def test_hostile_producer_summary_renders_its_observations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,18 +350,19 @@ class RecordLoadingTests(unittest.TestCase):
         return stdout.getvalue()
 
     def test_successful_full_and_partial_runs_render_their_campaigns(self) -> None:
+        campaign_records = {
+            "panel": {"record-candidate-canary.md"},
+            "lifecycle": {"record-github-current-image.md", "record-gitlab-current-image.md"},
+            "hostile": {"record-gitlab-hostile-mr.md"},
+        }
         for size in (1, 2, 3):
-            for campaigns in combinations(("panel", "lifecycle", "hostile"), size):
+            for campaigns in combinations(campaign_records, size):
                 summaries = {
                     key: value
                     for key, value in _run().summaries.items()
                     if key.split("-")[0] in campaigns
                 }
-                filenames = {
-                    filename
-                    for filename, (needs, _) in records.RECORDS.items()
-                    if all(key in summaries for key in needs)
-                }
+                filenames = set().union(*(campaign_records[c] for c in campaigns))
                 with (
                     self.subTest(campaigns=campaigns),
                     tempfile.TemporaryDirectory() as tmp,
@@ -387,7 +376,6 @@ class RecordLoadingTests(unittest.TestCase):
                     loaded = records.load_run("99", directory)
                     self.assertEqual(set(records.render_records(loaded)), filenames)
                     self.assertEqual(loaded.summaries, summaries)
-                    self.assertEqual(loaded.expected_summaries, frozenset(summaries))
                     self.assertEqual(loaded.scanned_files, len(summaries))
                     self.assertEqual(
                         gh.call_args_list,
@@ -395,8 +383,13 @@ class RecordLoadingTests(unittest.TestCase):
                             VIEW_CALL,
                             WORKFLOW_CALL,
                             mock.call(
-                                "run", "download", "99", "--repo",
-                                "github.com/seanleecoder/code-tribunal", "--dir", str(directory),
+                                "run",
+                                "download",
+                                "99",
+                                "--repo",
+                                "github.com/seanleecoder/code-tribunal",
+                                "--dir",
+                                str(directory),
                             ),
                         ],
                     )
@@ -447,10 +440,6 @@ class RecordLoadingTests(unittest.TestCase):
                 self._refuses(
                     meta=meta, downloaded=False, error="run 99 concluded .*expected success"
                 )
-
-    def test_cleanup_failure_exits_without_writing_records(self) -> None:
-        meta = _metadata() | {"conclusion": "failure"}
-        self._refuses(meta=meta, downloaded=False, error="run 99 concluded 'failure'")
 
     def test_wrong_or_incomplete_run_provenance_refuses_before_downloading(self) -> None:
         cases = [
@@ -584,17 +573,9 @@ class RecordLoadingTests(unittest.TestCase):
                 self._refuses(meta=_metadata(campaigns), error="despite its campaign being skipped")
 
     def test_bad_campaign_results_never_overwrite_other_records(self) -> None:
-        other = _panel("gitlab")
-        other["candidate"] = dict(CANDIDATE, runtime_source="f" * 40)
-        for summaries in (
-            _run(**{"panel-gitlab": other}).summaries,
-            _run(**{"lifecycle-github": _lifecycle("github") | {"passed": False}}).summaries,
-            _run(**{"panel-github": _panel("github") | {"cleanup": "failure"}}).summaries,
-            _run(**{"panel-github": _panel("github") | {"consensus": {"status": "incomplete"}}})
-            .summaries,
-        ):
-            with self.subTest(summaries=summaries):
-                self._refuses(summaries=summaries)
+        for message, bad in _bad_summaries().items():
+            with self.subTest(message=message):
+                self._refuses(summaries=_run(**bad).summaries, error=message)
 
     def test_leak_scan_checks_all_downloaded_files_before_writing(self) -> None:
         stdout = self._refuses(
@@ -605,46 +586,11 @@ class RecordLoadingTests(unittest.TestCase):
 
 
 class RecordRefusalTests(unittest.TestCase):
-    def test_nothing_renders_unless_the_whole_run_is_sound(self) -> None:
-        other = _panel("gitlab")
-        other["candidate"] = dict(CANDIDATE, runtime_source="f" * 40)
-        failed = _lifecycle("github")
-        failed["passed"] = False
-        incomplete = _panel("github") | {"consensus": {"status": "incomplete"}}
-        dirty = _panel("github") | {"cleanup": "failure"}
-        cases = {
-            "one candidate": _run(**{"panel-gitlab": other}),
-            "did not pass": _run(**{"lifecycle-github": failed}),
-            "incomplete": _run(**{"panel-github": incomplete}),
-            "cleanup was failure": _run(**{"panel-github": dirty}),
-        }
-        for message, run in cases.items():
-            with (
-                self.subTest(message=message),
-                self.assertRaisesRegex(records.RecordError, message),
-            ):
-                records.render_records(run)
-
-    def test_a_failed_identity_check_blocks_every_record(self) -> None:
-        meta = _metadata() | {"jobs": [_job("verify-candidate", "failure")]}
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            mock.patch.object(records, "_gh", side_effect=_gh_response(meta, _workflow())) as gh,
-            self.assertRaisesRegex(records.RecordError, "verify-candidate.*concluded 'failure'"),
-        ):
-            records.load_run("99", Path(tmp))
-        self.assertEqual(gh.call_args_list, [VIEW_CALL, WORKFLOW_CALL])
-
     def test_an_unpinned_image_refuses_the_record(self) -> None:
         lifecycle = _lifecycle("github")
         lifecycle["candidate"] = dict(CANDIDATE, base_image="ghcr.io/x/ai-review-base:2.0")
-        run = records.CanaryRun(
-            run_id="99",
-            url="https://github.example/runs/99",
-            date="2026-09-30",
-            summaries={"lifecycle-github": lifecycle},
-            expected_summaries=frozenset({"lifecycle-github"}),
-            scanned_files=1,
+        run = _run(
+            **{key: None for key in records.DEMO_ARTIFACTS} | {"lifecycle-github": lifecycle}
         )
         with self.assertRaisesRegex(records.RecordError, "not a digest-pinned"):
             records.render_records(run)

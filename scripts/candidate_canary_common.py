@@ -42,7 +42,7 @@ LIFECYCLE_FIXTURE = (
 
 LIFECYCLE_SUMMARY_SCHEMA = "candidate_canary_lifecycle_summary.v1"
 _POST_MUTATIONS = ("created_discussions", "updated_discussions", "resolved_discussions")
-POST_COUNT_KEYS = ("status", *_POST_MUTATIONS, "skipped_unchanged", "warnings")
+POST_COUNT_KEYS = ("status", *_POST_MUTATIONS, "skipped_unchanged")
 
 CreateParser = Callable[[argparse.ArgumentParser], None]
 LifecycleStep = Callable[[], dict[str, Any]]
@@ -145,8 +145,9 @@ def expect(condition: bool, message: str) -> None:
 
 
 def post_counts(post: dict[str, Any]) -> dict[str, Any]:
-    counts = {key: post.get(key) for key in POST_COUNT_KEYS}
-    return counts | {"warnings": len(post.get("warnings", []))}
+    return {key: post.get(key) for key in POST_COUNT_KEYS} | {
+        "warnings": len(post.get("warnings", []))
+    }
 
 
 def post_mutated(post: dict[str, Any]) -> bool:

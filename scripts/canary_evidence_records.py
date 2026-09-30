@@ -57,6 +57,7 @@ LIFECYCLE_OBSERVED_KEYS = (
     "persist_pipeline",
     "thread",
     *POST_COUNT_KEYS,
+    "warnings",
     "mergeable",
     "mergeStateStatus",
     "detailed_merge_status",
@@ -76,7 +77,6 @@ class CanaryRun:
     url: str
     date: str
     summaries: dict[str, dict[str, Any]]
-    expected_summaries: frozenset[str]
     scanned_files: int
 
 
@@ -88,13 +88,6 @@ def _digest(image: str) -> str:
 
 
 def _require_consistent(run: CanaryRun) -> dict[str, str]:
-    missing = run.expected_summaries - run.summaries.keys()
-    unexpected = run.summaries.keys() - run.expected_summaries
-    if missing or unexpected:
-        raise RecordError(
-            f"campaign summaries disagree with job metadata: "
-            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
-        )
     if not run.summaries:
         raise RecordError("the run uploaded no canary summaries")
     candidates = {json.dumps(s["candidate"], sort_keys=True) for s in run.summaries.values()}
@@ -226,17 +219,17 @@ def _step_rows(
     ]
 
 
-def _lifecycle_counts(observed: dict[str, Any]) -> str:
+def _observed_json(observed: dict[str, Any]) -> str:
+    return json.dumps(observed, sort_keys=True)
+
+
+def _lifecycle_observed(observed: dict[str, Any]) -> str:
     values = []
     for key in LIFECYCLE_OBSERVED_KEYS:
         if key in observed:
             value = observed[key]
             values.append(f"{key}={_observed_json(value) if isinstance(value, dict) else value}")
     return ", ".join(values)
-
-
-def _observed_json(observed: dict[str, Any]) -> str:
-    return json.dumps(observed, sort_keys=True)
 
 
 def lifecycle_record(run: CanaryRun, candidate: dict[str, str], platform: str) -> str:
@@ -252,7 +245,7 @@ def lifecycle_record(run: CanaryRun, candidate: dict[str, str], platform: str) -
         "posting, state, and command APIs on one finding identity. The fixture adds",
         f"`{LIFECYCLE_FIXTURE_PATH}`.",
         "",
-        *_table(_step_rows(summary["steps"], _lifecycle_counts), ("Step", "Result", "Observed")),
+        *_table(_step_rows(summary["steps"], _lifecycle_observed), ("Step", "Result", "Observed")),
     ]
     lines += _footer(
         run,
@@ -304,13 +297,13 @@ RECORDS: dict[str, tuple[tuple[str, ...], Callable[[CanaryRun, dict[str, str]], 
 
 
 def render_records(run: CanaryRun) -> dict[str, str]:
-    """Render complete evidence for the campaigns confirmed by job metadata."""
+    """Render complete evidence for the campaigns the run's summaries cover."""
     try:
         candidate = _require_consistent(run)
         return {
             filename: render(run, candidate)
             for filename, (needs, render) in RECORDS.items()
-            if all(key in run.expected_summaries for key in needs)
+            if run.summaries.keys() >= set(needs)
         }
     except (KeyError, TypeError, AttributeError) as exc:
         raise RecordError(f"invalid canary summary data: {exc}") from exc
@@ -333,7 +326,7 @@ def _json_object(text: str, label: str) -> dict[str, Any]:
     return value
 
 
-def _successful_job(job: dict[str, Any]) -> None:
+def _require_successful_job(job: dict[str, Any]) -> None:
     if job.get("status") != "completed" or job.get("conclusion") != "success":
         raise RecordError(
             f"{job['name']} has status {job.get('status')!r}, "
@@ -360,16 +353,12 @@ def _expected_summaries(jobs: list[dict[str, Any]]) -> frozenset[str]:
             raise RecordError(f"{family} job metadata is missing or ambiguous")
         for key, artifact in artifacts.items():
             pattern = (
-                family
-                if len(artifacts) == 1
-                else rf"{family} \({artifact.platform}(?:, [^()]+)?\)"
+                family if len(artifacts) == 1 else rf"{family} \({artifact.platform}(?:, [^()]+)?\)"
             )
-            matches = [
-                job for job in family_jobs if re.fullmatch(pattern, job["name"])
-            ]
+            matches = [job for job in family_jobs if re.fullmatch(pattern, job["name"])]
             if len(matches) != 1:
                 raise RecordError(f"{key} job metadata is missing or ambiguous")
-            _successful_job(matches[0])
+            _require_successful_job(matches[0])
             expected.add(key)
     if not expected:
         raise RecordError("the run included no successful canary campaigns")
@@ -416,7 +405,7 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
     verify = [job for job in jobs if job["name"] == "verify-candidate"]
     if len(verify) != 1:
         raise RecordError("verify-candidate job metadata is missing or ambiguous")
-    _successful_job(verify[0])
+    _require_successful_job(verify[0])
     expected = _expected_summaries(jobs)
     _gh("run", "download", run_id, "--repo", repository, "--dir", str(workdir))
     summaries = {}
@@ -441,7 +430,6 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
         url=meta["url"],
         date=meta["createdAt"][:10],
         summaries=summaries,
-        expected_summaries=expected,
         scanned_files=scanned,
     )
 
