@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import io
 import json
 import tempfile
@@ -104,7 +103,6 @@ def _run(**summaries: dict) -> object:
         run_id="99",
         url="https://github.example/runs/99",
         date="2026-09-30",
-        verify_candidate="success",
         summaries={k: v for k, v in full.items() if v is not None},
         scanned_files=5,
     )
@@ -284,7 +282,7 @@ class RecordRefusalTests(unittest.TestCase):
     def test_nothing_renders_unless_the_whole_run_is_sound(self) -> None:
         other = _panel("gitlab")
         other["candidate"] = dict(CANDIDATE, runtime_source="f" * 40)
-        failed = copy.deepcopy(_lifecycle("github"))
+        failed = _lifecycle("github")
         failed["passed"] = False
         incomplete = _panel("github") | {"consensus": {"status": "incomplete"}}
         dirty = _panel("github") | {"cleanup": "failure"}
@@ -302,9 +300,26 @@ class RecordRefusalTests(unittest.TestCase):
                 records.render_records(run)
 
     def test_a_failed_identity_check_blocks_every_record(self) -> None:
-        run = _run()
-        run = records.CanaryRun(**{**run.__dict__, "verify_candidate": "failure"})
-        with self.assertRaisesRegex(records.RecordError, "verify-candidate"):
+        meta = _metadata() | {"jobs": [{"name": "verify-candidate", "conclusion": "failure"}]}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(records, "_gh", return_value=json.dumps(meta)) as gh,
+            self.assertRaisesRegex(records.RecordError, "verify-candidate concluded failure"),
+        ):
+            records.load_run("99", Path(tmp))
+        gh.assert_called_once_with("run", "view", "99", "--json", "url,createdAt,conclusion,jobs")
+
+    def test_an_unpinned_image_refuses_the_record(self) -> None:
+        lifecycle = _lifecycle("github")
+        lifecycle["candidate"] = dict(CANDIDATE, base_image="ghcr.io/x/ai-review-base:2.0")
+        run = records.CanaryRun(
+            run_id="99",
+            url="https://github.example/runs/99",
+            date="2026-09-30",
+            summaries={"lifecycle-github": lifecycle},
+            scanned_files=1,
+        )
+        with self.assertRaisesRegex(records.RecordError, "not a digest-pinned"):
             records.render_records(run)
 
 
