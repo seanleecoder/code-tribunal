@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
 from unittest import mock
@@ -309,6 +310,226 @@ class RecordRenderingTests(unittest.TestCase):
         ]
         self.assertIn('| `credentials_withheld` | passed | {"GITLAB_TOKEN": "absent"} |', text)
         self.assertIn('| `image_substituted` | passed | {"hostile_image_pulled": true} |', text)
+
+
+class RecordRegenerationTests(unittest.TestCase):
+    def _regenerate(self, output: Path, campaigns=("panel", "lifecycle", "hostile")):
+        summaries = {
+            key: value
+            for key, value in _run().summaries.items()
+            if key.split("-")[0] in campaigns
+        }
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(
+                records,
+                "_gh",
+                side_effect=_gh_response(_metadata(campaigns), _workflow(), summaries),
+            ),
+            redirect_stdout(stdout),
+        ):
+            result = records.main(["99", "--out", str(output)])
+        return result, stdout.getvalue()
+
+    def test_same_run_preserves_each_records_notes_and_refreshes_generated_content(self) -> None:
+        rendered = records.render_records(_run())
+        expected = {
+            name: text.replace("\nNone recorded.\n\n", f"\nOperator context for {name}.\n\n")
+            for name, text in rendered.items()
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "docs/evidence"
+            output.mkdir(parents=True)
+            for name, text in expected.items():
+                stale = text.replace("Status: passed", "Status: stale").replace(
+                    "Scoped pass", "Outdated verdict"
+                )
+                (output / name).write_bytes(stale.encode("utf-8"))
+            for _ in range(2):
+                self.assertEqual(self._regenerate(output)[0], 0)
+                self.assertEqual(
+                    {path.name: path.read_bytes() for path in output.iterdir()},
+                    {name: text.encode("utf-8") for name, text in expected.items()},
+                )
+            data = {
+                "status": "active",
+                "runtime_source": R,
+                "images": {"base": {"digest": BASE}, "reviewer": {"digest": REVIEWER}},
+                "verification": {"evidence_record_ids": sorted(expected), "evidence_waivers": {}},
+            }
+            self.assertEqual(release_inputs.validate_evidence_records(data, Path(tmp)), [])
+
+    def test_notes_preserve_empty_bodies_whitespace_unicode_and_markdown_examples(self) -> None:
+        name = "record-candidate-canary.md"
+        template = records.render_records(_run())[name]
+        bodies = (
+            "",
+            "\nNone recorded.\n\n",
+            "\r\n\r\nRésumé — caveats  \r\n\t- item\r\n### Detail\r\n\r\n",
+            "\n- first  \n\t- nested\n\n### Caveat\n\nLast paragraph.\n\n",
+            "\n```markdown\n## Operator notes\n## Verdict\n```\n\n",
+            "\n````markdown\n```\n## Verdict\n````\n\n",
+            "\n   ~~~markdown\n## Operator notes\n## Verdict\n   ~~~~\n\n",
+            "\n- Candidate Canary run: [`100`](https://other.example/runs/100), 2026-09-30\n"
+            f"Release-runtime-source: {'f' * 40}\n\n",
+        )
+        for body in bodies:
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                expected = template.replace("\nNone recorded.\n\n", body)
+                # Both mixed-newline notes and an entirely CRLF record retain their body.
+                existing = expected
+                if body.startswith("\r\n"):
+                    existing = template.replace("\n", "\r\n").replace(
+                        "\r\nNone recorded.\r\n\r\n", body
+                    )
+                (output / name).write_bytes(existing.encode("utf-8"))
+                self.assertEqual(self._regenerate(output)[0], 0)
+                self.assertEqual((output / name).read_bytes(), expected.encode("utf-8"))
+
+    def test_new_files_and_historical_records_without_notes_use_default_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            (output / "record-candidate-canary.md").write_text(
+                "# Historical evidence\n\n## Audit\n\nHistorical context.\n\n## Verdict\n\nPass.\n"
+            )
+            self.assertEqual(self._regenerate(output)[0], 0)
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in output.iterdir()},
+                {
+                    name: text.encode("utf-8")
+                    for name, text in records.render_records(_run()).items()
+                },
+            )
+
+    def test_another_run_with_the_same_candidate_starts_with_default_notes(self) -> None:
+        old_run = replace(_run(), run_id="98", url="https://github.example/runs/98")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            for name, text in records.render_records(old_run).items():
+                (output / name).write_text(text.replace("None recorded.", "Notes for run 98."))
+            self.assertEqual(self._regenerate(output)[0], 0)
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in output.iterdir()},
+                {
+                    name: text.encode("utf-8")
+                    for name, text in records.render_records(_run()).items()
+                },
+            )
+
+    def test_partial_run_preserves_selected_notes_and_does_not_read_skipped_records(self) -> None:
+        rendered = records.render_records(_run())
+        partial = records.render_records(
+            _run(**{"panel-github": None, "panel-gitlab": None, "hostile-gitlab": None})
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            selected = {}
+            for platform in ("github", "gitlab"):
+                name = f"record-{platform}-current-image.md"
+                selected[name] = partial[name].replace("None recorded.", f"{platform} context.")
+                (output / name).write_text(
+                    rendered[name].replace("None recorded.", f"{platform} context.")
+                )
+            skipped = {"record-candidate-canary.md", "record-gitlab-hostile-mr.md"}
+            for name in skipped:
+                # These would fail decoding if the partial run inspected them.
+                (output / name).write_bytes(b"\xff skipped evidence\n")
+            result, stdout = self._regenerate(output, ("lifecycle",))
+            self.assertEqual(result, 0)
+            for name, text in selected.items():
+                self.assertEqual((output / name).read_bytes(), text.encode("utf-8"))
+            for name in skipped:
+                self.assertEqual((output / name).read_bytes(), b"\xff skipped evidence\n")
+                self.assertIn(f"skipped {name}", stdout)
+
+    def test_ambiguous_notes_or_identity_refuse_before_any_record_changes(self) -> None:
+        name = "record-gitlab-hostile-mr.md"
+        template = records.render_records(_run())[name]
+        identity = "- Candidate Canary run: [`99`](https://github.example/runs/99), 2026-09-30"
+        cases = {
+            "changed URL": template.replace("https://github.example/runs/99", "https://other/99"),
+            "conflicting run mentions": template.replace(
+                "- Candidate Canary run: [`99`]", "- Candidate Canary run: [`98`]"
+            ),
+            "missing run": template.replace(identity, ""),
+            "duplicate run": template.replace(identity, identity + "\n" + identity),
+            "missing notes": template.replace("## Operator notes", "## Removed notes"),
+            "duplicate notes": template.replace(
+                "## Operator notes", "## Operator notes\n\n## Operator notes"
+            ),
+            "missing verdict": template.replace("## Verdict", "## Removed verdict"),
+            "duplicate verdict": template + "\n## Verdict\n\nAnother verdict.\n",
+            "extra section": template.replace("None recorded.", "## Unexpected section\n\nNotes."),
+            "unclosed fence": template.replace("None recorded.", "```markdown\nNotes."),
+            "unknown identity": "## Operator notes\n\nNotes.\n\n## Verdict\n\nPass.\n",
+        }
+        for field, value in (
+            ("runtime-source", R),
+            ("base-digest", BASE),
+            ("reviewer-digest", REVIEWER),
+        ):
+            binding = f"Release-{field}: {value}"
+            cases[f"changed {field}"] = template.replace(binding, binding[:-1] + "f")
+            cases[f"missing {field}"] = template.replace(binding, "")
+            cases[f"duplicate {field}"] = template.replace(binding, binding + "\n" + binding)
+        for label, damaged in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                for filename, text in records.render_records(_run()).items():
+                    (output / filename).write_text(
+                        text.replace("None recorded.", "Saved context.").replace(
+                            "Status: passed", "Status: stale"
+                        )
+                    )
+                (output / name).write_text(damaged.replace("None recorded.", "PRIVATE CONTEXT"))
+                before = {path.name: path.read_bytes() for path in output.iterdir()}
+                result, stdout = self._regenerate(output)
+                self.assertEqual(result, 1)
+                self.assertIn(name, stdout)
+                self.assertNotIn("PRIVATE CONTEXT", stdout)
+                self.assertEqual(
+                    {path.name: path.read_bytes() for path in output.iterdir()}, before
+                )
+
+    def test_unreadable_selected_records_refuse_before_any_record_changes(self) -> None:
+        name = "record-gitlab-hostile-mr.md"
+        for damage in ("invalid UTF-8", "directory", "permission"):
+            with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                for filename, text in records.render_records(_run()).items():
+                    (output / filename).write_text(
+                        text.replace("None recorded.", "Saved context.").replace(
+                            "Status: passed", "Status: stale"
+                        )
+                    )
+                target = output / name
+                if damage == "invalid UTF-8":
+                    target.write_bytes(b"\xff")
+                elif damage == "directory":
+                    target.unlink()
+                    target.mkdir()
+                before = {
+                    path.name: path.read_bytes() for path in output.iterdir() if path.is_file()
+                }
+                original_read = Path.read_bytes
+
+                def read_bytes(path, damage=damage, target=target, original_read=original_read):
+                    if damage == "permission" and path == target:
+                        raise PermissionError("PRIVATE ERROR CONTENT")
+                    return original_read(path)
+
+                with mock.patch.object(Path, "read_bytes", read_bytes):
+                    result, stdout = self._regenerate(output)
+                self.assertEqual(result, 1)
+                self.assertIn(name, stdout)
+                self.assertNotIn("PRIVATE ERROR CONTENT", stdout)
+                self.assertEqual(
+                    {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()},
+                    before,
+                )
+                if damage == "directory":
+                    self.assertTrue(target.is_dir())
 
 
 class RecordLoadingTests(unittest.TestCase):

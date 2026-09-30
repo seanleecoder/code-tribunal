@@ -54,7 +54,12 @@ and remove completed spec files from the active
    summaries disagree on the candidate, a campaign failed, or the leak scan hits.
    Lifecycle records retain consumer-run, persistence-run, thread, and saved-state
    identifiers alongside their step results. Only each record's **Operator notes**
-   section is written by hand.
+   section is written by hand. Regenerating the same run preserves that section
+   verbatim when the run URL and all three release bindings match; a different
+   run starts with `None recorded.` Conflicting identity, missing or ambiguous
+   notes boundaries, and unreadable selected records are errors checked before
+   any record is written. Historical records without an operator-notes section
+   are replaced normally.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
