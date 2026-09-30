@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -24,19 +25,44 @@ from candidate_canary_common import LIFECYCLE_FIXTURE_PATH, POST_COUNT_KEYS
 from check_release_inputs import EVIDENCE_DIR
 from release_common import DIGEST_RE, ROOT
 from scan_evidence_leaks import scan
+from validate_candidate_identity import REPOSITORY, SOURCE_REF
+
+
+@dataclass(frozen=True)
+class CanaryArtifact:
+    name: str
+    job: str
+    platform: str
+
 
 DEMO_ARTIFACTS = {
-    "panel-github": "candidate-canary-github-summary",
-    "panel-gitlab": "candidate-canary-gitlab-summary",
-    "lifecycle-github": "candidate-canary-github-lifecycle-summary",
-    "lifecycle-gitlab": "candidate-canary-gitlab-lifecycle-summary",
-    "hostile-gitlab": "candidate-canary-gitlab-hostile-summary",
+    "panel-github": CanaryArtifact("candidate-canary-github-summary", "campaign", "github"),
+    "panel-gitlab": CanaryArtifact("candidate-canary-gitlab-summary", "campaign", "gitlab"),
+    "lifecycle-github": CanaryArtifact(
+        "candidate-canary-github-lifecycle-summary", "lifecycle", "github"
+    ),
+    "lifecycle-gitlab": CanaryArtifact(
+        "candidate-canary-gitlab-lifecycle-summary", "lifecycle", "gitlab"
+    ),
+    "hostile-gitlab": CanaryArtifact(
+        "candidate-canary-gitlab-hostile-summary", "hostile", "gitlab"
+    ),
 }
+CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
+RUN_FIELDS = "url,createdAt,status,conclusion,event,headBranch,workflowDatabaseId,jobs"
 LIFECYCLE_OBSERVED_KEYS = (
+    "run_id",
+    "persist_run_id",
+    "pipeline",
+    "persist_pipeline",
+    "thread",
     *POST_COUNT_KEYS,
     "mergeable",
     "mergeStateStatus",
     "detailed_merge_status",
+    "state",
+    "persisted_state",
+    "persisted",
 )
 
 
@@ -50,6 +76,7 @@ class CanaryRun:
     url: str
     date: str
     summaries: dict[str, dict[str, Any]]
+    expected_summaries: frozenset[str]
     scanned_files: int
 
 
@@ -61,6 +88,13 @@ def _digest(image: str) -> str:
 
 
 def _require_consistent(run: CanaryRun) -> dict[str, str]:
+    missing = run.expected_summaries - run.summaries.keys()
+    unexpected = run.summaries.keys() - run.expected_summaries
+    if missing or unexpected:
+        raise RecordError(
+            f"campaign summaries disagree with job metadata: "
+            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
+        )
     if not run.summaries:
         raise RecordError("the run uploaded no canary summaries")
     candidates = {json.dumps(s["candidate"], sort_keys=True) for s in run.summaries.values()}
@@ -193,7 +227,12 @@ def _step_rows(
 
 
 def _lifecycle_counts(observed: dict[str, Any]) -> str:
-    return ", ".join(f"{key}={observed[key]}" for key in LIFECYCLE_OBSERVED_KEYS if key in observed)
+    values = []
+    for key in LIFECYCLE_OBSERVED_KEYS:
+        if key in observed:
+            value = observed[key]
+            values.append(f"{key}={_observed_json(value) if isinstance(value, dict) else value}")
+    return ", ".join(values)
 
 
 def _observed_json(observed: dict[str, Any]) -> str:
@@ -265,13 +304,16 @@ RECORDS: dict[str, tuple[tuple[str, ...], Callable[[CanaryRun, dict[str, str]], 
 
 
 def render_records(run: CanaryRun) -> dict[str, str]:
-    """Return every record whose summaries the run produced."""
-    candidate = _require_consistent(run)
-    return {
-        filename: render(run, candidate)
-        for filename, (needs, render) in RECORDS.items()
-        if all(key in run.summaries for key in needs)
-    }
+    """Render complete evidence for the campaigns confirmed by job metadata."""
+    try:
+        candidate = _require_consistent(run)
+        return {
+            filename: render(run, candidate)
+            for filename, (needs, render) in RECORDS.items()
+            if all(key in run.expected_summaries for key in needs)
+        }
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise RecordError(f"invalid canary summary data: {exc}") from exc
 
 
 def _gh(*args: str) -> str:
@@ -281,25 +323,116 @@ def _gh(*args: str) -> str:
     return completed.stdout
 
 
+def _json_object(text: str, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RecordError(f"{label} is not valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RecordError(f"{label} must be a JSON object")
+    return value
+
+
+def _successful_job(job: dict[str, Any]) -> None:
+    if job.get("status") != "completed" or job.get("conclusion") != "success":
+        raise RecordError(
+            f"{job['name']} has status {job.get('status')!r}, "
+            f"concluded {job.get('conclusion')!r}; expected completed success"
+        )
+
+
+def _expected_summaries(jobs: list[dict[str, Any]]) -> frozenset[str]:
+    expected = set()
+    for family in dict.fromkeys(artifact.job for artifact in DEMO_ARTIFACTS.values()):
+        artifacts = {key: spec for key, spec in DEMO_ARTIFACTS.items() if spec.job == family}
+        family_jobs = [
+            job for job in jobs if job["name"] == family or job["name"].startswith(f"{family} (")
+        ]
+        # GitHub evaluates the campaign condition before expanding its matrix.
+        if (
+            len(family_jobs) == 1
+            and family_jobs[0]["name"] == family
+            and family_jobs[0].get("status") == "completed"
+            and family_jobs[0].get("conclusion") == "skipped"
+        ):
+            continue
+        if len(family_jobs) != len(artifacts):
+            raise RecordError(f"{family} job metadata is missing or ambiguous")
+        for key, artifact in artifacts.items():
+            pattern = (
+                family
+                if len(artifacts) == 1
+                else rf"{family} \({artifact.platform}(?:, [^()]+)?\)"
+            )
+            matches = [
+                job for job in family_jobs if re.fullmatch(pattern, job["name"])
+            ]
+            if len(matches) != 1:
+                raise RecordError(f"{key} job metadata is missing or ambiguous")
+            _successful_job(matches[0])
+            expected.add(key)
+    if not expected:
+        raise RecordError("the run included no successful canary campaigns")
+    return frozenset(expected)
+
+
 def load_run(run_id: str, workdir: Path) -> CanaryRun:
-    meta = json.loads(_gh("run", "view", run_id, "--json", "url,createdAt,conclusion,jobs"))
+    repository = f"github.com/{REPOSITORY}"
+    meta = _json_object(
+        _gh("run", "view", run_id, "--repo", repository, "--json", RUN_FIELDS), "run metadata"
+    )
     conclusion = meta.get("conclusion")
     if conclusion != "success":
         raise RecordError(
             f"Candidate Canary run {run_id} concluded {conclusion!r}; expected success"
         )
-    verify = next(
-        (job["conclusion"] for job in meta["jobs"] if job["name"] == "verify-candidate"),
-        "missing",
+    required = {
+        "status": "completed",
+        "event": "workflow_dispatch",
+        "headBranch": SOURCE_REF.removeprefix("refs/heads/"),
+    }
+    for field, value in required.items():
+        if meta.get(field) != value:
+            raise RecordError(f"run {run_id} {field} is {meta.get(field)!r}; expected {value!r}")
+    for field in ("url", "createdAt"):
+        if not isinstance(meta.get(field), str) or not meta[field]:
+            raise RecordError(f"run metadata is missing {field}")
+    workflow_id = meta.get("workflowDatabaseId")
+    if type(workflow_id) is not int or workflow_id <= 0:
+        raise RecordError("run metadata is missing a valid workflowDatabaseId")
+    workflow = _json_object(
+        _gh(
+            "api", "--hostname", "github.com", f"repos/{REPOSITORY}/actions/workflows/{workflow_id}"
+        ),
+        "workflow metadata",
     )
-    if verify != "success":
-        raise RecordError(f"verify-candidate concluded {verify}")
-    _gh("run", "download", run_id, "--dir", str(workdir))
+    if workflow.get("id") != workflow_id or workflow.get("path") != CANARY_WORKFLOW:
+        raise RecordError(f"run {run_id} is not the canonical {CANARY_WORKFLOW} workflow")
+    jobs = meta.get("jobs")
+    if not isinstance(jobs, list) or not all(
+        isinstance(job, dict) and isinstance(job.get("name"), str) for job in jobs
+    ):
+        raise RecordError("run metadata is missing a valid jobs list")
+    verify = [job for job in jobs if job["name"] == "verify-candidate"]
+    if len(verify) != 1:
+        raise RecordError("verify-candidate job metadata is missing or ambiguous")
+    _successful_job(verify[0])
+    expected = _expected_summaries(jobs)
+    _gh("run", "download", run_id, "--repo", repository, "--dir", str(workdir))
     summaries = {}
     for key, artifact in DEMO_ARTIFACTS.items():
-        files = list((workdir / artifact).glob("*.json"))
-        if len(files) == 1:
-            summaries[key] = json.loads(files[0].read_text(encoding="utf-8"))
+        directory = workdir / artifact.name
+        if key not in expected:
+            if directory.exists():
+                raise RecordError(f"{key} uploaded an artifact despite its campaign being skipped")
+            continue
+        files = list(directory.glob("*.json"))
+        if len(files) != 1 or not files[0].is_file():
+            raise RecordError(f"{key} requires exactly one summary JSON file; found {len(files)}")
+        try:
+            summaries[key] = _json_object(files[0].read_text(encoding="utf-8"), f"{key} summary")
+        except (OSError, UnicodeError) as exc:
+            raise RecordError(f"cannot read {key} summary: {exc}") from exc
     findings, scanned, _ = scan([workdir])
     if findings:
         raise RecordError(f"the leak scan flagged the summaries: {sorted(findings)}")
@@ -308,6 +441,7 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
         url=meta["url"],
         date=meta["createdAt"][:10],
         summaries=summaries,
+        expected_summaries=expected,
         scanned_files=scanned,
     )
 

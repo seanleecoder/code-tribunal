@@ -44,10 +44,17 @@ and remove completed spec files from the active
    failure has led to a concrete fix. The canary retains only redacted summary
    artifacts. `make evidence-records RUN=<run id>` turns a green run's summaries
    into the panel, both lifecycle, and hostile-MR records, with the `Release-*`
-   binding. It requires overall workflow success, including cleanup, and refuses
-   to write anything if the summaries disagree on the candidate, a campaign
-   failed, or the leak scan hits. Only each record's **Operator notes** section is
-   written by hand.
+   binding. It accepts only the canonical canary workflow in this repository,
+   dispatched from protected `main`, with overall success including cleanup and
+   one successful `verify-candidate` job. Job metadata determines which campaigns
+   ran: every successful platform job requires exactly one summary JSON file;
+   missing, ambiguous, or malformed summaries are errors. Intentionally skipped
+   campaigns leave their records untouched, and artifacts for skipped campaigns
+   are rejected. It refuses to write anything if metadata is incomplete, the
+   summaries disagree on the candidate, a campaign failed, or the leak scan hits.
+   Lifecycle records retain consumer-run, persistence-run, thread, and saved-state
+   identifiers alongside their step results. Only each record's **Operator notes**
+   section is written by hand.
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
