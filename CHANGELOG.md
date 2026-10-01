@@ -36,6 +36,9 @@ versioning.
 
 ### Changed
 
+- The trust auditor no longer reserves the retired `ai_review_gate` job name
+  after the gate-free 2.0.0 release (COMPAT-005). Current shipped jobs remain
+  reserved against consumer overrides.
 - Evidence waivers state their reason once. A waived record carries only
   `Release-evidence-waived: registered`, and the reason lives only in
   `verification.evidence_waivers`; waived records no longer carry `Release-*`

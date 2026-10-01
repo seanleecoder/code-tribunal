@@ -302,9 +302,15 @@ def test_flags_wrong_direct_template_path() -> None:
 
 def test_flags_direct_reserved_job_override() -> None:
     config = _direct_config()
-    config["ai_review_gate"] = {"script": ["exit 0"]}
+    config["post_ai_review"] = {"script": ["exit 0"]}
     issues = _issues(config, mode="direct")
     assert any("must not redefine reserved" in issue for issue in issues)
+
+
+def test_retired_gate_job_name_is_no_longer_reserved() -> None:
+    config = _direct_config()
+    config["ai_review_gate"] = {"script": ["exit 0"]}
+    assert not _issues(config, mode="direct")
 
 
 def test_flags_direct_cursor_job_overrides() -> None:
