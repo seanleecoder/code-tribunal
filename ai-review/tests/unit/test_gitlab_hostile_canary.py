@@ -47,18 +47,23 @@ class FakeGitLab:
         archive_error: int | None = None,
         prepare_upload: str = "WARNING: inputs/: no matching files\nERROR: No files to upload",
     ) -> None:
-        self.trace = "\n".join(
-            f"{name} IS PRESENT" if name in present else f"{name} absent"
-            for name in hostile.GITLAB_SECRETS
-        )
+        # GitLab's real job-log format: a timestamp and stream marker on every
+        # line, and the echoed command colored and naming both outcomes.
+        lines = []
+        for index, name in enumerate(hostile.GITLAB_SECRETS):
+            stamp = f"2026-10-01T11:32:00.1249{index:02d}Z 01O "
+            lines.append(
+                f'{stamp}\x1b[32;1m$ test -n "${{{name}:-}}" && echo "{name} IS PRESENT"'
+                f' || echo "{name} absent"\x1b[0;m'
+            )
+            lines.append(stamp + (f"{name} IS PRESENT" if name in present else f"{name} absent"))
+        self.trace = "\n".join(lines)
         self.archive = archive
         self.artifacts_file = (
             {"filename": "artifacts.zip"} if archive is not None or advertise_archive else {}
         )
         self.archive_error = archive_error
-        self.prepare_trace = (
-            f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
-        )
+        self.prepare_trace = f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
 
     def __call__(self, method: str, path: str, **kwargs: object) -> object:
         if path.endswith("/merge_requests/5/pipelines"):
@@ -215,6 +220,23 @@ class HostileConfigTests(unittest.TestCase):
         )
         self.assertEqual(request.call_args_list[1].args[0], "POST")
         self.assertEqual(request.call_args_list[1].kwargs["payload"]["source_branch"], branch)
+
+
+class TraceLineTests(unittest.TestCase):
+    def test_real_gitlab_log_lines_are_normalized_and_echoes_never_count(self) -> None:
+        # Verbatim shape of candidate canary run 36855687237's enumeration trace.
+        trace = (
+            '2026-10-01T11:32:00.124890Z 01O \x1b[32;1m$ test -n "${CURSOR_API_KEY:-}" && '
+            'echo "CURSOR_API_KEY IS PRESENT" || echo "CURSOR_API_KEY absent"\x1b[0;m\n'
+            "2026-10-01T11:32:00.124914Z 01O CURSOR_API_KEY absent\n"
+            "2026-10-01T11:32:00.124930Z 01O+section_end:1:step_script\r\n"
+        )
+        lines = hostile.trace_output_lines(trace)
+        self.assertIn("CURSOR_API_KEY absent", lines)
+        self.assertNotIn("CURSOR_API_KEY IS PRESENT", lines)
+
+    def test_unprefixed_lines_still_parse(self) -> None:
+        self.assertIn("GITLAB_TOKEN absent", hostile.trace_output_lines("GITLAB_TOKEN absent\n"))
 
 
 class HostileProbeTests(unittest.TestCase):

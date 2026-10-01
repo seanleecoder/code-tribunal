@@ -44,6 +44,10 @@ versioning.
 
 ### Fixed
 
+- The hostile canary reads its credential-presence lines after stripping GitLab's
+  job-log timestamp, stream marker, and colors. Comparing raw lines reported every
+  credential as `unknown` and failed run 36855687237, although the trace showed
+  all three withheld.
 - The GitLab canary campaigns protect their demo branch name before pushing it
   and wait until GitLab reports it protected before opening the merge request.
   Protecting after the push raced GitLab's protection cache, so a lifecycle

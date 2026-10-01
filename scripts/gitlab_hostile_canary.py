@@ -168,6 +168,25 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
     return state
 
 
+# GitLab prefixes each job-log line with a timestamp and a stream marker
+# ("2026-10-01T11:32:00.124914Z 01O ", "01O+" for continuations) and colors the
+# echoed commands, so output lines must be normalized before they are compared.
+_TRACE_PREFIX_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z [0-9a-f]{2}[OE][+ ]?")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def trace_output_lines(trace: str) -> set[str]:
+    """Return the trace's lines with GitLab's log prefix and colors removed.
+
+    Lines are compared whole, so the echoed ``$ test -n ... echo "X IS PRESENT"``
+    command can never be mistaken for its own output.
+    """
+    return {
+        _TRACE_PREFIX_RE.sub("", _ANSI_RE.sub("", line)).strip()
+        for line in trace.replace("\r", "\n").splitlines()
+    }
+
+
 class HostileProbe:
     def __init__(self, state: dict[str, Any], deadline: float) -> None:
         self.mr = str(state["mr_iid"])
@@ -227,7 +246,7 @@ class HostileProbe:
                     and all(part not in {"", ".", ".."} for part in entry.filename[:-1].split("/"))
                     for entry in archive.infolist()
                 )
-        except (zipfile.BadZipFile, UnicodeDecodeError):
+        except zipfile.BadZipFile, UnicodeDecodeError:
             raise LifecycleFailure("prepare input artifact is not a valid ZIP archive") from None
         expect(empty, "prepare input artifact is not an empty inputs/ tree")
 
@@ -280,7 +299,7 @@ class HostileProbe:
             enumerate_job is not None and enumerate_job["status"] == "success",
             "credential enumeration job did not run",
         )
-        lines = {line.strip() for line in self._trace(enumerate_job).splitlines()}
+        lines = trace_output_lines(self._trace(enumerate_job))
         presence = {
             name: (
                 "present"
