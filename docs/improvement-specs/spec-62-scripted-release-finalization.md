@@ -7,7 +7,7 @@
 ## Why
 
 After SPEC-61 Phase 2, the live campaign is one Candidate Canary dispatch plus
-`make evidence-records RUN=<id>`. Everything after it is still manual. For 2.0.0
+`make evidence-records RUN=<id>`, plus any manual RUNBOOK records. Everything after it is still manual. For 2.0.0
 that was:
 
 1. Regex-edit 5 GitHub container pins plus 3 GitLab variables, then run
@@ -76,53 +76,43 @@ chance for a mistake that the validators then catch late.
 ### 2. `make release-finalize`
 
 ```bash
-make release-finalize RUN=<canary run id> EVIDENCE="<record id> ..." [WAIVE=record=reason ...]
+make release-finalize RUN=<canary run id> EVIDENCE="<record filename> ..." [WAIVE=record=reason ...]
 ```
 
-Preconditions: the repin is merged, generated and manually collected evidence
-records are merged, and `release-inputs.json` is `draft` for `V`. The operator
-selects the complete `EVIDENCE=` list using the
+Preconditions: the repin is merged, every generated and manual evidence record is
+merged, and `release-inputs.json` is `draft` for `V`. The operator picks the
+complete `EVIDENCE=` list (generated, manual passing, and waived records) from the
 [release-process impact table](../development/release-process.md#scoping-the-live-campaign).
-It includes generated records, manual passing records (such as body-format refresh
-and effort-route checks when required), and waived records. Body-format refresh
-remains a manual RUNBOOK step, as SPEC-61 requires.
+Body-format refresh and effort-route checks stay manual RUNBOOK passes, as SPEC-61
+requires. Neither `canary_evidence_records.RECORDS` (generated records only) nor
+`validate_release_inputs()` (cited records only) knows the full matrix, so
+campaign completeness is the operator's check. Then:
 
-`canary_evidence_records.RECORDS` describes generated records, not the complete
-release matrix. `validate_release_inputs()` validates cited records; it cannot
-detect a required row that was never selected. Reviewing campaign completeness is
-an operator precondition. `EVIDENCE=` supplies the selection to the existing
-release authority; it creates no separate row registry or release ledger. Then:
-
-1. Fill `runtime_source` and digests from the canary candidate. Find `ci_run_id`
-   and `publication_run_id` for `R`, and refuse unless both concluded `success`.
-2. Require a non-empty `EVIDENCE=` list of bare filenames under `docs/evidence/`.
-   It must include every record generated for the selected run and every `WAIVE=`
-   key; refuse an omitted generated or waived record. Set `evidence_record_ids`
-   to the complete explicit list, including manual passing records, and set
-   `evidence_waivers` from `WAIVE=`. Each waived record must already carry
-   `Release-evidence-waived: registered`, which the SPEC-61 marker rule requires.
-3. Set `status: active` and run `validate_release_inputs()`, which reuses
-   `validate_evidence_records()` for every selected record. Generated and manual
-   passing records both require exact `Status: passed` and matching
-   `Release-runtime-source`, `Release-base-digest`, and `Release-reviewer-digest`
-   bindings. Missing files, failed or partial status, and stale bindings refuse
-   activation; waived records retain the existing marker/declaration contract.
+1. Load the run once with `load_run(RUN)`. Fill `runtime_source` and digests from
+   its candidate. Find `ci_run_id` and `publication_run_id` for `R`, and refuse
+   unless both concluded `success`.
+2. Refuse an `EVIDENCE=` list that omits a `WAIVE=` key or a record that
+   `render_records()` produces for the loaded run. Copy the list to
+   `evidence_record_ids` and set `evidence_waivers` from `WAIVE=`.
+3. Set `status: active` and run `validate_release_inputs()`. Its
+   `validate_evidence_records()` check covers every selected record the same way,
+   whether generated or manual, and enforces its existing binding and waiver
+   contract. Finalize adds no parallel pre-checks.
 4. Promote the CHANGELOG: `## [Unreleased]` becomes
    `## [Unreleased]\n\n## [V] - <today>`.
 5. Finalize `release/V.md`:
    - drop the draft banner
    - fill the identity block, including `R`, which `check_docs.py` requires in
      active notes
-   - fill the live-campaign table from the complete selected record list,
-     including manual passes and references to declared waivers
+   - fill the live-campaign table from `evidence_record_ids`, including manual
+     passes and waivers
    - keep the operator-written Scope and Migration sections untouched
 6. Write no commit. Print the expected `R..P` paths and refuse if any falls outside
    `ALLOWED_RELEASE_PATHS`.
 7. After the operator commits `P`, `make release-manifest P=<sha>` builds and
    validates the manifest. It writes the renamed assets and the checksum over the
-   renamed file, and drafts the tag certificate message. The manifest retains the
-   complete `evidence_record_ids` list from the release authority. The 2.0.0
-   message is the model: `R`, `P`, the runs, both digests, the evidence, the
+   renamed file, and drafts the tag certificate message. The 2.0.0 message is the
+   model: `R`, `P`, the runs, both digests, the evidence, the
    waivers, known limitations, and the manifest sha256.
 
 ### 3. Tag-push publish workflow
@@ -155,37 +145,28 @@ did. It doesn't open notes; `release/TEMPLATE.md` is copied on demand.
 
 ## Acceptance
 
-- Run repin, finalize, and manifest acceptance tests offline from the implementation
-  checkout against a scratch repository. Capture current-format canary run
-  metadata and artifacts accepted by the unchanged loader: a successful completed
-  dispatch from protected `main`, the canonical workflow, successful
-  `verify-candidate`, and every campaign job family present as successful or
-  explicitly skipped, with exactly the corresponding summaries. Freeze the
-  release version/date and CI/publication lookup responses in the fixture.
-  Compare outputs with the expected fixture artifacts and require runs from
-  identical scratch baselines to reproduce the same bytes:
-  - `release-inputs.json`, including the complete selected evidence list
+- Repin, finalize, and manifest tests run offline against a scratch repository,
+  using captured current-format canary metadata and artifacts that the unchanged
+  loader accepts, with the release version/date and CI/publication lookups frozen.
+  The fixture's `EVIDENCE=` mixes generated, manual (body-refresh, effort-route),
+  and waived records. Outputs match the expected fixture bytes:
+  - `release-inputs.json`
   - synchronized GitHub and GitLab pins
-  - the CHANGELOG heading and finalized release notes
+  - the CHANGELOG heading and finalized release notes, including the campaign
+    table
   - `R..P` paths inside the allowlist
   - a manifest that validates and its checksum
-- Historical byte comparisons, if retained, use frozen, prevalidated candidate
-  coordinates and source-bound evidence records to exercise deterministic
-  transformations separately from live-run loading. The 2.0.0 canary run
-  `36313164907` remains rejected by the production loader because it lacks the
-  lifecycle and hostile job families; no legacy loading path is introduced.
-- A fixture selecting manual body-refresh and effort-route passing records carries
-  them into release inputs, the release-note campaign table, and the manifest,
-  alongside generated and waived records.
+- The 2.0.0 canary run `36313164907` stays rejected by the loader because it lacks
+  the lifecycle and hostile job families; no legacy loading path is added.
 - `release-finalize` refuses:
-  - a missing or empty explicit evidence selection
-  - an omitted record generated for the selected run or named by `WAIVE=`
-  - a selected manual record whose file is missing or whose status is not passed
+  - an `EVIDENCE=` list that omits a record generated for the run or named by
+    `WAIVE=`
   - a summary candidate that differs from the record binding
-  - a selected passing record with stale source or digest bindings
   - a failed publish or CI run
-  - a waiver without a marker
   - any write outside the allowlist
+- `release-finalize` surfaces `validate_release_inputs()` refusals for an empty
+  selection, a missing or non-passed record (generated or manual), stale source or
+  digest bindings, and a waiver without a marker.
 - The publish workflow refuses a manifest whose sha256 differs from the one in the
   tag message.
 - The release process doc's sequence shrinks to the SPEC-61 target shape.
