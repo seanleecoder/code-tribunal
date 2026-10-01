@@ -162,6 +162,21 @@ def push_candidate_change(
     result = push_template_branch(args, template)
     template_sha = result["template_sha"]
 
+    # Protect the name before the branch exists. Protected variables such as
+    # GITLAB_TOKEN reach only protected refs, and GitLab applies a new protection
+    # rule asynchronously: protecting after the push let the MR's first pipeline
+    # start on a ref it still treated as unprotected (candidate canary run
+    # 36684239922), so prepare ran without GITLAB_TOKEN.
+    _request(
+        "POST",
+        f"projects/{DEMO_PROJECT}/protected_branches",
+        payload={
+            "name": args.branch,
+            "push_access_level": 40,
+            "merge_access_level": 40,
+        },
+    )
+
     demo_ci = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
     demo_ci, ref_count = re.subn(
         r'(?m)^(\s*ref:\s*)"[0-9a-f]{40}"$', rf'\g<1>"{template_sha}"', demo_ci
@@ -174,15 +189,7 @@ def push_candidate_change(
         message,
         [{"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci}, *fixture],
     )
-    _request(
-        "POST",
-        f"projects/{DEMO_PROJECT}/protected_branches",
-        payload={
-            "name": args.branch,
-            "push_access_level": 40,
-            "merge_access_level": 40,
-        },
-    )
+    _await_protection(args.branch)
     mr = _request(
         "POST",
         f"projects/{DEMO_PROJECT}/merge_requests",
@@ -196,6 +203,19 @@ def push_candidate_change(
     result.update({"mr_iid": str(mr["iid"]), "change_url": str(mr["web_url"])})
     write_state(args.state, result)
     return result
+
+
+def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
+    """Wait until GitLab reports ``branch`` protected before any pipeline can start."""
+    encoded = urllib.parse.quote(branch, safe="")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        status = _request("GET", f"projects/{DEMO_PROJECT}/repository/branches/{encoded}")
+        if status.get("protected") is True:
+            return
+        if time.monotonic() >= deadline:
+            raise GitLabCanaryError(f"demo branch {branch} never reported as protected")
+        time.sleep(2)
 
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:

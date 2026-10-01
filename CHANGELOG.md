@@ -37,6 +37,14 @@ versioning.
   bindings. `check_release_inputs.py` rejects a waiver line that restates a
   reason. The `release_inputs` schema and the manifest are unchanged (SPEC-61).
 
+### Fixed
+
+- The GitLab canary campaigns protect their demo branch name before pushing it
+  and wait until GitLab reports it protected before opening the merge request.
+  Protecting after the push raced GitLab's protection cache, so a lifecycle
+  campaign could start its first pipeline without the protected `GITLAB_TOKEN`
+  (run 36684239922).
+
 ## [2.0.0] - 2026-09-27
 
 ### Added
