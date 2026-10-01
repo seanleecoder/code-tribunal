@@ -2,7 +2,7 @@
 
 - **Severity:** Medium (operator toil and late-discovered drift) · **Effort:** M overall
 - **Status:** Phases 1–2 delivered (#137–#146) and live-validated, except for the panel
-  record-generation check (see Handover). Phase 3 is [SPEC-62](spec-62-scripted-release-finalization.md);
+  record-generation check (see Handover). Phase 3 tooling is delivered;
   Phase 4 is [SPEC-63](spec-63-documentation-drift-checks.md).
 - **Depends on:** ADR-0003 source-of-truth map; the Candidate Canary (#129, #132).
 
@@ -83,9 +83,10 @@ when some summaries passed (`36855687237`).
 
 ### Next phases
 
-- [SPEC-62](spec-62-scripted-release-finalization.md): `release-repin`,
-  `release-finalize`, `release-manifest`, a tag-push publish workflow, and the
-  next-draft reset.
+- SPEC-62 tooling is delivered: `release-repin`, `release-finalize`,
+  `release-manifest`, a tag-push publish workflow, and the next-draft reset.
+  See the [release process](../development/release-process.md) for the lasting
+  single-PR sequence. Its live publication proof is still pending.
 - [SPEC-63](spec-63-documentation-drift-checks.md): code-span path and test-name
   checks in `check_docs.py`.
 - SPEC-64 is delivered: failed thread resolutions and reopenings report
