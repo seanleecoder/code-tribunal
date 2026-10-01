@@ -1,8 +1,8 @@
 # SPEC-61 — Simplify the release process
 
 - **Severity:** Medium (operator toil and late-discovered drift) · **Effort:** M overall
-- **Status:** Phases 1–2 delivered (#137–#146); Phase 2 has two validation items
-  left (see Handover). Phase 3 is [SPEC-62](spec-62-scripted-release-finalization.md);
+- **Status:** Phases 1–2 delivered (#137–#146) and live-validated, except for two
+  record-generation checks (see Handover). Phase 3 is [SPEC-62](spec-62-scripted-release-finalization.md);
   Phase 4 is [SPEC-63](spec-63-documentation-drift-checks.md).
 - **Depends on:** ADR-0003 source-of-truth map; the Candidate Canary (#129, #132).
 
@@ -43,8 +43,8 @@ Most of the time, however, went to:
 | 2 | `campaigns` selector input (`panel`, `lifecycle`, `hostile`; default all) | #141 | — |
 | 2 | GitHub mock lifecycle (Chain B incl. stale head) | #141 | runs `36602259241`, `36630018877`, `36855687237` green |
 | 2 | GitLab mock lifecycle (temp `AI_REVIEW_MOCK_SCENARIO` project variable) | #142, #145 | `36630018877`, `36855687237` green |
-| 2 | GitLab hostile-MR probe | #143, #146 | see Handover |
-| 2 | `make evidence-records RUN=<id>` generates records from summaries | #144 | dry runs on `36313164907`, `36630018877` |
+| 2 | GitLab hostile-MR probe | #143, #146 | run `36863857862` green; all three credentials withheld |
+| 2 | `make evidence-records RUN=<id>` generates records from summaries | #144 | hostile record from `36863857862` generated and accepted by `validate_evidence_records` |
 
 Design decisions taken during delivery:
 - **Waivers:** option B, chosen over waived-rows-without-records (needs a row
@@ -67,23 +67,30 @@ Design decisions taken during delivery:
 
 ### Phase 2 validation tail
 
-1. **Hostile campaign live run.** Check run `36863857862`, dispatched after #146.
-   If it isn't green, debug from its `candidate-canary-gitlab-hostile-summary`.
-   Each check records `observed` or `error`. Validate with a zero-token dispatch:
+The hostile campaign is green (run `36863857862`), and `make evidence-records`
+turned it into a record that `validate_evidence_records` accepts. Two record
+types remain unproven end to end:
+
+1. **Lifecycle records.** The generator only accepts runs of the current workflow:
+   every job family must be present, and either skipped or successful. Runs from
+   before the `hostile` job existed (`36630018877`, `36313164907`) are refused on
+   purpose. Validate with one zero-token dispatch, then generate into a scratch
+   directory, never over the tag-pinned 2.0.0 records:
 
    ```bash
-   gh workflow run candidate-canary.yml --ref main -f campaigns=hostile \
+   gh workflow run candidate-canary.yml --ref main -f campaigns=lifecycle,hostile \
      -f runtime_source=71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f \
      -f base_image=ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02 \
      -f reviewer_image=ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c
+   PYTHONPATH=ai-review/src:scripts python scripts/canary_evidence_records.py <run> --out <scratch>/docs/evidence
    ```
 
    Confirm the selection in the `verify-candidate` log line `CAMPAIGNS: …`. A
    recalled shell command once dispatched the wrong selection.
-2. **First end-to-end `make evidence-records`.** Once the hostile run is green, run
-   the generator on it and on `36855687237`, writing to a scratch directory. Check
-   all four records render and pass `validate_evidence_records`. Do not commit
-   them over the tag-pinned 2.0.0 records.
+2. **Panel record.** This needs a real panel run, which spends tokens. Let the next
+   release's canary prove it rather than spending tokens just to validate.
+3. The generator also refuses runs whose overall conclusion is not `success`, even
+   when some summaries inside them passed. Run `36855687237` is an example.
 
 ### Next phases
 
