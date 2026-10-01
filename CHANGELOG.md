@@ -44,8 +44,8 @@ versioning.
 
 ### Fixed
 
-- The hostile canary reads its credential-presence lines after stripping GitLab's
-  job-log timestamp, stream marker, and colors. Comparing raw lines reported every
+- The hostile canary reads GitLab job logs after stripping each line's timestamp,
+  stream marker, and colors. Comparing raw lines reported every
   credential as `unknown` and failed run 36855687237, although the trace showed
   all three withheld.
 - The GitLab canary campaigns protect their demo branch name before pushing it

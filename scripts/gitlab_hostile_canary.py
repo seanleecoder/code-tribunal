@@ -168,23 +168,17 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
     return state
 
 
-# GitLab prefixes each job-log line with a timestamp and a stream marker
-# ("2026-10-01T11:32:00.124914Z 01O ", "01O+" for continuations) and colors the
-# echoed commands, so output lines must be normalized before they are compared.
+# GitLab job logs prefix each line with a timestamp and stream marker
+# ("2026-10-01T11:32:00.124914Z 01O ", "01O+" on continuations) and color commands.
 _TRACE_PREFIX_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z [0-9a-f]{2}[OE][+ ]?")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def trace_output_lines(trace: str) -> set[str]:
-    """Return the trace's lines with GitLab's log prefix and colors removed.
-
-    Lines are compared whole, so the echoed ``$ test -n ... echo "X IS PRESENT"``
-    command can never be mistaken for its own output.
-    """
-    return {
-        _TRACE_PREFIX_RE.sub("", _ANSI_RE.sub("", line)).strip()
-        for line in trace.replace("\r", "\n").splitlines()
-    }
+def plain_trace(trace: str) -> str:
+    """Return a job log without GitLab's line prefixes and colors."""
+    return "\n".join(
+        _TRACE_PREFIX_RE.sub("", _ANSI_RE.sub("", line)).strip() for line in trace.splitlines()
+    )
 
 
 class HostileProbe:
@@ -214,7 +208,7 @@ class HostileProbe:
 
     def _trace(self, job: dict[str, Any]) -> str:
         raw = _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/trace", raw=True)
-        return raw.decode("utf-8", errors="replace")
+        return plain_trace(raw.decode("utf-8", errors="replace"))
 
     def _verify_empty_input_bundle(self, prepare: dict[str, Any], trace: str) -> None:
         raw = _request(
@@ -299,7 +293,8 @@ class HostileProbe:
             enumerate_job is not None and enumerate_job["status"] == "success",
             "credential enumeration job did not run",
         )
-        lines = trace_output_lines(self._trace(enumerate_job))
+        # Whole-line matches, so the echoed command never counts as its own output.
+        lines = set(self._trace(enumerate_job).splitlines())
         presence = {
             name: (
                 "present"

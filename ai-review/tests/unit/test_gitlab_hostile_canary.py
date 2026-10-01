@@ -37,6 +37,11 @@ CONSUMER = (
 )
 
 
+def _gitlab_log(lines: list[str]) -> str:
+    """Render output lines in GitLab's job-log format."""
+    return "".join(f"2026-10-01T11:32:00.124914Z 01O {line}\r\n" for line in lines)
+
+
 class FakeGitLab:
     def __init__(
         self,
@@ -47,23 +52,18 @@ class FakeGitLab:
         archive_error: int | None = None,
         prepare_upload: str = "WARNING: inputs/: no matching files\nERROR: No files to upload",
     ) -> None:
-        # GitLab's real job-log format: a timestamp and stream marker on every
-        # line, and the echoed command colored and naming both outcomes.
         lines = []
-        for index, name in enumerate(hostile.GITLAB_SECRETS):
-            stamp = f"2026-10-01T11:32:00.1249{index:02d}Z 01O "
-            lines.append(
-                f'{stamp}\x1b[32;1m$ test -n "${{{name}:-}}" && echo "{name} IS PRESENT"'
-                f' || echo "{name} absent"\x1b[0;m'
-            )
-            lines.append(stamp + (f"{name} IS PRESENT" if name in present else f"{name} absent"))
-        self.trace = "\n".join(lines)
+        for name in hostile.GITLAB_SECRETS:
+            lines.append(f'\x1b[32;1m$ echo "{name} IS PRESENT" || echo "{name} absent"\x1b[0;m')
+            lines.append(f"{name} IS PRESENT" if name in present else f"{name} absent")
+        self.trace = _gitlab_log(lines)
         self.archive = archive
         self.artifacts_file = (
             {"filename": "artifacts.zip"} if archive is not None or advertise_archive else {}
         )
         self.archive_error = archive_error
-        self.prepare_trace = f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
+        self.prepare_output = f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
+        self.prepare_trace = _gitlab_log(self.prepare_output.splitlines())
 
     def __call__(self, method: str, path: str, **kwargs: object) -> object:
         if path.endswith("/merge_requests/5/pipelines"):
@@ -223,20 +223,8 @@ class HostileConfigTests(unittest.TestCase):
 
 
 class TraceLineTests(unittest.TestCase):
-    def test_real_gitlab_log_lines_are_normalized_and_echoes_never_count(self) -> None:
-        # Verbatim shape of candidate canary run 36855687237's enumeration trace.
-        trace = (
-            '2026-10-01T11:32:00.124890Z 01O \x1b[32;1m$ test -n "${CURSOR_API_KEY:-}" && '
-            'echo "CURSOR_API_KEY IS PRESENT" || echo "CURSOR_API_KEY absent"\x1b[0;m\n'
-            "2026-10-01T11:32:00.124914Z 01O CURSOR_API_KEY absent\n"
-            "2026-10-01T11:32:00.124930Z 01O+section_end:1:step_script\r\n"
-        )
-        lines = hostile.trace_output_lines(trace)
-        self.assertIn("CURSOR_API_KEY absent", lines)
-        self.assertNotIn("CURSOR_API_KEY IS PRESENT", lines)
-
     def test_unprefixed_lines_still_parse(self) -> None:
-        self.assertIn("GITLAB_TOKEN absent", hostile.trace_output_lines("GITLAB_TOKEN absent\n"))
+        self.assertEqual(hostile.plain_trace("\x1b[0KGITLAB_TOKEN absent\n"), "GITLAB_TOKEN absent")
 
 
 class HostileProbeTests(unittest.TestCase):
@@ -275,7 +263,7 @@ class HostileProbeTests(unittest.TestCase):
         self.assertEqual(written["schema_version"], "candidate_canary_hostile_summary.v1")
         self.assertTrue(all(step["passed"] for step in written["steps"][:-1]))
         self.assertFalse(written["steps"][-1]["passed"])
-        self.assertNotIn(fake.prepare_trace, json.dumps(written))
+        self.assertNotIn(fake.prepare_output, json.dumps(written))
         return written
 
     def _assert_failed_summary(self, fake: FakeGitLab) -> dict[str, Any]:
