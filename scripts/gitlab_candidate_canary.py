@@ -162,11 +162,9 @@ def push_candidate_change(
     result = push_template_branch(args, template)
     template_sha = result["template_sha"]
 
-    # Protect the name before the branch exists. Protected variables such as
-    # GITLAB_TOKEN reach only protected refs, and GitLab applies a new protection
-    # rule asynchronously: protecting after the push let the MR's first pipeline
-    # start on a ref it still treated as unprotected (candidate canary run
-    # 36684239922), so prepare ran without GITLAB_TOKEN.
+    # Protect the name before the branch exists: protected variables such as
+    # GITLAB_TOKEN reach only protected refs, and GitLab applies protection
+    # asynchronously, so protecting after the push raced the MR's first pipeline.
     _request(
         "POST",
         f"projects/{DEMO_PROJECT}/protected_branches",

@@ -295,12 +295,9 @@ class CandidateIdentityTests(unittest.TestCase):
 
     def _cli_args(self) -> list[str]:
         return [
-            "--runtime-source",
-            self.source,
-            "--base-image",
-            self.base,
-            "--reviewer-image",
-            self.reviewer,
+            "--runtime-source", self.source,
+            "--base-image", self.base,
+            "--reviewer-image", self.reviewer,
         ]
 
     def _verify_outputs(
@@ -343,18 +340,11 @@ class CandidateIdentityTests(unittest.TestCase):
             [
                 mock.call(
                     [
-                        "gh",
-                        "attestation",
-                        "verify",
-                        f"oci://{image}",
-                        "--repo",
-                        "seanleecoder/code-tribunal",
-                        "--predicate-type",
-                        "https://slsa.dev/provenance/v1",
-                        "--source-ref",
-                        "refs/heads/main",
-                        "--source-digest",
-                        self.source,
+                        "gh", "attestation", "verify", f"oci://{image}",
+                        "--repo", "seanleecoder/code-tribunal",
+                        "--predicate-type", "https://slsa.dev/provenance/v1",
+                        "--source-ref", "refs/heads/main",
+                        "--source-digest", self.source,
                         "--cert-identity",
                         "https://github.com/seanleecoder/code-tribunal/"
                         ".github/workflows/publish-ai-review-images.yml@refs/heads/main",
@@ -501,6 +491,25 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         self.github = load_repository_script("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
         self.gitlab = load_repository_script("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
 
+    @staticmethod
+    def _gitlab_args(state: Path) -> argparse.Namespace:
+        return argparse.Namespace(
+            template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
+            child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
+            branch="candidate-test",
+            base_image="base",
+            reviewer_image="reviewer",
+            runtime_source="c" * 40,
+            state=str(state),
+        )
+
+    @staticmethod
+    def _gitlab_raw_file(_project: str, path: str, ref: str = "main") -> str:
+        del ref
+        if path == ".gitlab-ci.yml":
+            return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
+        return "    return normalize_username(username) in normalized_allowed\n"
+
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = argparse.Namespace(state=str(Path(tmp) / "missing.json"))
@@ -601,24 +610,10 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                     raise result
                 return result
 
-            def raw_file(_project: str, path: str, ref: str = "main") -> str:
-                del ref
-                if path == ".gitlab-ci.yml":
-                    return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
-                return "    return normalize_username(username) in normalized_allowed\n"
-
-            args = argparse.Namespace(
-                template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
-                child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
-                branch="candidate-test",
-                base_image="base",
-                reviewer_image="reviewer",
-                runtime_source="c" * 40,
-                state=str(state),
-            )
+            args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", side_effect=raw_file),
+                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
@@ -629,8 +624,6 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             )
 
     def test_gitlab_protects_the_branch_before_it_exists_and_waits_before_the_mr(self) -> None:
-        # Protecting after the push raced GitLab's protection cache: the MR's first
-        # pipeline ran on a ref still treated as unprotected, without GITLAB_TOKEN.
         events: list[str] = []
         protected_reports = iter([False, False, True])
 
@@ -650,25 +643,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             events.append(f"commit:{project}")
             return {"id": "d" * 40}
 
-        def raw_file(_project: str, path: str, ref: str = "main") -> str:
-            del ref
-            if path == ".gitlab-ci.yml":
-                return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
-            return "    return normalize_username(username) in normalized_allowed\n"
-
         with tempfile.TemporaryDirectory() as tmp:
-            args = argparse.Namespace(
-                template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
-                child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
-                branch="candidate-test",
-                base_image="base",
-                reviewer_image="reviewer",
-                runtime_source="c" * 40,
-                state=str(Path(tmp) / "state.json"),
-            )
+            args = self._gitlab_args(Path(tmp) / "state.json")
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", side_effect=raw_file),
+                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):
