@@ -23,8 +23,16 @@ code spans, not links:
 ## Design
 
 Extend `scripts/check_docs.py` (already in `make quality`) over current
-documentation. Tagged release notes and `archive/` are excluded, the same way
-Lychee excludes them:
+documentation, using its existing `current` Markdown inventory, which excludes
+tagged release notes and `archive/`. For the new path and test-name existence
+checks only, also exclude `docs/improvement-specs/**`: those documents describe
+proposed work and intentionally name files and tests that have not been
+implemented. The historical marker below is for deliberately deleted references
+in current product documentation, rather than planned work in specifications.
+
+Apply this exclusion locally to the new existence checks. Preserve the shared
+Markdown inventories, existing documentation checks, and Markdown link checks
+for specifications. Within the existence-check scope:
 
 1. **Backticked repository paths must exist.** Any code span shaped like a repo
    path (`scripts/…`, `ai-review/…`, `docs/…`, `release/…`, `.github/…`) must
@@ -44,7 +52,14 @@ documented default, schema version, or job name?"
 ## Acceptance
 
 - On today's `main`, the check passes; fix or mark any findings in the same PR.
-- Re-introducing any of the stale references listed in Why makes `make quality`
-  fail with the file and line.
+- Re-introducing any of the stale references listed in Why in current product
+  documentation without a historical marker makes `make quality` fail with the
+  file and line.
+- SPEC-45's proposed `test_critique_observations_keep_selected_effective_non_agree_verdicts`
+  and SPEC-62's future `.github/workflows/publish-release.yml` path do not fail
+  existence checks. The same missing references in current product documentation
+  outside `docs/improvement-specs/` fail with the file and line.
+- A broken Markdown link in an improvement specification still fails the existing
+  link check, and specifications remain subject to existing documentation checks.
 - No false positives on tagged release notes, CHANGELOG history sections, or
   `archive/`.
