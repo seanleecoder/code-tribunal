@@ -6,6 +6,11 @@
 
 -
 
+## Documentation
+
+- Does this change any documented default, schema version, or job name? Update
+  the affected current documentation when it does.
+
 ## Tests
 
 -

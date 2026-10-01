@@ -18,3 +18,13 @@ scope, required-check configuration, or real container registry pulls. See the
 When behavior changes, update the smallest relevant test and any schema-backed
 golden file. Run `make update-golden` only for an intentional reducer contract
 change and review the generated diff.
+
+`make quality` checks concrete backticked repository paths and test references in
+current Markdown. It reports missing targets with file and line, and checks test
+definitions parsed from the tests tree. Fenced examples, placeholder paths, and
+globs are patterns; tagged release notes, archive documents, and CHANGELOG history
+are outside this existence check. Proposed improvement specs are exempt from
+existence checks but retain their Markdown link checks and other contracts.
+When current prose deliberately names a deleted target, put
+`<!-- docs-check: historical -->` on that same line. Documented defaults, schema
+versions, and job names still require review; existence cannot prove behavior.

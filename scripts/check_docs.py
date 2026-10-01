@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -171,6 +172,67 @@ def _without_fenced_code(text: str) -> str:
 def _inline_code_values(text: str) -> set[str]:
     """Return single-backtick inline code values outside fenced examples."""
     return set(INLINE_CODE_RE.findall(_without_fenced_code(text)))
+
+
+def _test_definition_index() -> dict[Path, set[str]]:
+    return {
+        path: {
+            node.name for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+        }
+        for path in (ROOT / "ai-review/tests").rglob("*.py")
+    }
+
+
+def _reference_issues(path: Path, text: str, tests: dict[Path, set[str]]) -> list[str]:
+    """Check concrete references, retaining line numbers and the existing inventory scope."""
+    relative = path.relative_to(ROOT)
+    if relative.is_relative_to("docs/improvement-specs"):
+        return []  # Proposed names remain subject to every other documentation check.
+    lines = _without_fenced_code(text).splitlines()
+    if relative.as_posix() == "CHANGELOG.md":
+        start = next((i for i, line in enumerate(lines) if line == "## [Unreleased]"), None)
+        if start is None:
+            return []
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines)
+        )
+        lines = ["" if i < start or i >= end else line for i, line in enumerate(lines)]
+    issues = []
+    for number, line in enumerate(lines, 1):
+        if "<!-- docs-check: historical -->" in line:
+            continue
+        for value in INLINE_CODE_RE.findall(line):
+            # Placeholders, globs, and ellipses describe patterns, not concrete paths.
+            if any(marker in value for marker in ("<", ">", "*", "?", "...", "…", "$")):
+                continue
+            reference = re.sub(r":\d+$", "", value)
+            file_name, separator, test_name = reference.partition("::")
+            if (
+                re.fullmatch(r"(?:scripts|ai-review|docs|release|\.github)/[^\s:]+", file_name)
+                and not (ROOT / file_name).exists()
+            ):
+                issues.append(f"{relative}:{number}: repository path {file_name!r} does not exist")
+            candidates = [
+                p for p in tests if p.name == file_name or p in (
+                    ROOT / file_name, ROOT / "ai-review/tests" / file_name
+                )
+            ]
+            if re.fullmatch(r"test_[A-Za-z0-9_]+\.py", reference) and not candidates:
+                issues.append(f"{relative}:{number}: test file {reference!r} does not exist")
+            if separator and re.fullmatch(r"[^\s:]+\.py", file_name):
+                if (
+                    re.fullmatch(r"test_[A-Za-z0-9_]+", test_name)
+                    and not any(test_name in tests[p] for p in candidates)
+                ):
+                    issues.append(f"{relative}:{number}: test {reference!r} does not exist")
+            elif (
+                re.fullmatch(r"test_[A-Za-z0-9_]+", reference)
+                and not any(reference in names for names in tests.values())
+            ):
+                issues.append(f"{relative}:{number}: test {reference!r} does not exist")
+    return issues
 
 
 def _config_leaf_paths(value: object, prefix: str = "") -> set[str]:
@@ -417,8 +479,10 @@ def _release_state_issues() -> list[str]:
 
 def find_issues() -> list[str]:
     issues: list[str] = []
+    tests = _test_definition_index()
     for path in markdown_inventory("current"):
         text = path.read_text(encoding="utf-8")
+        issues.extend(_reference_issues(path, text, tests))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
 
@@ -451,7 +515,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(
         "OK: documentation configuration/environment inventory, install contract, "
-        "release state, and GitHub/GitLab examples are consistent"
+        "release state, path/test references, and GitHub/GitLab examples are consistent"
     )
     return 0
 

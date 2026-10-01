@@ -9,6 +9,9 @@ versioning.
 
 ### Added
 
+- Documentation checks report missing concrete repository paths and test
+  definitions with file and line. Proposed specs retain link checks; historical
+  references use an explicit same-line marker.
 - Pushing a signed release tag triggers publication after verifying its signer,
   reachability from `main`, and the rebuilt manifest against the checksum in the
   signed certificate. CI uploads the final notes and both manifest assets.

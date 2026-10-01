@@ -23,7 +23,6 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
 | [SPEC-61](spec-61-release-process-simplification.md) | Accepted; lifecycle generation proven, panel and operational tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
-| [SPEC-63](spec-63-documentation-drift-checks.md) | Accepted (SPEC-61 Phase 4); not started | `check_docs.py` fails on backticked repository paths and test names that do not exist. |
 
 ## What to do next
 
