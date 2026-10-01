@@ -85,6 +85,16 @@ def _strip_html_comments(text: str) -> str:
     return _HTML_COMMENT_RE.sub("", text)
 
 
+def release_bindings(text: str) -> dict[str, list[str]]:
+    """Return every live ``Release-*`` binding value, keyed by field name."""
+    text = _strip_html_comments(text)
+    return {
+        "runtime-source": _RUNTIME_SOURCE_RE.findall(text),
+        "base-digest": _BASE_DIGEST_RE.findall(text),
+        "reviewer-digest": _REVIEWER_DIGEST_RE.findall(text),
+    }
+
+
 # A waived record only marks itself; the reason lives once, in
 # verification.evidence_waivers, so the record and the release authority must both
 # change to waive a row without restating the reason in two places.

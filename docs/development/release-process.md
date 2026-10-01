@@ -42,9 +42,16 @@ and remove completed spec files from the active
    repinning. It does not gate ordinary pull requests. One green GitHub run and
    one green GitLab run are the complete canary campaign; repeat only after a
    failure has led to a concrete fix. The canary retains only redacted summary
-   artifacts and writes no evidence record: the operator records the green pair
-   in `docs/evidence/record-candidate-canary.md` with the `Release-*` binding
-   fields, and that record is the real Chain A panel row for step 5.
+   artifacts. `make evidence-records RUN=<run id>` turns a green run's summaries
+   into the panel, both lifecycle, and hostile-MR records, with the `Release-*`
+   binding. It accepts only a fully successful run of the canonical canary
+   workflow dispatched from protected `main`, reads which campaigns ran from the
+   job metadata, and refuses to write anything on any inconsistency (see
+   `scripts/canary_evidence_records.py`). A rerun attempt's duplicate summaries
+   are refused: dispatch a fresh Candidate Canary run instead. Skipped campaigns
+   leave their records untouched. Only each record's **Operator notes** section
+   is hand-written; regenerating the same run preserves it verbatim, and a
+   different run starts with `None recorded.`
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and
    `release/release-inputs.json` together. Keep status `draft` until step 5
    completes, then validate:
