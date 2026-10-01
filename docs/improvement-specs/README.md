@@ -22,7 +22,10 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
-| [SPEC-61](spec-61-release-process-simplification.md) | Accepted; Phases 1–2 complete, Phase 3 next | Cut release ceremony (canary-owned image checks, single-source waivers, no per-release evidence index, demo preflight), then automate the mock campaigns and finalization. |
+| [SPEC-61](spec-61-release-process-simplification.md) | Accepted; Phases 1–2 delivered, validation tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
+| [SPEC-62](spec-62-scripted-release-finalization.md) | Accepted (SPEC-61 Phase 3); not started | `release-repin`, `release-finalize`, `release-manifest`, and a tag-push publish workflow that only re-validates and uploads. |
+| [SPEC-63](spec-63-documentation-drift-checks.md) | Accepted (SPEC-61 Phase 4); not started | `check_docs.py` fails on backticked repository paths and test names that do not exist. |
+| [SPEC-64](spec-64-thread-resolution-failure-visibility.md) | Proposed; needs a maintainer decision | A human command the bot accepted but could not apply (expired resolve token) is only a warning; make it visible. |
 
 ## What to do next
 
@@ -35,5 +38,7 @@ completed spec is a description of work already visible in the code, tests, and
    [evidence index](../evidence/README.md#known-gaps-and-missing-evidence) — most
    notably that no record binds the SPEC-50 structured-output canary to a
    *released* image pair.
-3. Take SPEC-41 next among the proposals. A reviewer silently losing every
+3. For release work, start from the SPEC-61 **Handover** section: finish the
+   Phase 2 validation tail, then implement SPEC-62.
+4. Take SPEC-41 next among the proposals. A reviewer silently losing every
    finding is a correctness defect in the panel, not a feature request.
