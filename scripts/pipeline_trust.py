@@ -38,12 +38,6 @@ RESERVED_DIRECT_JOB_NAMES = {
     # GitLab expands the current matrix jobs to these names.
     *(f"AI critique: [{reviewer}]" for reviewer in REVIEWERS),
     *(f"AI review: [{reviewer}]" for reviewer in REVIEWERS),
-    # Deleted from the template with the merge gate, but kept reserved for one
-    # release: this auditor runs from the image against a *consuming* project's
-    # configuration, and a consumer pinned to an older template still declares the
-    # job. Un-reserving a name is the direction that loosens a trust boundary, so
-    # removal is tracked as COMPAT-005 rather than done here.
-    "ai_review_gate",
     "consensus_ai_review",
     "post_ai_review",
     "prepare_ai_review",

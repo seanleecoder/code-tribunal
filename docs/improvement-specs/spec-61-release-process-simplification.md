@@ -104,9 +104,8 @@ types remain unproven end to end:
 
 ### Operational follow-ups carried from 2.0.0
 
-- **COMPAT-005 is due.** The first release after 2.0.0 may drop the reserved
-  `ai_review_gate` job name in `scripts/pipeline_trust.py`
-  (`docs/development/temporary-compatibility.md`).
+- **COMPAT-005 is retired.** The gate-free 2.0.0 release satisfies its removal
+  condition; the auditor no longer reserves `ai_review_gate`.
 - **GitLab body refresh not run.** The 1.0.0-format GitLab note `3601861614` on demo
   MR !11 has not been refreshed live (RUNBOOK coverage-gap table).
 - **The tag shows "Unverified" on GitHub.** The maintainer's SSH key isn't
