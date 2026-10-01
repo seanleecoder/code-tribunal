@@ -491,6 +491,25 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         self.github = load_repository_script("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
         self.gitlab = load_repository_script("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
 
+    @staticmethod
+    def _gitlab_args(state: Path) -> argparse.Namespace:
+        return argparse.Namespace(
+            template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
+            child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
+            branch="candidate-test",
+            base_image="base",
+            reviewer_image="reviewer",
+            runtime_source="c" * 40,
+            state=str(state),
+        )
+
+    @staticmethod
+    def _gitlab_raw_file(_project: str, path: str, ref: str = "main") -> str:
+        del ref
+        if path == ".gitlab-ci.yml":
+            return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
+        return "    return normalize_username(username) in normalized_allowed\n"
+
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = argparse.Namespace(state=str(Path(tmp) / "missing.json"))
@@ -591,24 +610,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                     raise result
                 return result
 
-            def raw_file(_project: str, path: str, ref: str = "main") -> str:
-                del ref
-                if path == ".gitlab-ci.yml":
-                    return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
-                return "    return normalize_username(username) in normalized_allowed\n"
-
-            args = argparse.Namespace(
-                template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
-                child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
-                branch="candidate-test",
-                base_image="base",
-                reviewer_image="reviewer",
-                runtime_source="c" * 40,
-                state=str(state),
-            )
+            args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", side_effect=raw_file),
+                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
+                mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
                 self.gitlab.create_campaign(args)
@@ -616,6 +622,39 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 json.loads(state.read_text(encoding="utf-8")),
                 {"branch": "candidate-test", "template_sha": "d" * 40},
             )
+
+    def test_gitlab_protects_the_branch_before_it_exists_and_waits_before_the_mr(self) -> None:
+        events: list[str] = []
+        protected_reports = iter([False, False, True])
+
+        def request(method: str, path: str, **_kwargs: object) -> object:
+            if path.endswith("/protected_branches"):
+                events.append("protect")
+                return {}
+            if "/repository/branches/" in path:
+                events.append("check")
+                return {"protected": next(protected_reports)}
+            if path.endswith("/merge_requests"):
+                events.append("open_mr")
+                return {"iid": 9, "web_url": "https://gitlab.example/mr/9"}
+            raise AssertionError(f"unexpected {method} {path}")
+
+        def commit(project: str, *_args: object, **_kwargs: object) -> dict[str, object]:
+            events.append(f"commit:{project}")
+            return {"id": "d" * 40}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self._gitlab_args(Path(tmp) / "state.json")
+            with (
+                mock.patch.object(self.gitlab, "_commit", side_effect=commit),
+                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
+                mock.patch.object(self.gitlab, "_request", side_effect=request),
+                mock.patch.object(self.gitlab.time, "sleep"),
+            ):
+                self.gitlab.create_campaign(args)
+        demo = f"commit:{self.gitlab.DEMO_PROJECT}"
+        self.assertLess(events.index("protect"), events.index(demo))
+        self.assertEqual(events[events.index(demo) + 1 :], ["check", "check", "check", "open_mr"])
 
     def test_gitlab_cleanup_attempts_every_resource_and_aggregates_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
