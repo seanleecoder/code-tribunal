@@ -40,7 +40,7 @@ REVIEWER_CREDENTIALS = tuple(sorted(
 GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
 GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 # The resolve token is a fine-grained GitHub token, which expires, and an expired
-# one only produces a post_result warning, so its age is surfaced before a run.
+# one prevents thread mutations, so its age is surfaced before a run.
 EXPIRING_SECRET = "AI_REVIEW_GITHUB_RESOLVE_TOKEN"
 SECRET_AGE_WARNING_DAYS = 60
 

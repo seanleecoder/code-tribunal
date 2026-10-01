@@ -12,7 +12,7 @@ The 2.0.0 release took seven pull requests (#130–#136), two image candidates,
 about thirty manual operator actions, and eight hand-written evidence records. Its
 live checks earned their cost. The canary found a consensus crash (#131) and a
 doubled GitHub panel (#132), and the lifecycle chain exposed an expired resolve
-token that silently disabled `wontfix` ([SPEC-64](spec-64-thread-resolution-failure-visibility.md)).
+token that silently disabled `wontfix` (addressed by SPEC-64).
 Most of the time, however, went to:
 - overlapping checks
 - the same content copied by hand into four places
@@ -99,8 +99,8 @@ types remain unproven end to end:
   next-draft reset.
 - [SPEC-63](spec-63-documentation-drift-checks.md): code-span path and test-name
   checks in `check_docs.py`.
-- [SPEC-64](spec-64-thread-resolution-failure-visibility.md): proposed; needs a
-  maintainer decision before implementation.
+- SPEC-64 is delivered: failed thread resolutions and reopenings report
+  `partial_failed`, retain the previous disposition for a retry, and fail `post`.
 
 ### Operational follow-ups carried from 2.0.0
 

@@ -1143,6 +1143,87 @@ class PostTests(PostCase):
         self.assertEqual(state["records"][0]["discussion_id"], "discussion")
         self.assertEqual(state["records"][0]["status"], "open")
 
+    def test_failed_commands_on_both_platforms_preserve_state_and_can_retry(self) -> None:
+        from ai_review.platform.github import GitHubReviewPlatform
+        from ai_review.platform.gitlab import GitLabReviewPlatform
+
+        class UnauthorizedResponse:
+            status_code = 401
+            headers: dict[str, str] = {}
+            text = "expired token"
+
+            def json(self) -> dict[str, str]:
+                return {"message": "expired token"}
+
+        class UnauthorizedSession:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+            def request(self, method: str, url: str, **kwargs: Any) -> UnauthorizedResponse:
+                self.calls.append((method, url, kwargs))
+                return UnauthorizedResponse()
+
+        for mode in ("github_reviews", "gitlab_discussions"):
+            for command in ("resolve", "wontfix", "reopen"):
+                with self.subTest(platform=mode, command=command):
+                    session = UnauthorizedSession()
+                    if mode == "github_reviews":
+                        platform = GitHubReviewPlatform(
+                            "https://api.github.com", "token", session=session
+                        )
+                        platform._review_thread_node_id = lambda *args: "PRRT_thread"
+                    else:
+                        platform = GitLabReviewPlatform(
+                            "https://gitlab.example/api/v4", "token", session=session
+                        )
+                    manifest = dict(self._manifest("head"), project_id="owner/repo")
+                    consensus = self._consensus()
+                    record = self._state_record(consensus["groups"][0])
+                    prior_status = "resolved" if command == "reopen" else "open"
+                    prior_disposition = "resolve" if command == "reopen" else None
+                    record.update(status=prior_status, human_disposition=prior_disposition)
+                    state = self._state_with_records([record])
+                    config = self._config(mode=mode)
+                    client = StatePostClient("head", state)
+                    plan = plan_state(
+                        config, manifest, consensus, state, [], [], [],
+                        {record["issue_id"]: command},
+                    )
+                    result = _initial_post_result(
+                        consensus=consensus, manifest=manifest, current_head_sha="head"
+                    )
+                    with patch.object(
+                        client, "resolve_thread", side_effect=platform.resolve_thread
+                    ):
+                        posting_module.finalize_state(
+                            client, manifest, consensus, result, plan, [], [], [],
+                            posting_mode=mode, fyi_mode="off", max_fyi=0, dry_run=False,
+                        )
+                    self.assertEqual(len(session.calls), 1)
+                    self.assertEqual(result["status"], "partial_failed")
+                    self.assertEqual(post_module.exit_code_for_status(result["status"]), 1)
+                    self.assertTrue(any("401" in warning for warning in result["warnings"]))
+                    validate_instance(result, "post_result.schema.json")
+                    saved = decode_state_note_body(client.state_notes[-1]["body"])
+                    self.assertIsNotNone(saved)
+                    self.assertEqual(saved["records"][0]["status"], prior_status)
+                    self.assertEqual(saved["records"][0]["human_disposition"], prior_disposition)
+
+                    retry = StatePostClient("head", saved)
+                    retry_plan = plan_state(
+                        config, manifest, consensus, saved, [], [], [],
+                        {record["issue_id"]: command},
+                    )
+                    retry_result = _initial_post_result(
+                        consensus=consensus, manifest=manifest, current_head_sha="head"
+                    )
+                    posting_module.finalize_state(
+                        retry, manifest, consensus, retry_result, retry_plan, [], [], [],
+                        posting_mode=mode, fyi_mode="off", max_fyi=0, dry_run=False,
+                    )
+                    self.assertEqual(retry_result["status"], "success")
+                    self.assertEqual(len(retry.resolve_calls), 1)
+
     def test_post_state_processing_runs_before_and_after_mutations(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]

@@ -545,7 +545,7 @@ class StatePlanningTests(PostCase):
         self.assertEqual(state_after["records"][0]["status"], "open")
         self.assertIsNone(state_after["records"][0]["human_disposition"])
 
-    def test_finalize_state_keeps_reopen_blocking_after_unresolve_failure(self) -> None:
+    def test_failed_reopen_reports_failure_and_preserves_previous_state(self) -> None:
         from ai_review.platform.base import ReviewPlatformError
 
         consensus = self._consensus()
@@ -592,9 +592,10 @@ class StatePlanningTests(PostCase):
         )
 
         self.assertTrue(any("unresolve error" in w for w in finalized["warnings"]))
+        self.assertEqual(finalized["status"], "partial_failed")
         state_after = decode_state_note_body(client.mr_notes[-1]["body"])
-        self.assertEqual(state_after["records"][0]["status"], "open")
-        self.assertEqual(state_after["records"][0]["human_disposition"], "reopen")
+        self.assertEqual(state_after["records"][0]["status"], "resolved")
+        self.assertIsNone(state_after["records"][0]["human_disposition"])
 
     def test_collect_human_commands_with_github_threads(self) -> None:
         client = FakeGitHubClient(

@@ -413,7 +413,6 @@ discovered, so the next release starts here instead of rediscovering it.
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
 | GitLab refresh of an older-format note | v3→v4 was proven on GitHub at 2.0.0 ([record](record-render-body-v4-refresh.md)); no GitLab note has been migrated live | refresh the 1.0.0-format note `3601861614` on MR !11 after merging `main` into its branch, and assert `updated_discussions=1`, `created=0`, same `issue_id` |
-| Failed resolution is only a warning | at 2.0.0 an expired GitHub resolve token left `post` green while `wontfix` never applied ([record](record-github-current-image.md)) | decide whether a failed resolution should fail `post`; until then, check `post_result.warnings` in every Chain B |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |

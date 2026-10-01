@@ -25,7 +25,6 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-61](spec-61-release-process-simplification.md) | Accepted; Phases 1–2 delivered, validation tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
 | [SPEC-62](spec-62-scripted-release-finalization.md) | Accepted (SPEC-61 Phase 3); not started | `release-repin`, `release-finalize`, `release-manifest`, and a tag-push publish workflow that only re-validates and uploads. |
 | [SPEC-63](spec-63-documentation-drift-checks.md) | Accepted (SPEC-61 Phase 4); not started | `check_docs.py` fails on backticked repository paths and test names that do not exist. |
-| [SPEC-64](spec-64-thread-resolution-failure-visibility.md) | Proposed; needs a maintainer decision | A human command the bot accepted but could not apply (expired resolve token) is only a warning; make it visible. |
 
 ## What to do next
 

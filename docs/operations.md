@@ -133,6 +133,11 @@ The precedence and exit behavior are exercised by
 [`test_consensus_integrity.py`](../ai-review/tests/unit/test_consensus_integrity.py),
 and [`test_publish_e2e.py`](../ai-review/tests/integration/test_publish_e2e.py).
 
+A failed thread resolution or reopening also reports `partial_failed`. The state
+retains the previous status and human disposition, so repairing platform access
+and rerunning can retry the command. The structured result includes the platform
+error before the CLI exits nonzero.
+
 ## Concurrency
 
 GitLab serializes post per project/MR through a resource group. GitHub groups

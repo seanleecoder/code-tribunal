@@ -649,15 +649,15 @@ def finalize_state(
                 result["resolved_discussions"] += 1
         except ReviewPlatformError as exc:
             action = "resolve" if desired else "unresolve"
+            result["status"] = "partial_failed"
             result["warnings"].append(
                 f"failed to {action} thread {discussion_id}: {exc}"
             )
-            if desired:
-                previous = prior_records.get(record["issue_id"])
-                record["status"] = previous.get("status", "open") if previous else "open"
-                record["human_disposition"] = (
-                    previous.get("human_disposition") if previous else None
-                )
+            previous = prior_records.get(record["issue_id"])
+            record["status"] = previous.get("status", "open") if previous else "open"
+            record["human_disposition"] = (
+                previous.get("human_disposition") if previous else None
+            )
     final_state, overflow = _process_state_for_persistence(
         {
             **state_plan.planned_state,
