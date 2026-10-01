@@ -438,6 +438,77 @@ def _expected_summaries(jobs: list[dict[str, Any]]) -> frozenset[str]:
     return frozenset(expected)
 
 
+def _artifact_inventory(run_id: str, expected: frozenset[str]) -> dict[int, tuple[str, bool]]:
+    response = _gh(
+        "api",
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        f"repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100",
+    )
+    try:
+        pages = json_loads_no_duplicates(response)
+    except ValueError as exc:
+        raise RecordError(f"artifact metadata is not valid JSON: {exc}") from exc
+    if not isinstance(pages, list) or not pages:
+        raise RecordError("artifact metadata must contain a nonempty list of pages")
+    inventory: dict[int, tuple[str, bool]] = {}
+    total_count = None
+    for page in pages:
+        if not isinstance(page, dict):
+            raise RecordError("artifact metadata page must be a JSON object")
+        count = page.get("total_count")
+        artifacts = page.get("artifacts")
+        if type(count) is not int or count < 0 or not isinstance(artifacts, list):
+            raise RecordError("artifact metadata page requires total_count and an artifacts list")
+        if total_count is not None and count != total_count:
+            raise RecordError("artifact metadata pages disagree on total_count")
+        total_count = count
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise RecordError("artifact metadata entry must be a JSON object")
+            artifact_id = artifact.get("id")
+            name = artifact.get("name")
+            expired = artifact.get("expired")
+            if (
+                type(artifact_id) is not int
+                or artifact_id <= 0
+                or not isinstance(name, str)
+                or not name
+                or type(expired) is not bool
+            ):
+                raise RecordError(
+                    "artifact metadata entry requires a valid ID, name, and expired flag"
+                )
+            if artifact_id in inventory:
+                raise RecordError(f"artifact metadata repeats artifact ID {artifact_id}")
+            inventory[artifact_id] = (name, expired)
+    if len(inventory) != total_count:
+        raise RecordError("artifact metadata is incomplete: entry count differs from total_count")
+    for key, artifact in DEMO_ARTIFACTS.items():
+        ids = sorted(
+            artifact_id for artifact_id, (name, _) in inventory.items() if name == artifact.name
+        )
+        if key not in expected:
+            if ids:
+                raise RecordError(f"{key} uploaded an artifact despite its campaign being skipped")
+            continue
+        # gh run download discards duplicate names, including summaries from earlier attempts.
+        # Count expired entries too: their presence still leaves the attempt binding ambiguous.
+        if len(ids) != 1:
+            raise RecordError(
+                f"{artifact.name} requires exactly one artifact; found {len(ids)} (IDs: {ids}). "
+                "Dispatch a fresh Candidate Canary run with a new run ID."
+            )
+        if inventory[ids[0]][1]:
+            raise RecordError(
+                f"{artifact.name} artifact {ids[0]} has expired. "
+                "Dispatch a fresh Candidate Canary run with a new run ID."
+            )
+    return inventory
+
+
 def load_run(run_id: str, workdir: Path) -> CanaryRun:
     repository = f"github.com/{REPOSITORY}"
     meta = _json_object(
@@ -476,7 +547,10 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
         raise RecordError("verify-candidate job metadata is missing or ambiguous")
     _require_successful_job(verify[0])
     expected = _expected_summaries(jobs)
+    inventory = _artifact_inventory(run_id, expected)
     _gh("run", "download", run_id, "--repo", repository, "--dir", str(workdir))
+    if _artifact_inventory(run_id, expected) != inventory:
+        raise RecordError("artifact metadata changed during download; retry evidence generation")
     summaries = {}
     for key, artifact in DEMO_ARTIFACTS.items():
         directory = workdir / artifact.name

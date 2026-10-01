@@ -47,8 +47,13 @@ and remove completed spec files from the active
    binding. It accepts only a fully successful run of the canonical canary
    workflow dispatched from protected `main`, reads which campaigns ran from the
    job metadata, and refuses to write anything on any inconsistency (see
-   `scripts/canary_evidence_records.py`). Skipped campaigns leave their records
-   untouched. Only each record's **Operator notes** section is hand-written;
+   `scripts/canary_evidence_records.py`). Each expected summary must have exactly
+   one nonexpired artifact in the complete run metadata. Duplicate summary names
+   across attempts are rejected, including expired duplicates: dispatch a fresh
+   Candidate Canary run with a new run ID. The artifact inventory is checked again
+   after download; changes refuse generation before any record is written.
+   Skipped campaigns leave their records untouched. Only each record's
+   **Operator notes** section is hand-written;
    regenerating the same run preserves it verbatim, and a different run starts
    with `None recorded.`
 4. Update the canonical GitHub workflow, the three GitLab pin variables, and

@@ -233,6 +233,30 @@ VIEW_CALL = mock.call(
 WORKFLOW_CALL = mock.call(
     "api", "--hostname", "github.com", "repos/seanleecoder/code-tribunal/actions/workflows/42"
 )
+ARTIFACTS_CALL = mock.call(
+    "api",
+    "--hostname",
+    "github.com",
+    "--paginate",
+    "--slurp",
+    "repos/seanleecoder/code-tribunal/actions/runs/99/artifacts?per_page=100",
+)
+
+
+def _artifacts(campaigns=("panel", "lifecycle", "hostile")) -> list[dict]:
+    return [
+        {"id": index, "name": artifact.name, "expired": False}
+        for index, (key, artifact) in enumerate(records.DEMO_ARTIFACTS.items(), 1)
+        if key.partition("-")[0] in campaigns
+    ]
+
+
+def _artifact_pages(artifacts=None, page_size=100) -> list[dict]:
+    artifacts = _artifacts() if artifacts is None else artifacts
+    return [
+        {"total_count": len(artifacts), "artifacts": artifacts[start : start + page_size]}
+        for start in range(0, max(1, len(artifacts)), page_size)
+    ]
 
 
 def _write_artifacts(directory: Path, summaries: dict) -> None:
@@ -242,12 +266,32 @@ def _write_artifacts(directory: Path, summaries: dict) -> None:
         (artifact / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
 
-def _gh_response(meta: dict, workflow: dict, summaries: dict | None = None, damage=None):
+def _gh_response(
+    meta: dict,
+    workflow: dict,
+    summaries: dict | None = None,
+    damage=None,
+    *,
+    artifact_pages=None,
+    after_artifact_pages=None,
+):
+    artifact_pages = _artifact_pages() if artifact_pages is None else artifact_pages
+    artifact_reads = 0
+
     def respond(*args: str) -> str:
+        nonlocal artifact_reads
         if args[:2] == ("run", "view"):
             return json.dumps(meta)
-        if args[0] == "api":
+        if args == WORKFLOW_CALL.args:
             return json.dumps(workflow)
+        if args == ARTIFACTS_CALL.args:
+            pages = artifact_pages
+            if artifact_reads and after_artifact_pages is not None:
+                pages = after_artifact_pages
+            artifact_reads += 1
+            if isinstance(pages, Exception):
+                raise pages
+            return pages if isinstance(pages, str) else json.dumps(pages)
         if args[:2] == ("run", "download"):
             directory = Path(args[-1])
             if summaries is not None:
@@ -348,7 +392,12 @@ class RecordRegenerationTests(unittest.TestCase):
             mock.patch.object(
                 records,
                 "_gh",
-                side_effect=_gh_response(_metadata(campaigns), _workflow(), summaries),
+                side_effect=_gh_response(
+                    _metadata(campaigns),
+                    _workflow(),
+                    summaries,
+                    artifact_pages=_artifact_pages(_artifacts(campaigns)),
+                ),
             ),
             redirect_stdout(stdout),
         ):
@@ -578,6 +627,8 @@ class RecordLoadingTests(unittest.TestCase):
         workflow=None,
         summaries=None,
         damage=None,
+        artifact_pages=None,
+        after_artifact_pages=None,
         downloaded=True,
         error="ERROR:",
     ) -> str:
@@ -593,7 +644,16 @@ class RecordLoadingTests(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 mock.patch.object(
-                    records, "_gh", side_effect=_gh_response(meta, workflow, summaries, damage)
+                    records,
+                    "_gh",
+                    side_effect=_gh_response(
+                        meta,
+                        workflow,
+                        summaries,
+                        damage,
+                        artifact_pages=artifact_pages,
+                        after_artifact_pages=after_artifact_pages,
+                    ),
                 ) as gh,
                 mock.patch.object(records, "scan", wraps=records.scan) as scan,
                 redirect_stdout(stdout),
@@ -624,7 +684,12 @@ class RecordLoadingTests(unittest.TestCase):
                     mock.patch.object(
                         records,
                         "_gh",
-                        side_effect=_gh_response(_metadata(campaigns), _workflow(), summaries),
+                        side_effect=_gh_response(
+                            _metadata(campaigns),
+                            _workflow(),
+                            summaries,
+                            artifact_pages=_artifact_pages(_artifacts(campaigns), page_size=1),
+                        ),
                     ) as gh,
                 ):
                     directory = Path(tmp)
@@ -637,6 +702,7 @@ class RecordLoadingTests(unittest.TestCase):
                         [
                             VIEW_CALL,
                             WORKFLOW_CALL,
+                            ARTIFACTS_CALL,
                             mock.call(
                                 "run",
                                 "download",
@@ -646,6 +712,7 @@ class RecordLoadingTests(unittest.TestCase):
                                 "--dir",
                                 str(directory),
                             ),
+                            ARTIFACTS_CALL,
                         ],
                     )
 
@@ -799,7 +866,144 @@ class RecordLoadingTests(unittest.TestCase):
     def test_artifacts_for_skipped_campaigns_are_rejected(self) -> None:
         for campaigns in (("panel", "lifecycle"), ("panel", "hostile"), ("lifecycle", "hostile")):
             with self.subTest(campaigns=campaigns):
-                self._refuses(meta=_metadata(campaigns), error="despite its campaign being skipped")
+                self._refuses(
+                    meta=_metadata(campaigns),
+                    downloaded=False,
+                    error="despite its campaign being skipped",
+                )
+
+    def test_downloaded_artifacts_for_skipped_campaigns_are_still_rejected(self) -> None:
+        self._refuses(
+            meta=_metadata(("panel",)),
+            artifact_pages=_artifact_pages(_artifacts(("panel",))),
+            error="despite its campaign being skipped",
+        )
+
+    def test_green_rerun_refuses_duplicate_names_before_cli_discards_them(self) -> None:
+        for index, artifact in enumerate(_artifacts()):
+            for expired in (False, True):
+                entries = _artifacts()
+                entries[index] = artifact | {"expired": expired}
+                entries.append(artifact | {"id": artifact["id"] + 100})
+                for reverse in (False, True):
+                    for page_size in (1, 100):
+                        with self.subTest(
+                            name=artifact["name"],
+                            expired=expired,
+                            reverse=reverse,
+                            page_size=page_size,
+                        ):
+                            # The fake CLI extracts only one JSON for each summary name.
+                            stdout = self._refuses(
+                                artifact_pages=_artifact_pages(
+                                    list(reversed(entries)) if reverse else entries, page_size
+                                ),
+                                downloaded=False,
+                                error=f"{artifact['name']} requires exactly one artifact; found 2",
+                            )
+                            self.assertIn(f"IDs: {[artifact['id'], artifact['id'] + 100]}", stdout)
+                            self.assertIn("a new run ID", stdout)
+
+    def test_missing_or_expired_artifact_metadata_refuses_before_downloading(self) -> None:
+        for index, artifact in enumerate(_artifacts()):
+            with self.subTest(name=artifact["name"], kind="missing"):
+                entries = _artifacts()
+                del entries[index]
+                self._refuses(
+                    artifact_pages=_artifact_pages(entries),
+                    downloaded=False,
+                    error=f"{artifact['name']} requires exactly one artifact; found 0",
+                )
+            with self.subTest(name=artifact["name"], kind="expired"):
+                entries = _artifacts()
+                entries[index]["expired"] = True
+                self._refuses(
+                    artifact_pages=_artifact_pages(entries), downloaded=False, error="has expired"
+                )
+
+    def test_malformed_or_incomplete_artifact_metadata_refuses_before_downloading(self) -> None:
+        entries = _artifacts()
+        count = len(entries)
+        cases = [
+            "{",
+            "null",
+            {},
+            [],
+            [None],
+            [{}],
+            [{"total_count": True, "artifacts": entries}],
+            [{"total_count": -1, "artifacts": entries}],
+            [{"total_count": str(count), "artifacts": entries}],
+            [{"total_count": count, "artifacts": {}}],
+            [{"total_count": count, "artifacts": entries[:-1]}],
+            [
+                {"total_count": count, "artifacts": entries[:1]},
+                {"total_count": count + 1, "artifacts": entries[1:]},
+            ],
+            _artifact_pages(entries + [entries[0]], page_size=1),
+            '[{"total_count": 0, "total_count": 5, "artifacts": []}]',
+        ]
+        for field, values in (
+            ("id", (None, True, 0, -1, "1")),
+            ("name", (None, "", 1)),
+            ("expired", (None, 0, "false")),
+        ):
+            cases.extend(
+                _artifact_pages([entries[0] | {field: value}, *entries[1:]]) for value in values
+            )
+            cases.append(
+                _artifact_pages(
+                    [
+                        {key: value for key, value in entries[0].items() if key != field},
+                        *entries[1:],
+                    ]
+                )
+            )
+        cases.append(_artifact_pages([None, *entries[1:]]))
+        for pages in cases:
+            with self.subTest(pages=pages):
+                self._refuses(artifact_pages=pages, downloaded=False, error="artifact metadata")
+
+    def test_artifact_inventory_changes_during_download_never_overwrite_records(self) -> None:
+        entries = _artifacts()
+        changed = [entries[0] | {"id": 101}, *entries[1:]]
+        renamed = [*entries, {"id": 101, "name": "diagnostic", "expired": False}]
+        cases = [
+            _artifact_pages(changed),
+            _artifact_pages(renamed),
+            _artifact_pages(entries[1:]),
+            _artifact_pages([entries[0] | {"expired": True}, *entries[1:]]),
+            _artifact_pages([*entries, entries[0] | {"id": 101}]),
+            "null",
+        ]
+        for pages in cases:
+            with self.subTest(pages=pages):
+                self._refuses(after_artifact_pages=pages)
+
+    def test_inventory_comparison_ignores_page_order_and_unrelated_metadata(self) -> None:
+        entries = _artifacts() + [{"id": 101, "name": "diagnostic", "expired": False}]
+        after = [entry | {"updated_at": "2026-10-01T00:00:00Z"} for entry in reversed(entries)]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(
+                records,
+                "_gh",
+                side_effect=_gh_response(
+                    _metadata(),
+                    _workflow(),
+                    _run().summaries,
+                    artifact_pages=_artifact_pages(entries),
+                    after_artifact_pages=_artifact_pages(after, page_size=1),
+                ),
+            ),
+        ):
+            loaded = records.load_run("99", Path(tmp))
+            self.assertEqual(loaded.summaries, _run().summaries)
+
+    def test_artifact_api_failures_never_overwrite_records(self) -> None:
+        failure = records.RecordError("artifact API unavailable")
+        self._refuses(artifact_pages=failure, downloaded=False, error="artifact API unavailable")
+        self._refuses(after_artifact_pages=failure, error="artifact API unavailable")
 
     def test_bad_campaign_results_never_overwrite_other_records(self) -> None:
         for message, bad in _bad_summaries().items():
