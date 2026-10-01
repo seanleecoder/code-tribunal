@@ -22,8 +22,8 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
-| [SPEC-61](spec-61-release-process-simplification.md) | Accepted; Phases 1–2 delivered, validation tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
-| [SPEC-62](spec-62-scripted-release-finalization.md) | Accepted (SPEC-61 Phase 3); not started | `release-repin`, `release-finalize`, `release-manifest`, and a tag-push publish workflow that only re-validates and uploads. |
+| [SPEC-61](spec-61-release-process-simplification.md) | Accepted; lifecycle generation proven, panel and operational tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
+| [SPEC-62](spec-62-scripted-release-finalization.md) | In progress (SPEC-61 Phase 3) | `release-repin`, `release-finalize`, `release-manifest`, and a tag-push publish workflow that only re-validates and uploads. |
 | [SPEC-63](spec-63-documentation-drift-checks.md) | Accepted (SPEC-61 Phase 4); not started | `check_docs.py` fails on backticked repository paths and test names that do not exist. |
 
 ## What to do next
