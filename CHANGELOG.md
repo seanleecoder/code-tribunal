@@ -9,6 +9,11 @@ versioning.
 
 ### Added
 
+- `make release-repin`, `release-finalize`, `release-manifest`, and
+  `release-open-next` prepare a single release PR, validate its evidence and
+  source bindings, generate the external certificate assets, and reset the next
+  draft. They reuse the canary loader and existing release validators; signing
+  stays local.
 - The Candidate Canary takes a `campaigns` input and gains a zero-token
   `lifecycle` campaign that drives the GitHub mock Chain B end to end: create on an
   added file, unchanged rerun, in-place body change, `wontfix` with persistence,

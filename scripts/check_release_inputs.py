@@ -89,6 +89,34 @@ def _strip_html_comments(text: str) -> str:
     return _HTML_COMMENT_RE.sub("", text)
 
 
+def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Path = ROOT) -> None:
+    """Validate candidate pins independently of release activation."""
+    expected_refs = {role: image_ref(image, runtime_source) for role, image in images.items()}
+    canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
+    containers = _github_job_containers(canonical)
+    if set(containers) != set(GITHUB_CONTAINER_ROLES):
+        raise ReleaseValidationError(
+            "GitHub template container jobs do not match the release role registry"
+        )
+    mismatched_jobs = [
+        job for job, role in GITHUB_CONTAINER_ROLES.items()
+        if containers[job] != expected_refs[role]
+    ]
+    if mismatched_jobs:
+        raise ReleaseValidationError(
+            "GitHub template pins do not match release inputs for jobs: "
+            + ", ".join(mismatched_jobs)
+        )
+    gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
+    expected_lines = (
+        f'AI_REVIEW_BASE_IMAGE: "{expected_refs["base"]}"',
+        f'AI_REVIEW_REVIEWER_IMAGE: "{expected_refs["reviewer"]}"',
+        f'AI_REVIEW_TRUSTED_IMAGE_SHA: "{runtime_source}"',
+    )
+    if any(gitlab.count(line) != 1 for line in expected_lines):
+        raise ReleaseValidationError("GitLab template pins do not match release inputs")
+
+
 def release_bindings(text: str) -> dict[str, list[str]]:
     """Return every live ``Release-*`` binding value, keyed by field name."""
     text = _strip_html_comments(text)
@@ -367,33 +395,9 @@ def validate_release_inputs(
     # it is checked by check_release_manifest.validate_manifest, which is the
     # validator that runs standalone from a tagged worktree. Both call the one
     # implementation in release_common.sync_workflows.
-    canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     if data["status"] == "active":
         assert isinstance(runtime_source, str)
-        expected_refs = {role: image_ref(images[role], runtime_source) for role in images}
-        containers = _github_job_containers(canonical)
-        if set(containers) != set(GITHUB_CONTAINER_ROLES):
-            raise ReleaseValidationError(
-                "GitHub template container jobs do not match the release role registry"
-            )
-        mismatched_jobs = [
-            job
-            for job, role in GITHUB_CONTAINER_ROLES.items()
-            if containers[job] != expected_refs[role]
-        ]
-        if mismatched_jobs:
-            raise ReleaseValidationError(
-                "GitHub template pins do not match release inputs for jobs: "
-                + ", ".join(mismatched_jobs)
-            )
-        gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
-        expected_lines = (
-            f'AI_REVIEW_BASE_IMAGE: "{expected_refs["base"]}"',
-            f'AI_REVIEW_REVIEWER_IMAGE: "{expected_refs["reviewer"]}"',
-            f'AI_REVIEW_TRUSTED_IMAGE_SHA: "{runtime_source}"',
-        )
-        if any(gitlab.count(line) != 1 for line in expected_lines):
-            raise ReleaseValidationError("GitLab template pins do not match release inputs")
+        validate_template_pins(images, runtime_source, root)
     return waivers
 
 

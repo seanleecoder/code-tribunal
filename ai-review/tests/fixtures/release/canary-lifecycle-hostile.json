@@ -1,0 +1,776 @@
+{
+  "artifacts": [
+    {
+      "artifacts": [
+        {
+          "expired": false,
+          "id": 11196680301,
+          "name": "candidate-canary-github-lifecycle-summary"
+        },
+        {
+          "expired": false,
+          "id": 11195707667,
+          "name": "candidate-canary-gitlab-lifecycle-summary"
+        },
+        {
+          "expired": false,
+          "id": 11194653938,
+          "name": "candidate-canary-gitlab-hostile-summary"
+        }
+      ],
+      "total_count": 3
+    }
+  ],
+  "metadata": {
+    "conclusion": "success",
+    "createdAt": "2026-10-01T21:19:05Z",
+    "event": "workflow_dispatch",
+    "headBranch": "main",
+    "jobs": [
+      {
+        "completedAt": "2026-10-01T21:26:05Z",
+        "conclusion": "success",
+        "databaseId": 110589503783,
+        "name": "verify-candidate",
+        "startedAt": "2026-10-01T21:25:28Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T21:25:30Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T21:25:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:25:32Z",
+            "conclusion": "success",
+            "name": "Check out protected orchestration",
+            "number": 2,
+            "startedAt": "2026-10-01T21:25:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:25:32Z",
+            "conclusion": "success",
+            "name": "Validate campaign selection",
+            "number": 3,
+            "startedAt": "2026-10-01T21:25:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:25:32Z",
+            "conclusion": "success",
+            "name": "Validate source and image inputs",
+            "number": 4,
+            "startedAt": "2026-10-01T21:25:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:25:53Z",
+            "conclusion": "success",
+            "name": "Pull candidate images",
+            "number": 5,
+            "startedAt": "2026-10-01T21:25:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:26:03Z",
+            "conclusion": "success",
+            "name": "Verify candidate image identity and provenance",
+            "number": 6,
+            "startedAt": "2026-10-01T21:25:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:26:03Z",
+            "conclusion": "success",
+            "name": "Post Check out protected orchestration",
+            "number": 12,
+            "startedAt": "2026-10-01T21:26:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:26:03Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-01T21:26:03Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324/job/110589503783"
+      },
+      {
+        "completedAt": "2026-10-01T21:52:36Z",
+        "conclusion": "success",
+        "databaseId": 110592142128,
+        "name": "lifecycle (github, CANDIDATE_CANARY_GITHUB_TOKEN, GH_TOKEN)",
+        "startedAt": "2026-10-01T21:31:08Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T21:31:10Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T21:31:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:12Z",
+            "conclusion": "success",
+            "name": "Check out protected orchestration",
+            "number": 2,
+            "startedAt": "2026-10-01T21:31:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:14Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 3,
+            "startedAt": "2026-10-01T21:31:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:15Z",
+            "conclusion": "success",
+            "name": "Install validation dependency",
+            "number": 4,
+            "startedAt": "2026-10-01T21:31:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:22Z",
+            "conclusion": "success",
+            "name": "Create isolated mock lifecycle change",
+            "number": 5,
+            "startedAt": "2026-10-01T21:31:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:30Z",
+            "conclusion": "success",
+            "name": "Drive the lifecycle steps",
+            "number": 6,
+            "startedAt": "2026-10-01T21:31:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:33Z",
+            "conclusion": "success",
+            "name": "Clean up demo",
+            "number": 7,
+            "startedAt": "2026-10-01T21:52:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:34Z",
+            "conclusion": "success",
+            "name": "Upload redacted lifecycle summary",
+            "number": 8,
+            "startedAt": "2026-10-01T21:52:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:34Z",
+            "conclusion": "success",
+            "name": "Post Set up Python",
+            "number": 15,
+            "startedAt": "2026-10-01T21:52:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:34Z",
+            "conclusion": "success",
+            "name": "Post Check out protected orchestration",
+            "number": 16,
+            "startedAt": "2026-10-01T21:52:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:52:34Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-01T21:52:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324/job/110592142128"
+      },
+      {
+        "completedAt": "2026-10-01T21:45:19Z",
+        "conclusion": "success",
+        "databaseId": 110592142204,
+        "name": "lifecycle (gitlab, CANDIDATE_CANARY_GITLAB_TOKEN, GITLAB_CANARY_TOKEN)",
+        "startedAt": "2026-10-01T21:31:10Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T21:31:12Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T21:31:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:14Z",
+            "conclusion": "success",
+            "name": "Check out protected orchestration",
+            "number": 2,
+            "startedAt": "2026-10-01T21:31:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:18Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 3,
+            "startedAt": "2026-10-01T21:31:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:21Z",
+            "conclusion": "success",
+            "name": "Install validation dependency",
+            "number": 4,
+            "startedAt": "2026-10-01T21:31:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:25Z",
+            "conclusion": "success",
+            "name": "Create isolated mock lifecycle change",
+            "number": 5,
+            "startedAt": "2026-10-01T21:31:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:12Z",
+            "conclusion": "success",
+            "name": "Drive the lifecycle steps",
+            "number": 6,
+            "startedAt": "2026-10-01T21:31:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:15Z",
+            "conclusion": "success",
+            "name": "Clean up demo",
+            "number": 7,
+            "startedAt": "2026-10-01T21:45:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:16Z",
+            "conclusion": "success",
+            "name": "Upload redacted lifecycle summary",
+            "number": 8,
+            "startedAt": "2026-10-01T21:45:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:16Z",
+            "conclusion": "success",
+            "name": "Post Set up Python",
+            "number": 15,
+            "startedAt": "2026-10-01T21:45:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:16Z",
+            "conclusion": "success",
+            "name": "Post Check out protected orchestration",
+            "number": 16,
+            "startedAt": "2026-10-01T21:45:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:45:16Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-01T21:45:16Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324/job/110592142204"
+      },
+      {
+        "completedAt": "2026-10-01T21:32:10Z",
+        "conclusion": "success",
+        "databaseId": 110592142280,
+        "name": "hostile",
+        "startedAt": "2026-10-01T21:31:09Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T21:31:11Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T21:31:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:13Z",
+            "conclusion": "success",
+            "name": "Check out protected orchestration",
+            "number": 2,
+            "startedAt": "2026-10-01T21:31:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:16Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 3,
+            "startedAt": "2026-10-01T21:31:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:22Z",
+            "conclusion": "success",
+            "name": "Install validation dependency",
+            "number": 4,
+            "startedAt": "2026-10-01T21:31:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:31:25Z",
+            "conclusion": "success",
+            "name": "Open the unprotected hostile merge request",
+            "number": 5,
+            "startedAt": "2026-10-01T21:31:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:04Z",
+            "conclusion": "success",
+            "name": "Check the credential boundary",
+            "number": 6,
+            "startedAt": "2026-10-01T21:31:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:06Z",
+            "conclusion": "success",
+            "name": "Clean up demo",
+            "number": 7,
+            "startedAt": "2026-10-01T21:32:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:07Z",
+            "conclusion": "success",
+            "name": "Upload redacted hostile-MR summary",
+            "number": 8,
+            "startedAt": "2026-10-01T21:32:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:07Z",
+            "conclusion": "success",
+            "name": "Post Set up Python",
+            "number": 15,
+            "startedAt": "2026-10-01T21:32:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:07Z",
+            "conclusion": "success",
+            "name": "Post Check out protected orchestration",
+            "number": 16,
+            "startedAt": "2026-10-01T21:32:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T21:32:07Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-01T21:32:07Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324/job/110592142280"
+      },
+      {
+        "completedAt": "2026-10-01T21:26:06Z",
+        "conclusion": "skipped",
+        "databaseId": 110592143899,
+        "name": "campaign",
+        "startedAt": "2026-10-01T21:26:06Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324/job/110592143899"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/36927853324",
+    "workflowDatabaseId": 340810062
+  },
+  "run_id": "36927853324",
+  "summaries": {
+    "hostile-gitlab": {
+      "candidate": {
+        "base_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02",
+        "reviewer_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c",
+        "runtime_source": "71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f"
+      },
+      "change_url": "https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/29",
+      "passed": true,
+      "platform": "gitlab",
+      "schema_version": "candidate_canary_hostile_summary.v1",
+      "steps": [
+        {
+          "name": "auditor_rejects_hostile",
+          "observed": {
+            "hostile_issues": 2,
+            "legitimate_issues": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "credentials_withheld",
+          "observed": {
+            "CURSOR_API_KEY": "absent",
+            "GITLAB_TOKEN": "absent",
+            "OPENROUTER_API_KEY": "absent"
+          },
+          "passed": true
+        },
+        {
+          "name": "prepare_fails_closed",
+          "observed": {
+            "downstream": [
+              "skipped"
+            ],
+            "empty_input_bundle": true,
+            "prepare": "failed"
+          },
+          "passed": true
+        },
+        {
+          "name": "forgery_unconsumed",
+          "observed": {
+            "consensus_ai_review": "skipped",
+            "post_ai_review": "skipped"
+          },
+          "passed": true
+        },
+        {
+          "name": "image_substituted",
+          "observed": {
+            "hostile_image_pulled": true,
+            "note": "in-pipeline image enforcement is not implemented (SPEC-43)"
+          },
+          "passed": true
+        }
+      ]
+    },
+    "lifecycle-github": {
+      "candidate": {
+        "base_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02",
+        "reviewer_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c",
+        "runtime_source": "71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f"
+      },
+      "change_url": "https://github.com/seanleecoder/code-tribunal-demo/pull/30",
+      "passed": true,
+      "platform": "github",
+      "schema_version": "candidate_canary_lifecycle_summary.v1",
+      "steps": [
+        {
+          "name": "create",
+          "observed": {
+            "created_discussions": 1,
+            "resolved_discussions": 0,
+            "reviewers": {
+              "claude": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "codex": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "cursor": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "opencode": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              }
+            },
+            "run_id": 36929240674,
+            "skipped_unchanged": 0,
+            "status": "success",
+            "thread": 4160717796,
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "unchanged_rerun",
+          "observed": {
+            "created_discussions": 0,
+            "resolved_discussions": 0,
+            "run_id": 36929519479,
+            "skipped_unchanged": 1,
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "changed_body",
+          "observed": {
+            "created_discussions": 0,
+            "resolved_discussions": 0,
+            "run_id": 36929838709,
+            "skipped_unchanged": 0,
+            "status": "success",
+            "updated_discussions": 1,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "wontfix",
+          "observed": {
+            "created_discussions": 0,
+            "persist_run_id": 36930431477,
+            "persisted": {
+              "created_discussions": 0,
+              "resolved_discussions": 0,
+              "skipped_unchanged": 1,
+              "status": "success",
+              "updated_discussions": 0,
+              "warnings": 0
+            },
+            "persisted_state": {
+              "discussion_id": "4160717796",
+              "human_disposition": "wontfix",
+              "issue_id": "761fd1ba3e8db4463a5706f86ba8602f2c37a760202cbd9fda81dc73dbc43974",
+              "root_note_id": 4160717796,
+              "state_note_id": 5941077248,
+              "status": "wontfix"
+            },
+            "resolved_discussions": 1,
+            "run_id": 36930129916,
+            "skipped_unchanged": 1,
+            "state": {
+              "discussion_id": "4160717796",
+              "human_disposition": "wontfix",
+              "issue_id": "761fd1ba3e8db4463a5706f86ba8602f2c37a760202cbd9fda81dc73dbc43974",
+              "root_note_id": 4160717796,
+              "state_note_id": 5941077248,
+              "status": "wontfix"
+            },
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "reopen",
+          "observed": {
+            "created_discussions": 0,
+            "resolved_discussions": 0,
+            "run_id": 36930704986,
+            "skipped_unchanged": 1,
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "stale_head",
+          "observed": {
+            "created_discussions": 0,
+            "resolved_discussions": 0,
+            "run_id": 36930982071,
+            "skipped_unchanged": 0,
+            "status": "stale_head",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "blocker_does_not_block",
+          "observed": {
+            "created_discussions": 0,
+            "mergeStateStatus": "CLEAN",
+            "mergeable": "MERGEABLE",
+            "resolved_discussions": 0,
+            "run_id": 36931050085,
+            "skipped_unchanged": 1,
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        }
+      ]
+    },
+    "lifecycle-gitlab": {
+      "candidate": {
+        "base_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:f7028a5a22a2df0edd53235f3836b9adae3dbea474f711aab38b21b337181f02",
+        "reviewer_image": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f@sha256:292142b70c96fbb9fda530eeafb79644694f23cae9e971a2ca3c74ac6b72295c",
+        "runtime_source": "71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f"
+      },
+      "change_url": "https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/30",
+      "passed": true,
+      "platform": "gitlab",
+      "schema_version": "candidate_canary_lifecycle_summary.v1",
+      "steps": [
+        {
+          "name": "create",
+          "observed": {
+            "created_discussions": 1,
+            "pipeline": 2904237518,
+            "resolved_discussions": 0,
+            "reviewers": {
+              "claude": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "codex": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "cursor": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              },
+              "opencode": {
+                "accepted_finding_count": 1,
+                "adapter_status": "success",
+                "raw_finding_count": 1,
+                "status": "success"
+              }
+            },
+            "skipped_unchanged": 0,
+            "status": "success",
+            "thread": 3941032302,
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "unchanged_rerun",
+          "observed": {
+            "created_discussions": 0,
+            "pipeline": 2904277186,
+            "resolved_discussions": 0,
+            "skipped_unchanged": 1,
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "changed_body",
+          "observed": {
+            "created_discussions": 0,
+            "pipeline": 2904318622,
+            "resolved_discussions": 0,
+            "skipped_unchanged": 0,
+            "status": "success",
+            "updated_discussions": 1,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "wontfix",
+          "observed": {
+            "created_discussions": 0,
+            "persist_pipeline": 2904387421,
+            "persisted": {
+              "created_discussions": 0,
+              "resolved_discussions": 0,
+              "skipped_unchanged": 1,
+              "status": "success",
+              "updated_discussions": 0,
+              "warnings": 0
+            },
+            "persisted_state": {
+              "discussion_id": "fb13ce8fea8affc3993a1f4b8fb50fb7ebf80383",
+              "human_disposition": "wontfix",
+              "issue_id": "761fd1ba3e8db4463a5706f86ba8602f2c37a760202cbd9fda81dc73dbc43974",
+              "root_note_id": 3941032302,
+              "state_note_id": 3941032370,
+              "status": "wontfix"
+            },
+            "pipeline": 2904354424,
+            "resolved_discussions": 1,
+            "skipped_unchanged": 1,
+            "state": {
+              "discussion_id": "fb13ce8fea8affc3993a1f4b8fb50fb7ebf80383",
+              "human_disposition": "wontfix",
+              "issue_id": "761fd1ba3e8db4463a5706f86ba8602f2c37a760202cbd9fda81dc73dbc43974",
+              "root_note_id": 3941032302,
+              "state_note_id": 3941032370,
+              "status": "wontfix"
+            },
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "reopen",
+          "observed": {
+            "created_discussions": 0,
+            "pipeline": 2904420508,
+            "resolved_discussions": 0,
+            "skipped_unchanged": 1,
+            "status": "success",
+            "updated_discussions": 0,
+            "warnings": 0
+          },
+          "passed": true
+        },
+        {
+          "name": "blocker_does_not_block",
+          "observed": {
+            "detailed_merge_status": "mergeable"
+          },
+          "passed": true
+        }
+      ]
+    }
+  },
+  "workflow": {
+    "id": 340810062,
+    "path": ".github/workflows/candidate-canary.yml"
+  }
+}

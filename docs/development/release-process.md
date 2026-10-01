@@ -52,44 +52,65 @@ and remove completed spec files from the active
    leave their records untouched. Only each record's **Operator notes** section
    is hand-written; regenerating the same run preserves it verbatim, and a
    different run starts with `None recorded.`
-4. Update the canonical GitHub workflow, the three GitLab pin variables, and
-   `release/release-inputs.json` together. Keep status `draft` until step 5
-   completes, then validate:
+4. Prepare every required generated and manual evidence record in the local
+   release checkout. Each selected record must declare exact `Status: passed`
+   with matching `Release-runtime-source`, `Release-base-digest`, and
+   `Release-reviewer-digest` fields, or carry exactly one same-line
+   `Release-evidence-waived: registered` marker with no `Release-*` bindings.
+   Pick the complete evidence list from the impact table below. The generator
+   knows only generated records, and the validator checks only cited records;
+   neither decides campaign completeness. Body refresh and effort-route checks
+   remain manual RUNBOOK steps.
+5. Repin and finalize locally, then review the evidence, pins, inputs, CHANGELOG,
+   and notes together in **one release PR**:
 
    ```bash
+   make release-repin RUN="$RUN"
+   make release-finalize RUN="$RUN" EVIDENCE="$EVIDENCE" WAIVE="$WAIVE"
    make quality
    ```
 
-   `make quality` runs `workflow-parity`, which regenerates nothing but reports
-   an installed workflow copy that has drifted from its canonical template; use
-   `make sync-workflows` to repair it.
-
-5. Run the GitHub and GitLab live evidence matrix. Each cited record under
-   `docs/evidence/` must either declare exact `Status: passed` with
-   matching `Release-runtime-source` / `Release-base-digest` /
-   `Release-reviewer-digest` fields, or the marker
-   `Release-evidence-waived: registered` with its reason declared under
-   `verification.evidence_waivers` in `release/release-inputs.json`.
-   Only then set `release-inputs.status` to `active` and re-run
-   `python scripts/check_release_inputs.py` (active status rejects partial,
-   SHA/digest-mismatched, or undeclared-waiver evidence).
-6. Move `CHANGELOG` `[Unreleased]` to `[$V]`, finalize `release/$V.md`, and
-   create final release commit `P`. Set `V` to the release version (for example
-   `2.0.0`), build and validate the external asset against `P`, then create the
-   signed `v$V` tag on `P` with the manifest checksum in its certificate message:
+   `EVIDENCE` is a space-separated list of bare record filenames, including
+   generated, manual passing, and waived records. `WAIVE` contains shell-quoted
+   `RECORD=REASON` arguments, for example:
+   `WAIVE='"record-example.md=Unchanged modules; covered by regression tests"'`.
+   A waived record requires both its marker and a nonempty reason in the inputs.
+   The command requires all generated records and waiver keys in the selection,
+   finds successful canonical CI and image-publication push runs for `R`, and
+   activates the inputs through the existing validator before writing anything.
+   It preserves the operator's Scope and Migration prose in the notes.
+   `release-repin` updates the canonical template and its installed copy together;
+   `make workflow-parity` checks that they remain byte-identical.
+6. Inspect the actual `R..P` diff for the semantic restrictions that the path
+   allowlist cannot prove. Merge the release PR with a **merge commit**, then check
+   out that final merged commit as `P`. Build the certificate only after the merge:
 
    ```bash
-   V=2.0.0
-   python scripts/build_release_manifest.py \
-     --tag "v$V" --runtime-source "$R" --release-commit "$P" \
-     --out /tmp/release-manifest.json
-   python scripts/check_release_manifest.py /tmp/release-manifest.json
-   sha256sum /tmp/release-manifest.json > /tmp/release-manifest.json.sha256
+   P=<final-merged-commit>
+   V=2.0.1
+   git switch --detach "$P"
+   make release-manifest P="$P" RELEASE_OUT=/tmp/code-tribunal-release
+   git tag -s "v$V" "$P" -F "/tmp/code-tribunal-release/code-tribunal-v$V-tag-message.txt"
+   git verify-tag "v$V"
+   git push origin "v$V"
    ```
 
-7. Inspect the actual `R..P` diff for the semantic restrictions that the
-   path-level allowlist cannot prove. Then publish the reviewed tag, manifest,
-   checksum, and release notes.
+   The clean checkout must be exactly `P`. The command builds and validates the
+   existing manifest, names the assets `code-tribunal-vV-release-manifest.json`
+   and its `.sha256`, and drafts the signed certificate with one
+   `Release-manifest-sha256` line. Signing stays local and manual. Never reuse a
+   certificate generated for a different commit.
+7. Verify publication of the tag, final notes, manifest, and checksum. The tag-push
+   publication workflow revalidates the signed certificate against the tagged
+   inputs and uploads its assets; it carries no signing key. Then open the next
+   draft in a follow-up PR:
+
+   ```bash
+   make release-open-next V=2.0.2
+   ```
+
+   This resets all candidate and verification fields and creates no notes file.
+   Copy `release/TEMPLATE.md` when the next release is scoped.
 
 Do not describe a release as stable until its required live evidence is complete.
 Never rebuild a release tag from a different source commit; publish a new patch

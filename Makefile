@@ -5,12 +5,14 @@ REVIEWER ?= claude
 DIFF ?= $(AI_REVIEW_ROOT)/tests/fixtures/diffs/simple.diff
 REPO ?= $(AI_REVIEW_ROOT)/tests/fixtures/repos/simple
 LOCAL_OUT ?= .ai-review-local
+RELEASE_OUT ?= /tmp/code-tribunal-release
 SCOPE ?= base
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 .PHONY: quality test test-strict packaged-smoke lint typecheck compile supply-chain \
-	release-inputs docs-check sync-workflows workflow-parity \
+	release-inputs docs-check sync-workflows workflow-parity demo-preflight evidence-records \
+	release-repin release-finalize release-manifest release-open-next \
 	update-golden review-local consensus-local validate-local
 
 quality: docs-check lint test-strict typecheck supply-chain release-inputs workflow-parity compile
@@ -73,6 +75,22 @@ demo-preflight:
 evidence-records:
 	@test -n "$(RUN)" || { echo "usage: make evidence-records RUN=<canary run id>"; exit 2; }
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/canary_evidence_records.py $(RUN)
+
+release-repin:
+	@test -n "$(RUN)" || { echo "usage: make release-repin RUN=<canary run id>"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py repin --run "$(RUN)"
+
+release-finalize:
+	@test -n "$(RUN)" -a -n "$(EVIDENCE)" || { echo "usage: make release-finalize RUN=<run> EVIDENCE='<record IDs>' [WAIVE='<quoted RECORD=REASON arguments>']"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py finalize --run "$(RUN)" --evidence $(EVIDENCE) $(if $(WAIVE),--waive $(WAIVE),)
+
+release-manifest:
+	@test -n "$(P)" || { echo "usage: make release-manifest P=<release commit>"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py manifest --release-commit "$(P)" --out "$(RELEASE_OUT)"
+
+release-open-next:
+	@test -n "$(V)" || { echo "usage: make release-open-next V=<next version>"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py open-next --version "$(V)"
 
 # Pass CHECK=1 to verify without writing.
 sync-workflows:

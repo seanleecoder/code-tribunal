@@ -70,17 +70,14 @@ Waiver reasons are stated once, in `verification.evidence_waivers` in
 The external manifest binds `release_commit` and re-derives the `R..P` diff, so the
 tag must point at a commit that satisfies it.
 
-- Tag **`P`** exactly. Do **not** squash-merge the release PR: a squash rewrites `P`
-  into a new commit and drops it from `main`'s history, invalidating the manifest.
-- If you want the tag on `main`'s tip instead, rebuild and re-validate the manifest
-  against the merge commit — this only validates while `main` has not advanced past
-  the merge, because `changed_paths` is recomputed from `R..P`.
-- Re-run `scripts/check_release_manifest.py` after any change of tag target and
-  attach the regenerated manifest, not an earlier copy.
-- Write the annotated tag message as a release certificate: `R`, `P`, publication
-  run, both digests, evidence summary, registered waivers, known shipped
-  limitations, and the external manifest sha256. Compare
-  `git show --no-patch v1.0.0`.
+- Merge the single release PR with a merge commit. Check out that final merged
+  commit as **`P`**, then run `make release-manifest P=<full SHA>`.
+- Inspect `R..P`, the manifest, checksum, and generated tag certificate before
+  signing. Sign `vX.Y.Z` locally on exactly `P`, using the generated message.
+- The signed certificate's `Release-manifest-sha256` binds the manifest bytes.
+  Any change of tag target requires rebuilding and revalidating the certificate.
+- Push the signed tag and verify automatic publication of these notes and both
+  assets. CI never holds the signing key.
 
 ## Carried known limitations
 
@@ -97,9 +94,11 @@ tag must point at a commit that satisfies it.
 
 ## Finalization
 
-After every required gate passes and the release commit and tag exist: promote
-`CHANGELOG` `[Unreleased]` to `[X.Y.Z] - <date>`, rewrite this file from draft notes
-to final release notes in the release commit, build and validate the external
-manifest with the release coordinates, and publish the manifest and checksum. Then
-open the next draft. Historical inputs remain available at
-`vX.Y.Z:release/release-inputs.json`.
+After every required gate passes, `make release-repin RUN=<id>` and
+`make release-finalize RUN=<id> EVIDENCE="<all record filenames>"` prepare the
+pins, active inputs, CHANGELOG promotion, and final notes together for one release
+PR. Include quoted `WAIVE` arguments for every registered waiver. Scope and
+Migration remain operator-written. After merging, generate the manifest and
+certificate for the final merged `P`, sign and push the tag locally, and verify
+publication. Then `make release-open-next V=<next>` opens the next draft.
+Historical inputs remain available at `vX.Y.Z:release/release-inputs.json`.
