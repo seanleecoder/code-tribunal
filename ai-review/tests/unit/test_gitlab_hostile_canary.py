@@ -37,6 +37,11 @@ CONSUMER = (
 )
 
 
+def _gitlab_log(lines: list[str]) -> str:
+    """Render output lines in GitLab's job-log format."""
+    return "".join(f"2026-10-01T11:32:00.124914Z 01O {line}\r\n" for line in lines)
+
+
 class FakeGitLab:
     def __init__(
         self,
@@ -47,18 +52,18 @@ class FakeGitLab:
         archive_error: int | None = None,
         prepare_upload: str = "WARNING: inputs/: no matching files\nERROR: No files to upload",
     ) -> None:
-        self.trace = "\n".join(
-            f"{name} IS PRESENT" if name in present else f"{name} absent"
-            for name in hostile.GITLAB_SECRETS
-        )
+        lines = []
+        for name in hostile.GITLAB_SECRETS:
+            lines.append(f'\x1b[32;1m$ echo "{name} IS PRESENT" || echo "{name} absent"\x1b[0;m')
+            lines.append(f"{name} IS PRESENT" if name in present else f"{name} absent")
+        self.trace = _gitlab_log(lines)
         self.archive = archive
         self.artifacts_file = (
             {"filename": "artifacts.zip"} if archive is not None or advertise_archive else {}
         )
         self.archive_error = archive_error
-        self.prepare_trace = (
-            f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
-        )
+        self.prepare_output = f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
+        self.prepare_trace = _gitlab_log(self.prepare_output.splitlines())
 
     def __call__(self, method: str, path: str, **kwargs: object) -> object:
         if path.endswith("/merge_requests/5/pipelines"):
@@ -217,6 +222,11 @@ class HostileConfigTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].kwargs["payload"]["source_branch"], branch)
 
 
+class TraceLineTests(unittest.TestCase):
+    def test_unprefixed_lines_still_parse(self) -> None:
+        self.assertEqual(hostile.plain_trace("\x1b[0KGITLAB_TOKEN absent\n"), "GITLAB_TOKEN absent")
+
+
 class HostileProbeTests(unittest.TestCase):
     def test_the_boundary_holds(self) -> None:
         observed = _run(FakeGitLab())
@@ -253,7 +263,7 @@ class HostileProbeTests(unittest.TestCase):
         self.assertEqual(written["schema_version"], "candidate_canary_hostile_summary.v1")
         self.assertTrue(all(step["passed"] for step in written["steps"][:-1]))
         self.assertFalse(written["steps"][-1]["passed"])
-        self.assertNotIn(fake.prepare_trace, json.dumps(written))
+        self.assertNotIn(fake.prepare_output, json.dumps(written))
         return written
 
     def _assert_failed_summary(self, fake: FakeGitLab) -> dict[str, Any]:

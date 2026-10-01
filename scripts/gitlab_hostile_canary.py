@@ -168,6 +168,19 @@ def create_probe(args: argparse.Namespace) -> dict[str, Any]:
     return state
 
 
+# GitLab job logs prefix each line with a timestamp and stream marker
+# ("2026-10-01T11:32:00.124914Z 01O ", "01O+" on continuations) and color commands.
+_TRACE_PREFIX_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z [0-9a-f]{2}[OE][+ ]?")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def plain_trace(trace: str) -> str:
+    """Return a job log without GitLab's line prefixes and colors."""
+    return "\n".join(
+        _TRACE_PREFIX_RE.sub("", _ANSI_RE.sub("", line)).strip() for line in trace.splitlines()
+    )
+
+
 class HostileProbe:
     def __init__(self, state: dict[str, Any], deadline: float) -> None:
         self.mr = str(state["mr_iid"])
@@ -195,7 +208,7 @@ class HostileProbe:
 
     def _trace(self, job: dict[str, Any]) -> str:
         raw = _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/trace", raw=True)
-        return raw.decode("utf-8", errors="replace")
+        return plain_trace(raw.decode("utf-8", errors="replace"))
 
     def _verify_empty_input_bundle(self, prepare: dict[str, Any], trace: str) -> None:
         raw = _request(
@@ -227,7 +240,7 @@ class HostileProbe:
                     and all(part not in {"", ".", ".."} for part in entry.filename[:-1].split("/"))
                     for entry in archive.infolist()
                 )
-        except (zipfile.BadZipFile, UnicodeDecodeError):
+        except zipfile.BadZipFile, UnicodeDecodeError:
             raise LifecycleFailure("prepare input artifact is not a valid ZIP archive") from None
         expect(empty, "prepare input artifact is not an empty inputs/ tree")
 
@@ -280,7 +293,8 @@ class HostileProbe:
             enumerate_job is not None and enumerate_job["status"] == "success",
             "credential enumeration job did not run",
         )
-        lines = {line.strip() for line in self._trace(enumerate_job).splitlines()}
+        # Whole-line matches, so the echoed command never counts as its own output.
+        lines = set(self._trace(enumerate_job).splitlines())
         presence = {
             name: (
                 "present"
