@@ -634,6 +634,43 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseValidationError, "must be a non-empty string"):
                 validate_release_inputs(data, root)
 
+    def test_waiver_marker_must_be_unique_and_on_one_line(self) -> None:
+        for marker in (
+            "Release-evidence-waived:\nregistered\n",
+            "Release-evidence-waived: registered\nRelease-evidence-waived: registered\n",
+            "Release-evidence-waived: registered\nRelease-evidence-waived: another reason\n",
+        ):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._tree(root)
+                data = self._active(root)
+                record_id = data["verification"]["evidence_record_ids"][0]
+                (root / "docs/evidence" / record_id).write_text(marker, encoding="utf-8")
+                data["verification"]["evidence_waivers"] = {record_id: "unchanged modules"}
+                with self.assertRaisesRegex(ReleaseValidationError, "must (declare|contain)"):
+                    validate_evidence_records(data, root)
+
+    def test_waived_records_reject_bindings_in_markdown_contexts(self) -> None:
+        for prefix in ("", "- ", "  ", "  - ", "* ", "1. "):
+            for field, value in (
+                ("runtime-source", "d" * 40),
+                ("base-digest", "sha256:" + "e" * 64),
+                ("reviewer-digest", "sha256:" + "f" * 64),
+            ):
+                with self.subTest(prefix=prefix, field=field), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    self._tree(root)
+                    data = self._active(root)
+                    record_id = data["verification"]["evidence_record_ids"][0]
+                    (root / "docs/evidence" / record_id).write_text(
+                        "Release-evidence-waived: registered\n"
+                        + f"{prefix}Release-{field}: {value}\n",
+                        encoding="utf-8",
+                    )
+                    data["verification"]["evidence_waivers"] = {record_id: "unchanged modules"}
+                    with self.assertRaisesRegex(ReleaseValidationError, "must not carry"):
+                        validate_evidence_records(data, root)
+
     def test_active_ignores_html_commented_waiver_example(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

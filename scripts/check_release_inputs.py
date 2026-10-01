@@ -44,7 +44,11 @@ _BASE_DIGEST_RE = re.compile(
 _REVIEWER_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-reviewer-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
-_WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.*?)\s*$")
+_WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:[ \t]*([^\r\n]*?)[ \t]*$")
+_BINDING_LINE_RE = re.compile(
+    r"(?im)^[ \t]*(?:[-*+][ \t]+|[0-9]+[.)][ \t]+)?"
+    r"Release-(?:runtime-source|base-digest|reviewer-digest)[ \t]*:"
+)
 
 
 def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -102,10 +106,14 @@ WAIVER_MARKER = "registered"
 
 
 def _has_waiver_marker(text: str, record_id: str) -> bool:
-    match = _WAIVED_LINE_RE.search(text)
-    if match is None:
+    values = _WAIVED_LINE_RE.findall(text)
+    if not values:
         return False
-    value = match.group(1).strip()
+    if len(values) != 1:
+        raise ReleaseValidationError(
+            f"evidence record {record_id} must contain exactly one Release-evidence-waived line"
+        )
+    value = values[0].strip()
     if value != WAIVER_MARKER:
         raise ReleaseValidationError(
             f"evidence record {record_id} must declare exactly "
@@ -200,6 +208,10 @@ def validate_evidence_records(
                 "evidence record has no Release-evidence-waived line"
             )
         if waived:
+            if _BINDING_LINE_RE.search(text):
+                raise ReleaseValidationError(
+                    f"waived evidence record {record_id} must not carry Release-* bindings"
+                )
             waivers.append((record_id, str(declared_reason).strip()))
             continue
 

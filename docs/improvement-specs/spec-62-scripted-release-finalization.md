@@ -79,8 +79,10 @@ chance for a mistake that the validators then catch late.
 make release-finalize RUN=<canary run id> EVIDENCE="<record filename> ..." [WAIVE=record=reason ...]
 ```
 
-Preconditions: the repin is merged, every generated and manual evidence record is
-merged, and `release-inputs.json` is `draft` for `V`. The operator picks the
+Preconditions: the repin and every generated and manual evidence record are
+prepared in the local release checkout, and `release-inputs.json` is `draft` for
+`V`. Evidence, repins, and finalization are reviewed together in one release PR.
+The operator picks the
 complete `EVIDENCE=` list (generated, manual passing, and waived records) from the
 [release-process impact table](../development/release-process.md#scoping-the-live-campaign).
 Body-format refresh and effort-route checks stay manual RUNBOOK passes, as SPEC-61
