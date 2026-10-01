@@ -24,6 +24,11 @@ versioning.
   fail-closed prepare, unconsumed forged publication artifacts, and the trust
   auditor's verdicts. The known image substitution is recorded, not asserted
   (SPEC-43). The default campaign selection is now `panel,lifecycle,hostile`.
+- `make evidence-records RUN=<canary run id>` writes the canary panel, both
+  lifecycle, and hostile-MR evidence records from one run's redacted summaries,
+  with the `Release-*` binding and a leak scan. It refuses when the summaries
+  disagree on the candidate, a campaign failed or is incomplete, or
+  `verify-candidate` did not succeed (SPEC-61).
 - `make demo-preflight`: a read-only check of both demo consumers before a live
   campaign. It reports required status checks, sticky mock or retired variables,
   manual mode, a roster without Cursor, missing or unprotected credentials, and an

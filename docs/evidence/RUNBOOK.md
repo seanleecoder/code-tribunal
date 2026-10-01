@@ -136,13 +136,13 @@ identity, OCI labels, and provenance, then runs one four-seat (Claude, Codex,
 OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
 result blocks repinning; rerun only after a concrete fix.
 
-The canary retains only the redacted `candidate-canary-<platform>-summary`
-artifacts and writes nothing under `docs/evidence/`. Record the green pair in a
-new `record-candidate-canary.md`, copied from [the record template](record-template.md), with the
-workflow run ID, both summary artifacts, and the three `Release-*` binding
-fields. Include the `verify-candidate` job result for both images. That record is
-the release's real-panel (Chain A) row on **both**
-platforms, so Chain A below is needed only when the canary cannot run.
+The canary retains only redacted summary artifacts. Generate the records from a
+green run with `make evidence-records RUN=<run id>`. It writes
+`record-candidate-canary.md` (image identity plus the real panel on **both**
+platforms), `record-github-current-image.md`, `record-gitlab-current-image.md`,
+and `record-gitlab-hostile-mr.md`, each with the `Release-*` binding and a leak
+scan. Add context only under each record's **Operator notes**. Chain A below is
+needed only when the canary cannot run.
 
 When the posted-body format changed, confirm before the repin that a bot thread
 in the **previous** format survives on the demo (see the preserved threads in

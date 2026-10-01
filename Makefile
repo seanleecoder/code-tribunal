@@ -68,6 +68,12 @@ release-inputs:
 demo-preflight:
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/demo_preflight.py
 
+# Rewrite the release evidence records from one Candidate Canary run:
+#   make evidence-records RUN=<run id>
+evidence-records:
+	@test -n "$(RUN)" || { echo "usage: make evidence-records RUN=<canary run id>"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/canary_evidence_records.py $(RUN)
+
 # Pass CHECK=1 to verify without writing.
 sync-workflows:
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/sync_workflows.py $(if $(CHECK),--check,)
