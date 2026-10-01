@@ -35,13 +35,13 @@ GITHUB_CONTAINER_ROLES = {
 EVIDENCE_DIR = Path("docs/evidence")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
-RUNTIME_SOURCE_RE = re.compile(
+_RUNTIME_SOURCE_RE = re.compile(
     r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$"
 )
-BASE_DIGEST_RE = re.compile(
+_BASE_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-base-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
-REVIEWER_DIGEST_RE = re.compile(
+_REVIEWER_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-reviewer-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
 )
 _WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:\s*(.*?)\s*$")
@@ -83,6 +83,16 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
 def _strip_html_comments(text: str) -> str:
     """Remove HTML comments so template examples cannot become live bindings."""
     return _HTML_COMMENT_RE.sub("", text)
+
+
+def release_bindings(text: str) -> dict[str, list[str]]:
+    """Return every live ``Release-*`` binding value, keyed by field name."""
+    text = _strip_html_comments(text)
+    return {
+        "runtime-source": _RUNTIME_SOURCE_RE.findall(text),
+        "base-digest": _BASE_DIGEST_RE.findall(text),
+        "reviewer-digest": _REVIEWER_DIGEST_RE.findall(text),
+    }
 
 
 # A waived record only marks itself; the reason lives once, in
@@ -205,7 +215,7 @@ def validate_evidence_records(
                 f"Release-evidence-waived: {WAIVER_MARKER} plus a declared reason to waive"
             )
 
-        record_source = _first_match(RUNTIME_SOURCE_RE, text)
+        record_source = _first_match(_RUNTIME_SOURCE_RE, text)
         if record_source is None:
             raise ReleaseValidationError(
                 f"evidence record {record_id} must declare Release-runtime-source"
@@ -216,8 +226,8 @@ def validate_evidence_records(
                 f"{record_source!r} does not match release inputs"
             )
 
-        base_digest = _first_match(BASE_DIGEST_RE, text)
-        reviewer_digest = _first_match(REVIEWER_DIGEST_RE, text)
+        base_digest = _first_match(_BASE_DIGEST_RE, text)
+        reviewer_digest = _first_match(_REVIEWER_DIGEST_RE, text)
         if base_digest is None:
             raise ReleaseValidationError(
                 f"evidence record {record_id} must declare Release-base-digest"

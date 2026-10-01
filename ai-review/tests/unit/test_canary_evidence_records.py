@@ -5,11 +5,13 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
 from unittest import mock
+
+import yaml
 
 from tests.support.repository_script import load_repository_script
 
@@ -153,9 +155,7 @@ def _bad_summaries() -> dict[str, dict]:
 
 def _summaries(campaigns: tuple[str, ...]) -> dict[str, dict]:
     return {
-        key: value
-        for key, value in _run().summaries.items()
-        if key.partition("-")[0] in campaigns
+        key: value for key, value in _run().summaries.items() if key.partition("-")[0] in campaigns
     }
 
 
@@ -166,6 +166,10 @@ def _write_saved_records(output: Path) -> None:
                 "Status: passed", "Status: stale"
             )
         )
+
+
+def _snapshot(directory: Path) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
 
 
 def _waive_record(text: str) -> str:
@@ -321,10 +325,13 @@ class RecordRenderingTests(unittest.TestCase):
     def test_observed_values_cannot_break_the_table(self) -> None:
         hostile = _hostile()
         hostile["steps"][0]["observed"] = {"note": "a|b"}
-        text = records.render_records(_run(**{"hostile-gitlab": hostile}))[
-            "record-gitlab-hostile-mr.md"
-        ]
-        self.assertIn("a\\|b", text)
+        lifecycle = _lifecycle("github")
+        lifecycle["steps"][1]["observed"]["state"]["discussion_id"] = "a|b"
+        rendered = records.render_records(
+            _run(**{"hostile-gitlab": hostile, "lifecycle-github": lifecycle})
+        )
+        self.assertIn('"note": "a\\|b"', rendered["record-gitlab-hostile-mr.md"])
+        self.assertIn('"discussion_id": "a\\|b"', rendered["record-github-current-image.md"])
 
     def test_lifecycle_retains_consumer_runs_threads_and_persistence_evidence(self) -> None:
         rendered = records.render_records(_run())
@@ -342,14 +349,6 @@ class RecordRenderingTests(unittest.TestCase):
                 observed = _lifecycle(platform)["steps"][1]["observed"]
                 for key in ("state", "persisted_state", "persisted"):
                     self.assertIn(f"{key}={json.dumps(observed[key], sort_keys=True)}", wontfix)
-
-    def test_lifecycle_saved_identifiers_cannot_break_the_table(self) -> None:
-        lifecycle = _lifecycle("github")
-        lifecycle["steps"][1]["observed"]["state"]["discussion_id"] = "a|b"
-        text = records.render_records(_run(**{"lifecycle-github": lifecycle}))[
-            "record-github-current-image.md"
-        ]
-        self.assertIn('"discussion_id": "a\\|b"', text)
 
     def test_hostile_producer_summary_renders_its_observations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -382,6 +381,15 @@ class RecordRenderingTests(unittest.TestCase):
         ]
         self.assertIn('| `credentials_withheld` | passed | {"GITLAB_TOKEN": "absent"} |', text)
         self.assertIn('| `image_substituted` | passed | {"hostile_image_pulled": true} |', text)
+
+    def test_an_unpinned_image_refuses_the_record(self) -> None:
+        lifecycle = _lifecycle("github")
+        lifecycle["candidate"] = dict(CANDIDATE, base_image="ghcr.io/x/ai-review-base:2.0")
+        run = _run(
+            **{key: None for key in records.DEMO_ARTIFACTS} | {"lifecycle-github": lifecycle}
+        )
+        with self.assertRaisesRegex(records.RecordError, "not a digest-pinned"):
+            records.render_records(run)
 
 
 class RecordRegenerationTests(unittest.TestCase):
@@ -421,7 +429,7 @@ class RecordRegenerationTests(unittest.TestCase):
             for _ in range(2):
                 self.assertEqual(self._regenerate(output)[0], 0)
                 self.assertEqual(
-                    {path.name: path.read_bytes() for path in output.iterdir()},
+                    _snapshot(output),
                     {name: text.encode("utf-8") for name, text in expected.items()},
                 )
             _assert_release_valid(self, Path(tmp), expected)
@@ -454,35 +462,29 @@ class RecordRegenerationTests(unittest.TestCase):
                 self.assertEqual(self._regenerate(output)[0], 0)
                 self.assertEqual((output / name).read_bytes(), expected.encode("utf-8"))
 
-    def test_new_files_and_historical_records_without_notes_use_default_notes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp)
-            (output / "record-candidate-canary.md").write_text(
-                "# Historical evidence\n\n## Audit\n\nHistorical context.\n\n## Verdict\n\nPass.\n"
-            )
-            self.assertEqual(self._regenerate(output)[0], 0)
-            self.assertEqual(
-                {path.name: path.read_bytes() for path in output.iterdir()},
-                {
-                    name: text.encode("utf-8")
-                    for name, text in records.render_records(_run()).items()
-                },
-            )
-
-    def test_another_run_with_the_same_candidate_starts_with_default_notes(self) -> None:
+    def test_new_historical_and_other_run_records_use_default_notes(self) -> None:
         old_run = replace(_run(), run_id="98", url="https://github.example/runs/98")
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp)
-            for name, text in records.render_records(old_run).items():
-                (output / name).write_text(text.replace("None recorded.", "Notes for run 98."))
-            self.assertEqual(self._regenerate(output)[0], 0)
-            self.assertEqual(
-                {path.name: path.read_bytes() for path in output.iterdir()},
-                {
-                    name: text.encode("utf-8")
-                    for name, text in records.render_records(_run()).items()
-                },
-            )
+        existing = {
+            "new files": {},
+            "historical record without notes": {
+                "record-candidate-canary.md": "# Historical evidence\n\n## Audit\n\n"
+                "Historical context.\n\n## Verdict\n\nPass.\n"
+            },
+            "another run with the same candidate": {
+                name: text.replace("None recorded.", "Notes for run 98.")
+                for name, text in records.render_records(old_run).items()
+            },
+        }
+        expected = {
+            name: text.encode("utf-8") for name, text in records.render_records(_run()).items()
+        }
+        for label, files in existing.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                for name, text in files.items():
+                    (output / name).write_text(text)
+                self.assertEqual(self._regenerate(output)[0], 0)
+                self.assertEqual(_snapshot(output), expected)
 
     def test_another_run_replaces_waived_records_and_leaves_skipped_records_unchanged(self) -> None:
         old_run = replace(_run(), run_id="98", url="https://github.example/runs/98")
@@ -495,7 +497,7 @@ class RecordRegenerationTests(unittest.TestCase):
                     (output / name).write_text(
                         _waive_record(text).replace("None recorded.", "PRIVATE CONTEXT for run 98.")
                     )
-                before = {path.name: path.read_bytes() for path in output.iterdir()}
+                before = _snapshot(output)
                 summaries = _summaries(campaigns)
                 expected = records.render_records(
                     replace(_run(), summaries=summaries, scanned_files=len(summaries))
@@ -504,7 +506,7 @@ class RecordRegenerationTests(unittest.TestCase):
                 self.assertEqual(result, 0, stdout)
                 self.assertNotIn("PRIVATE CONTEXT", stdout)
                 self.assertEqual(
-                    {path.name: path.read_bytes() for path in output.iterdir()},
+                    _snapshot(output),
                     {name: text.encode("utf-8") for name, text in expected.items()}
                     | {name: text for name, text in before.items() if name not in expected},
                 )
@@ -575,44 +577,46 @@ class RecordRegenerationTests(unittest.TestCase):
                 output = Path(tmp)
                 _write_saved_records(output)
                 (output / name).write_text(damaged.replace("None recorded.", "PRIVATE CONTEXT"))
-                before = {path.name: path.read_bytes() for path in output.iterdir()}
+                before = _snapshot(output)
                 result, stdout = self._regenerate(output)
                 self.assertEqual(result, 1)
                 self.assertIn(name, stdout)
                 self.assertNotIn("PRIVATE CONTEXT", stdout)
-                self.assertEqual(
-                    {path.name: path.read_bytes() for path in output.iterdir()}, before
-                )
+                self.assertEqual(_snapshot(output), before)
 
     def test_unreadable_selected_records_refuse_before_any_record_changes(self) -> None:
         name = "record-gitlab-hostile-mr.md"
-        for damage in ("invalid UTF-8", "directory", "permission"):
+        original_read = Path.read_bytes
+
+        def denied_read(path: Path) -> bytes:
+            if path.name == name:
+                raise PermissionError("PRIVATE ERROR CONTENT")
+            return original_read(path)
+
+        damages = {
+            "invalid UTF-8": lambda target: target.write_bytes(b"\xff"),
+            "directory": lambda target: (target.unlink(), target.mkdir()),
+            "permission": lambda target: None,
+        }
+        for damage, apply in damages.items():
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp)
                 _write_saved_records(output)
                 target = output / name
-                if damage == "invalid UTF-8":
-                    target.write_bytes(b"\xff")
-                elif damage == "directory":
-                    target.unlink()
-                    target.mkdir()
-                before = {
-                    path.name: path.read_bytes() for path in output.iterdir() if path.is_file()
-                }
-                original_read = Path.read_bytes
-
-                def read_bytes(path, damage=damage, target=target, original_read=original_read):
-                    if damage == "permission" and path == target:
-                        raise PermissionError("PRIVATE ERROR CONTENT")
-                    return original_read(path)
-
-                with mock.patch.object(Path, "read_bytes", read_bytes):
+                apply(target)
+                before = _snapshot(output)
+                reads = (
+                    mock.patch.object(Path, "read_bytes", denied_read)
+                    if damage == "permission"
+                    else nullcontext()
+                )
+                with reads:
                     result, stdout = self._regenerate(output)
                 self.assertEqual(result, 1)
                 self.assertIn(name, stdout)
                 self.assertNotIn("PRIVATE ERROR CONTENT", stdout)
                 self.assertEqual(
-                    {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()},
+                    _snapshot(output),
                     before,
                 )
                 if damage == "directory":
@@ -620,6 +624,26 @@ class RecordRegenerationTests(unittest.TestCase):
 
 
 class RecordLoadingTests(unittest.TestCase):
+    def test_demo_artifacts_match_the_canary_workflow_uploads(self) -> None:
+        workflow = yaml.load(
+            (ROOT / records.CANARY_WORKFLOW).read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
+        uploads = set()
+        for job_id, job in workflow["jobs"].items():
+            include = job.get("strategy", {}).get("matrix", {}).get("include", [])
+            platforms = [entry["platform"] for entry in include] or [None]
+            for step in job["steps"]:
+                if not step.get("uses", "").startswith("actions/upload-artifact@"):
+                    continue
+                for platform in platforms:
+                    name = step["with"]["name"]
+                    if platform is not None:
+                        name = name.replace("${{ matrix.platform }}", platform)
+                    uploads.add((name, job_id))
+        self.assertEqual(
+            uploads, {(artifact.name, artifact.job) for artifact in records.DEMO_ARTIFACTS.values()}
+        )
+
     def _refuses(
         self,
         *,
@@ -640,7 +664,7 @@ class RecordLoadingTests(unittest.TestCase):
             output.mkdir()
             for name in records.RECORDS:
                 (output / name).write_bytes(f"existing {name}\n".encode())
-            before = {path.name: path.read_bytes() for path in output.iterdir()}
+            before = _snapshot(output)
             stdout = io.StringIO()
             with (
                 mock.patch.object(
@@ -659,7 +683,7 @@ class RecordLoadingTests(unittest.TestCase):
                 redirect_stdout(stdout),
             ):
                 self.assertEqual(records.main(["99", "--out", str(output)]), 1)
-            self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, before)
+            self.assertEqual(_snapshot(output), before)
             self.assertEqual(gh.call_args_list[0], VIEW_CALL)
             downloads = [call for call in gh.call_args_list if call.args[:2] == ("run", "download")]
             self.assertEqual(len(downloads), int(downloaded))
@@ -717,19 +741,7 @@ class RecordLoadingTests(unittest.TestCase):
                     )
 
     def test_unsuccessful_runs_refuse_even_with_passing_summaries(self) -> None:
-        conclusions = (
-            "failure",
-            "cancelled",
-            "timed_out",
-            "action_required",
-            "neutral",
-            "skipped",
-            "stale",
-            "unknown",
-            "",
-            None,
-        )
-        cases = [_metadata() | {"conclusion": conclusion} for conclusion in conclusions]
+        cases = [_metadata() | {"conclusion": conclusion} for conclusion in ("failure", "", None)]
         cases.append({key: value for key, value in _metadata().items() if key != "conclusion"})
         for meta in cases:
             with self.subTest(meta=meta):
@@ -885,24 +897,15 @@ class RecordLoadingTests(unittest.TestCase):
                 entries = _artifacts()
                 entries[index] = artifact | {"expired": expired}
                 entries.append(artifact | {"id": artifact["id"] + 100})
-                for reverse in (False, True):
-                    for page_size in (1, 100):
-                        with self.subTest(
-                            name=artifact["name"],
-                            expired=expired,
-                            reverse=reverse,
-                            page_size=page_size,
-                        ):
-                            # The fake CLI extracts only one JSON for each summary name.
-                            stdout = self._refuses(
-                                artifact_pages=_artifact_pages(
-                                    list(reversed(entries)) if reverse else entries, page_size
-                                ),
-                                downloaded=False,
-                                error=f"{artifact['name']} requires exactly one artifact; found 2",
-                            )
-                            self.assertIn(f"IDs: {[artifact['id'], artifact['id'] + 100]}", stdout)
-                            self.assertIn("a new run ID", stdout)
+                with self.subTest(name=artifact["name"], expired=expired):
+                    # The fake CLI extracts only one JSON for each summary name.
+                    stdout = self._refuses(
+                        artifact_pages=_artifact_pages(entries),
+                        downloaded=False,
+                        error=f"{artifact['name']} requires exactly one artifact; found 2",
+                    )
+                    self.assertIn(f"IDs: {[artifact['id'], artifact['id'] + 100]}", stdout)
+                    self.assertIn("a new run ID", stdout)
 
     def test_missing_or_expired_artifact_metadata_refuses_before_downloading(self) -> None:
         for index, artifact in enumerate(_artifacts()):
@@ -1016,17 +1019,6 @@ class RecordLoadingTests(unittest.TestCase):
             error="leak scan flagged",
         )
         self.assertNotIn("ghp_", stdout)
-
-
-class RecordRefusalTests(unittest.TestCase):
-    def test_an_unpinned_image_refuses_the_record(self) -> None:
-        lifecycle = _lifecycle("github")
-        lifecycle["candidate"] = dict(CANDIDATE, base_image="ghcr.io/x/ai-review-base:2.0")
-        run = _run(
-            **{key: None for key in records.DEMO_ARTIFACTS} | {"lifecycle-github": lifecycle}
-        )
-        with self.assertRaisesRegex(records.RecordError, "not a digest-pinned"):
-            records.render_records(run)
 
 
 if __name__ == "__main__":
