@@ -168,6 +168,16 @@ def _write_saved_records(output: Path) -> None:
         )
 
 
+def _waive_record(text: str) -> str:
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not line.startswith(
+            ("Release-runtime-source:", "Release-base-digest:", "Release-reviewer-digest:")
+        )
+    ).replace("Status: passed", "Status: waived\n\nRelease-evidence-waived: registered")
+
+
 def _assert_release_valid(test: unittest.TestCase, root: Path, names) -> None:
     data = {
         "status": "active",
@@ -425,6 +435,32 @@ class RecordRegenerationTests(unittest.TestCase):
                 },
             )
 
+    def test_another_run_replaces_waived_records_and_leaves_skipped_records_unchanged(self) -> None:
+        old_run = replace(_run(), run_id="98", url="https://github.example/runs/98")
+        old_records = records.render_records(old_run)
+        for campaigns in (("panel", "lifecycle", "hostile"), ("lifecycle",)):
+            with self.subTest(campaigns=campaigns), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "docs/evidence"
+                output.mkdir(parents=True)
+                for name, text in old_records.items():
+                    (output / name).write_text(
+                        _waive_record(text).replace("None recorded.", "PRIVATE CONTEXT for run 98.")
+                    )
+                before = {path.name: path.read_bytes() for path in output.iterdir()}
+                summaries = _summaries(campaigns)
+                expected = records.render_records(
+                    replace(_run(), summaries=summaries, scanned_files=len(summaries))
+                )
+                result, stdout = self._regenerate(output, campaigns)
+                self.assertEqual(result, 0, stdout)
+                self.assertNotIn("PRIVATE CONTEXT", stdout)
+                self.assertEqual(
+                    {path.name: path.read_bytes() for path in output.iterdir()},
+                    {name: text.encode("utf-8") for name, text in expected.items()}
+                    | {name: text for name, text in before.items() if name not in expected},
+                )
+                _assert_release_valid(self, Path(tmp), expected)
+
     def test_partial_run_preserves_selected_notes_and_does_not_read_skipped_records(self) -> None:
         rendered = records.render_records(_run())
         partial = records.render_records(
@@ -455,6 +491,8 @@ class RecordRegenerationTests(unittest.TestCase):
         name = "record-gitlab-hostile-mr.md"
         template = records.render_records(_run())[name]
         identity = "- Candidate Canary run: [`99`](https://github.example/runs/99), 2026-09-30"
+        old_identity = identity.replace("99", "98")
+        old_waived = _waive_record(template.replace(identity, old_identity))
         cases = {
             "changed URL": template.replace("https://github.example/runs/99", "https://other/99"),
             "missing run": template.replace(identity, ""),
@@ -468,6 +506,11 @@ class RecordRegenerationTests(unittest.TestCase):
             "extra section": template.replace("None recorded.", "## Unexpected section\n\nNotes."),
             "unclosed fence": template.replace("None recorded.", "```markdown\nNotes."),
             "unknown identity": "## Operator notes\n\nNotes.\n\n## Verdict\n\nPass.\n",
+            "waived same run": _waive_record(template),
+            "waived missing run": old_waived.replace(old_identity, ""),
+            "waived duplicate run": old_waived.replace(
+                old_identity, old_identity + "\n" + old_identity
+            ),
         }
         for field, value in (
             ("runtime-source", R),

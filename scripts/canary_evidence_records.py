@@ -344,12 +344,16 @@ def _notes_span(text: str) -> tuple[int, int] | None:
     return headings[notes[0]][2], headings[verdicts[0]][1]
 
 
-def _record_identity(header: str) -> tuple[str, ...]:
+def _record_run_identity(header: str) -> tuple[str, str]:
     runs = re.findall(
         r"^- Candidate Canary run: \[`([^`\r\n]+)`\]\(([^()\r\n]+)\)", header, re.MULTILINE
     )
     if len(runs) != 1:
         raise RecordError("missing or ambiguous Candidate Canary run identity")
+    return runs[0]
+
+
+def _record_release_bindings(header: str) -> tuple[str, ...]:
     bindings = []
     for field, pattern in (
         ("runtime-source", RUNTIME_SOURCE_RE),
@@ -360,7 +364,7 @@ def _record_identity(header: str) -> tuple[str, ...]:
         if len(values) != 1:
             raise RecordError(f"missing or ambiguous Release-{field} binding")
         bindings.append(values[0])
-    return (*runs[0], *bindings)
+    return tuple(bindings)
 
 
 def _preserve_operator_notes(path: Path, rendered: str) -> str:
@@ -377,11 +381,16 @@ def _preserve_operator_notes(path: Path, rendered: str) -> str:
             return rendered
         new_span = _notes_span(rendered)
         assert new_span is not None
-        old_identity = _record_identity(existing[: old_span[0]])
-        new_identity = _record_identity(rendered[: new_span[0]])
-        if old_identity[0] != new_identity[0]:
+        old_header = existing[: old_span[0]]
+        new_header = rendered[: new_span[0]]
+        old_run = _record_run_identity(old_header)
+        new_run = _record_run_identity(new_header)
+        if old_run[0] != new_run[0]:
+            # Waiving removes release bindings; a new run replaces that evidence.
             return rendered
-        if old_identity != new_identity:
+        old_bindings = _record_release_bindings(old_header)
+        new_bindings = _record_release_bindings(new_header)
+        if old_run != new_run or old_bindings != new_bindings:
             raise RecordError("the same run has conflicting URL or release bindings")
         return rendered[: new_span[0]] + existing[slice(*old_span)] + rendered[new_span[1] :]
     except RecordError as exc:
