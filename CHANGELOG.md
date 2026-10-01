@@ -44,6 +44,9 @@ versioning.
 
 ### Fixed
 
+- Failed thread resolutions and reopenings make `post` report `partial_failed`
+  and exit nonzero. The prior state and disposition are retained for a retry,
+  including failed reopen commands (SPEC-64).
 - The hostile canary reads GitLab job logs after stripping each line's timestamp,
   stream marker, and colors. Comparing raw lines reported every
   credential as `unknown` and failed run 36855687237, although the trace showed
