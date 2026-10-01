@@ -21,7 +21,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from candidate_canary_common import LIFECYCLE_FIXTURE_PATH, POST_COUNT_KEYS
+from ai_review.canonical import json_loads_no_duplicates
+from candidate_canary_common import LIFECYCLE_FIXTURE_PATH
 from check_release_inputs import (
     BASE_DIGEST_RE,
     EVIDENCE_DIR,
@@ -48,21 +49,8 @@ DEMO_ARTIFACTS = {
 }
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 RUN_FIELDS = "url,createdAt,status,conclusion,event,headBranch,workflowDatabaseId,jobs"
-LIFECYCLE_OBSERVED_KEYS = (
-    "run_id",
-    "persist_run_id",
-    "pipeline",
-    "persist_pipeline",
-    "thread",
-    *POST_COUNT_KEYS,
-    "warnings",
-    "mergeable",
-    "mergeStateStatus",
-    "detailed_merge_status",
-    "state",
-    "persisted_state",
-    "persisted",
-)
+# Per-reviewer results are already summarized by the panel record.
+LIFECYCLE_OBSERVED_EXCLUDED = frozenset({"reviewers"})
 
 
 class RecordError(RuntimeError):
@@ -86,8 +74,6 @@ def _digest(image: str) -> str:
 
 
 def _require_consistent(run: CanaryRun) -> dict[str, str]:
-    if not run.summaries:
-        raise RecordError("the run uploaded no canary summaries")
     candidates = {json.dumps(s["candidate"], sort_keys=True) for s in run.summaries.values()}
     if len(candidates) != 1:
         raise RecordError("the summaries do not bind one candidate")
@@ -222,12 +208,11 @@ def _observed_json(observed: dict[str, Any]) -> str:
 
 
 def _lifecycle_observed(observed: dict[str, Any]) -> str:
-    values = []
-    for key in LIFECYCLE_OBSERVED_KEYS:
-        if key in observed:
-            value = observed[key]
-            values.append(f"{key}={_observed_json(value) if isinstance(value, dict) else value}")
-    return ", ".join(values)
+    return ", ".join(
+        f"{key}={_observed_json(value) if isinstance(value, dict) else value}"
+        for key, value in observed.items()
+        if key not in LIFECYCLE_OBSERVED_EXCLUDED
+    )
 
 
 def lifecycle_record(run: CanaryRun, candidate: dict[str, str], platform: str) -> str:
@@ -330,18 +315,16 @@ def _notes_span(text: str) -> tuple[int, int] | None:
         )
         if heading is not None:
             headings.append((heading.group(1), start, offset))
-    notes = [index for index, (title, _, _) in enumerate(headings) if title == "Operator notes"]
-    verdicts = [index for index, (title, _, _) in enumerate(headings) if title == "Verdict"]
-    if not notes and not generated:
+    titles = [title for title, _, _ in headings]
+    if "Operator notes" not in titles and not generated:
         return None
     if (
-        len(notes) != 1
-        or len(verdicts) != 1
-        or verdicts[0] != notes[0] + 1
-        or verdicts[0] != len(headings) - 1
+        titles.count("Operator notes") != 1
+        or titles.count("Verdict") != 1
+        or titles[-2:] != ["Operator notes", "Verdict"]
     ):
         raise RecordError("missing or ambiguous Operator notes / Verdict boundaries")
-    return headings[notes[0]][2], headings[verdicts[0]][1]
+    return headings[-2][2], headings[-1][1]
 
 
 def _record_run_identity(header: str) -> tuple[str, str]:
@@ -406,8 +389,8 @@ def _gh(*args: str) -> str:
 
 def _json_object(text: str, label: str) -> dict[str, Any]:
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError as exc:
+        value = json_loads_no_duplicates(text)
+    except ValueError as exc:
         raise RecordError(f"{label} is not valid JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise RecordError(f"{label} must be a JSON object")
@@ -502,7 +485,7 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
                 raise RecordError(f"{key} uploaded an artifact despite its campaign being skipped")
             continue
         files = list(directory.glob("*.json"))
-        if len(files) != 1 or not files[0].is_file():
+        if len(files) != 1:
             raise RecordError(f"{key} requires exactly one summary JSON file; found {len(files)}")
         try:
             summaries[key] = _json_object(files[0].read_text(encoding="utf-8"), f"{key} summary")
