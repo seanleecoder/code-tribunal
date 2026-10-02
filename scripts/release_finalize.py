@@ -8,12 +8,10 @@ import copy
 import os
 import posixpath
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -464,78 +462,6 @@ def publication_flags(tag: str, github_output: Path) -> None:
         output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
 
 
-def _owned_worktree_admin(common: Path, tree: Path, admin: Path) -> bool:
-    """Only a direct, non-symlink registration with this tree's backpointer is owned."""
-    registrations = common / "worktrees"
-    return (
-        not registrations.is_symlink()
-        and admin.parent.resolve() == registrations
-        and not admin.is_symlink()
-        and admin.is_dir()
-        and admin.resolve().parent == registrations
-        and (admin / "gitdir").is_file()
-        and not (admin / "gitdir").is_symlink()
-        and (admin / "gitdir").read_text(encoding="utf-8").strip() == str(tree / ".git")
-    )
-
-
-def _partial_worktree_admin(common: Path, tree: Path) -> Path | None:
-    registrations = common / "worktrees"
-    if registrations.is_symlink() or not registrations.is_dir():
-        return None
-    for admin in registrations.iterdir():
-        if _owned_worktree_admin(common, tree, admin):
-            return admin
-    return None
-
-
-@contextmanager
-def _tag_worktree(root: Path, release_commit: str) -> Iterator[Path]:
-    common = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
-    admin: Path | None = None
-    removal_failed = False
-    try:
-        with tempfile.TemporaryDirectory() as temporary:
-            tree = Path(temporary).resolve() / "tag"
-            failed = False
-            try:
-                _git(root, "worktree", "add", "--detach", str(tree), release_commit)
-                admin = Path(_git(tree, "rev-parse", "--absolute-git-dir"))
-                yield tree
-            except BaseException:
-                failed = True
-                if admin is None:
-                    try:
-                        admin = _partial_worktree_admin(common, tree)
-                    except (ReleaseValidationError, OSError) as recovery_error:
-                        print(f"ERROR: worktree recovery also failed: {recovery_error}",
-                              file=sys.stderr)
-                raise
-            finally:
-                if admin is not None:
-                    try:
-                        if not _owned_worktree_admin(common, tree, admin):
-                            raise ReleaseValidationError("unsafe worktree admin registration")
-                        _git(root, "worktree", "remove", "--force", str(tree))
-                    except (ReleaseValidationError, OSError) as cleanup_error:
-                        removal_failed = True
-                        if not failed:
-                            raise
-                        print(f"ERROR: worktree cleanup also failed: {cleanup_error}",
-                              file=sys.stderr)
-    finally:
-        # TemporaryDirectory has deleted the tree. Never prune operator registrations.
-        if removal_failed and admin is not None:
-            try:
-                if admin.exists() or admin.is_symlink():
-                    if not _owned_worktree_admin(common, tree, admin):
-                        raise ReleaseValidationError("unsafe worktree admin registration")
-                    shutil.rmtree(admin)
-            except (ReleaseValidationError, OSError) as cleanup_error:
-                print(f"ERROR: targeted worktree cleanup also failed: {cleanup_error}",
-                      file=sys.stderr)
-
-
 def publish(
     root: Path, tag: str, out: Path, github_output: Path | None = None,
 ) -> tuple[Path, Path, Path]:
@@ -550,7 +476,11 @@ def publish(
     if inputs["release_version"] != version:
         raise ReleaseValidationError("tag must match the tagged release inputs")
     out = out.absolute()
-    with _tag_worktree(root, release_commit) as tree:
+    with tempfile.TemporaryDirectory() as temporary:
+        tree = Path(temporary) / "tag"
+        _git(root, "clone", "--quiet", "--no-checkout", "--no-hardlinks",
+             str(root.resolve()), str(tree))
+        _git(tree, "checkout", "--quiet", "--detach", release_commit)
         environment = {
             key: value for key, value in os.environ.items()
             if not key.startswith(("GH_", "GITHUB_"))
