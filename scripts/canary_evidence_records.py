@@ -1,24 +1,23 @@
-#!/usr/bin/env python3
-"""Write the release evidence records from one Candidate Canary run.
+"""Load, validate, and render evidence from one Candidate Canary run.
 
 Reads a successful run's redacted summaries (panel, lifecycle, hostile), refuses
 unless every one binds the same candidate, passed, and scans clean, and only then
-rewrites the records under ``docs/evidence/`` with the ``Release-*`` binding
-that ``check_release_inputs.py`` validates. Results are generated; the only
-hand-written part of a record is its **Operator notes** section.
+renders records with the ``Release-*`` bindings that ``check_release_inputs.py``
+validates. Release preparation owns writes; this module preserves matching
+records' handwritten **Operator notes** sections.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
 
+import release_common
 from ai_review.canonical import json_loads_no_duplicates
 from candidate_canary_common import LIFECYCLE_FIXTURE_PATH
 from check_release_inputs import release_bindings
@@ -365,13 +364,6 @@ def _preserve_operator_notes(path: Path, rendered: str) -> str:
         raise RecordError(f"{path.name}: {exc}") from exc
 
 
-def _gh(*args: str) -> str:
-    completed = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
-    if completed.returncode != 0:
-        raise RecordError(completed.stderr.strip() or f"gh {args[0]} failed")
-    return completed.stdout
-
-
 def _json_value(text: str, label: str, kind: type = dict) -> Any:
     try:
         value = json_loads_no_duplicates(text)
@@ -424,13 +416,14 @@ def _expected_summaries(jobs: list[dict[str, Any]]) -> frozenset[str]:
 
 
 def _artifact_inventory(run_id: str, expected: frozenset[str]) -> dict[int, tuple[str, bool]]:
-    response = _gh(
+    response = release_common.gh(
         "api",
         "--hostname",
         "github.com",
         "--paginate",
         "--slurp",
         f"repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100",
+        error_type=RecordError,
     )
     pages = _json_value(response, "artifact metadata", list)
     if not pages:
@@ -494,7 +487,17 @@ def _artifact_inventory(run_id: str, expected: frozenset[str]) -> dict[int, tupl
 def load_run(run_id: str, workdir: Path) -> CanaryRun:
     repository = f"github.com/{REPOSITORY}"
     meta = _json_value(
-        _gh("run", "view", run_id, "--repo", repository, "--json", RUN_FIELDS), "run metadata"
+        release_common.gh(
+            "run",
+            "view",
+            run_id,
+            "--repo",
+            repository,
+            "--json",
+            RUN_FIELDS,
+            error_type=RecordError,
+        ),
+        "run metadata",
     )
     required = {
         "conclusion": "success",
@@ -512,8 +515,12 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
     if type(workflow_id) is not int or workflow_id <= 0:
         raise RecordError("run metadata is missing a valid workflowDatabaseId")
     workflow = _json_value(
-        _gh(
-            "api", "--hostname", "github.com", f"repos/{REPOSITORY}/actions/workflows/{workflow_id}"
+        release_common.gh(
+            "api",
+            "--hostname",
+            "github.com",
+            f"repos/{REPOSITORY}/actions/workflows/{workflow_id}",
+            error_type=RecordError,
         ),
         "workflow metadata",
     )
@@ -530,9 +537,18 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
     _require_successful_job(verify[0])
     expected = _expected_summaries(jobs)
     inventory = _artifact_inventory(run_id, expected)
-    _gh("run", "download", run_id, "--repo", repository, "--dir", str(workdir))
+    release_common.gh(
+        "run",
+        "download",
+        run_id,
+        "--repo",
+        repository,
+        "--dir",
+        str(workdir),
+        error_type=RecordError,
+    )
     if _artifact_inventory(run_id, expected) != inventory:
-        raise RecordError("artifact metadata changed during download; retry evidence generation")
+        raise RecordError("artifact metadata changed during download; retry release preparation")
     summaries = {}
     for key, artifact in DEMO_ARTIFACTS.items():
         directory = workdir / artifact.name

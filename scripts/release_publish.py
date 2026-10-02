@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
+import release_common
+from ai_review.canonical import json_loads_no_duplicates
 from check_release_inputs import validate_release_commit, validate_release_inputs
 from release_common import (
     FULL_SHA_RE,
@@ -17,57 +18,9 @@ from release_common import (
     ReleaseValidationError,
     compare_release_versions,
     git,
-    parse_json,
     validate_release_version,
 )
 from validate_candidate_identity import REPOSITORY
-
-
-def _gh(*args: str) -> str:
-    result = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
-    if result.returncode:
-        raise ReleaseValidationError(result.stderr.strip() or f"gh {args[0]} failed")
-    return result.stdout
-
-
-def successful_run(source: str, workflow: str) -> str:
-    runs = parse_json(
-        _gh(
-            "run",
-            "list",
-            "--repo",
-            REPOSITORY,
-            "--workflow",
-            workflow,
-            "--commit",
-            source,
-            "--branch",
-            "main",
-            "--event",
-            "push",
-            "--limit",
-            "1",
-            "--json",
-            "databaseId,headSha,headBranch,event,status,conclusion",
-        )
-    )
-    if not isinstance(runs, list) or len(runs) != 1:
-        raise ReleaseValidationError(f"no canonical {workflow} push run found for {source}")
-    run = runs[0]
-    if not isinstance(run, dict) or (
-        run.get("headSha") != source
-        or run.get("headBranch") != "main"
-        or run.get("event") != "push"
-        or run.get("status") != "completed"
-        or run.get("conclusion") != "success"
-        or type(run.get("databaseId")) is not int
-        or run["databaseId"] <= 0
-    ):
-        raise ReleaseValidationError(
-            f"{workflow} requires completed successful canonical push CI for exactly {source}; "
-            "retry publication from main after CI succeeds"
-        )
-    return str(run["databaseId"])
 
 
 def _tag_version(tag: str) -> str:
@@ -104,8 +57,10 @@ def verify_release_tag(root: Path, tag: str) -> tuple[str, str]:
 
 
 def published_releases() -> list[dict[str, Any]]:
-    pages = parse_json(
-        _gh("api", "--paginate", "--slurp", f"repos/{REPOSITORY}/releases?per_page=100")
+    pages = json_loads_no_duplicates(
+        release_common.gh(
+            "api", "--paginate", "--slurp", f"repos/{REPOSITORY}/releases?per_page=100"
+        )
     )
     if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
         raise ReleaseValidationError("published releases must be paginated arrays")
@@ -137,14 +92,21 @@ def publication_flags(version: str, releases: list[dict[str, Any]]) -> tuple[boo
 def publish(root: Path, tag: str) -> bool:
     version = _tag_version(tag)
     releases = published_releases()
-    if any(release.get("tag_name") == tag for release in releases):
-        return False  # Never edit an existing body's bytes or its historical assets.
+    for release in releases:
+        if release.get("tag_name") != tag:
+            continue
+        if release.get("draft") is False:
+            return False  # Never edit a published body's bytes or its historical assets.
+        raise ReleaseValidationError(
+            f"existing release for {tag} is not published; resolve the draft and retry publication "
+            "from main; the publisher never promotes or edits existing releases"
+        )
     tag_object, release_commit = verify_release_tag(root, tag)
 
     def read_file(relative: str) -> bytes:
         return git(root, "show", f"{release_commit}:{relative}", text=False)
 
-    inputs = parse_json(read_file("release/release-inputs.json"))
+    inputs = json_loads_no_duplicates(read_file("release/release-inputs.json").decode("utf-8"))
     if not isinstance(inputs, dict) or inputs.get("release_version") != version:
         raise ReleaseValidationError("tag must match the tagged release inputs")
     if inputs.get("status") != "active":
@@ -153,17 +115,24 @@ def publish(root: Path, tag: str) -> bool:
     # the one validator. Do not import preparation's YAML/model dependencies here.
     validate_release_inputs(inputs, root, read_file=read_file, check_templates=False)
     validate_release_commit(inputs["runtime_source"], release_commit, root)
-    successful_run(release_commit, "ci.yml")
+    try:
+        release_common.successful_run(release_commit, "ci.yml", repository=REPOSITORY)
+    except ReleaseValidationError as exc:
+        raise ReleaseValidationError(
+            f"{exc}; retry publication from main after CI succeeds"
+        ) from exc
     notes = read_file(f"release/{version}.md")
     prerelease, latest = publication_flags(version, releases)
     with tempfile.TemporaryDirectory() as temporary:
         notes_file = Path(temporary) / "notes.md"
         notes_file.write_bytes(notes)
-        remote = parse_json(_gh("api", f"repos/{REPOSITORY}/git/ref/tags/{tag}"))
+        remote = json_loads_no_duplicates(
+            release_common.gh("api", f"repos/{REPOSITORY}/git/ref/tags/{tag}")
+        )
         obj = remote.get("object") if isinstance(remote, dict) else None
         if not isinstance(obj, dict) or obj.get("sha") != tag_object:
             raise ReleaseValidationError("remote tag changed after validation")
-        _gh(
+        release_common.gh(
             "release",
             "create",
             tag,

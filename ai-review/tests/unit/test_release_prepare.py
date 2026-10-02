@@ -50,7 +50,7 @@ def _captured_run(candidate=None):
         for summary in fixture["summaries"].values():
             summary["candidate"] = copy.deepcopy(candidate)
 
-    def gh(*args: str) -> str:
+    def gh(*args: str, error_type) -> str:
         if args[:2] == ("run", "view"):
             return json.dumps(fixture["metadata"])
         if args[0] == "api" and "/actions/workflows/" in args[-1]:
@@ -66,7 +66,7 @@ def _captured_run(candidate=None):
             return ""
         raise AssertionError(f"unexpected gh command: {args}")
 
-    with tempfile.TemporaryDirectory() as tmp, mock.patch.object(records, "_gh", side_effect=gh):
+    with tempfile.TemporaryDirectory() as tmp, mock.patch.object(common, "gh", side_effect=gh):
         return records.load_run(fixture["run_id"], Path(tmp))
 
 
@@ -153,7 +153,9 @@ class ReleaseFixture(unittest.TestCase):
         )
         shutil.copyfile(REPO / "release/TEMPLATE.md", self.root / "release/TEMPLATE.md")
         self.lookup = mock.patch.object(
-            tool, "successful_run", side_effect=lambda runtime, workflow: RUN_IDS[workflow]
+            tool,
+            "successful_run",
+            side_effect=lambda runtime, workflow, **kwargs: RUN_IDS[workflow],
         )
         self.lookup.start()
         self.addCleanup(self.lookup.stop)
@@ -168,6 +170,20 @@ class ReleaseFixture(unittest.TestCase):
         _git(self.root, "add", ".")
         _git(self.root, "commit", "-qm", "release finalization")
         return _git(self.root, "rev-parse", "HEAD")
+
+    def _quality(self) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(checker, "ROOT", self.root),
+            mock.patch.object(
+                checker.sys,
+                "argv",
+                ["check_release_inputs.py", str(self.root / "release/release-inputs.json")],
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return checker.main(), stderr.getvalue()
 
 
 class ReleasePreparationTests(ReleaseFixture):
@@ -299,7 +315,9 @@ class ReleasePreparationTests(ReleaseFixture):
         self,
     ) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         for key, (index, value) in tool.gitlab_template_pins(original).items():
@@ -330,7 +348,9 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_gitlab_scope_refusals_match_validation_and_repin_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         invalid_templates = [
@@ -395,7 +415,9 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_yaml_variable_overrides_and_interpreted_values_refuse_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         key = next(iter(tool.GITLAB_PIN_FIELDS))
@@ -430,7 +452,9 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_job_pin_inheritance_refusals_match_validation_and_repin_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         for name in ("job", ".hidden_template"):
@@ -489,7 +513,9 @@ class ReleasePreparationTests(ReleaseFixture):
                         job["inherit"] = inheritance
                 path.write_text(original + yaml.safe_dump(jobs))
                 self._prepare()
-                data, _ = tool._candidate_inputs(self.root, self.run)
+                data, _ = tool._candidate_inputs(
+                    tool.load_json(self.root / "release/release-inputs.json"), self.run
+                )
                 checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
 
     def test_yaml_interpolation_commas_and_recursive_aliases_are_not_overrides(self) -> None:
@@ -508,7 +534,9 @@ class ReleasePreparationTests(ReleaseFixture):
         path.write_text(text)
         self.assertEqual(tool.gitlab_template_pins(text)[key][1], "old, image")
         self._prepare()
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
         self.assertIn(f"image: ${key}", path.read_text())
         self.assertNotEqual(old_value, "old, image")
@@ -555,7 +583,9 @@ class ReleasePreparationTests(ReleaseFixture):
             github.read_bytes(), (self.root / ".github/workflows/ai-review.yml").read_bytes()
         )
         self.assertIn("# A harmless column-zero comment", github.read_text())
-        data, _ = tool._candidate_inputs(self.root, self.run)
+        data, _ = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        )
         checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
 
     def test_one_captured_canary_load_produces_the_complete_valid_edit_set(self) -> None:
@@ -617,6 +647,80 @@ class ReleasePreparationTests(ReleaseFixture):
         self._commit_release()
         self._prepare()
         self.assertEqual(_snapshot(self.root), before)
+
+    def test_tagged_release_refuses_preparation_before_loading_any_run_or_writing(self) -> None:
+        self._prepare()
+        record = self.root / "docs/evidence" / next(iter(self.generated))
+        record.write_bytes(record.read_bytes().replace(b"None recorded.", b"Operator context."))
+        self._commit_release()
+        _git(self.root, "tag", "-a", f"v{VERSION}", "-m", "frozen release")
+        before = _snapshot(self.root)
+        for run_id in (self.run.run_id, "999999"):
+            with (
+                self.subTest(run_id=run_id),
+                mock.patch.object(tool, "load_run") as loader,
+                self.assertRaisesRegex(
+                    tool.ReleaseValidationError, "cannot prepare tagged release"
+                ),
+            ):
+                tool.prepare(self.root, run_id)
+            loader.assert_not_called()
+            self.assertEqual(_snapshot(self.root), before)
+
+    def test_tag_created_during_preparation_refuses_before_the_first_write(self) -> None:
+        before = _snapshot(self.root)
+
+        def load(*args):
+            _git(self.root, "tag", f"v{VERSION}")
+            return self.run
+
+        with (
+            mock.patch.object(tool, "load_run", side_effect=load) as loader,
+            self.assertRaisesRegex(tool.ReleaseValidationError, "cannot prepare tagged release"),
+        ):
+            tool.prepare(self.root, self.run.run_id)
+        loader.assert_called_once()
+        self.assertEqual(_snapshot(self.root), before)
+
+    def test_prepare_reports_neutral_canonical_run_errors(self) -> None:
+        self.lookup.stop()
+        before = _snapshot(self.root)
+        with (
+            mock.patch.object(tool, "load_run", return_value=self.run),
+            mock.patch.object(common, "gh", return_value="[]"),
+            self.assertRaisesRegex(tool.ReleaseValidationError, "no canonical ci.yml") as error,
+        ):
+            tool.prepare(self.root, self.run.run_id)
+        self.assertNotIn("publication", str(error.exception))
+        self.assertEqual(_snapshot(self.root), before)
+
+    def test_changelog_draft_and_active_constraints_fail_before_writes(self) -> None:
+        changelog = self.root / "CHANGELOG.md"
+        for text in (
+            self.changelog.replace("## [Unreleased]", "## [Missing]"),
+            self.changelog + "\n## [Unreleased]\n",
+            self.changelog + f"\n## [{VERSION}] - 2026-10-01\n",
+        ):
+            with self.subTest(status="draft", text=text):
+                changelog.write_text(text)
+                before = _snapshot(self.root)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "CHANGELOG"):
+                    self._prepare()
+                self.assertEqual(_snapshot(self.root), before)
+        changelog.write_text(self.changelog)
+        self._prepare()
+        active = changelog.read_text()
+        for text in (
+            active.replace(f"## [{VERSION}] - 2026-10-01", f"## [{VERSION}] - missing date"),
+            active + f"\n## [{VERSION}] - 2030-01-01\n",
+            active.replace(f"## [{VERSION}] - 2026-10-01", "## [Different] - 2026-10-01"),
+        ):
+            with self.subTest(status="active", text=text):
+                changelog.write_text(text)
+                before = _snapshot(self.root)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "CHANGELOG"):
+                    self._prepare()
+                self.assertEqual(_snapshot(self.root), before)
 
     def test_active_candidate_change_and_generated_waiver_fail_without_writes(self) -> None:
         self._prepare()
@@ -770,6 +874,69 @@ class ReleasePreparationTests(ReleaseFixture):
         for source, commit in (("BAD", P), (self.runtime_source, "BAD")):
             with self.assertRaises(tool.ReleaseValidationError):
                 checker.validate_release_commit(source, commit, self.root)
+
+    def test_tagged_quality_allows_subsequent_staged_worktree_and_committed_runtime_changes(
+        self,
+    ) -> None:
+        self._prepare()
+        self._commit_release()
+        _git(self.root, "tag", "-a", f"v{VERSION}", "-m", "frozen release")
+        self.assertEqual(self._quality()[0], 0)
+        runtime = self.root / "runtime.py"
+        runtime.write_text("staged update\n")
+        _git(self.root, "add", "runtime.py")
+        runtime.write_text("immutable runtime\n")
+        self.assertEqual(self._quality()[0], 0)
+        runtime.write_text("working update\n")
+        (self.root / "résumé.py").write_text("ordinary untracked file\n")
+        self.assertEqual(self._quality()[0], 0)
+        _git(self.root, "add", "runtime.py")
+        _git(self.root, "commit", "-qm", "ordinary fix after tagging")
+        self.assertEqual(self._quality()[0], 0)
+
+    def test_tagged_quality_requires_matching_inputs_and_checkout_ancestry(self) -> None:
+        self._prepare()
+        P = self._commit_release()
+        _git(self.root, "tag", f"v{VERSION}")
+        inputs = self.root / "release/release-inputs.json"
+        original = inputs.read_bytes()
+        data = tool.load_json(inputs)
+        data["verification"]["ci_run_id"] = "999999"
+        inputs.write_bytes(tool.canonical_json_bytes(data))
+        status, error = self._quality()
+        self.assertEqual(status, 1)
+        self.assertIn("must match their tagged inputs", error)
+        inputs.write_bytes(original)
+        _git(self.root, "checkout", "--detach", self.runtime_source)
+        _git(self.root, "checkout", P, "--", ".")
+        status, error = self._quality()
+        self.assertEqual(status, 1)
+        self.assertIn("checkout must descend", error)
+
+    def test_tagged_quality_still_rejects_disallowed_paths_in_the_release_commit(self) -> None:
+        self._prepare()
+        (self.root / "runtime.py").write_text("changed during release\n")
+        self._commit_release()
+        _git(self.root, "tag", f"v{VERSION}")
+        status, error = self._quality()
+        self.assertEqual(status, 1)
+        self.assertIn("release contains disallowed paths: runtime.py", error)
+
+    def test_tagged_quality_still_checks_current_evidence_pins_and_workflow_parity(self) -> None:
+        self._prepare()
+        self._commit_release()
+        _git(self.root, "tag", f"v{VERSION}")
+        mutations = (
+            (self.root / "docs/evidence" / MANUAL[0], self.runtime_source, "f" * 40),
+            (self.root / "ai-review/ci/review.gitlab-ci.yml", self.runtime_source, "f" * 40),
+            (self.root / ".github/workflows/ai-review.yml", "name:", "# divergence\nname:"),
+        )
+        for path, before, after in mutations:
+            with self.subTest(path=path):
+                original = path.read_bytes()
+                path.write_bytes(original.replace(before.encode(), after.encode(), 1))
+                self.assertEqual(self._quality()[0], 1)
+                path.write_bytes(original)
 
     def test_preflight_rejects_internal_and_parent_symlinks_before_writing(self) -> None:
         installed = self.root / ".github/workflows/ai-review.yml"

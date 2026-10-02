@@ -52,4 +52,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          PYTHONPATH: ai-review/src
         run: python scripts/release_publish.py --tag "$RELEASE_TAG"

@@ -26,7 +26,8 @@ anchor checking.
 Before freezing `R`, land behavior, schemas, migrations, tooling, and documentation.
 Clear due [temporary compatibility](temporary-compatibility.md) entries and delete
 completed [specs](../improvement-specs/README.md). Keep inputs draft and run
-`make quality`.
+`make quality`. Use a checkout with full history and current tags; refresh them
+with `git fetch origin --tags` before release commands.
 
 1. **Freeze and check.** Wait for successful main CI and image publication for
    `R`. Scope `git diff v<previous>..R` using the impact table below, and update
@@ -61,15 +62,17 @@ completed [specs](../improvement-specs/README.md). Keep inputs draft and run
    for `R`, activates inputs, promotes CHANGELOG, and finalizes release identity
    and campaign sections in the notes. Scope, Migration, and carried limitations
    remain handwritten. All destinations and the complete proposed tree are
-   validated before writing. Repeating the same candidate preserves the date and
-   handwritten sections; changing candidates after activation is rejected.
+   validated before writing. Repeating the same candidate before tagging preserves
+   the date and handwritten sections; changing candidates after activation is
+   rejected. Preparation refuses an already tagged version before downloading a
+   canary or writing files; open the next draft instead.
 
 3. **Merge, wait for CI, and sign locally.** Any merge strategy is acceptable.
    The final commit `P` must descend from `R`, differ from `R`, and change only
    the allowlisted release paths, with matching evidence, pins, and workflow
-   parity. `make quality` checks committed and pending changes, including both
-   rename sides, staged changes, and non-ignored untracked paths. Wait for
-   successful canonical **push CI on exactly `P`**, then check out that commit:
+   parity. Before tagging, `make quality` checks committed and pending changes,
+   including both rename sides, staged changes, and non-ignored untracked paths.
+   Wait for successful canonical **push CI on exactly `P`**, then check out that commit:
 
    ```bash
    git switch main
@@ -100,12 +103,20 @@ completed [specs](../improvement-specs/README.md). Keep inputs draft and run
    ```
 
    Notes are read by captured commit SHA and preserve their bytes. The remote tag
-   object is rechecked immediately before creation. Existing releases are a no-op;
-   bodies and assets are never edited. Prereleases remain prereleases and older
-   stable versions do not replace a newer latest release. Opening the next draft
+   object is rechecked immediately before creation. Existing published releases
+   are a no-op. An existing draft fails with instructions to resolve it and retry
+   from main; the publisher never promotes or edits it. Bodies and assets are
+   never edited. Prereleases remain prereleases and older stable versions do not
+   replace a newer latest release. Opening the next draft
    resets identity and verification selections and creates version-correct notes.
    It requires a higher, untagged version and refuses an existing notes destination.
    Review and commit the draft reset in a follow-up PR.
+
+Once the version tag exists, `make quality` requires the current active inputs to
+match the tagged inputs and the checkout to descend from tagged `P`. Release-path
+restrictions then apply to `R → P`, allowing ordinary PRs while publication or
+open-next is pending. Current evidence bindings, pins/parity, and tag-identical
+notes remain checked. CI fetches full history and tags for this boundary.
 
 Do not describe a release as stable before its required evidence is complete.
 Current tooling accepts v3 only. The removed commands are `evidence-records`,

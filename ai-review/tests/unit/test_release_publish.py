@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import subprocess
 import sys
@@ -82,7 +84,7 @@ class ReleasePublicationTests(ReleaseFixture):
         raise AssertionError(f"unexpected gh command: {args}")
 
     def publish(self):
-        with mock.patch.object(publisher, "_gh", side_effect=self.gh):
+        with mock.patch.object(common, "gh", side_effect=self.gh):
             return publisher.publish(self.root, self.tag)
 
     def test_notes_preserve_bytes_captured_commit_and_no_tag_code_executes(self) -> None:
@@ -215,7 +217,9 @@ class ReleasePublicationTests(ReleaseFixture):
         self.assertFalse(self.created)
 
     def test_existing_release_is_a_noop_without_validation_or_asset_edits(self) -> None:
-        self.releases = [[{"tag_name": self.tag, "body": "immutable", "assets": ["historical"]}]]
+        self.releases = [
+            [{"tag_name": self.tag, "draft": False, "body": "immutable", "assets": ["historical"]}]
+        ]
         before = _snapshot(self.root)
         with mock.patch.object(
             publisher, "verify_release_tag", side_effect=AssertionError("no validation needed")
@@ -224,8 +228,39 @@ class ReleasePublicationTests(ReleaseFixture):
         self.assertEqual(_snapshot(self.root), before)
         self.assertFalse(self.created)
 
+    def test_existing_draft_fails_without_creating_promoting_or_editing_a_release(self) -> None:
+        self.releases = [
+            [
+                {
+                    "tag_name": self.tag,
+                    "draft": True,
+                    "body": "operator draft",
+                    "assets": ["draft asset"],
+                }
+            ]
+        ]
+        before = _snapshot(self.root)
+        releases = copy.deepcopy(self.releases)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(common, "gh", side_effect=self.gh) as gh,
+            mock.patch.object(publisher, "ROOT", self.root),
+            mock.patch.object(publisher, "verify_release_tag") as verify,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.assertEqual(publisher.main(["--tag", self.tag]), 1)
+        verify.assert_not_called()
+        gh.assert_called_once()
+        self.assertEqual(gh.call_args.args[:2], ("api", "--paginate"))
+        self.assertIn("resolve the draft and retry publication from main", stderr.getvalue())
+        self.assertNotIn("already published", stdout.getvalue())
+        self.assertEqual(self.releases, releases)
+        self.assertEqual(_snapshot(self.root), before)
+        self.assertFalse(self.created)
+
     def test_remote_recheck_is_immediately_before_creation(self) -> None:
-        with mock.patch.object(publisher, "_gh", side_effect=self.gh) as gh:
+        with mock.patch.object(common, "gh", side_effect=self.gh) as gh:
             publisher.publish(self.root, self.tag)
         self.assertIn("/git/ref/tags/", gh.call_args_list[-2].args[-1])
         self.assertEqual(gh.call_args_list[-1].args[:2], ("release", "create"))
@@ -236,6 +271,9 @@ class ReleasePublicationTests(ReleaseFixture):
 import sys, json
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+import validate_candidate_identity
+assert "ai_review" not in sys.modules
+sys.path.insert(0, str(Path(sys.argv[1]).parent / "ai-review/src"))
 import release_publish as publisher
 root, tag, P, obj = Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 def gh(*args):
@@ -248,9 +286,10 @@ def gh(*args):
     notes = Path(args[args.index("--notes-file")+1]).read_bytes()
     assert notes == publisher.git(root, "show", f"{P}:release/{tag[1:]}.md", text=False)
     return ""
-publisher._gh = gh
+publisher.release_common.gh = gh
 assert publisher.publish(root, tag)
-for name in ("yaml", "ai_review", "canary_evidence_records", "release_prepare"):
+assert {name for name in sys.modules if name.startswith("ai_review.")} == {"ai_review.canonical"}
+for name in ("yaml", "canary_evidence_records", "release_prepare"):
     assert name not in sys.modules
 """
         result = subprocess.run(
@@ -277,7 +316,7 @@ class PublicationContractTests(unittest.TestCase):
             [{"tag_name": "v9.0.0", "draft": True}, {"tag_name": "v8.0.0", "prerelease": True}],
             [{"tag_name": "v2.10.0"}, {"tag_name": "v2.9.0"}, {"tag_name": "invalid"}],
         ]
-        with mock.patch.object(publisher, "_gh", return_value=json.dumps(releases)) as gh:
+        with mock.patch.object(common, "gh", return_value=json.dumps(releases)) as gh:
             published = publisher.published_releases()
         self.assertIn("--paginate", gh.call_args.args)
         self.assertIn("--slurp", gh.call_args.args)
@@ -294,10 +333,10 @@ class PublicationContractTests(unittest.TestCase):
 
     def test_ci_lookup_rejects_absent_runs_and_queries_exact_source_workflow(self) -> None:
         with (
-            mock.patch.object(publisher, "_gh", return_value="[]") as gh,
+            mock.patch.object(common, "gh", return_value="[]") as gh,
             self.assertRaises(publisher.ReleaseValidationError),
         ):
-            publisher.successful_run("a" * 40, "ci.yml")
+            common.successful_run("a" * 40, "ci.yml", repository=publisher.REPOSITORY)
         self.assertIn("a" * 40, gh.call_args.args)
         self.assertIn("ci.yml", gh.call_args.args)
         self.assertIn("push", gh.call_args.args)
@@ -316,6 +355,7 @@ class PublicationContractTests(unittest.TestCase):
         )
         self.assertRegex(steps[2]["uses"], r"^actions/setup-python@[0-9a-f]{40}$")
         self.assertEqual(steps[3]["run"], 'python scripts/release_publish.py --tag "$RELEASE_TAG"')
+        self.assertEqual(steps[3]["env"]["PYTHONPATH"], "ai-review/src")
         self.assertEqual(len(steps), 4)
         self.assertEqual(
             workflow["concurrency"],
@@ -331,3 +371,44 @@ class PublicationContractTests(unittest.TestCase):
             run.return_value.stderr = b"invalid \xff"
             with self.assertRaisesRegex(common.ReleaseValidationError, "invalid"):
                 common.git(REPO, "show", "P:notes", text=False)
+
+    def test_shared_gh_runner_preserves_default_and_canary_error_boundaries(self) -> None:
+        from tests.unit.test_release_prepare import records
+
+        with mock.patch.object(common.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "complete output\n"
+            self.assertEqual(common.gh("run", "list"), "complete output\n")
+            self.assertEqual(run.call_args.args[0], ["gh", "run", "list"])
+            run.return_value.returncode = 1
+            for error_type in (common.ReleaseValidationError, records.RecordError):
+                for stderr, expected in (
+                    ("CLI unavailable\n", "CLI unavailable"),
+                    ("", "gh api failed"),
+                ):
+                    with self.subTest(error_type=error_type, stderr=stderr):
+                        run.return_value.stderr = stderr
+                        with self.assertRaisesRegex(error_type, expected):
+                            common.gh("api", "endpoint", error_type=error_type)
+
+    def test_release_json_uses_the_canonical_duplicate_and_nonfinite_checks(self) -> None:
+        for invalid in (
+            '{"duplicate": 1, "duplicate": 2}',
+            '{"number": NaN}',
+            '{"number": Infinity}',
+        ):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "inputs.json"
+                path.write_text(invalid)
+                with self.assertRaises(common.ReleaseValidationError):
+                    common.load_json(path)
+            with (
+                mock.patch.object(common, "gh", return_value=invalid),
+                self.assertRaises(common.ReleaseValidationError),
+            ):
+                common.successful_run("a" * 40, "ci.yml", repository=publisher.REPOSITORY)
+            with (
+                mock.patch.object(common, "gh", return_value=invalid),
+                self.assertRaises(ValueError),
+            ):
+                publisher.published_releases()

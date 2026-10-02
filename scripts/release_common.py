@@ -95,26 +95,69 @@ def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
-def parse_json(value: str | bytes) -> Any:
-    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, child in pairs:
-            if key in result:
-                raise ReleaseValidationError(f"duplicate JSON key: {key}")
-            result[key] = child
-        return result
-
-    return json.loads(value, object_pairs_hook=unique)
-
-
 def load_json(path: Path) -> dict[str, Any]:
+    # Identity/workflow helpers also run standalone without the runtime import path.
+    from ai_review.canonical import json_loads_no_duplicates
+
     try:
-        value = parse_json(path.read_bytes())
-    except (OSError, json.JSONDecodeError) as exc:
+        value = json_loads_no_duplicates(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
         raise ReleaseValidationError(f"cannot read {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ReleaseValidationError(f"{path} must contain a JSON object")
     return value
+
+
+def gh(*args: str, error_type: type[Exception] = ReleaseValidationError) -> str:
+    """Run GitHub CLI once, preserving the caller's error boundary."""
+    completed = subprocess.run(["gh", *args], text=True, capture_output=True, check=False)
+    if completed.returncode:
+        raise error_type(completed.stderr.strip() or f"gh {args[0]} failed")
+    return completed.stdout
+
+
+def successful_run(source: str, workflow: str, *, repository: str) -> str:
+    """Require a successful canonical main push run for exactly this commit."""
+    from ai_review.canonical import json_loads_no_duplicates
+
+    response = gh(
+        "run",
+        "list",
+        "--repo",
+        repository,
+        "--workflow",
+        workflow,
+        "--commit",
+        source,
+        "--branch",
+        "main",
+        "--event",
+        "push",
+        "--limit",
+        "1",
+        "--json",
+        "databaseId,headSha,headBranch,event,status,conclusion",
+    )
+    try:
+        runs = json_loads_no_duplicates(response)
+    except ValueError as exc:
+        raise ReleaseValidationError(f"invalid {workflow} run response: {exc}") from exc
+    if not isinstance(runs, list) or len(runs) != 1:
+        raise ReleaseValidationError(f"no canonical {workflow} push run found for {source}")
+    run = runs[0]
+    if not isinstance(run, dict) or (
+        run.get("headSha") != source
+        or run.get("headBranch") != "main"
+        or run.get("event") != "push"
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "success"
+        or type(run.get("databaseId")) is not int
+        or run["databaseId"] <= 0
+    ):
+        raise ReleaseValidationError(
+            f"{workflow} requires completed successful canonical push CI for exactly {source}"
+        )
+    return str(run["databaseId"])
 
 
 def image_ref(image: dict[str, Any], runtime_source: str) -> str:

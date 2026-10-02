@@ -233,9 +233,14 @@ VIEW_CALL = mock.call(
     "github.com/seanleecoder/code-tribunal",
     "--json",
     "url,createdAt,status,conclusion,event,headBranch,workflowDatabaseId,jobs",
+    error_type=records.RecordError,
 )
 WORKFLOW_CALL = mock.call(
-    "api", "--hostname", "github.com", "repos/seanleecoder/code-tribunal/actions/workflows/42"
+    "api",
+    "--hostname",
+    "github.com",
+    "repos/seanleecoder/code-tribunal/actions/workflows/42",
+    error_type=records.RecordError,
 )
 ARTIFACTS_CALL = mock.call(
     "api",
@@ -244,6 +249,7 @@ ARTIFACTS_CALL = mock.call(
     "--paginate",
     "--slurp",
     "repos/seanleecoder/code-tribunal/actions/runs/99/artifacts?per_page=100",
+    error_type=records.RecordError,
 )
 
 
@@ -282,7 +288,7 @@ def _gh_response(
     artifact_pages = _artifact_pages() if artifact_pages is None else artifact_pages
     artifact_reads = 0
 
-    def respond(*args: str) -> str:
+    def respond(*args: str, error_type) -> str:
         nonlocal artifact_reads
         if args[:2] == ("run", "view"):
             return json.dumps(meta)
@@ -398,8 +404,8 @@ class RecordRegenerationTests(unittest.TestCase):
         stdout = io.StringIO()
         with (
             mock.patch.object(
-                records,
-                "_gh",
+                records.release_common,
+                "gh",
                 side_effect=_gh_response(
                     _metadata(campaigns),
                     _workflow(),
@@ -677,8 +683,8 @@ class RecordLoadingTests(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 mock.patch.object(
-                    records,
-                    "_gh",
+                    records.release_common,
+                    "gh",
                     side_effect=_gh_response(
                         meta,
                         workflow,
@@ -720,8 +726,8 @@ class RecordLoadingTests(unittest.TestCase):
                     self.subTest(campaigns=campaigns),
                     tempfile.TemporaryDirectory() as tmp,
                     mock.patch.object(
-                        records,
-                        "_gh",
+                        records.release_common,
+                        "gh",
                         side_effect=_gh_response(
                             _metadata(campaigns),
                             _workflow(),
@@ -749,6 +755,7 @@ class RecordLoadingTests(unittest.TestCase):
                                 "github.com/seanleecoder/code-tribunal",
                                 "--dir",
                                 str(directory),
+                                error_type=records.RecordError,
                             ),
                             ARTIFACTS_CALL,
                         ],
@@ -848,7 +855,9 @@ class RecordLoadingTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch.object(
-                records, "_gh", side_effect=_gh_response(meta, _workflow(), _run().summaries)
+                records.release_common,
+                "gh",
+                side_effect=_gh_response(meta, _workflow(), _run().summaries),
             ),
         ):
             self.assertEqual(
@@ -1003,8 +1012,8 @@ class RecordLoadingTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch.object(
-                records,
-                "_gh",
+                records.release_common,
+                "gh",
                 side_effect=_gh_response(
                     _metadata(),
                     _workflow(),

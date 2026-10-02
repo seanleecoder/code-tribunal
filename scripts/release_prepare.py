@@ -41,19 +41,18 @@ from release_common import (
     git,
     image_ref,
     load_json,
+    successful_run,
     tag_exists,
     validate_release_version,
 )
-from release_publish import REPOSITORY, successful_run
+from validate_candidate_identity import REPOSITORY
 
 
 def _candidate_inputs(
-    root: Path,
+    data: dict[str, Any],
     run: CanaryRun,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     candidate = next(iter(run.summaries.values()))["candidate"]
-    data = load_json(root / "release/release-inputs.json")
-    validate_release_inputs(data, root, check_templates=False)
     previous = copy.deepcopy(data)
     runtime_source = candidate["runtime_source"]
     if not isinstance(runtime_source, str) or FULL_SHA_RE.fullmatch(runtime_source) is None:
@@ -204,13 +203,25 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
     return _replace_section(text, "Live campaign", "\n".join(campaign))
 
 
+def _require_untagged(root: Path, version: str) -> None:
+    if tag_exists(f"v{version}", root):
+        raise ReleaseValidationError(
+            f"cannot prepare tagged release v{version}; open the next draft first"
+        )
+
+
 def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tuple[str, ...]:
+    data = load_json(root / "release/release-inputs.json")
+    # Validate original evidence paths before the proposed tree copies their bytes.
+    validate_release_inputs(data, root, check_templates=False)
+    version = data["release_version"]
+    _require_untagged(root, version)
     with tempfile.TemporaryDirectory() as temporary:
         run = load_run(run_id, Path(temporary))
     records = render_records(run)
     if not records:
         raise ReleaseValidationError("canary produced no passing records")
-    data, candidate = _candidate_inputs(root, run)
+    data, candidate = _candidate_inputs(data, run)
     verification = data["verification"]
     if conflict := set(records) & verification["evidence_waivers"].keys():
         raise ReleaseValidationError(
@@ -220,28 +231,29 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
     was_active = data["status"] == "active"
     data["status"] = "active"
     verification.update(
-        ci_run_id=successful_run(data["runtime_source"], "ci.yml"),
-        publication_run_id=successful_run(data["runtime_source"], "publish-ai-review-images.yml"),
+        ci_run_id=successful_run(data["runtime_source"], "ci.yml", repository=REPOSITORY),
+        publication_run_id=successful_run(
+            data["runtime_source"], "publish-ai-review-images.yml", repository=REPOSITORY
+        ),
         evidence_record_ids=list(dict.fromkeys([*verification["evidence_record_ids"], *records])),
     )
     edits = _template_edits(root, candidate)
     edits.update(
         {f"{EVIDENCE_DIR.as_posix()}/{name}": text.encode() for name, text in records.items()}
     )
-    version = data["release_version"]
     notes_path = f"release/{version}.md"
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     headings = re.findall(
         rf"(?m)^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$", changelog
     )
-    if (
-        changelog.count("## [Unreleased]") != 1
-        or changelog.count(f"## [{version}]") != (1 if was_active else 0)
-        or (was_active and len(headings) != 1)
-        or (not was_active and f"## [{version}]" in changelog)
-    ):
+    if changelog.count("## [Unreleased]") != 1:
+        raise ReleaseValidationError("CHANGELOG requires one Unreleased heading")
+    if was_active:
+        if changelog.count(f"## [{version}]") != 1 or len(headings) != 1:
+            raise ReleaseValidationError("CHANGELOG requires one consistent release date")
+    elif f"## [{version}]" in changelog:
         raise ReleaseValidationError(
-            "CHANGELOG requires one Unreleased heading and one consistent release date"
+            "CHANGELOG draft must not already contain this release version"
         )
     if not was_active:
         changelog = changelog.replace(
@@ -262,6 +274,7 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
         data["runtime_source"], git(root, "rev-parse", "HEAD"), root, pending=True, preparing=True
     )
     _validate_edits(root, edits, data)
+    _require_untagged(root, version)
     return _write_edits(root, edits)
 
 

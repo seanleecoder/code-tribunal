@@ -617,38 +617,20 @@ reviewer image and reported `model: auto`.
 
 ## After the release-gating runs pass
 
-> **Completed for 1.0.0** on 2026-07-25 against `R = 88bc941` (release commit
-> `3ad443e`, tag `v1.0.0`). The steps below are the reusable sequence for every
-> later release; the parenthetical notes record how 1.0.0 satisfied each.
+Follow the four-step [release process](../development/release-process.md#release-sequence)
+for preparation, CI, local signing, publication, and opening the next draft.
+Select passing records and inputs-only waivers there; preserve historical records.
+Record any observed token/cost from the OpenRouter dashboard or leave it unasserted,
+and audit retained artifacts/traces with `python scripts/scan_evidence_leaks.py <dirs…>`,
+recording the scan's scope and limitations.
 
-1. Mark each release-gating record `Status: passed` with a scoped verdict, and
-   record the per-run token/cost for the one real panel per platform. (1.0.0: all
-   six cited records stamped with `Release-runtime-source` and both digests; the
-   non-gating SPEC-34 row carries a registered `Release-evidence-waived` reason
-   instead. Token/cost is **not** in any artifact — read it from the OpenRouter
-   dashboard or leave it unasserted, as 1.0.0 did.)
-2. Fill the **Live campaign** table in `release/<version>.md` with the scoped
-   results and record links; it is the only per-release copy. The
-   [evidence index](README.md) is not edited per release.
-3. **Retarget the release inputs to the pair under test (release-blocking).**
-   Update `runtime_source`, both image digests, the canonical template pins, the
-   recorded publication and CI run IDs, and the evidence references together, then
-   re-run `make quality`. This is an
-   operator/CI action because it needs the published digests. (1.0.0: publication
-   run `30125524008`, CI run `30125523924`, base `sha256:f2a433ac…`, reviewer
-   `sha256:2fd84c43…`. Remember the **three** GitLab pin variables and **both**
-   byte-identical GitHub workflow copies, plus the consumer/template projects used
-   for evidence — a stale template pin means the evidence exercised the wrong
-   images.)
-4. Audit for credential leakage across every retained artifact and trace with
-   `python scripts/scan_evidence_leaks.py <dirs…>` and record its exact scope and
-   limitations in the records. (1.0.0: 438 files / 5.7 MB, zero hits; the
-   exact-value scan was left as an operator sign-off item.)
-5. Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
-   update the changelog/version record, generate and validate the external
-   manifest, then tag. **The tag target is constrained** — do not squash-merge the
-   release commit, and either tag `P` exactly or rebuild the manifest against the
-   merge commit; see the tagging section of the release notes.
+**Historical 1.0.0 observations:** completed on 2026-07-25 against `R = 88bc941`
+(release commit `3ad443e`, tag `v1.0.0`). All six cited passing records were stamped
+with source and digest bindings; the non-gating SPEC-34 row used the then-current
+record-side waiver marker. Token/cost was not asserted. Publication run
+`30125524008` and CI run `30125523924` covered base `sha256:f2a433ac…` and reviewer
+`sha256:2fd84c43…`. The leak audit scanned 438 files / 5.7 MB with zero hits; the
+exact-value scan remained an operator sign-off item.
 
 Do not describe a release as "stable" or "credential isolated" until every
 release-gating row is a scoped pass against the exact rebuilt RC source and image

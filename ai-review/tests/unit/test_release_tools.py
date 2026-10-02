@@ -488,7 +488,11 @@ class ReleaseToolTests(unittest.TestCase):
             mock.patch.object(
                 release_input_checker,
                 "load_json",
-                return_value={"status": "active", "runtime_source": "a" * 40},
+                return_value={
+                    "status": "active",
+                    "runtime_source": "a" * 40,
+                    "release_version": "9.9.9",
+                },
             ),
             mock.patch.object(
                 release_input_checker,
@@ -496,6 +500,7 @@ class ReleaseToolTests(unittest.TestCase):
                 return_value=waivers,
             ),
             mock.patch.object(release_input_checker, "validate_release_commit"),
+            mock.patch.object(release_input_checker, "tag_exists", return_value=False),
             contextlib.redirect_stderr(stderr),
         ):
             self.assertEqual(release_input_checker.main(), 0)

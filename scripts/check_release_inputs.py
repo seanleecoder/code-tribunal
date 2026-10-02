@@ -27,6 +27,7 @@ from release_common import (
     image_ref,
     load_json,
     sync_workflows,
+    tag_exists,
     validate_release_version,
     working_tree_paths,
 )
@@ -426,10 +427,32 @@ def main() -> int:
         data = load_json(args.path)
         waivers = validate_release_inputs(data, ROOT)
         if data["status"] == "active":
-            validate_release_commit(
-                data["runtime_source"], git(ROOT, "rev-parse", "HEAD"), ROOT, pending=True
+            from ai_review.canonical import json_loads_no_duplicates
+
+            head = git(ROOT, "rev-parse", "HEAD")
+            tag = f"v{data['release_version']}"
+            tagged = tag_exists(tag, ROOT)
+            release_commit = (
+                git(ROOT, "rev-parse", f"refs/tags/{tag}^{{commit}}") if tagged else head
             )
-    except ReleaseValidationError as exc:
+            if tagged:
+                tagged_inputs = json_loads_no_duplicates(
+                    git(
+                        ROOT, "show", f"{release_commit}:release/release-inputs.json", text=False
+                    ).decode("utf-8")
+                )
+                if tagged_inputs != data:
+                    raise ReleaseValidationError(
+                        "active release inputs must match their tagged inputs"
+                    )
+                if not git_is_ancestor(release_commit, head, ROOT):
+                    raise ReleaseValidationError(
+                        "checkout must descend from tagged release commit P"
+                    )
+            validate_release_commit(
+                data["runtime_source"], release_commit, ROOT, pending=not tagged
+            )
+    except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     print(f"release inputs valid ({data['status']}): {args.path}")

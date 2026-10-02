@@ -2,11 +2,12 @@
 
 Status: pending
 
-<!-- For release-inputs status=active, Status must be exactly "passed" and the
-     three Release-* fields below must match release/release-inputs.json, OR
-     set "Release-evidence-waived: registered", drop the three Release-* fields,
-     and state the reason only under verification.evidence_waivers in
-     release/release-inputs.json. -->
+<!-- Passing records selected by active release inputs must have Status exactly
+     "passed" and matching source/digest bindings below. To waive a record, remove
+     its ID from verification.evidence_record_ids and register its nonempty reason
+     only under verification.evidence_waivers in release/release-inputs.json.
+     Preserve the record's historical status and bindings; no record-side waiver
+     marker is required, and a waiver does not certify the current candidate. -->
 
 Release-runtime-source: `<40-character-runtime-source-sha>`
 Release-base-digest: `sha256:<64-character-base-image-digest>`
