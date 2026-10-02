@@ -31,6 +31,11 @@ GITHUB_CONTAINER_ROLES = {
     "consensus": "base",
     "post": "base",
 }
+GITLAB_PIN_FIELDS = {
+    "AI_REVIEW_BASE_IMAGE": "base_image",
+    "AI_REVIEW_REVIEWER_IMAGE": "reviewer_image",
+    "AI_REVIEW_TRUSTED_IMAGE_SHA": "runtime_source",
+}
 
 EVIDENCE_DIR = Path("docs/evidence")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -96,23 +101,40 @@ def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
 
 def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     """Return the three canonical assignments' zero-based positions and values."""
-    keys = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
-    key_pattern = "|".join(keys)
+    key_pattern = "|".join(map(re.escape, GITLAB_PIN_FIELDS))
     pins: dict[str, tuple[int, str]] = {}
+    in_variables = False
+    blocks = 0
     for index, line in enumerate(text.splitlines()):
-        if line.lstrip().startswith("#"):
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
-        assignment = re.match(rf"[ \t]*[\"']?({key_pattern})\b", line)
+        if re.match(r'''["']?variables["']?[ \t]*:''', line):
+            if not re.fullmatch(r"variables:[ \t]*(?:#.*)?", line):
+                raise ReleaseValidationError(
+                    "expected one canonical top-level GitLab variables block"
+                )
+            blocks += 1
+            if blocks > 1:
+                raise ReleaseValidationError("duplicate top-level GitLab variables blocks")
+            in_variables = True
+            continue
+        if not line.startswith((" ", "\t")):
+            in_variables = False
+        assignment = re.search(rf"(?:^[ \t]*|[{{,][ \t]*)[\"']?({key_pattern})\b", line)
         if assignment is None:
             continue
         key = assignment.group(1)
+        if not in_variables or re.match(rf"  [\"']?{key}\b", line) is None:
+            raise ReleaseValidationError(f"GitLab pin outside top-level variables: {key}")
         if key in pins:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
-        value = re.fullmatch(rf'[ \t]*{key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
+        value = re.fullmatch(rf'  {key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
         if value is None:
             raise ReleaseValidationError(f"malformed GitLab {key} pin")
         pins[key] = (index, value.group(1))
-    for key in keys:
+    if blocks != 1:
+        raise ReleaseValidationError("expected one canonical top-level GitLab variables block")
+    for key in GITLAB_PIN_FIELDS:
         if key not in pins:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
     return pins
@@ -144,12 +166,11 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
         )
     gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
     pins = gitlab_template_pins(gitlab)
-    expected_pins = {
-        "AI_REVIEW_BASE_IMAGE": expected_refs["base"],
-        "AI_REVIEW_REVIEWER_IMAGE": expected_refs["reviewer"],
-        "AI_REVIEW_TRUSTED_IMAGE_SHA": runtime_source,
+    expected_fields = {
+        **{f"{role}_image": reference for role, reference in expected_refs.items()},
+        "runtime_source": runtime_source,
     }
-    if any(pins[key][1] != value for key, value in expected_pins.items()):
+    if any(pins[key][1] != expected_fields[field] for key, field in GITLAB_PIN_FIELDS.items()):
         raise ReleaseValidationError("GitLab template pins do not match release inputs")
 
 

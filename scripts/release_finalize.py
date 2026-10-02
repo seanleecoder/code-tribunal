@@ -23,6 +23,7 @@ from canary_evidence_records import CanaryRun, RecordError, _gh, load_run, rende
 from check_release_inputs import (
     EVIDENCE_DIR,
     GITHUB_CONTAINER_ROLES,
+    GITLAB_PIN_FIELDS,
     github_job_containers,
     gitlab_template_pins,
     validate_release_inputs,
@@ -161,11 +162,8 @@ def repin(root: Path, run: CanaryRun) -> tuple[str, ...]:
     gitlab = (root / gitlab_path).read_text(encoding="utf-8")
     pins = gitlab_template_pins(gitlab)
     lines = gitlab.splitlines(keepends=True)
-    for key, value in (
-        ("AI_REVIEW_BASE_IMAGE", candidate["base_image"]),
-        ("AI_REVIEW_REVIEWER_IMAGE", candidate["reviewer_image"]),
-        ("AI_REVIEW_TRUSTED_IMAGE_SHA", candidate["runtime_source"]),
-    ):
+    for key, field in GITLAB_PIN_FIELDS.items():
+        value = candidate[field]
         index, previous = pins[key]
         prefix, separator, suffix = lines[index].partition(f'"{previous}"')
         assert separator

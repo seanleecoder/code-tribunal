@@ -298,7 +298,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         path.write_text(path.read_text() + '\n  AI_REVIEW_BASE_IMAGE: "duplicate"\n')
         before = _snapshot(self.root)
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "exactly one GitLab"):
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "outside top-level variables"):
             tool.repin(self.root, self.run)
         self.assertEqual(_snapshot(self.root), before)
 
@@ -398,6 +398,8 @@ class ReleaseFinalizationTests(unittest.TestCase):
     def test_shared_gitlab_parser_refuses_missing_duplicate_or_malformed_pins_without_writes(
         self,
     ) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         for key, (index, value) in tool.gitlab_template_pins(original).items():
@@ -413,10 +415,64 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 with self.subTest(key=key, invalid=invalid):
                     path.write_text(invalid)
                     before = _snapshot(self.root)
-                    with self.assertRaises(tool.ReleaseValidationError):
+                    with self.assertRaises(tool.ReleaseValidationError) as repin_error:
                         tool.repin(self.root, self.run)
                     self.assertEqual(_snapshot(self.root), before)
+                    with self.assertRaises(tool.ReleaseValidationError) as validation_error:
+                        tool.validate_template_pins(
+                            data["images"], data["runtime_source"], self.root,
+                        )
+                    self.assertEqual(str(repin_error.exception), str(validation_error.exception))
+                    self.assertEqual(_snapshot(self.root), before)
         path.write_text(original)
+
+    def test_gitlab_scope_refusals_match_validation_and_repin_without_writes(self) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        invalid_templates = [
+            (original + "\nvariables:\n", "duplicate top-level"),
+            (original.replace("variables:\n", "variables :\n", 1), "canonical top-level"),
+            (original.replace("variables:\n", '"variables":\n', 1), "canonical top-level"),
+            (original.replace("variables:\n", "variables: {}\n", 1), "canonical top-level"),
+            (original.replace("variables:\n", "  variables:\n", 1), "outside top-level"),
+        ]
+        for _key, (index, _value) in tool.gitlab_template_pins(original).items():
+            pin = original.splitlines()[index]
+            removed = original.replace(pin + "\n", "", 1)
+            for indent in ("", " ", "   ", "    ", "\t", " \t"):
+                invalid_templates.append((
+                    original.replace(pin, indent + pin.lstrip(), 1), "outside top-level",
+                ))
+            for prefix in (removed, original):
+                invalid_templates.append((
+                    prefix + "\njob:\n  variables:\n  " + pin + "\n", "outside top-level",
+                ))
+                invalid_templates.append((
+                    prefix + "\njob:\n" + pin + "\n", "outside top-level",
+                ))
+                invalid_templates.append((
+                    prefix + "\njob:\n  variables: {" + pin.strip() + "}\n",
+                    "outside top-level",
+                ))
+            invalid_templates.append((
+                original.replace(pin, "  # " + pin.lstrip(), 1), "exactly one GitLab",
+            ))
+        for invalid, message in invalid_templates:
+            with self.subTest(invalid=invalid):
+                path.write_text(invalid)
+                before = _snapshot(self.root)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, message) as validation:
+                    tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+                self.assertEqual(_snapshot(self.root), before)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, message) as repinning:
+                    tool.repin(self.root, self.run)
+                self.assertEqual(str(validation.exception), str(repinning.exception))
+                self.assertEqual(_snapshot(self.root), before)
+        path.write_text(original)
+        tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+        tool.repin(self.root, self.run)
 
     def test_shared_parsers_preserve_comments_and_repin_the_live_assignment_positions(self) -> None:
         github = self.root / "ai-review/ci/review.github-actions.yml"
@@ -429,6 +485,9 @@ class ReleaseFinalizationTests(unittest.TestCase):
             f'# {key}: "commented-{key}"\n' for key in tool.gitlab_template_pins(original)
         )
         original = comments + original
+        original = original.replace(
+            "variables:\n", "variables: # canonical pins\n# Column-zero comment in variables.\n", 1,
+        )
         # Inline comments and whitespace remain unchanged by the shared parser's repin.
         original = original.replace('  AI_REVIEW_TRUSTED_IMAGE_SHA:',
                                     '  AI_REVIEW_TRUSTED_IMAGE_SHA:   ')
