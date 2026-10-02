@@ -9,6 +9,9 @@ versioning.
 
 ### Added
 
+- Pushing a signed release tag triggers publication after verifying its signer,
+  reachability from `main`, and the rebuilt manifest against the checksum in the
+  signed certificate. CI uploads the final notes and both manifest assets.
 - `make release-repin`, `release-finalize`, `release-manifest`, and
   `release-open-next` prepare a single release PR, validate its evidence and
   source bindings, generate the external certificate assets, and reset the next

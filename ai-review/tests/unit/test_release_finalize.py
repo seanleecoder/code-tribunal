@@ -300,6 +300,73 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.assertNotEqual(release_commit, self.runtime_source)
 
 
+    def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
+        # Generate a fixture-only SSH key; the test never reads an operator key.
+        key_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(key_directory.cleanup)
+        key = Path(key_directory.name) / "fixture-key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+        )
+        allowed = self.root / ".github/allowed_signers"
+        allowed.write_text("fixture@example.test " + key.with_suffix(".pub").read_text())
+        _git(self.root, "add", ".github/allowed_signers")
+        _git(self.root, "commit", "-qm", "register fixture signer before R")
+        # Keep R at the runtime commit; the register is outside the release diff.
+        self.runtime_source = _git(self.root, "rev-parse", "HEAD")
+        for summary in self.run.summaries.values():
+            old_source = summary["candidate"]["runtime_source"]
+            summary["candidate"]["runtime_source"] = self.runtime_source
+            for role in ("base", "reviewer"):
+                image_key = f"{role}_image"
+                summary["candidate"][image_key] = summary["candidate"][image_key].replace(
+                    old_source, self.runtime_source
+                )
+        for record in (self.root / "docs/evidence").glob("*.md"):
+            record.write_text(record.read_text().replace(old_source, self.runtime_source))
+        tool.repin(self.root, self.run)
+        self._finalize()
+        P = self._commit_release()
+        out = self.root / "assets"
+        manifest, checksum, message = tool.manifest_assets(self.root, P, out)
+        _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        _git(self.root, "config", "gpg.format", "ssh")
+        _git(self.root, "config", "user.signingkey", str(key))
+        tag = f"v{VERSION}"
+        _git(self.root, "tag", tag)
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "annotated signed"):
+            tool.publish_assets(self.root, tag, out)
+        _git(self.root, "tag", "-d", tag)
+        _git(self.root, "tag", "-a", tag, "-m", "unsigned")
+        with self.assertRaises(tool.ReleaseValidationError):
+            tool.publish_assets(self.root, tag, out)
+        for invalid in ("0" * 64, None, "duplicate"):
+            _git(self.root, "tag", "-d", tag)
+            text = message.read_text()
+            if invalid is None:
+                text = text.replace("Release-manifest-sha256:", "Missing:")
+            elif invalid == "duplicate":
+                text += "Release-manifest-sha256: " + "0" * 64 + "\n"
+            else:
+                text = re.sub(r"Release-manifest-sha256: [0-9a-f]{64}",
+                              f"Release-manifest-sha256: {invalid}", text)
+            signed_message = self.root / "signed-message"
+            signed_message.write_text(text)
+            _git(self.root, "tag", "-s", tag, "-F", str(signed_message))
+            with self.subTest(invalid=invalid), self.assertRaises(tool.ReleaseValidationError):
+                tool.publish_assets(self.root, tag, out)
+            # Rebuild the original certificate after the mismatch case wrote scratch assets.
+            tool.manifest_assets(self.root, P, out)
+        _git(self.root, "tag", "-d", tag)
+        _git(self.root, "tag", "-s", tag, "-F", str(message))
+        self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
+        _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
+        with self.assertRaises(tool.ReleaseValidationError):
+            tool.publish_assets(self.root, tag, out)
+        _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "tag must match"):
+            tool.publish_assets(self.root, "v9.9.10", out)
+
 class ReleaseRunLookupTests(unittest.TestCase):
     def test_lookup_requires_the_latest_successful_main_push_for_R(self) -> None:
         runtime_source = "a" * 40

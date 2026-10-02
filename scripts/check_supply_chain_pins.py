@@ -15,6 +15,7 @@ REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 CANDIDATE_CANARY_WORKFLOW = ROOT / ".github/workflows/candidate-canary.yml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/publish-release.yml"
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = ROOT / "ai-review/images/package.json"
@@ -536,7 +537,7 @@ def main() -> int:
     # from /opt/scripts, where .github/ does not exist, so its parity check
     # silently passed on the one platform that ran it.
     shipped_workflows = {}
-    for path in (CI_WORKFLOW, CANDIDATE_CANARY_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
+    for path in (CI_WORKFLOW, CANDIDATE_CANARY_WORKFLOW, RELEASE_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
         workflow_text = _read_optional(path)
         if workflow_text is not None:
             shipped_workflows[path] = workflow_text

@@ -1,0 +1,47 @@
+name: Publish Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout signed release tag and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install pinned validation dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Verify signed certificate and rebuild its assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publish \
+            --tag "$RELEASE_TAG" --out "$RUNNER_TEMP/release"
+
+      - name: Publish final notes, manifest, and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            "$RUNNER_TEMP/release/code-tribunal-${RELEASE_TAG}-release-manifest.json" \
+            "$RUNNER_TEMP/release/code-tribunal-${RELEASE_TAG}-release-manifest.json.sha256" \
+            --verify-tag --title "Code Tribunal ${RELEASE_TAG#v}" \
+            --notes-file "release/${RELEASE_TAG#v}.md"

@@ -350,6 +350,32 @@ def open_next(root: Path, version: str) -> tuple[str, ...]:
     return _write_edits(root, {"release/release-inputs.json": canonical_json_bytes(data)})
 
 
+def publish_assets(root: Path, tag: str, out: Path) -> tuple[Path, Path]:
+    """Revalidate the signed tag's certificate; never sign or choose a release."""
+    data = load_json(root / "release/release-inputs.json")
+    validate_release_inputs(data, root)
+    if tag != f"v{data['release_version']}":
+        raise ReleaseValidationError("tag must match the tagged release inputs")
+    reference = f"refs/tags/{tag}"
+    if _git(root, "cat-file", "-t", reference) != "tag":
+        raise ReleaseValidationError("publication requires an annotated signed tag")
+    release_commit = _git(root, "rev-parse", f"{reference}^{{commit}}")
+    _git(root, "merge-base", "--is-ancestor", release_commit, "refs/remotes/origin/main")
+    _git(
+        root, "-c", "gpg.format=ssh", "-c",
+        f"gpg.ssh.allowedSignersFile={root / '.github/allowed_signers'}",
+        "verify-tag", tag,
+    )
+    message = _git(root, "for-each-ref", "--format=%(contents)", reference)
+    markers = re.findall(r"(?m)^Release-manifest-sha256: ([0-9a-f]{64})$", message)
+    if len(markers) != 1 or message.count("Release-manifest-sha256:") != 1:
+        raise ReleaseValidationError("signed certificate requires exactly one manifest checksum")
+    assets = manifest_assets(root, release_commit, out)
+    if sha256_bytes(assets[0].read_bytes()) != markers[0]:
+        raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
+    return assets[:2]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -364,6 +390,9 @@ def main(argv: list[str] | None = None) -> int:
     manifest = commands.add_parser("manifest")
     manifest.add_argument("--release-commit", required=True)
     manifest.add_argument("--out", type=Path, required=True)
+    publish = commands.add_parser("publish")
+    publish.add_argument("--tag", required=True)
+    publish.add_argument("--out", type=Path, required=True)
     next_draft = commands.add_parser("open-next")
     next_draft.add_argument("--version", required=True)
     args = parser.parse_args(argv)
@@ -385,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
                 outputs = finalize(ROOT, run, args.evidence, waivers)
         elif args.command == "manifest":
             outputs = manifest_assets(ROOT, args.release_commit, args.out)
+        elif args.command == "publish":
+            outputs = publish_assets(ROOT, args.tag, args.out)
         else:
             outputs = open_next(ROOT, args.version)
         for output in outputs:
