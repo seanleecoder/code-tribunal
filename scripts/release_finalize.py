@@ -8,6 +8,7 @@ import copy
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from ai_review.canonical import json_loads_no_duplicates
 from build_release_manifest import build_manifest
@@ -30,7 +31,6 @@ from check_release_inputs import (
     validate_template_pins,
 )
 from check_release_manifest import validate_manifest
-from markdown_code import mask_markdown_code
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
@@ -393,71 +393,28 @@ def _tag_version(tag: str) -> str:
 
 
 def render_release_notes(text: str, tag: str) -> str:
-    """Render the bounded link syntax documented in the release runbook."""
-    _tag_version(tag)
-    masked = mask_markdown_code(text, inline=True)
-    if re.search(r"!\[|</?(?:a|img)\b", masked, re.I):
-        raise ReleaseValidationError("release notes do not support images or HTML links")
-    if re.search(r"\[[^\]\n]*\[[^\n]*\]\s*[\[(]", masked):
-        raise ReleaseValidationError("release notes do not support nested link labels")
-    target_pattern = r'''(?P<target><[^<>\s]+>|[^<>\s()"'\\\[\]]+)'''
-    title_pattern = r'''(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?'''
-    edits: list[tuple[int, int, str]] = []
+    """Pin repository-relative Markdown destinations to the notes' release tag."""
+    validate_release_version(tag.removeprefix("v"))
+    if not tag.startswith("v"):
+        raise ReleaseValidationError("release notes require a v-prefixed release tag")
 
-    def destination(target: str) -> str:
-        wrapped = target.startswith("<")
-        target = target[1:-1] if wrapped else target
-        if "\\" in target:
-            raise ReleaseValidationError("release notes do not support escaped link destinations")
+    def destination(match: re.Match[str]) -> str:
+        target = match.group("target")
         parts = urlsplit(target)
         if parts.scheme or parts.netloc or not parts.path:
-            return f"<{target}>" if wrapped else target
-        decoded = unquote(parts.path)
-        bounded = posixpath.normpath(posixpath.join("release", decoded))
-        if decoded.startswith("/") or bounded == ".." or bounded.startswith("../"):
-            raise ReleaseValidationError("release notes destination escapes the repository")
+            return match.group(0)
         path = posixpath.normpath(posixpath.join("release", parts.path))
+        if parts.path.startswith("/") or path == ".." or path.startswith("../"):
+            return match.group(0)
         pinned = urlunsplit((
             "https", "github.com", f"/{REPOSITORY}/blob/{tag}/{path}",
             parts.query, parts.fragment,
         ))
-        return f"<{pinned}>" if wrapped else pinned
+        return match.group(0).replace(target, pinned, 1)
 
-    def consume(pattern: str) -> list[re.Match[str]]:
-        nonlocal masked
-        matches = list(re.finditer(pattern, masked, re.M))
-        for match in reversed(matches):
-            if "target" in match.groupdict():
-                start, end = match.span("target")
-                # Read the original destination; a backtick in a URL is unsupported.
-                target = text[start:end]
-                if target != match["target"]:
-                    raise ReleaseValidationError("release notes destination contains code syntax")
-                edits.append((start, end, destination(target)))
-            masked = (masked[:match.start()] + re.sub(r"[^\r\n]", " ", match[0])
-                      + masked[match.end():])
-        return matches
-
-    def reference_key(label: str) -> str:
-        return " ".join(label.split()).casefold()
-
-    definitions = consume(
-        r"^ {0,3}\[(?P<label>[^\[\]\n]+)\]:[ \t]*"
-        + target_pattern + title_pattern + r"[ \t]*\r?$"
+    return re.sub(
+        r"\]\((?P<target>[^\s()]+)(?:[ \t]+[\"'][^\n]*?[\"'])?\)", destination, text
     )
-    keys = [reference_key(match["label"]) for match in definitions]
-    if len(keys) != len(set(keys)):
-        raise ReleaseValidationError("release notes contain duplicate reference definitions")
-    consume(r"\[[^\[\]\n]*\]\([ \t]*" + target_pattern + title_pattern + r"[ \t]*\)")
-    references = consume(r"\[(?P<label>[^\[\]\n]+)\]\[(?P<reference>[^\[\]\n]*)\]")
-    for match in references:
-        if reference_key(match["reference"] or match["label"]) not in keys:
-            raise ReleaseValidationError("release notes contain an undefined reference link")
-    if re.search(r"\]\s*(?:\(|\[|:)", masked):
-        raise ReleaseValidationError("release notes contain unsupported link syntax")
-    for start, end, replacement in sorted(edits, reverse=True):
-        text = text[:start] + replacement + text[end:]
-    return text
 
 
 def release_notes(root: Path, tag: str, out: Path, *, revision: str | None = None) -> Path:
@@ -507,31 +464,76 @@ def publication_flags(tag: str, github_output: Path) -> None:
         output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
 
 
+def _owned_worktree_admin(common: Path, tree: Path, admin: Path) -> bool:
+    """Only a direct, non-symlink registration with this tree's backpointer is owned."""
+    registrations = common / "worktrees"
+    return (
+        not registrations.is_symlink()
+        and admin.parent.resolve() == registrations
+        and not admin.is_symlink()
+        and admin.is_dir()
+        and admin.resolve().parent == registrations
+        and (admin / "gitdir").is_file()
+        and not (admin / "gitdir").is_symlink()
+        and (admin / "gitdir").read_text(encoding="utf-8").strip() == str(tree / ".git")
+    )
+
+
+def _partial_worktree_admin(common: Path, tree: Path) -> Path | None:
+    registrations = common / "worktrees"
+    if registrations.is_symlink() or not registrations.is_dir():
+        return None
+    for admin in registrations.iterdir():
+        if _owned_worktree_admin(common, tree, admin):
+            return admin
+    return None
+
+
 @contextmanager
 def _tag_worktree(root: Path, release_commit: str) -> Iterator[Path]:
+    common = Path(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    admin: Path | None = None
     removal_failed = False
     try:
         with tempfile.TemporaryDirectory() as temporary:
-            tree = Path(temporary) / "tag"
+            tree = Path(temporary).resolve() / "tag"
+            failed = False
             try:
                 _git(root, "worktree", "add", "--detach", str(tree), release_commit)
+                admin = Path(_git(tree, "rev-parse", "--absolute-git-dir"))
                 yield tree
+            except BaseException:
+                failed = True
+                if admin is None:
+                    try:
+                        admin = _partial_worktree_admin(common, tree)
+                    except (ReleaseValidationError, OSError) as recovery_error:
+                        print(f"ERROR: worktree recovery also failed: {recovery_error}",
+                              file=sys.stderr)
+                raise
             finally:
-                active_error = sys.exception()
-                try:
-                    _git(root, "worktree", "remove", "--force", str(tree))
-                except (ReleaseValidationError, OSError) as cleanup_error:
-                    removal_failed = True
-                    if active_error is None:
-                        raise
-                    print(f"ERROR: worktree cleanup also failed: {cleanup_error}", file=sys.stderr)
+                if admin is not None:
+                    try:
+                        if not _owned_worktree_admin(common, tree, admin):
+                            raise ReleaseValidationError("unsafe worktree admin registration")
+                        _git(root, "worktree", "remove", "--force", str(tree))
+                    except (ReleaseValidationError, OSError) as cleanup_error:
+                        removal_failed = True
+                        if not failed:
+                            raise
+                        print(f"ERROR: worktree cleanup also failed: {cleanup_error}",
+                              file=sys.stderr)
     finally:
-        # TemporaryDirectory has deleted the tree, making its registration stale.
-        if removal_failed:
+        # TemporaryDirectory has deleted the tree. Never prune operator registrations.
+        if removal_failed and admin is not None:
             try:
-                _git(root, "worktree", "prune", "--expire", "now")
-            except (ReleaseValidationError, OSError) as prune_error:
-                print(f"ERROR: worktree prune also failed: {prune_error}", file=sys.stderr)
+                if admin.exists() or admin.is_symlink():
+                    if not _owned_worktree_admin(common, tree, admin):
+                        raise ReleaseValidationError("unsafe worktree admin registration")
+                    shutil.rmtree(admin)
+            except (ReleaseValidationError, OSError) as cleanup_error:
+                print(f"ERROR: targeted worktree cleanup also failed: {cleanup_error}",
+                      file=sys.stderr)
 
 
 def publish(

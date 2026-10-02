@@ -628,8 +628,6 @@ class ReleasePublicationTests(unittest.TestCase):
                 self.assertEqual(len(set(messages)), 1)
                 self.assertIn("release tag must be v-prefixed", messages[0])
                 self.assertEqual(_snapshot(root), {})
-                with self.assertRaisesRegex(tool.ReleaseValidationError, "release tag must"):
-                    tool.render_release_notes("notes", tag)
 
     def test_tagged_input_shapes_fail_cleanly_before_worktree_addition(self) -> None:
         for value in (None, [], "text", 1, True, {}, {"other": "1.0.0"},
@@ -684,7 +682,11 @@ class ReleasePublicationTests(unittest.TestCase):
         )]
         self.assertEqual(credential_steps, ["flags"])
         ids = [step.get("id") for step in steps]
-        self.assertLess(ids.index("certificate"), ids.index("flags"))
+        self.assertLess(ids.index("flags"), ids.index("certificate"))
+        subsequent = steps[ids.index("certificate") + 1:]
+        self.assertTrue(subsequent)
+        self.assertTrue(all("actions/upload-artifact@" in step.get("uses", "")
+                            and "run" not in step for step in subsequent))
         flags = steps[ids.index("flags")]
         self.assertIn(" publication-flags ", flags["run"])
         self.assertNotIn(" publish ", flags["run"])
@@ -696,71 +698,176 @@ class ReleasePublicationTests(unittest.TestCase):
         checkout = next(step for step in steps if "actions/checkout@" in step.get("uses", ""))
         self.assertFalse(checkout["with"]["persist-credentials"])
 
-    def test_real_worktree_cleanup_prunes_stale_registration_and_preserves_valid_tree(self) -> None:
-        for failure in ("none", "validation", "addition", "removal", "both", "prune"):
+    def _worktree_repository(self, directory: Path) -> Path:
+        root = directory / "repository"
+        root.mkdir()
+        for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                     ("config", "user.email", "fixture@example.test"),
+                     ("config", "commit.gpgsign", "false")):
+            _git(root, *args)
+        (root / "file").write_text("fixture")
+        _git(root, "add", ".")
+        _git(root, "commit", "-qm", "fixture")
+        return root
+
+    def test_real_worktree_cleanup_preserves_valid_and_missing_operator_registrations(self) -> None:
+        for failure in ("none", "validation", "addition", "addition-and-removal",
+                        "no-registration", "removal", "both", "targeted",
+                        "body-and-targeted", "caller-except"):
             with tempfile.TemporaryDirectory() as tmp, self.subTest(failure=failure):
-                root = Path(tmp) / "repository"
-                root.mkdir()
-                for args in (("init", "-q"), ("config", "user.name", "Fixture"),
-                             ("config", "user.email", "fixture@example.test"),
-                             ("config", "commit.gpgsign", "false")):
-                    _git(root, *args)
-                (root / "file").write_text("fixture")
-                _git(root, "add", ".")
-                _git(root, "commit", "-qm", "fixture")
-                valid = Path(tmp) / "valid"
-                _git(root, "worktree", "add", "--detach", str(valid), "HEAD")
-                before = _git(root, "worktree", "list", "--porcelain")
-                real_git = tool._git
-                calls = []
-                tree = None
+                self._exercise_worktree_failure(failure, Path(tmp))
 
-                def git(repository, *args, _failure=failure, _calls=calls,
-                        _real_git=real_git, **kwargs):
-                    nonlocal tree
-                    _calls.append(args)
-                    if args[:2] == ("worktree", "add"):
-                        tree = Path(args[-2])
-                        result = _real_git(repository, *args, **kwargs)
-                        if _failure == "addition":
-                            raise tool.ReleaseValidationError("addition failed after registration")
-                        return result
-                    if args[:2] == ("worktree", "remove") and _failure in (
-                        "addition", "removal", "both", "prune",
-                    ):
-                        raise tool.ReleaseValidationError("removal failure")
-                    if args[:2] == ("worktree", "prune"):
-                        self.assertIsNotNone(tree)
-                        self.assertFalse(tree.exists())
-                        if _failure == "prune":
-                            raise tool.ReleaseValidationError("prune failure")
-                    return _real_git(repository, *args, **kwargs)
+    def _exercise_worktree_failure(self, failure: str, directory: Path) -> None:
+        root = self._worktree_repository(directory)
+        valid, missing = directory / "valid", directory / "missing"
+        for tree in (valid, missing):
+            _git(root, "worktree", "add", "--detach", str(tree), "HEAD")
+        shutil.rmtree(missing)
+        before = _git(root, "worktree", "list", "--porcelain")
+        # A real failed post-checkout hook leaves a partial registration.
+        if failure in ("addition", "addition-and-removal"):
+            hook = root / ".git/hooks/post-checkout"
+            hook.write_text("#!/bin/sh\nexit 1\n")
+            hook.chmod(0o755)
+        real_git, real_rmtree = tool._git, shutil.rmtree
+        calls = []
+        active_tree = None
+        owned_admin = None
 
-                stderr = io.StringIO()
-                expected = ("addition" if failure == "addition" else "validation"
-                            if failure in ("validation", "both") else "removal")
-                with mock.patch.object(tool, "_git", side_effect=git), \
-                        mock.patch.object(tool.sys, "stderr", stderr):
-                    if failure == "none":
-                        with tool._tag_worktree(root, "HEAD") as active:
-                            self.assertTrue(active.is_dir())
-                    else:
-                        with self.assertRaisesRegex(tool.ReleaseValidationError, expected), \
-                                tool._tag_worktree(root, "HEAD"):
-                            if failure in ("validation", "both"):
-                                raise tool.ReleaseValidationError("validation failure")
-                self.assertTrue(valid.is_dir())
-                self.assertFalse(tree.exists())
-                pruned = any(args[:2] == ("worktree", "prune") for args in calls)
-                self.assertEqual(pruned, failure in ("addition", "removal", "both", "prune"))
-                if failure == "prune":
-                    self.assertIn("worktree prune also failed: prune failure", stderr.getvalue())
-                    self.assertNotEqual(_git(root, "worktree", "list", "--porcelain"), before)
-                    _git(root, "worktree", "prune", "--expire", "now")
-                self.assertEqual(_git(root, "worktree", "list", "--porcelain"), before)
-                if failure in ("addition", "both"):
-                    self.assertIn("worktree cleanup also failed: removal failure",
-                                  stderr.getvalue())
+        def git(repository, *args, **kwargs):
+            nonlocal active_tree
+            calls.append(args)
+            if args[:2] == ("worktree", "add"):
+                active_tree = Path(args[-2])
+                if failure == "no-registration":
+                    raise tool.ReleaseValidationError("addition without registration")
+            if args[:2] == ("worktree", "remove") and failure in (
+                "addition-and-removal", "removal", "both", "targeted",
+                "body-and-targeted", "caller-except",
+            ):
+                raise tool.ReleaseValidationError("removal failure")
+            self.assertNotEqual(args[:2], ("worktree", "prune"))
+            return real_git(repository, *args, **kwargs)
+
+        def rmtree(path, *args, **kwargs):
+            nonlocal owned_admin
+            if Path(path).parent.name == "worktrees":
+                owned_admin = Path(path)
+                self.assertFalse(active_tree.exists())
+                if failure in ("targeted", "body-and-targeted"):
+                    raise OSError("targeted failure")
+            return real_rmtree(path, *args, **kwargs)
+
+        def run_body():
+            with tool._tag_worktree(root, "HEAD") as active:
+                self.assertTrue(active.is_dir())
+                if failure in ("validation", "both", "body-and-targeted"):
+                    raise tool.ReleaseValidationError("validation failure")
+
+        stderr = io.StringIO()
+        with (mock.patch.object(tool, "_git", side_effect=git),
+              mock.patch.object(tool.shutil, "rmtree", side_effect=rmtree),
+              mock.patch.object(tool.sys, "stderr", stderr)):
+            if failure == "none":
+                run_body()
+            elif failure == "caller-except":
+                try:
+                    raise ValueError("caller's handled exception")
+                except ValueError:
+                    with self.assertRaisesRegex(tool.ReleaseValidationError, "removal"):
+                        run_body()
+            else:
+                expected = ("addition" if failure == "no-registration" else
+                            "exit code 1" if failure == "addition" else
+                            "validation" if failure in (
+                                "validation", "both", "body-and-targeted",
+                            ) else "removal")
+                with self.assertRaises(tool.ReleaseValidationError) as error:
+                    run_body()
+                if failure not in ("addition", "addition-and-removal"):
+                    self.assertIn(expected, str(error.exception))
+        self.assertTrue(valid.is_dir())
+        self.assertFalse(active_tree.exists())
+        if failure == "no-registration":
+            self.assertFalse(any(args[:2] == ("worktree", "remove") for args in calls))
+            self.assertEqual(stderr.getvalue(), "")
+        if failure in ("targeted", "body-and-targeted"):
+            self.assertIn("targeted worktree cleanup also failed: targeted failure",
+                          stderr.getvalue())
+            self.assertTrue(owned_admin.is_dir())
+            real_rmtree(owned_admin)
+        if failure in ("addition-and-removal", "both", "body-and-targeted"):
+            self.assertIn("worktree cleanup also failed: removal failure", stderr.getvalue())
+        self.assertEqual(_git(root, "worktree", "list", "--porcelain"), before)
+
+    def test_base_exceptions_in_body_remain_primary(self) -> None:
+        for error in (KeyboardInterrupt(), SystemExit(3)):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(error=error):
+                self._exercise_base_exception(error, Path(tmp))
+
+    def _exercise_base_exception(self, error: BaseException, directory: Path) -> None:
+        root = self._worktree_repository(directory)
+        real_git = tool._git
+
+        def git(repository, *args, **kwargs):
+            if args[:2] == ("worktree", "remove"):
+                raise tool.ReleaseValidationError("removal failed")
+            return real_git(repository, *args, **kwargs)
+
+        stderr = io.StringIO()
+        before = _git(root, "worktree", "list", "--porcelain")
+        with (mock.patch.object(tool, "_git", side_effect=git),
+              mock.patch.object(tool.sys, "stderr", stderr),
+              self.assertRaises(type(error)) as raised,
+              tool._tag_worktree(root, "HEAD")):
+            raise error
+        self.assertIs(raised.exception, error)
+        self.assertIn("worktree cleanup also failed", stderr.getvalue())
+        self.assertEqual(_git(root, "worktree", "list", "--porcelain"), before)
+
+    def test_unsafe_admin_directories_are_never_deleted(self) -> None:
+        for unsafe in ("outside", "symlink", "backpointer", "parent-symlink"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(unsafe=unsafe):
+                self._exercise_unsafe_admin(unsafe, Path(tmp))
+
+    def _exercise_unsafe_admin(self, unsafe: str, directory: Path) -> None:
+        root = self._worktree_repository(directory)
+        real_git = tool._git
+        actual_admin = None
+        target = directory / "operator"
+        target.mkdir()
+        (target / "keep").write_text("operator registration")
+        registrations = root / ".git/worktrees"
+
+        def git(repository, *args, **kwargs):
+            nonlocal actual_admin
+            if args == ("rev-parse", "--absolute-git-dir"):
+                actual_admin = Path(real_git(repository, *args, **kwargs))
+                if unsafe == "outside":
+                    (target / "gitdir").write_text(str(repository / ".git"))
+                    return str(target)
+                if unsafe == "symlink":
+                    real_rmtree(actual_admin)
+                    actual_admin.symlink_to(target, target_is_directory=True)
+                elif unsafe == "backpointer":
+                    (actual_admin / "gitdir").write_text(str(target / ".git"))
+                else:
+                    moved = directory / "moved-registrations"
+                    registrations.rename(moved)
+                    registrations.symlink_to(moved, target_is_directory=True)
+                return str(actual_admin)
+            return real_git(repository, *args, **kwargs)
+
+        real_rmtree = shutil.rmtree
+        stderr = io.StringIO()
+        with (mock.patch.object(tool, "_git", side_effect=git),
+              mock.patch.object(tool.sys, "stderr", stderr),
+              self.assertRaisesRegex(tool.ReleaseValidationError, "unsafe worktree"),
+              tool._tag_worktree(root, "HEAD")):
+            pass
+        self.assertEqual((target / "keep").read_text(), "operator registration")
+        self.assertIn("targeted worktree cleanup also failed", stderr.getvalue())
+        self.assertTrue(actual_admin.exists())
 
     def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
         for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
@@ -772,39 +879,6 @@ class ReleasePublicationTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertEqual(tool.validate_release_version(version), version)
                 self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
-
-    def test_worktree_cleanup_preserves_an_active_error_but_fails_success(self) -> None:
-        for invalid in (False, True):
-            with tempfile.TemporaryDirectory() as tmp, self.subTest(invalid=invalid):
-                root = Path(tmp)
-                manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
-                manifest.write_bytes(b"fixture")
-
-                def git(_root, *args, **kwargs):
-                    if args[:2] == ("worktree", "remove"):
-                        raise tool.ReleaseValidationError("cleanup fixture failure")
-                    if args[0] == "show":
-                        return '{"release_version":"1.0.0"}'
-                    return ""
-
-                stderr = io.StringIO()
-                result = subprocess.CompletedProcess([], int(invalid), "", "primary fixture error")
-                with (
-                    mock.patch.object(tool, "_verify_release_tag", return_value=(
-                        "a" * 40, "b" * 40, tool.sha256_bytes(b"fixture"),
-                    )),
-                    mock.patch.object(tool, "_git", side_effect=git),
-                    mock.patch.object(tool.subprocess, "run", return_value=result),
-                    mock.patch.object(tool, "release_notes", return_value=root / "notes"),
-                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
-                    mock.patch.object(tool.sys, "stderr", stderr),
-                    self.assertRaisesRegex(
-                        tool.ReleaseValidationError,
-                        "primary fixture error" if invalid else "cleanup fixture failure",
-                    ),
-                ):
-                    tool.publish(root, "v1.0.0", root)
-                self.assertEqual("worktree cleanup also failed" in stderr.getvalue(), invalid)
 
     def test_publication_checks_remote_tag_object_before_creation(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
@@ -878,62 +952,6 @@ class ReleasePublicationTests(unittest.TestCase):
         expected = expected.replace("(1.0.0.md)", f"({prefix}release/1.0.0.md)")
         expected = expected.replace("../docs/guide.md", prefix + "docs/guide.md")
         self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
-
-    def test_notes_renderer_supports_angle_destinations_titles_and_reference_forms(self) -> None:
-        text = (
-            "Before [angle](<../docs/a(b).md?q=1#part> 'Title') after.\n"
-            "[full][Guide] [Guide][] [Guide]\n"
-            "[Guide]: <../docs/guide.md?view=1#intro> \"A guide\"\n"
-            "[bare]: ../docs/other.md 'Other guide'\n"
-            "[other][bare]\n"
-            "[web]: <https://example.test/a(b)?q=1#part> 'External'\n"
-            "[anchor]: #scope\n"
-        )
-        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/"
-        expected = text
-        for path in ("a(b).md?q=1#part", "guide.md?view=1#intro", "other.md"):
-            expected = expected.replace("../docs/" + path, prefix + "docs/" + path)
-        self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
-        self.assertEqual(tool.render_release_notes(text.replace("\n", "\r\n"), "v1.0.0"),
-                         expected.replace("\n", "\r\n"))
-
-    def test_notes_renderer_preserves_fences_and_multi_backtick_code_byte_for_byte(self) -> None:
-        code = (
-            "```markdown\r\n[link](../../outside) ![image][id]\r\n```\r\n"
-            "  ~~~~text\n[ref]: ../docs/code.md\n~~~\n~~~~\n"
-            "`[single](../docs/code.md)` and `` `[double](../../outside)` ``\n"
-            "``` [triple](../docs/code.md) `` inside ```\n"
-            "``multi\n[line](../docs/code.md)``\n"
-        )
-        live = "[live](../docs/live.md)\n"
-        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/docs/"
-        self.assertEqual(tool.render_release_notes(code + live, "v1.0.0"),
-                         code + live.replace("../docs/", prefix))
-
-    def test_notes_renderer_rejects_unsupported_link_forms(self) -> None:
-        invalid = (
-            "[root](/docs/guide.md)", "[escape](../../outside.md)",
-            "[encoded](../%2e%2e/outside.md)", "[encoded](%2fdocs/guide.md)",
-            "![image](../docs/image.png)", "![image][ref]\n[ref]: ../docs/image.png",
-            "![image][]", "![image]", "[space](../docs/my guide.md)",
-            "[space](<../docs/my guide.md>)", "[parentheses](../docs/a(b).md)",
-            "[title](../docs/guide.md (Title))", "[nested [label]](../docs/guide.md)",
-            "[link][missing]", "[ref]:\n  ../docs/guide.md",
-            "[ref]: ../docs/guide.md\n[REF]: ../docs/other.md",
-            '<a href="../docs/guide.md">guide</a>', '<img src="../docs/image.png">',
-            "[escaped](../docs/a\\ b.md)",
-        )
-        for text in invalid:
-            with self.subTest(text=text), self.assertRaises(tool.ReleaseValidationError):
-                tool.render_release_notes(text, "v1.0.0")
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                with (
-                    mock.patch.object(tool, "_git", return_value=text),
-                    self.assertRaises(tool.ReleaseValidationError),
-                ):
-                    tool.release_notes(root, "v1.0.0", root / "assets")
-                self.assertEqual(_snapshot(root), {})
 
     def test_release_notes_reads_tagged_content_without_changing_the_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

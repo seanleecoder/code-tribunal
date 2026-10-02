@@ -54,15 +54,6 @@ jobs:
       - name: Install pinned validation dependencies
         run: python -m pip install -r requirements-dev.txt
 
-      - name: Verify signed certificate and render publication files
-        id: certificate
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publish \
-            --tag "$RELEASE_TAG" --out "$RUNNER_TEMP/release" --github-output "$GITHUB_OUTPUT"
-
       - name: Compute publication flags
         id: flags
         env:
@@ -73,6 +64,17 @@ jobs:
           PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publication-flags \
             --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
 
+      - name: Verify signed certificate and render publication files
+        id: certificate
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publish \
+            --tag "$RELEASE_TAG" --out "$RUNNER_TEMP/release" --github-output "$GITHUB_OUTPUT"
+
+      # Tag code has executed. Subsequent steps may only upload artifacts;
+      # never run workspace commands or introduce an authenticated step here.
       - name: Retain private publication files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
