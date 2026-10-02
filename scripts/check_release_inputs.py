@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
@@ -101,6 +102,34 @@ def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
 
 def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     """Return the three canonical assignments' zero-based positions and values."""
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ReleaseValidationError(f"cannot parse GitLab template YAML: {exc}") from exc
+    variables = document.get("variables") if isinstance(document, dict) else None
+    if not isinstance(variables, dict):
+        raise ReleaseValidationError("expected one canonical top-level GitLab variables block")
+
+    visited: set[int] = set()
+
+    def check_overrides(value: Any, *, top_level: bool = False) -> None:
+        if not isinstance(value, (dict, list)) or id(value) in visited:
+            return
+        visited.add(id(value))
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "variables" and not top_level and isinstance(child, dict):
+                    for pin in GITLAB_PIN_FIELDS:
+                        if pin in child:
+                            raise ReleaseValidationError(
+                                f"GitLab pin outside top-level variables: {pin}"
+                            )
+                check_overrides(child)
+        else:
+            for child in value:
+                check_overrides(child)
+
+    check_overrides(document, top_level=True)
     key_pattern = "|".join(map(re.escape, GITLAB_PIN_FIELDS))
     pins: dict[str, tuple[int, str]] = {}
     in_variables = False
@@ -120,12 +149,12 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
             continue
         if not line.startswith((" ", "\t")):
             in_variables = False
-        assignment = re.search(rf"(?:^[ \t]*|[{{,][ \t]*)[\"']?({key_pattern})\b", line)
+        if not in_variables:
+            continue
+        assignment = re.match(rf"[ \t]*[\"']?({key_pattern})\b", line)
         if assignment is None:
             continue
         key = assignment.group(1)
-        if not in_variables or re.match(rf"  [\"']?{key}\b", line) is None:
-            raise ReleaseValidationError(f"GitLab pin outside top-level variables: {key}")
         if key in pins:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
         value = re.fullmatch(rf'  {key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
@@ -135,8 +164,10 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     if blocks != 1:
         raise ReleaseValidationError("expected one canonical top-level GitLab variables block")
     for key in GITLAB_PIN_FIELDS:
-        if key not in pins:
+        if key not in pins or key not in variables:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
+        if pins[key][1] != variables[key]:
+            raise ReleaseValidationError(f"GitLab {key} pin differs from parsed YAML value")
     return pins
 
 
