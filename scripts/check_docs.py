@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -174,18 +175,32 @@ def _inline_code_values(text: str) -> set[str]:
     return set(INLINE_CODE_RE.findall(_without_fenced_code(text)))
 
 
-def _test_definition_index() -> dict[Path, set[str]]:
-    return {
-        path: {
+@dataclass(frozen=True)
+class TestReferenceIndex:
+    definition_names: set[str]
+    definitions_by_file: dict[str, set[str]]
+
+
+def _test_definition_index() -> TestReferenceIndex:
+    definition_names: set[str] = set()
+    definitions_by_file: dict[str, set[str]] = {}
+    test_root = ROOT / "ai-review/tests"
+    for path in test_root.rglob("*.py"):
+        names = {
             node.name for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name.startswith("test_")
         }
-        for path in (ROOT / "ai-review/tests").rglob("*.py")
-    }
+        definition_names.update(names)
+        for key in (
+            path.name, path.as_posix(), path.relative_to(ROOT).as_posix(),
+            path.relative_to(test_root).as_posix(),
+        ):
+            definitions_by_file.setdefault(key, set()).update(names)
+    return TestReferenceIndex(definition_names, definitions_by_file)
 
 
-def _reference_issues(path: Path, text: str, tests: dict[Path, set[str]]) -> list[str]:
+def _reference_issues(path: Path, text: str, tests: TestReferenceIndex) -> list[str]:
     """Check concrete references, retaining line numbers and the existing inventory scope."""
     relative = path.relative_to(ROOT)
     if relative.is_relative_to("docs/improvement-specs"):
@@ -214,22 +229,19 @@ def _reference_issues(path: Path, text: str, tests: dict[Path, set[str]]) -> lis
                 and not (ROOT / file_name).exists()
             ):
                 issues.append(f"{relative}:{number}: repository path {file_name!r} does not exist")
-            candidates = [
-                p for p in tests if p.name == file_name or p in (
-                    ROOT / file_name, ROOT / "ai-review/tests" / file_name
-                )
-            ]
-            if re.fullmatch(r"test_[A-Za-z0-9_]+\.py", reference) and not candidates:
-                issues.append(f"{relative}:{number}: test file {reference!r} does not exist")
-            if separator and re.fullmatch(r"[^\s:]+\.py", file_name):
-                if (
-                    re.fullmatch(r"test_[A-Za-z0-9_]+", test_name)
-                    and not any(test_name in tests[p] for p in candidates)
-                ):
+            if (
+                separator and re.fullmatch(r"[^\s:]+\.py", file_name)
+                and re.fullmatch(r"test_[A-Za-z0-9_]+", test_name)
+            ):
+                names = tests.definitions_by_file.get(Path(file_name).as_posix(), set())
+                if test_name not in names:
                     issues.append(f"{relative}:{number}: test {reference!r} does not exist")
+            elif re.fullmatch(r"test_[A-Za-z0-9_]+\.py", reference):
+                if reference not in tests.definitions_by_file:
+                    issues.append(f"{relative}:{number}: test file {reference!r} does not exist")
             elif (
                 re.fullmatch(r"test_[A-Za-z0-9_]+", reference)
-                and not any(reference in names for names in tests.values())
+                and reference not in tests.definition_names
             ):
                 issues.append(f"{relative}:{number}: test {reference!r} does not exist")
     return issues
