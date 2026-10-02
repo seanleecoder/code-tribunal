@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -13,6 +14,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from datetime import UTC
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +38,21 @@ class GitLabCanaryError(RuntimeError):
     def __init__(self, message: str, *, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _retry_after(value: str | None, backoff: int) -> float:
+    if value is None:
+        return backoff
+    try:
+        value = value.strip()
+        if re.fullmatch(r"[0-9]+", value):
+            return min(int(value), 30)
+        deadline = parsedate_to_datetime(value)
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+        return max(0, min(deadline.timestamp() - time.time(), 30))
+    except (TypeError, ValueError, OverflowError):
+        return backoff
 
 
 def _request(
@@ -67,11 +85,22 @@ def _request(
         except urllib.error.HTTPError as exc:
             if allow_missing and exc.code == 404:
                 return None
+            if exc.code in {429, 502, 503, 504} and attempt + 1 < attempts:
+                delay = attempt + 1
+                if exc.code == 429:
+                    delay = _retry_after(
+                        exc.headers.get("Retry-After") if exc.headers else None, delay
+                    )
+                exc.close()
+                time.sleep(delay)
+                continue
             raise GitLabCanaryError(
                 f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}",
                 status=exc.code,
             ) from exc
-        except (TimeoutError, urllib.error.URLError) as exc:
+        except (
+            TimeoutError, ConnectionError, urllib.error.URLError, http.client.HTTPException,
+        ) as exc:
             if attempt + 1 == attempts:
                 raise GitLabCanaryError(
                     f"GitLab API {method} {path.split('?', 1)[0]} transport failed "

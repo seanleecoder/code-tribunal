@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import io
 import json
 import os
@@ -744,3 +745,144 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                 self.gitlab._request("GET", "projects/1")
         self.assertEqual(failure.exception.status, 404)
         self.assertEqual(request.call_count, 2)
+
+    def test_transient_http_errors_recover_and_exhaust_without_replaying_mutations(self) -> None:
+        for status in (429, 502, 503, 504):
+            for method in ("GET", "POST", "PUT", "DELETE", "PATCH"):
+                error = urllib.error.HTTPError(
+                    "https://fixture?private-query", status, "fixture-only-token", {}, None
+                )
+                attempts = 3 if method == "GET" else 1
+                with (
+                    self.subTest(status=status, method=method),
+                    mock.patch.object(self.gitlab.urllib.request, "urlopen",
+                                      side_effect=error) as request,
+                    mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                    self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
+                ):
+                    self.gitlab._request(method, "projects/1?private-query")
+                self.assertEqual(request.call_count, attempts)
+                self.assertEqual(sleep.call_args_list,
+                                 [mock.call(1), mock.call(2)] if method == "GET" else [])
+                self.assertEqual(failure.exception.status, status)
+                self.assertNotIn("private-query", str(failure.exception))
+                self.assertNotIn("fixture-only-token", str(failure.exception))
+            with (
+                self.subTest(recovery=status),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                    error, io.BytesIO(b'{"status":"running"}'),
+                ]) as request,
+                mock.patch.object(self.gitlab.time, "sleep") as sleep,
+            ):
+                self.assertEqual(self.gitlab._request("GET", "projects/1"), {"status": "running"})
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once_with(1)
+
+    def test_new_transport_classes_retry_open_and_read_failures_only_for_get(self) -> None:
+        errors = (
+            ConnectionError("fixture-only-token"),
+            ConnectionResetError("fixture-only-token"),
+            http.client.HTTPException("fixture-only-token"),
+            http.client.IncompleteRead(b"fixture-only-token", 40),
+            http.client.RemoteDisconnected("fixture-only-token"),
+        )
+        for error in errors:
+            for phase in ("open", "read"):
+                def fail(*args, error=error, phase=phase, **kwargs):
+                    if phase == "open":
+                        raise error
+                    response = mock.MagicMock()
+                    response.__enter__.return_value = response
+                    response.read.side_effect = error
+                    return response
+
+                for method in ("GET", "POST", "PUT", "DELETE", "PATCH"):
+                    attempts = 3 if method == "GET" else 1
+                    with (
+                        self.subTest(error=type(error), phase=phase, method=method),
+                        mock.patch.object(self.gitlab.urllib.request, "urlopen",
+                                          side_effect=fail) as request,
+                        mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                        self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
+                    ):
+                        self.gitlab._request(method, "projects/1?private-query")
+                    self.assertEqual(request.call_count, attempts)
+                    self.assertEqual(sleep.call_args_list,
+                                     [mock.call(1), mock.call(2)] if method == "GET" else [])
+                    self.assertIn(f"after {attempts} attempt", str(failure.exception))
+                    self.assertNotIn("private-query", str(failure.exception))
+                    self.assertNotIn("fixture-only-token", str(failure.exception))
+                first = error if phase == "open" else fail()
+                with (
+                    mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                        first, io.BytesIO(b"trace"),
+                    ]) as request,
+                    mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                ):
+                    self.assertEqual(self.gitlab._request("GET", "projects/1", raw=True), b"trace")
+                self.assertEqual(request.call_count, 2)
+                sleep.assert_called_once_with(1)
+
+    def test_rate_limit_retry_after_is_bounded_and_invalid_values_use_backoff(self) -> None:
+        now = 1_000_000_000
+        for header, delay in (
+            ("0", 0), ("7", 7), (" 8 ", 8), ("999", 30),
+            ("Sun, 09 Sep 2001 01:46:45 GMT", 5),
+            ("Sun, 09 Sep 2001 01:49:40 GMT", 30),
+            ("Sun, 09 Sep 2001 01:46:00 GMT", 0),
+            ("invalid", 1), ("-1", 1), ("1.5", 1), ("", 1), (None, 1),
+        ):
+            headers = {} if header is None else {"Retry-After": header}
+            error = urllib.error.HTTPError("https://fixture", 429, "limited", headers, None)
+            with (
+                self.subTest(header=header),
+                mock.patch.object(self.gitlab.time, "time", return_value=now),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                    error, io.BytesIO(b"{}"),
+                ]),
+                mock.patch.object(self.gitlab.time, "sleep") as sleep,
+            ):
+                self.assertEqual(self.gitlab._request("GET", "projects/1"), {})
+            sleep.assert_called_once_with(delay)
+        error = urllib.error.HTTPError("https://fixture", 429, "limited",
+                                       {"Retry-After": "invalid"}, None)
+        with (
+            mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=error),
+            mock.patch.object(self.gitlab.time, "sleep") as sleep,
+            self.assertRaises(self.gitlab.GitLabCanaryError),
+        ):
+            self.gitlab._request("GET", "projects/1")
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2)])
+
+    def test_transient_http_errors_during_response_reads_recover(self) -> None:
+        for status in (429, 502, 503, 504):
+            first = mock.MagicMock()
+            first.__enter__.return_value = first
+            first.read.side_effect = urllib.error.HTTPError(
+                "https://fixture", status, "transient", {}, None
+            )
+            with (
+                self.subTest(status=status),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                    first, io.BytesIO(b"{}"),
+                ]) as request,
+                mock.patch.object(self.gitlab.time, "sleep") as sleep,
+            ):
+                self.assertEqual(self.gitlab._request("GET", "projects/1"), {})
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once_with(1)
+
+    def test_permanent_http_errors_never_retry(self) -> None:
+        for status in (400, 401, 403, 404, 409, 500):
+            error = urllib.error.HTTPError("https://fixture", status, "permanent", {}, None)
+            with (
+                self.subTest(status=status),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen",
+                                  side_effect=error) as request,
+                mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
+            ):
+                self.gitlab._request("GET", "projects/1")
+            self.assertEqual(failure.exception.status, status)
+            request.assert_called_once()
+            sleep.assert_not_called()
