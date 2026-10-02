@@ -107,13 +107,21 @@ and remove completed spec files from the active
    tag object, verifies ancestry and its signature using main's signer registry,
    and extracts the signed checksum before executing any tag code. The signed
    tag rebuilds its certificate: its own `release_finalize.py manifest` command
-   runs in a temporary detached worktree at the verified commit, using the selected
-   Python environment with an explicit working directory and Python path and no
-   GitHub credentials or workflow output-file variables. Main compares the rebuilt
-   manifest with the signed checksum, renders notes, and computes publication flags.
-   The worktree is removed on success or failure; a cleanup failure is reported
-   separately when validation already failed. Its read-only job installs dependencies
-   and retains the manifest, checksum, and rendered notes in a one-day workflow
+   runs in a disposable clone checked out detached at the verified commit, using
+   the selected Python environment with an explicit working directory and Python path and no
+   inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
+   environment; it does not isolate it from files or other same-user processes.
+   The certificate step receives no `GH_TOKEN` and makes no GitHub API calls.
+   Main compares the rebuilt manifest with the signed checksum and reads notes
+   from the verified commit, even if the local tag moves. A preceding authenticated
+   `publication-flags` step computes only `prerelease` and `latest`; the certificate
+   step outputs only `tag_object`.
+   The clone uses `--no-checkout --no-hardlinks` and an absolute source path,
+   then checks out the verified commit. It has independent Git configuration and
+   creates no worktree registrations in the source repository. Its temporary
+   directory is removed on success or failure; operator registrations are untouched.
+   The read-only job installs dependencies and retains the manifest, checksum,
+   and rendered notes in a one-day workflow
    artifact. The write-enabled job downloads those files and creates the release
    without checking out or executing repository code or installing dependencies.
    It attaches only the manifest and checksum; it carries no signing key.

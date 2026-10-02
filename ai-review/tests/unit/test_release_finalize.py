@@ -730,7 +730,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
 
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
-        gh = mock.patch.object(tool, "_gh", return_value="[[]]")
+        gh = mock.patch.object(tool, "_gh", side_effect=AssertionError("certificate API call"))
         gh.start()
         self.addCleanup(gh.stop)
         # Generate a fixture-only SSH key; the test never reads an operator key.
@@ -818,11 +818,26 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.assertEqual(published[2].read_text(), tool.render_release_notes(
             _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
         ))
-        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\ntag_object="
+        self.assertEqual(output.read_text(), "tag_object="
                          + _git(self.root, "rev-parse", tag) + "\n")
         self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         after = _snapshot(self.root)
         self.assertEqual(after, before)
+        tag_object = _git(self.root, "rev-parse", tag)
+        verify = tool._verify_release_tag
+
+        def move_after_verification(root, requested_tag):
+            verified = verify(root, requested_tag)
+            _git(root, "update-ref", f"refs/tags/{requested_tag}", self.runtime_source)
+            return verified
+
+        with mock.patch.object(tool, "_verify_release_tag", side_effect=move_after_verification):
+            pinned_notes = tool.publish(self.root, tag, out)[2].read_text()
+        _git(self.root, "update-ref", f"refs/tags/{tag}", tag_object)
+        self.assertEqual(pinned_notes, tool.render_release_notes(
+            _git(self.root, "show", f"{P}:release/{VERSION}.md") + "\n", tag,
+        ))
+        self.assertNotEqual(pinned_notes, tool.render_release_notes(self.notes, tag))
         _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
@@ -868,7 +883,198 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 with self.assertRaises(tool.ReleaseValidationError):
                     tool.publish(self.root, tag, out)
 
+    def test_clone_publication_preserves_operator_registrations_and_configuration(self) -> None:
+        tool.repin(self.root, self.run)
+        self._finalize()
+        release_commit = self._commit_release()
+        out = self.root / "assets"
+        manifest, checksum, _ = tool.manifest_assets(self.root, release_commit, out)
+        expected_manifest = manifest.read_bytes()
+        expected_checksum = checksum.read_bytes()
+        _git(self.root, "repack", "-ad")
+        _git(self.root, "config", "worktree.useRelativePaths", "true")
+        _git(self.root, "config", "fixture.operator", "preserved")
+        with tempfile.TemporaryDirectory() as operator_directory:
+            valid, stale, corrupt = [Path(operator_directory) / name
+                                     for name in ("valid", "stale", "corrupt")]
+            for tree in (valid, stale, corrupt):
+                _git(self.root, "worktree", "add", "--detach", str(tree), release_commit)
+            shutil.rmtree(stale)
+            corrupt_admin = Path(_git(corrupt, "rev-parse", "--absolute-git-dir"))
+            (corrupt_admin / "gitdir").write_bytes(b"\xff\xfe corrupt operator backpointer\n")
+            registrations = self.root / ".git/worktrees"
+            before = _snapshot(registrations)
+            config = (self.root / ".git/config").read_bytes()
+            real_run = subprocess.run
+            clones = []
+
+            def run(command, **kwargs):
+                if command[0] == tool.sys.executable:
+                    tree = Path(kwargs["cwd"])
+                    clones.append(tree)
+                    self.assertTrue((tree / ".git").is_dir())
+                    self.assertEqual(_git(tree, "rev-parse", "HEAD"), release_commit)
+                    for key in ("fixture.operator", "worktree.useRelativePaths"):
+                        with self.assertRaises(tool.ReleaseValidationError):
+                            tool._git(tree, "config", "--local", "--get", key)
+                    _git(tree, "config", "fixture.operator", "clone-only")
+                    # The certificate command needs neither tags nor origin/main.
+                    _git(tree, "update-ref", "-d", "refs/remotes/origin/main")
+                    for tag in _git(tree, "tag", "--list").splitlines():
+                        _git(tree, "tag", "-d", tag)
+                    objects = self.root / ".git/objects"
+                    source_files = [path for path in objects.rglob("*") if path.is_file()]
+                    self.assertTrue(source_files)
+                    for source in source_files:
+                        copied = tree / ".git/objects" / source.relative_to(objects)
+                        self.assertFalse(source.samefile(copied))
+                return real_run(command, **kwargs)
+
+            with (
+                mock.patch.object(tool, "_verify_release_tag", return_value=(
+                    "a" * 40, release_commit, tool.sha256_bytes(expected_manifest),
+                )),
+                mock.patch.object(tool.subprocess, "run", side_effect=run) as processes,
+            ):
+                self.assertEqual(tool.publish(self.root, f"v{VERSION}", out)[:2],
+                                 (manifest, checksum))
+            clone_commands = [call.args[0] for call in processes.call_args_list
+                              if "clone" in call.args[0]]
+            self.assertEqual(len(clone_commands), 1)
+            self.assertIn("--no-checkout", clone_commands[0])
+            self.assertIn("--no-hardlinks", clone_commands[0])
+            self.assertEqual(clone_commands[0][-2], str(self.root.resolve()))
+            self.assertFalse(any("worktree" in call.args[0] for call in processes.call_args_list))
+            self.assertEqual(len(clones), 1)
+            self.assertFalse(clones[0].exists())
+            self.assertEqual(manifest.read_bytes(), expected_manifest)
+            self.assertEqual(checksum.read_bytes(), expected_checksum)
+            self.assertEqual(_snapshot(registrations), before)
+            self.assertEqual((self.root / ".git/config").read_bytes(), config)
+            self.assertTrue(valid.is_dir())
+
+    def test_clone_checkout_and_manifest_failures_preserve_errors(self) -> None:
+        tool.repin(self.root, self.run)
+        self._finalize()
+        release_commit = self._commit_release()
+        real_run = subprocess.run
+        for failure in ("clone", "checkout", "manifest"):
+            with self.subTest(failure=failure):
+                clones = []
+
+                def run(command, failure=failure, clones=clones, **kwargs):
+                    if "clone" in command:
+                        clones.append(Path(command[-1]))
+                    failing = (failure in ("clone", "checkout") and failure in command
+                               or failure == "manifest" and command[0] == tool.sys.executable)
+                    if failing:
+                        return subprocess.CompletedProcess(command, 1, "", f"{failure} failed")
+                    return real_run(command, **kwargs)
+
+                before = _snapshot(self.root)
+                with (
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, release_commit, "b" * 64,
+                    )),
+                    mock.patch.object(tool.subprocess, "run", side_effect=run),
+                    self.assertRaisesRegex(tool.ReleaseValidationError, f"^{failure} failed$"),
+                ):
+                    tool.publish(self.root, f"v{VERSION}", self.root / "assets")
+                self.assertEqual(len(clones), 1)
+                self.assertFalse(clones[0].parent.exists())
+                self.assertFalse((self.root / ".git/worktrees").exists())
+                self.assertEqual(_snapshot(self.root), before)
+
+
 class ReleasePublicationTests(unittest.TestCase):
+    def test_all_tag_consumers_report_the_same_validation_error_without_writes(self) -> None:
+        for tag in ("", "1.0.0", "v", "vv1.0.0", "v1.0.0+build", "v1.0.0-01"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(tag=tag):
+                root = Path(tmp)
+                messages = []
+                for command in ("publish", "release-notes", "publication-flags"):
+                    stderr = io.StringIO()
+                    arguments = [command, "--tag", tag]
+                    if command == "publication-flags":
+                        arguments += ["--github-output", str(root / "output")]
+                    else:
+                        arguments += ["--out", str(root / "assets")]
+                    with mock.patch.object(tool.sys, "stderr", stderr):
+                        self.assertEqual(tool.main(arguments), 1)
+                    messages.append(stderr.getvalue())
+                self.assertEqual(len(set(messages)), 1)
+                self.assertIn("release tag must be v-prefixed", messages[0])
+                self.assertEqual(_snapshot(root), {})
+
+    def test_tagged_input_shapes_fail_cleanly_before_cloning(self) -> None:
+        for value in (None, [], "text", 1, True, {}, {"other": "1.0.0"},
+                      *({"release_version": item} for item in (None, 1, [], {}, True))):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(value=value):
+                root = Path(tmp)
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(tool, "ROOT", root),
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, "b" * 40, "c" * 64,
+                    )),
+                    mock.patch.object(tool, "_git", return_value=json.dumps(value)) as git,
+                    mock.patch.object(tool.sys, "stderr", stderr),
+                ):
+                    with self.assertRaisesRegex(tool.ReleaseValidationError,
+                                                "object with release_version"):
+                        tool.publish(root, "v1.0.0", root / "assets")
+                    self.assertEqual(tool.main([
+                        "publish", "--tag", "v1.0.0", "--out", str(root / "assets"),
+                    ]), 1)
+                self.assertTrue(all(call.args[1] == "show" for call in git.call_args_list))
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertEqual(_snapshot(root), {})
+
+    def test_publication_flags_command_writes_only_classification(self) -> None:
+        for tag, expected in (("v1.0.0", "prerelease=false\nlatest=true\n"),
+                              ("v1.0.0-rc.1", "prerelease=true\nlatest=false\n")):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(tag=tag):
+                output = Path(tmp) / "output"
+                with (
+                    mock.patch.object(tool, "_gh", return_value="[[]]") as gh,
+                    mock.patch.object(tool, "_verify_release_tag") as verify,
+                    mock.patch.object(tool, "_git") as git,
+                ):
+                    self.assertEqual(tool.main([
+                        "publication-flags", "--tag", tag, "--github-output", str(output),
+                    ]), 0)
+                self.assertEqual(output.read_text(), expected)
+                self.assertEqual(gh.call_count, int("-" not in tag))
+                verify.assert_not_called()
+                git.assert_not_called()
+
+    def test_validation_workflow_credentials_are_only_in_flags_step(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        self.assertNotIn("env", workflow)
+        validate = workflow["jobs"]["validate"]
+        self.assertNotIn("env", validate)
+        steps = validate["steps"]
+        credential_steps = [step.get("id") for step in steps if any(
+            key.startswith(("GH_", "GITHUB_")) for key in step.get("env", {})
+        )]
+        self.assertEqual(credential_steps, ["flags"])
+        ids = [step.get("id") for step in steps]
+        self.assertLess(ids.index("flags"), ids.index("certificate"))
+        subsequent = steps[ids.index("certificate") + 1:]
+        self.assertTrue(subsequent)
+        self.assertTrue(all("actions/upload-artifact@" in step.get("uses", "")
+                            and "run" not in step for step in subsequent))
+        flags = steps[ids.index("flags")]
+        self.assertIn(" publication-flags ", flags["run"])
+        self.assertNotIn(" publish ", flags["run"])
+        self.assertEqual(validate["outputs"], {
+            "prerelease": "${{ steps.flags.outputs.prerelease }}",
+            "latest": "${{ steps.flags.outputs.latest }}",
+            "tag_object": "${{ steps.certificate.outputs.tag_object }}",
+        })
+        checkout = next(step for step in steps if "actions/checkout@" in step.get("uses", ""))
+        self.assertFalse(checkout["with"]["persist-credentials"])
+
     def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
         for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
             with self.subTest(version=version), self.assertRaisesRegex(
@@ -879,39 +1085,6 @@ class ReleasePublicationTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertEqual(tool.validate_release_version(version), version)
                 self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
-
-    def test_worktree_cleanup_preserves_an_active_error_but_fails_success(self) -> None:
-        for invalid in (False, True):
-            with tempfile.TemporaryDirectory() as tmp, self.subTest(invalid=invalid):
-                root = Path(tmp)
-                manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
-                manifest.write_bytes(b"fixture")
-
-                def git(_root, *args, **kwargs):
-                    if args[:2] == ("worktree", "remove"):
-                        raise tool.ReleaseValidationError("cleanup fixture failure")
-                    if args[0] == "show":
-                        return '{"release_version":"1.0.0"}'
-                    return ""
-
-                stderr = io.StringIO()
-                result = subprocess.CompletedProcess([], int(invalid), "", "primary fixture error")
-                with (
-                    mock.patch.object(tool, "_verify_release_tag", return_value=(
-                        "a" * 40, "b" * 40, tool.sha256_bytes(b"fixture"),
-                    )),
-                    mock.patch.object(tool, "_git", side_effect=git),
-                    mock.patch.object(tool.subprocess, "run", return_value=result),
-                    mock.patch.object(tool, "release_notes", return_value=root / "notes"),
-                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
-                    mock.patch.object(tool.sys, "stderr", stderr),
-                    self.assertRaisesRegex(
-                        tool.ReleaseValidationError,
-                        "primary fixture error" if invalid else "cleanup fixture failure",
-                    ),
-                ):
-                    tool.publish(root, "v1.0.0", root)
-                self.assertEqual("worktree cleanup also failed" in stderr.getvalue(), invalid)
 
     def test_publication_checks_remote_tag_object_before_creation(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
