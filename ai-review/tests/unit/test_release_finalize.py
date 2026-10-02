@@ -20,6 +20,7 @@ from tests.support.repository_script import load_repository_script
 
 REPO = Path(__file__).resolve().parents[3]
 tool = load_repository_script("release_finalize", REPO / "scripts/release_finalize.py")
+common = load_repository_script("release_common", REPO / "scripts/release_common.py")
 records = load_repository_script(
     "canary_evidence_records", REPO / "scripts/canary_evidence_records.py"
 )
@@ -110,6 +111,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.notes = self.notes.replace("## Migration\n", "## Migration\n\nOperator migration.\n")
         (self.root / f"release/{VERSION}.md").write_text(self.notes)
         (self.root / "runtime.py").write_text("immutable runtime\n")
+        (self.root / "release/spare.txt").write_text("allowed release file\n")
         for args in (
             ("init", "-q", "-b", "main"),
             ("config", "user.name", "Release fixture"),
@@ -274,6 +276,76 @@ class ReleaseFinalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "disallowed paths: runtime.py"):
             self._finalize()
         self.assertEqual(_snapshot(self.root), before)
+
+    def test_finalization_bounds_both_sides_of_renames_regardless_of_git_config(self) -> None:
+        tool.repin(self.root, self.run)
+        enumerations = []
+        for renames in ("true", "false"):
+            with self.subTest(renames=renames):
+                _git(self.root, "config", "diff.renames", renames)
+                _git(self.root, "mv", "runtime.py", "release/runtime.py")
+                paths = tool._git(
+                    self.root, "diff", "--no-renames", "--name-only", "-z",
+                    self.runtime_source, strip=False,
+                ).split("\0")
+                enumerations.append(paths)
+                self.assertIn("runtime.py", paths)
+                self.assertIn("release/runtime.py", paths)
+                before = _snapshot(self.root)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "disallowed.*runtime.py"):
+                    self._finalize()
+                self.assertEqual(_snapshot(self.root), before)
+                _git(self.root, "mv", "release/runtime.py", "runtime.py")
+                _git(self.root, "mv", "release/spare.txt", "release/moved.txt")
+                self._finalize()
+                # Restore only finalization outputs to repeat the same scenario.
+                for relative, content in (
+                    ("release/release-inputs.json", tool.canonical_json_bytes(self.draft)),
+                    ("CHANGELOG.md", self.changelog.encode()),
+                    (f"release/{VERSION}.md", self.notes.encode()),
+                ):
+                    (self.root / relative).write_bytes(content)
+                _git(self.root, "mv", "release/moved.txt", "release/spare.txt")
+        self.assertEqual(*enumerations)
+
+    def test_manifest_bounds_committed_renames_regardless_of_git_config(self) -> None:
+        tool.repin(self.root, self.run)
+        self._finalize()
+        _git(self.root, "mv", "release/spare.txt", "release/moved.txt")
+        release_commit = self._commit_release()
+        inputs = self.root / "release/release-inputs.json"
+        manifest = tool.build_manifest(
+            f"v{VERSION}", self.runtime_source, release_commit, inputs, self.root
+        )
+        for renames in ("true", "false"):
+            _git(self.root, "config", "diff.renames", renames)
+            self.assertEqual(
+                common.git_changed_paths(self.runtime_source, release_commit, self.root),
+                manifest["changed_paths"],
+            )
+            self.assertIn("release/spare.txt", manifest["changed_paths"])
+            self.assertIn("release/moved.txt", manifest["changed_paths"])
+            tool.validate_manifest(manifest, inputs, self.root)
+        _git(self.root, "mv", "runtime.py", "release/runtime.py")
+        forbidden_commit = self._commit_release()
+        enumerations = []
+        for renames in ("true", "false"):
+            with self.subTest(renames=renames):
+                _git(self.root, "config", "diff.renames", renames)
+                paths = common.git_changed_paths(self.runtime_source, forbidden_commit, self.root)
+                enumerations.append(paths)
+                self.assertIn("runtime.py", paths)
+                self.assertIn("release/runtime.py", paths)
+                before = _snapshot(self.root)
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "disallowed.*runtime.py"):
+                    tool.build_manifest(
+                        f"v{VERSION}", self.runtime_source, forbidden_commit, inputs, self.root
+                    )
+                invalid = {**manifest, "release_commit": forbidden_commit, "changed_paths": paths}
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "disallowed.*runtime.py"):
+                    tool.validate_manifest(invalid, inputs, self.root)
+                self.assertEqual(_snapshot(self.root), before)
+        self.assertEqual(*enumerations)
 
     def test_repin_and_finalization_reject_redirected_destinations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -278,7 +278,9 @@ def finalize(
     }
     # Include already-prepared evidence and repins when bounding the release checkout.
     _git(root, "merge-base", "--is-ancestor", data["runtime_source"], "HEAD")
-    tracked = _git(root, "diff", "--name-only", "-z", data["runtime_source"], strip=False)
+    tracked = _git(
+        root, "diff", "--no-renames", "--name-only", "-z", data["runtime_source"], strip=False
+    )
     untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
     existing_paths = [path for path in (tracked + untracked).split("\0") if path]
     _check_paths(existing_paths + list(edits))

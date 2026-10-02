@@ -118,7 +118,8 @@ def image_ref(image: dict[str, Any], runtime_source: str) -> str:
 
 def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROOT) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", runtime_source, release_commit],
+        ["git", "diff", "--no-renames", "--name-only", "--diff-filter=ACDMRTUXB",
+         runtime_source, release_commit],
         cwd=root,
         check=False,
         text=True,
