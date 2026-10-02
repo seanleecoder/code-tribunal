@@ -35,6 +35,7 @@ from release_common import (
     ROOT,
     WORKFLOW_PAIRS,
     ReleaseValidationError,
+    _diff_paths,
     canonical_json_bytes,
     compare_release_versions,
     disallowed_release_paths,
@@ -87,6 +88,14 @@ def _candidate_inputs(
 def _check_paths(paths: list[str]) -> None:
     if forbidden := disallowed_release_paths(paths):
         raise ReleaseValidationError("release contains disallowed paths: " + ", ".join(forbidden))
+
+
+def _working_tree_paths(root: Path, runtime_source: str) -> list[str]:
+    """Bound working-tree and staged changes plus non-ignored untracked paths."""
+    tracked = _diff_paths(root, runtime_source)
+    staged = _diff_paths(root, runtime_source, cached=True)
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
+    return sorted(set(tracked) | set(staged) | set(filter(None, untracked.split("\0"))))
 
 
 def _check_destinations(root: Path, edits: dict[str, bytes]) -> None:
@@ -278,9 +287,7 @@ def finalize(
     }
     # Include already-prepared evidence and repins when bounding the release checkout.
     _git(root, "merge-base", "--is-ancestor", data["runtime_source"], "HEAD")
-    tracked = _git(root, "diff", "--name-only", "-z", data["runtime_source"], strip=False)
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
-    existing_paths = [path for path in (tracked + untracked).split("\0") if path]
+    existing_paths = _working_tree_paths(root, data["runtime_source"])
     _check_paths(existing_paths + list(edits))
     _validate_edits(root, edits, data, validate_release_inputs)
     return _write_edits(root, edits)
