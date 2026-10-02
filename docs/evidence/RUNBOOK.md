@@ -137,7 +137,7 @@ OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
 result blocks repinning; rerun only after a concrete fix.
 
 The canary retains only redacted summary artifacts. Generate the records from a
-green run with `make evidence-records RUN=<run id>`. It writes
+green run during `make release-prepare RUN=<run id>`. Preparation writes
 `record-candidate-canary.md` (image identity plus the real panel on **both**
 platforms), `record-github-current-image.md`, `record-gitlab-current-image.md`,
 and `record-gitlab-hostile-mr.md`, each with the `Release-*` binding and a leak

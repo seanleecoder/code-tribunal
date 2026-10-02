@@ -10,11 +10,9 @@ hand-written part of a record is its **Operator notes** section.
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import subprocess
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -23,8 +21,8 @@ from typing import Any
 
 from ai_review.canonical import json_loads_no_duplicates
 from candidate_canary_common import LIFECYCLE_FIXTURE_PATH
-from check_release_inputs import EVIDENCE_DIR, release_bindings
-from release_common import DIGEST_RE, ROOT
+from check_release_inputs import release_bindings
+from release_common import DIGEST_RE
 from scan_evidence_leaks import scan
 from validate_candidate_identity import REPOSITORY, SOURCE_REF
 
@@ -356,7 +354,7 @@ def _preserve_operator_notes(path: Path, rendered: str) -> str:
         old_run_id, old_url = _record_run_identity(old_header)
         new_run_id, new_url = _record_run_identity(new_header)
         if old_run_id != new_run_id:
-            # Waiving removes release bindings; a new run replaces that evidence.
+            # A new run replaces the old observations and operator notes.
             return rendered
         old_bindings = _record_release_bindings(old_header)
         new_bindings = _record_release_bindings(new_header)
@@ -561,30 +559,8 @@ def load_run(run_id: str, workdir: Path) -> CanaryRun:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_id", help="Candidate Canary workflow run ID")
-    parser.add_argument("--out", type=Path, default=ROOT / EVIDENCE_DIR)
-    args = parser.parse_args(argv)
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            records = render_records(load_run(args.run_id, Path(tmp)))
-        # Preflight every selected record before the first write.
-        records = {
-            filename: _preserve_operator_notes(args.out / filename, text)
-            for filename, text in records.items()
-        }
-    except RecordError as exc:
-        print(f"ERROR: {exc}")
-        return 1
-    for filename, text in records.items():
-        (args.out / filename).write_bytes(text.encode("utf-8"))
-        print(f"wrote {args.out / filename}")
-    missing = sorted(set(RECORDS) - set(records))
-    for filename in missing:
-        print(f"skipped {filename}: the run did not include its campaign")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def preserve_record_notes(records: dict[str, str], directory: Path) -> dict[str, str]:
+    """Render and preflight every generated record before the caller writes any."""
+    return {
+        name: _preserve_operator_notes(directory / name, text) for name, text in records.items()
+    }

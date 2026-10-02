@@ -6,10 +6,10 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import yaml
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
@@ -20,9 +20,15 @@ from release_common import (
     ROOT,
     ReleaseValidationError,
     canonical_json_bytes,
+    disallowed_release_paths,
+    git,
+    git_changed_paths,
+    git_is_ancestor,
     image_ref,
     load_json,
+    sync_workflows,
     validate_release_version,
+    working_tree_paths,
 )
 
 GITHUB_CONTAINER_ROLES = {
@@ -41,19 +47,10 @@ GITLAB_PIN_FIELDS = {
 EVIDENCE_DIR = Path("docs/evidence")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:\s*(.+?)\s*$")
-_RUNTIME_SOURCE_RE = re.compile(
-    r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$"
-)
-_BASE_DIGEST_RE = re.compile(
-    r"(?im)^(?:- )?Release-base-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
-)
+_RUNTIME_SOURCE_RE = re.compile(r"(?im)^(?:- )?Release-runtime-source:\s*`?([0-9a-f]{40})`?\s*$")
+_BASE_DIGEST_RE = re.compile(r"(?im)^(?:- )?Release-base-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$")
 _REVIEWER_DIGEST_RE = re.compile(
     r"(?im)^(?:- )?Release-reviewer-digest:\s*`?(sha256:[0-9a-f]{64})`?\s*$"
-)
-_WAIVED_LINE_RE = re.compile(r"(?im)^Release-evidence-waived:[ \t]*([^\r\n]*?)[ \t]*$")
-_BINDING_LINE_RE = re.compile(
-    r"(?im)^[ \t]*(?:[-*+][ \t]+|[0-9]+[.)][ \t]+)?"
-    r"Release-(?:runtime-source|base-digest|reviewer-digest)[ \t]*:"
 )
 
 
@@ -88,7 +85,8 @@ def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
         container_match = re.fullmatch(r"    container:\s+(\S+)", line)
         if line.startswith("    container:"):
             if (
-                container_match is None or current_job not in GITHUB_CONTAINER_ROLES
+                container_match is None
+                or current_job not in GITHUB_CONTAINER_ROLES
                 or current_job in containers
             ):
                 raise ReleaseValidationError("unexpected or duplicate GitHub container job")
@@ -102,6 +100,8 @@ def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
 
 def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     """Return the three canonical assignments' zero-based positions and values."""
+    import yaml  # Preparation and canonical CI only; publication requires their success.
+
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -118,9 +118,7 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
         if isinstance(value, dict) and not canonical_variables:
             for pin in GITLAB_PIN_FIELDS:
                 if pin in value:
-                    raise ReleaseValidationError(
-                        f"GitLab pin outside top-level variables: {pin}"
-                    )
+                    raise ReleaseValidationError(f"GitLab pin outside top-level variables: {pin}")
         if not isinstance(value, (dict, list)) or id(value) in visited:
             return
         visited.add(id(value))
@@ -150,7 +148,7 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     for index, line in enumerate(text.splitlines()):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if re.match(r'''["']?variables["']?[ \t]*:''', line):
+        if re.match(r"""["']?variables["']?[ \t]*:""", line):
             if not re.fullmatch(r"variables:[ \t]*(?:#.*)?", line):
                 raise ReleaseValidationError(
                     "expected one canonical top-level GitLab variables block"
@@ -184,11 +182,6 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     return pins
 
 
-def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
-    match = pattern.search(text)
-    return match.group(1).strip() if match else None
-
-
 def _strip_html_comments(text: str) -> str:
     """Remove HTML comments so template examples cannot become live bindings."""
     return _HTML_COMMENT_RE.sub("", text)
@@ -200,7 +193,8 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     containers = github_job_containers(canonical)
     mismatched_jobs = [
-        job for job, role in GITHUB_CONTAINER_ROLES.items()
+        job
+        for job, role in GITHUB_CONTAINER_ROLES.items()
         if containers[job][1] != expected_refs[role]
     ]
     if mismatched_jobs:
@@ -228,182 +222,104 @@ def release_bindings(text: str) -> dict[str, list[str]]:
     }
 
 
-# A waived record only marks itself; the reason lives once, in
-# verification.evidence_waivers, so the record and the release authority must both
-# change to waive a row without restating the reason in two places.
-WAIVER_MARKER = "registered"
-
-
-def _has_waiver_marker(text: str, record_id: str) -> bool:
-    values = _WAIVED_LINE_RE.findall(text)
-    if not values:
-        return False
-    if len(values) != 1:
-        raise ReleaseValidationError(
-            f"evidence record {record_id} must contain exactly one Release-evidence-waived line"
-        )
-    value = values[0].strip()
-    if value != WAIVER_MARKER:
-        raise ReleaseValidationError(
-            f"evidence record {record_id} must declare exactly "
-            f"'Release-evidence-waived: {WAIVER_MARKER}' (got {value!r}); the reason "
-            "belongs only in verification.evidence_waivers"
-        )
-    return True
-
-
 def validate_evidence_records(
     data: dict[str, Any],
     root: Path = ROOT,
+    *,
+    read_file: Callable[[str], bytes] | None = None,
 ) -> list[tuple[str, str]]:
-    """Require active release inputs to cite fresh, matching evidence records.
-
-    Each cited record under ``docs/evidence/`` must either:
-
-    - declare ``Status: passed`` (exact) and bind the claimed runtime source plus
-      both image digests; or
-    - declare ``Release-evidence-waived: registered`` and be declared, with its
-      non-empty reason, under ``verification.evidence_waivers``. The reason is
-      stated only there; a waived record carries no release binding.
-
-    Non-waived records must use the explicit ``Release-runtime-source`` and
-    ``Release-*-digest`` fields. Historical Identity-section prose is not a
-    release binding; older records must be re-stamped with the explicit fields.
-
-    Returns every ``(record_id, waiver_reason)`` pair so callers can make
-    waivers visible in release-check output.
-    """
-    if data.get("status") != "active":
-        return []
-    runtime_source = data["runtime_source"]
-    images = data["images"]
-    assert isinstance(runtime_source, str)
-    assert isinstance(images, dict)
+    """Validate selection in drafts; certify only passing records in active inputs."""
     verification = data["verification"]
-    assert isinstance(verification, dict)
     record_ids = verification["evidence_record_ids"]
-    declared_waivers = verification["evidence_waivers"]
-    assert isinstance(record_ids, list)
-    if not isinstance(declared_waivers, dict):
-        raise ReleaseValidationError("verification.evidence_waivers must be an object")
-    if not record_ids:
-        raise ReleaseValidationError("active release inputs require evidence record identifiers")
-
-    for key, reason in declared_waivers.items():
-        if not isinstance(key, str) or not key.strip():
+    waivers = verification["evidence_waivers"]
+    if len(record_ids) != len(set(record_ids)):
+        raise ReleaseValidationError("evidence selection contains duplicate IDs")
+    if set(record_ids) & waivers.keys():
+        raise ReleaseValidationError("passing evidence and waivers must be disjoint")
+    for record_id in [*record_ids, *waivers]:
+        if (
+            not isinstance(record_id, str)
+            or not record_id.strip()
+            or record_id in {".", ".."}
+            or Path(record_id).name != record_id
+            or "/" in record_id
+            or "\\" in record_id
+        ):
+            raise ReleaseValidationError("evidence IDs must be bare filenames under docs/evidence")
+        relative = f"{EVIDENCE_DIR.as_posix()}/{record_id}"
+        if record_id in waivers and (
+            not isinstance(waivers[record_id], str) or not waivers[record_id].strip()
+        ):
             raise ReleaseValidationError(
-                "verification.evidence_waivers keys must be non-empty strings"
+                f"verification.evidence_waivers[{record_id!r}] must be a non-empty string"
             )
-        if not isinstance(reason, str) or not reason.strip():
-            raise ReleaseValidationError(
-                f"verification.evidence_waivers[{key!r}] must be a non-empty string"
-            )
-        if key not in record_ids:
-            raise ReleaseValidationError(
-                f"verification.evidence_waivers key {key!r} is not listed in "
-                "evidence_record_ids"
-            )
-
-    waivers: list[tuple[str, str]] = []
-    for record_id in record_ids:
-        if not isinstance(record_id, str) or not record_id.strip():
-            raise ReleaseValidationError(
-                "verification.evidence_record_ids must be non-empty strings"
-            )
-        if Path(record_id).name != record_id or "/" in record_id or "\\" in record_id:
-            raise ReleaseValidationError(
-                f"evidence record id {record_id!r} must be a bare filename under "
-                f"{EVIDENCE_DIR.as_posix()}"
-            )
-        path = root / EVIDENCE_DIR / record_id
         try:
-            text = _strip_html_comments(path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise ReleaseValidationError(
-                f"cannot read evidence record {record_id}: {exc}"
-            ) from exc
-
-        waived = _has_waiver_marker(text, record_id)
-        declared_reason = declared_waivers.get(record_id)
-
-        if waived and declared_reason is None:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} has Release-evidence-waived but is "
-                "not declared in verification.evidence_waivers"
-            )
-        if declared_reason is not None and not waived:
-            raise ReleaseValidationError(
-                f"verification.evidence_waivers declares {record_id} but the "
-                "evidence record has no Release-evidence-waived line"
-            )
-        if waived:
-            if _BINDING_LINE_RE.search(text):
-                raise ReleaseValidationError(
-                    f"waived evidence record {record_id} must not carry Release-* bindings"
-                )
-            waivers.append((record_id, str(declared_reason).strip()))
+            path = root.resolve() / relative
+            if read_file is None and any(p.is_symlink() for p in (path, *path.parents)):
+                raise ReleaseValidationError(f"evidence record uses a symlink: {record_id}")
+            content = read_file(relative) if read_file else path.read_bytes()
+            if record_id in waivers:
+                continue  # Historical contents are not a current-candidate certificate.
+            text = _strip_html_comments(content.decode("utf-8"))
+        except (OSError, UnicodeError) as exc:
+            raise ReleaseValidationError(f"cannot read evidence record {record_id}: {exc}") from exc
+        if data["status"] == "draft":
             continue
+        if _STATUS_RE.findall(text) != ["passed"]:
+            raise ReleaseValidationError(
+                f"evidence record {record_id} status must be exact 'passed'"
+            )
+        expected = {
+            "runtime-source": data["runtime_source"],
+            "base-digest": data["images"]["base"]["digest"],
+            "reviewer-digest": data["images"]["reviewer"]["digest"],
+        }
+        for field, values in release_bindings(text).items():
+            if not values:
+                raise ReleaseValidationError(
+                    f"evidence record {record_id} must declare Release-{field}"
+                )
+            if values != [expected[field]]:
+                raise ReleaseValidationError(
+                    f"evidence record {record_id} {field} does not match release inputs"
+                )
+    return [(record_id, reason.strip()) for record_id, reason in waivers.items()]
 
-        status = _first_match(_STATUS_RE, text)
-        if status is None:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} is missing a Status: line"
-            )
-        if status != "passed":
-            raise ReleaseValidationError(
-                f"evidence record {record_id} status must be exact 'passed' for "
-                f"active release inputs (got {status!r}); use "
-                f"Release-evidence-waived: {WAIVER_MARKER} plus a declared reason to waive"
-            )
 
-        record_source = _first_match(_RUNTIME_SOURCE_RE, text)
-        if record_source is None:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} must declare Release-runtime-source"
-            )
-        if record_source != runtime_source:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} runtime source "
-                f"{record_source!r} does not match release inputs"
-            )
-
-        base_digest = _first_match(_BASE_DIGEST_RE, text)
-        reviewer_digest = _first_match(_REVIEWER_DIGEST_RE, text)
-        if base_digest is None:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} must declare Release-base-digest"
-            )
-        if reviewer_digest is None:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} must declare Release-reviewer-digest"
-            )
-        expected_base = images["base"]["digest"]
-        expected_reviewer = images["reviewer"]["digest"]
-        if base_digest != expected_base:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} base digest {base_digest!r} does not "
-                f"match release inputs"
-            )
-        if reviewer_digest != expected_reviewer:
-            raise ReleaseValidationError(
-                f"evidence record {record_id} reviewer digest {reviewer_digest!r} "
-                f"does not match release inputs"
-            )
-    return waivers
+def validate_release_commit(
+    runtime_source: str,
+    release_commit: str,
+    root: Path = ROOT,
+    *,
+    pending: bool = False,
+    preparing: bool = False,
+) -> None:
+    """Bound the final commit and, for local validation, every pending change."""
+    if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
+        raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
+    if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
+        raise ReleaseValidationError("release commit must be a lowercase full 40-character SHA")
+    if not git_is_ancestor(runtime_source, release_commit, root):
+        raise ReleaseValidationError("release commit P must descend from runtime source R")
+    paths = set(git_changed_paths(runtime_source, release_commit, root))
+    if pending:
+        paths.update(working_tree_paths(root, runtime_source))
+    if runtime_source == release_commit and not preparing and not (pending and paths):
+        raise ReleaseValidationError("release commit P must differ from runtime source R")
+    if forbidden := disallowed_release_paths(sorted(paths)):
+        raise ReleaseValidationError("release contains disallowed paths: " + ", ".join(forbidden))
 
 
 def validate_release_inputs(
-    data: dict[str, Any], root: Path = ROOT
+    data: dict[str, Any],
+    root: Path = ROOT,
+    *,
+    read_file: Callable[[str], bytes] | None = None,
+    check_templates: bool = True,
 ) -> list[tuple[str, str]]:
-    # Version first: the key set below is compared exactly, so a v1 artifact would
-    # otherwise be reported as having a stray `hashes` key rather than as speaking
-    # a retired dialect. v2 is v1 without that member — one identifier covering
-    # both shapes is what leaves schema_version unable to say which parser applies.
-    if data.get("schema_version") == "code_tribunal.release_inputs.v1":
+    if data.get("schema_version") != RELEASE_INPUTS_SCHEMA_VERSION:
         raise ReleaseValidationError(
-            "code_tribunal.release_inputs.v1 is retired: drop the `hashes` member "
-            f"and set schema_version to {RELEASE_INPUTS_SCHEMA_VERSION}. Tagged "
-            "releases that shipped v1 are validated from their own tag."
+            "unsupported release-input schema_version; current tooling accepts v3 only"
         )
     _require_keys(
         data,
@@ -417,10 +333,8 @@ def validate_release_inputs(
         },
         "release inputs",
     )
-    if data["schema_version"] != RELEASE_INPUTS_SCHEMA_VERSION:
-        raise ReleaseValidationError("unsupported release-input schema_version")
     validate_release_version(data["release_version"])
-    if data["status"] not in {"draft", "active"}:
+    if data["status"] not in ("draft", "active"):
         raise ReleaseValidationError("status must be draft or active")
     if PLACEHOLDER_RE.search(canonical_json_bytes(data).decode()):
         raise ReleaseValidationError("release inputs contain a placeholder string")
@@ -435,14 +349,20 @@ def validate_release_inputs(
         if not isinstance(image, dict):
             raise ReleaseValidationError(f"images.{role} must be an object")
         _require_keys(image, {"name", "digest"}, f"images.{role}")
-        if image["name"] is not None and not IMAGE_NAME_RE.fullmatch(image["name"]):
+        if image["name"] is not None and (
+            not isinstance(image["name"], str) or not IMAGE_NAME_RE.fullmatch(image["name"])
+        ):
             raise ReleaseValidationError(f"images.{role}.name is malformed")
         if image["name"] is not None and not image["name"].endswith(f"ai-review-{role}"):
             raise ReleaseValidationError(f"images.{role}.name names the wrong image role")
-        if image["digest"] is not None and not DIGEST_RE.fullmatch(image["digest"]):
+        if image["digest"] is not None and (
+            not isinstance(image["digest"], str) or not DIGEST_RE.fullmatch(image["digest"])
+        ):
             raise ReleaseValidationError(f"images.{role}.digest must be a lowercase sha256 digest")
 
-    if runtime_source is not None and not FULL_SHA_RE.fullmatch(runtime_source):
+    if runtime_source is not None and (
+        not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source)
+    ):
         raise ReleaseValidationError("runtime_source must be a lowercase full 40-character SHA")
     if data["status"] == "active":
         if runtime_source is None:
@@ -453,14 +373,6 @@ def validate_release_inputs(
                     f"active release inputs require complete images.{role}"
                 )
 
-    # There is deliberately no per-file-set hash field. Six aggregate SHA-256s over
-    # hand-listed file groups used to live here, compared against hashes recomputed
-    # from the same checkout being validated — so the comparison could only ever
-    # report "someone edited one of these files without re-running --write-hashes",
-    # never a substitution. `runtime_source` is already a cryptographic commitment
-    # to every byte of the tree, and validate_release_coordinates proves the release
-    # commit changed only ALLOWED_RELEASE_PATHS relative to it. The hashes added a
-    # standing maintenance obligation on top of a strictly stronger binding.
     verification = data["verification"]
     if not isinstance(verification, dict):
         raise ReleaseValidationError("verification must be an object")
@@ -472,9 +384,7 @@ def validate_release_inputs(
     if not isinstance(verification["evidence_record_ids"], list) or not all(
         isinstance(item, str) and item.strip() for item in verification["evidence_record_ids"]
     ):
-        raise ReleaseValidationError(
-            "verification.evidence_record_ids must be non-empty strings"
-        )
+        raise ReleaseValidationError("verification.evidence_record_ids must be non-empty strings")
     if not isinstance(verification["evidence_waivers"], dict):
         raise ReleaseValidationError("verification.evidence_waivers must be an object")
     for key in ("ci_run_id", "publication_run_id"):
@@ -489,16 +399,22 @@ def validate_release_inputs(
         )
     if data["status"] == "active" and not verification["evidence_record_ids"]:
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
-    waivers = validate_evidence_records(data, root)
-
-    # Canonical-template -> installed-copy parity is not checked here. In the
-    # repository `make workflow-parity` gates it and can repair it; for a release
-    # it is checked by check_release_manifest.validate_manifest, which is the
-    # validator that runs standalone from a tagged worktree. Both call the one
-    # implementation in release_common.sync_workflows.
-    if data["status"] == "active":
-        assert isinstance(runtime_source, str)
+    if data["status"] == "draft" and (
+        runtime_source is not None
+        or any(image["digest"] is not None for image in images.values())
+        or any(verification[key] is not None for key in ("ci_run_id", "publication_run_id"))
+    ):
+        raise ReleaseValidationError(
+            "draft candidate identity and verification run IDs must be unset"
+        )
+    waivers = validate_evidence_records(data, root, read_file=read_file)
+    if data["status"] == "active" and check_templates:
         validate_template_pins(images, runtime_source, root)
+        if drifted := sync_workflows(check=True, root=root):
+            raise ReleaseValidationError(
+                "installed workflow copies differ from their canonical templates: "
+                + ", ".join(drifted)
+            )
     return waivers
 
 
@@ -508,7 +424,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         data = load_json(args.path)
-        waivers = validate_release_inputs(data)
+        waivers = validate_release_inputs(data, ROOT)
+        if data["status"] == "active":
+            validate_release_commit(
+                data["runtime_source"], git(ROOT, "rev-parse", "HEAD"), ROOT, pending=True
+            )
     except ReleaseValidationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

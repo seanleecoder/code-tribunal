@@ -7,6 +7,21 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Release-inputs v3 separates passing evidence from inputs-only waivers. Historical
+  record observations and bindings are preserved when waived.
+- `make release-prepare RUN=<id>` prepares generated evidence, synchronized pins,
+  active inputs, CHANGELOG, and notes in one validated edit set. It replaces
+  `evidence-records`, `release-repin`, `release-finalize`, and `release-manifest`.
+- Signed release tags bind committed release inputs, evidence, templates, and
+  notes. Protected-main publication requires successful canonical push CI for the
+  final commit, publishes notes only, and executes no tag code. New releases have
+  no standalone manifest, checksum, or certificate assets.
+- `make release-open-next V=<next>` also creates version-correct draft notes and
+  refuses an existing destination. Any merge strategy may be used when the final
+  release commit satisfies ancestry, path, and CI checks.
+
 ## [2.0.1] - 2026-10-02
 
 ### Added

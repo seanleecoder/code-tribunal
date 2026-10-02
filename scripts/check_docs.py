@@ -174,10 +174,12 @@ def _without_fenced_code(text: str) -> str:
     return "".join(output)
 
 
-def _release_note_destination_issues(path: Path, text: str) -> list[str]:
+def _release_note_destination_issues(
+    path: Path, text: str, *, root: Path | None = None,
+) -> list[str]:
     """Check draft authoring conventions; Lychee verifies paths and anchors."""
     prefix = f"https://github.com/{REPOSITORY}/blob/v{path.stem}/"
-    label = path.relative_to(ROOT)
+    label = path.relative_to(ROOT if root is None else root)
     text = _without_fenced_code(text)
     issues: list[str] = []
     destinations = re.compile(

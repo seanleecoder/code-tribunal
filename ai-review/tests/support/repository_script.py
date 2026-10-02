@@ -10,6 +10,8 @@ from types import ModuleType
 
 
 def load_repository_script(name: str, path: Path) -> ModuleType:
+    if not path.is_file() and path.parent.is_dir():
+        raise AssertionError(f"required repository script is missing: {path}")
     if not path.is_file():
         raise unittest.SkipTest(f"repository script is absent from this runtime: {path}")
     existing = sys.modules.get(name)

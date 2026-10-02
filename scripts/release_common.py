@@ -1,20 +1,19 @@
-"""Shared deterministic release-input and manifest helpers."""
+"""Shared release identity, Git, and canonical-workflow helpers."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 
+
 class ReleaseValidationError(ValueError):
     """Raised when release metadata violates its checked contract."""
-
 
 
 # Canonical template -> installed copy. GitHub only executes workflows that are
@@ -45,7 +44,8 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     check_supply_chain_pins.py, check_release_inputs.py, and test_ci_template.py;
     none of them could repair the drift they reported, and the one in
     check_supply_chain_pins.py ran inside the base image, where .github/ does not
-    exist and it therefore always passed. `make workflow-parity` is the single gate.
+    exist and it therefore always passed. Draft quality uses `make workflow-parity`; active
+    release inputs also call this comparison.
     """
     changed: list[str] = []
     for canonical_rel, installed_rel in WORKFLOW_PAIRS:
@@ -64,9 +64,8 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     return tuple(changed)
 
 
-# The release-input contract this tooling accepts. v2 is v1 without the per-file-set
-# `hashes` member; tagged releases before 2.0.0 keep v1 at their own tag.
-RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
+# Current tooling has one contract; historical releases retain validators at their tags.
+RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v3"
 
 # Image tag series: images are tagged `<series>-<runtime_source>`. It must equal
 # IMAGE_VERSION in .github/workflows/publish-ai-review-images.yml.
@@ -92,19 +91,25 @@ IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)"
 PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
 
-
-
 def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
-def sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+def parse_json(value: str | bytes) -> Any:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, child in pairs:
+            if key in result:
+                raise ReleaseValidationError(f"duplicate JSON key: {key}")
+            result[key] = child
+        return result
+
+    return json.loads(value, object_pairs_hook=unique)
 
 
 def load_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = parse_json(path.read_bytes())
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseValidationError(f"cannot read {path}: {exc}") from exc
     if not isinstance(value, dict):
@@ -118,8 +123,16 @@ def image_ref(image: dict[str, Any], runtime_source: str) -> str:
 
 def _diff_paths(root: Path, *revisions: str, cached: bool = False) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB",
-         *(["--cached"] if cached else []), *revisions],
+        [
+            "git",
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACDMRTUXB",
+            *(["--cached"] if cached else []),
+            *revisions,
+        ],
         cwd=root,
         check=False,
         text=True,
@@ -190,8 +203,9 @@ def validate_release_version(value: object) -> str:
             "is not supported"
         )
     prerelease = value.partition("-")[2]
-    if any(part.isdigit() and len(part) > 1 and part.startswith("0")
-           for part in prerelease.split(".")):
+    if any(
+        part.isdigit() and len(part) > 1 and part.startswith("0") for part in prerelease.split(".")
+    ):
         raise ReleaseValidationError(
             "numeric prerelease identifiers must not contain leading zeros"
         )
@@ -221,24 +235,6 @@ def compare_release_versions(left: str, right: str) -> int:
     return (len(left_parts) > len(right_parts)) - (len(left_parts) < len(right_parts))
 
 
-def validate_release_coordinates(
-    tag: object,
-    runtime_source: object,
-    release_commit: object,
-    release_version: object,
-) -> None:
-    version = validate_release_version(release_version)
-    expected_tag = f"v{version}"
-    if tag != expected_tag:
-        raise ReleaseValidationError(f"release tag must be {expected_tag}")
-    if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
-        raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
-    if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
-        raise ReleaseValidationError("release commit must be a lowercase full 40-character SHA")
-    if runtime_source == release_commit:
-        raise ReleaseValidationError("release commit P must differ from runtime source R")
-
-
 def disallowed_release_paths(paths: list[str]) -> list[str]:
     def allowed(path: str) -> bool:
         return any(
@@ -247,3 +243,33 @@ def disallowed_release_paths(paths: list[str]) -> list[str]:
         )
 
     return [path for path in paths if not allowed(path)]
+
+
+@overload
+def git(root: Path, *args: str, strip: bool = True, text: Literal[True] = True) -> str: ...
+
+
+@overload
+def git(root: Path, *args: str, strip: bool = True, text: Literal[False]) -> bytes: ...
+
+
+def git(root: Path, *args: str, strip: bool = True, text: bool = True) -> str | bytes:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=text, check=False
+    )
+    if result.returncode:
+        error = result.stderr if text else result.stderr.decode("utf-8", errors="replace")
+        raise ReleaseValidationError(error.strip() or f"git {args[0]} failed")
+    if not text:
+        return result.stdout
+    return result.stdout.strip() if strip else result.stdout
+
+
+def working_tree_paths(root: Path, runtime_source: str) -> list[str]:
+    """Include both rename sides, staged changes, and non-ignored untracked paths."""
+    untracked = git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
+    return sorted(
+        set(_diff_paths(root, runtime_source))
+        | set(_diff_paths(root, runtime_source, cached=True))
+        | set(filter(None, untracked.split("\0")))
+    )

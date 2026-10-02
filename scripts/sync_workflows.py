@@ -13,7 +13,7 @@ no .github/ directory to compare against. Those copies are gone.
 
 Or through the interpreter directly. This file is not executable by design,
 matching its sibling repository-only checkers (check_docs.py,
-check_release_inputs.py, check_release_manifest.py, build_release_manifest.py,
+check_release_inputs.py and release_prepare.py,
 scan_evidence_leaks.py), none of which is ever invoked by bare path:
 
     python3 scripts/sync_workflows.py [--check]

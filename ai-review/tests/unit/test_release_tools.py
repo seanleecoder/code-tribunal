@@ -16,14 +16,15 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "scripts"
 REQUIRED_RELEASE_SCRIPTS = (
-    "build_release_manifest.py",
     "check_release_inputs.py",
-    "check_release_manifest.py",
     "release_common.py",
 )
 
-if not all((SCRIPTS / name).is_file() for name in REQUIRED_RELEASE_SCRIPTS):
+if not SCRIPTS.is_dir():
     raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
+for name in REQUIRED_RELEASE_SCRIPTS:
+    if not (SCRIPTS / name).is_file():
+        raise AssertionError(f"required repository release tooling is missing: {name}")
 RELEASE_INPUTS = REPO_ROOT / "release/release-inputs.json"
 
 
@@ -40,16 +41,15 @@ def _release_version() -> str:
         return json.loads(RELEASE_INPUTS.read_text(encoding="utf-8"))["release_version"]
     except (OSError, ValueError, KeyError) as error:
         raise unittest.SkipTest(f"release inputs are unreadable: {error}") from error
+
+
 ORIGINAL_SYS_PATH = sys.path.copy()
 sys.path.insert(0, str(SCRIPTS))
 try:
     import check_release_inputs as release_input_checker  # noqa: E402
-    from build_release_manifest import build_manifest  # noqa: E402
     from check_release_inputs import (  # noqa: E402
-        validate_evidence_records,
         validate_release_inputs,
     )
-    from check_release_manifest import validate_manifest  # noqa: E402
     from release_common import (  # noqa: E402
         DIGEST_RE,
         IMAGE_TAG_SERIES,
@@ -61,10 +61,8 @@ try:
         disallowed_release_paths,
         git_is_ancestor,
         image_ref,
-        sha256_bytes,
         sync_workflows,
         tag_exists,
-        validate_release_coordinates,
         validate_release_version,
     )
 finally:
@@ -98,9 +96,7 @@ class ReleaseToolTests(unittest.TestCase):
         return f"release/{_release_version()}.md"
 
     def _draft(self, root: Path) -> dict[str, object]:
-        data = json.loads(
-            (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
-        )
+        data = json.loads((REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8"))
         return data
 
     def _write_matching_evidence(
@@ -225,30 +221,8 @@ class ReleaseToolTests(unittest.TestCase):
         release_inputs.write_bytes(canonical_json_bytes(inputs))
         return inputs, release_inputs
 
-    def _build_valid_manifest(
-        self, root: Path
-    ) -> tuple[dict[str, object], dict[str, object], Path, list[str]]:
-        inputs, release_inputs = self._write_active_inputs(root)
-        changed_paths = ["CHANGELOG.md", self.draft_release_notes]
-        with (
-            mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
-            mock.patch(
-                "build_release_manifest.git_changed_paths", return_value=changed_paths
-            ),
-        ):
-            manifest = build_manifest(
-                self.draft_release_tag,
-                inputs["runtime_source"],
-                "d" * 40,
-                release_inputs,
-                root,
-            )
-        return manifest, inputs, release_inputs, changed_paths
-
     def test_draft_current_tree_is_valid(self) -> None:
-        data = json.loads(
-            (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
-        )
+        data = json.loads((REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8"))
         validate_release_inputs(data, REPO_ROOT)
 
     def test_checked_in_artifact_matches_its_declared_status(self) -> None:
@@ -260,17 +234,13 @@ class ReleaseToolTests(unittest.TestCase):
         is `active` and must carry the binding, so this guard is scoped by status
         rather than asserting the draft shape unconditionally.
         """
-        data = json.loads(
-            (REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8")
-        )
+        data = json.loads((REPO_ROOT / "release/release-inputs.json").read_text(encoding="utf-8"))
         verification = data["verification"]
 
         if data["status"] == "draft":
             self.assertIsNone(verification["ci_run_id"])
             self.assertIsNone(verification["publication_run_id"])
-            self.assertEqual(verification["evidence_record_ids"], [])
-            self.assertEqual(verification["evidence_waivers"], {})
-            self.assertEqual(validate_release_inputs(data, REPO_ROOT), [])
+            validate_release_inputs(data, REPO_ROOT)
             return
 
         self.assertEqual(data["status"], "active")
@@ -396,25 +366,6 @@ class ReleaseToolTests(unittest.TestCase):
             verification["evidence_waivers"],
         )
 
-    def test_populated_synthetic_draft_verification_remains_valid(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._draft(root)
-            # Pin the status: this exercises the draft validator against a synthetic
-            # tree, and _draft() inherits status from the real checked-in artifact,
-            # which is `active` inside a release commit.
-            data["status"] = "draft"
-            data["release_version"] = "1.0.2-rc.1"
-            data["verification"] = {
-                "ci_run_id": "synthetic-ci-1",
-                "publication_run_id": "synthetic-publication-1",
-                "evidence_record_ids": ["synthetic-future-record.md"],
-                "evidence_waivers": {},
-            }
-
-            self.assertEqual(validate_release_inputs(data, root), [])
-
     def test_publish_workflow_tags_images_with_the_release_tag_series(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/publish-ai-review-images.yml").read_text(
             encoding="utf-8"
@@ -423,7 +374,6 @@ class ReleaseToolTests(unittest.TestCase):
 
     def test_release_version_accepts_prerelease_and_rejects_build_metadata(self) -> None:
         self.assertEqual(validate_release_version("1.0.2-rc.1"), "1.0.2-rc.1")
-        validate_release_coordinates("v1.0.2-rc.1", "a" * 40, "b" * 40, "1.0.2-rc.1")
         with self.assertRaisesRegex(ReleaseValidationError, "build metadata"):
             validate_release_version("1.0.2+build.1")
 
@@ -463,7 +413,7 @@ class ReleaseToolTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ReleaseValidationError, "runtime source"):
+            with self.assertRaisesRegex(ReleaseValidationError, "runtime-source"):
                 validate_release_inputs(data, root)
 
     def test_active_rejects_historical_identity_only_evidence(self) -> None:
@@ -485,11 +435,9 @@ class ReleaseToolTests(unittest.TestCase):
                         "",
                         f"- Source commit: `{runtime_source}`",
                         f"- Base image tag and digest: `{IMAGE_TAG_SERIES}-{runtime_source}`",
-                        "  `ghcr.io/example/code-tribunal/ai-review-base@"
-                        f"{base_digest}`",
+                        f"  `ghcr.io/example/code-tribunal/ai-review-base@{base_digest}`",
                         f"- Reviewer image tag and digest: `{IMAGE_TAG_SERIES}-{runtime_source}`",
-                        "  `ghcr.io/example/code-tribunal/ai-review-reviewer@"
-                        f"{reviewer_digest}`",
+                        f"  `ghcr.io/example/code-tribunal/ai-review-reviewer@{reviewer_digest}`",
                         "",
                     ]
                 ),
@@ -518,159 +466,6 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseValidationError, "exact 'passed'"):
                 validate_release_inputs(data, root)
 
-    def test_active_accepts_explicit_evidence_waiver(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            reason = "operator accepted residual risk for this row"
-            self._write_matching_evidence(
-                root,
-                runtime_source=data["runtime_source"],
-                base_digest=data["images"]["base"]["digest"],
-                reviewer_digest=data["images"]["reviewer"]["digest"],
-                record_ids=data["verification"]["evidence_record_ids"],
-                status="partial",
-                waived=True,
-            )
-            data["verification"]["evidence_waivers"] = {
-                record_id: reason
-                for record_id in data["verification"]["evidence_record_ids"]
-            }
-            expected_waivers = [
-                (record_id, reason)
-                for record_id in data["verification"]["evidence_record_ids"]
-            ]
-            self.assertEqual(validate_evidence_records(data, root), expected_waivers)
-            self.assertEqual(validate_release_inputs(data, root), expected_waivers)
-
-    def test_active_rejects_undeclared_markdown_waiver(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            self._write_matching_evidence(
-                root,
-                runtime_source=data["runtime_source"],
-                base_digest=data["images"]["base"]["digest"],
-                reviewer_digest=data["images"]["reviewer"]["digest"],
-                record_ids=data["verification"]["evidence_record_ids"],
-                status="partial",
-                waived=True,
-            )
-            with self.assertRaisesRegex(
-                ReleaseValidationError, "not declared in verification.evidence_waivers"
-            ):
-                validate_release_inputs(data, root)
-
-    def test_active_rejects_declared_waiver_missing_from_record(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            record_id = data["verification"]["evidence_record_ids"][0]
-            data["verification"]["evidence_waivers"] = {
-                record_id: "operator accepted residual risk for this row"
-            }
-            with self.assertRaisesRegex(
-                ReleaseValidationError, "has no Release-evidence-waived line"
-            ):
-                validate_release_inputs(data, root)
-
-    def test_active_rejects_a_reason_bearing_waiver_line(self) -> None:
-        # The reason is stated once, in evidence_waivers; a record that restates
-        # it is the pre-SPEC-61 shape and must be migrated, not accepted.
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            record_id = data["verification"]["evidence_record_ids"][0]
-            (root / "docs/evidence" / record_id).write_text(
-                "Status: waived\n\n"
-                "Release-evidence-waived: operator accepted residual risk for this row\n",
-                encoding="utf-8",
-            )
-            data["verification"]["evidence_waivers"] = {
-                record_id: "operator accepted residual risk for this row"
-            }
-            with self.assertRaisesRegex(
-                ReleaseValidationError, "must declare exactly 'Release-evidence-waived: registered'"
-            ):
-                validate_release_inputs(data, root)
-
-    def test_active_rejects_an_empty_waiver_line(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            record_id = data["verification"]["evidence_record_ids"][0]
-            (root / "docs/evidence" / record_id).write_text(
-                "Status: partial\n\nRelease-evidence-waived:\n", encoding="utf-8"
-            )
-            data["verification"]["evidence_waivers"] = {
-                record_id: "operator accepted residual risk for this row"
-            }
-            with self.assertRaisesRegex(ReleaseValidationError, "must declare exactly"):
-                validate_release_inputs(data, root)
-
-    def test_active_rejects_an_empty_declared_reason(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._active(root)
-            record_ids = data["verification"]["evidence_record_ids"]
-            self._write_matching_evidence(
-                root,
-                runtime_source=data["runtime_source"],
-                base_digest=data["images"]["base"]["digest"],
-                reviewer_digest=data["images"]["reviewer"]["digest"],
-                record_ids=record_ids,
-                status="waived",
-                waived=True,
-            )
-            data["verification"]["evidence_waivers"] = {
-                record_id: "  " for record_id in record_ids
-            }
-            with self.assertRaisesRegex(ReleaseValidationError, "must be a non-empty string"):
-                validate_release_inputs(data, root)
-
-    def test_waiver_marker_must_be_unique_and_on_one_line(self) -> None:
-        for marker in (
-            "Release-evidence-waived:\nregistered\n",
-            "Release-evidence-waived: registered\nRelease-evidence-waived: registered\n",
-            "Release-evidence-waived: registered\nRelease-evidence-waived: another reason\n",
-        ):
-            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                self._tree(root)
-                data = self._active(root)
-                record_id = data["verification"]["evidence_record_ids"][0]
-                (root / "docs/evidence" / record_id).write_text(marker, encoding="utf-8")
-                data["verification"]["evidence_waivers"] = {record_id: "unchanged modules"}
-                with self.assertRaisesRegex(ReleaseValidationError, "must (declare|contain)"):
-                    validate_evidence_records(data, root)
-
-    def test_waived_records_reject_bindings_in_markdown_contexts(self) -> None:
-        for prefix in ("", "- ", "  ", "  - ", "* ", "1. "):
-            for field, value in (
-                ("runtime-source", "d" * 40),
-                ("base-digest", "sha256:" + "e" * 64),
-                ("reviewer-digest", "sha256:" + "f" * 64),
-            ):
-                with self.subTest(prefix=prefix, field=field), tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp)
-                    self._tree(root)
-                    data = self._active(root)
-                    record_id = data["verification"]["evidence_record_ids"][0]
-                    (root / "docs/evidence" / record_id).write_text(
-                        "Release-evidence-waived: registered\n"
-                        + f"{prefix}Release-{field}: {value}\n",
-                        encoding="utf-8",
-                    )
-                    data["verification"]["evidence_waivers"] = {record_id: "unchanged modules"}
-                    with self.assertRaisesRegex(ReleaseValidationError, "must not carry"):
-                        validate_evidence_records(data, root)
-
     def test_active_ignores_html_commented_waiver_example(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -693,19 +488,19 @@ class ReleaseToolTests(unittest.TestCase):
             mock.patch.object(
                 release_input_checker,
                 "load_json",
-                return_value={"status": "active"},
+                return_value={"status": "active", "runtime_source": "a" * 40},
             ),
             mock.patch.object(
                 release_input_checker,
                 "validate_release_inputs",
                 return_value=waivers,
             ),
+            mock.patch.object(release_input_checker, "validate_release_commit"),
             contextlib.redirect_stderr(stderr),
         ):
             self.assertEqual(release_input_checker.main(), 0)
         self.assertIn(
-            "WARNING: evidence waiver record-github.md: "
-            "operator accepted a scoped residual risk",
+            "WARNING: evidence waiver record-github.md: operator accepted a scoped residual risk",
             stderr.getvalue(),
         )
 
@@ -874,7 +669,7 @@ class ReleaseToolTests(unittest.TestCase):
     # Config/schema/lockfile drift was previously caught by comparing a declared
     # per-file-set hash against one recomputed from the same checkout — which only
     # ever proved the field had been regenerated since the last edit. `runtime_source`
-    # is the commitment to those bytes, and validate_release_coordinates() (covered
+    # is the commitment to those bytes, and validate_release_commit() (covered
     # below) is what proves the release commit did not move them.
 
     def test_placeholder_is_rejected_even_in_draft(self) -> None:
@@ -892,33 +687,13 @@ class ReleaseToolTests(unittest.TestCase):
             "docs/evidence/github.md",
             "ai-review/src/ai_review/config.py",
         ]
-        self.assertEqual(
-            disallowed_release_paths(paths), ["ai-review/src/ai_review/config.py"]
-        )
+        self.assertEqual(disallowed_release_paths(paths), ["ai-review/src/ai_review/config.py"])
 
     def test_canonical_json_has_deterministic_key_order(self) -> None:
         self.assertEqual(
             canonical_json_bytes({"z": 1, "a": {"d": 2, "b": 1}}),
             b'{\n  "a": {\n    "b": 1,\n    "d": 2\n  },\n  "z": 1\n}\n',
         )
-
-    def test_manifest_generator_and_validator_clean_path(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, _inputs, release_inputs, changed_paths = self._build_valid_manifest(root)
-
-            self.assertEqual(manifest["changed_paths"], changed_paths)
-            self.assertEqual(
-                manifest["release_inputs_sha256"], sha256_bytes(release_inputs.read_bytes())
-            )
-            with (
-                mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
-                mock.patch(
-                    "check_release_manifest.git_changed_paths", return_value=changed_paths
-                ),
-            ):
-                validate_manifest(manifest, release_inputs, root)
 
     def _synthetic_release_repo(self, root: Path, *, note: str, tag: str | None) -> None:
         """A git repo containing release/<note>, optionally tagged.
@@ -971,192 +746,6 @@ class ReleaseToolTests(unittest.TestCase):
             self.assertFalse(any_tags_resolvable(root))
             self.assertFalse(tag_exists("v1.0.0", root))
 
-    def test_release_inputs_v1_is_rejected_with_migration_guidance(self) -> None:
-        """The version check must win over the exact-key comparison.
-
-        A v1 artifact carries `hashes`, which v2's key set does not allow. Checking
-        keys first would report a stray member and say nothing about the contract
-        the document actually speaks, so the ordering in validate_release_inputs is
-        deliberate — and this asserts it rather than leaving it to be undone by a
-        later tidy-up.
-        """
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            data = self._draft(root)
-            data["schema_version"] = "code_tribunal.release_inputs.v1"
-            data["hashes"] = {"configuration": {"files": [], "sha256": "0" * 64}}
-
-            with self.assertRaisesRegex(
-                ReleaseValidationError,
-                r"release_inputs\.v1 is retired.*`hashes`.*release_inputs\.v2",
-            ):
-                validate_release_inputs(data, root)
-
-    def test_manifest_validator_rejects_an_installed_workflow_only_release(self) -> None:
-        """A release may not ship an installed workflow that differs from canonical.
-
-        ALLOWED_RELEASE_PATHS allowlists the canonical template and its installed
-        copy independently, so a release commit touching only
-        .github/workflows/ai-review.yml clears the coordinate check. GitHub
-        executes that file verbatim, so without a parity check here the manifest
-        would certify a release running bytes the canonical pin validation never
-        examined — a different image, action, or permission set.
-        """
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, _inputs, release_inputs, changed_paths = self._build_valid_manifest(root)
-
-            installed = root / ".github/workflows/ai-review.yml"
-            installed.write_text(
-                installed.read_text(encoding="utf-8") + "\n# smuggled\n", encoding="utf-8"
-            )
-
-            with (
-                mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
-                mock.patch(
-                    "check_release_manifest.git_changed_paths", return_value=changed_paths
-                ),
-                self.assertRaisesRegex(ReleaseValidationError, "canonical"),
-            ):
-                validate_manifest(manifest, release_inputs, root)
-
-    def test_manifest_generator_rejects_disallowed_runtime_change(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            inputs, release_inputs = self._write_active_inputs(root)
-            with (
-                mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
-                mock.patch(
-                    "build_release_manifest.git_changed_paths",
-                    return_value=["ai-review/src/ai_review/config.py"],
-                ),
-                self.assertRaisesRegex(ReleaseValidationError, "disallowed paths"),
-            ):
-                build_manifest(
-                    self.draft_release_tag,
-                    inputs["runtime_source"],
-                    "d" * 40,
-                    release_inputs,
-                    root,
-                )
-
-    def test_manifest_generator_rejects_invalid_coordinates_and_ancestry(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            inputs, release_inputs = self._write_active_inputs(root)
-            runtime_source = inputs["runtime_source"]
-            for tag, release_commit, message in (
-                ("v0.0.0", "d" * 40, f"release tag must be {self.draft_release_tag}"),
-                (self.draft_release_tag, "BAD", "release commit must be"),
-                (self.draft_release_tag, runtime_source, "must differ"),
-            ):
-                with (
-                    self.subTest(tag=tag, release_commit=release_commit),
-                    self.assertRaisesRegex(ReleaseValidationError, message),
-                ):
-                    build_manifest(
-                        tag,
-                        runtime_source,
-                        release_commit,
-                        release_inputs,
-                        root,
-                    )
-            with (
-                mock.patch("build_release_manifest.git_is_ancestor", return_value=False),
-                self.assertRaisesRegex(ReleaseValidationError, "must descend"),
-            ):
-                build_manifest(
-                    self.draft_release_tag,
-                    runtime_source,
-                    "d" * 40,
-                    release_inputs,
-                    root,
-                )
-
-    def test_manifest_validator_rejects_tampered_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, _inputs, release_inputs, changed_paths = self._build_valid_manifest(root)
-            cases = (
-                ("release_inputs_sha256", "0" * 64, "release-input hash"),
-                ("changed_paths", [], "changed_paths"),
-                ("tag", "v0.0.0", f"release tag must be {self.draft_release_tag}"),
-                ("release_commit", "BAD", "release commit must be"),
-                ("release_commit", manifest["runtime_source"], "must differ"),
-            )
-            for field, value, message in cases:
-                with self.subTest(field=field):
-                    candidate = deepcopy(manifest)
-                    candidate[field] = value
-                    with (
-                        mock.patch(
-                            "check_release_manifest.git_is_ancestor", return_value=True
-                        ),
-                        mock.patch(
-                            "check_release_manifest.git_changed_paths",
-                            return_value=changed_paths,
-                        ),
-                        self.assertRaisesRegex(ReleaseValidationError, message),
-                    ):
-                        validate_manifest(candidate, release_inputs, root)
-
-            candidate = deepcopy(manifest)
-            candidate["images"]["base"]["digest"] = "sha256:" + "e" * 64
-            with (
-                mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
-                self.assertRaisesRegex(ReleaseValidationError, "images.base"),
-            ):
-                validate_manifest(candidate, release_inputs, root)
-
-    def test_manifest_version_mismatch_points_to_tagged_worktree_guidance(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, _inputs, release_inputs, _changed_paths = self._build_valid_manifest(root)
-            manifest["release_version"] = "0.0.0"
-
-            with self.assertRaisesRegex(ReleaseValidationError, "tagged worktree"):
-                validate_manifest(manifest, release_inputs, root)
-
-    def test_manifest_validator_requires_active_inputs(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, inputs, release_inputs, _changed_paths = self._build_valid_manifest(root)
-            inputs["status"] = "draft"
-            for relative in (
-                ".github/workflows/ai-review.yml",
-                "ai-review/ci/review.github-actions.yml",
-            ):
-                workflow = root / relative
-                workflow.write_text(
-                    workflow.read_text(encoding="utf-8").replace(
-                        "@sha256:" + "b" * 64,
-                        "@sha256:" + "e" * 64,
-                    ),
-                    encoding="utf-8",
-                )
-            release_inputs.write_bytes(canonical_json_bytes(inputs))
-            manifest["release_inputs_sha256"] = sha256_bytes(release_inputs.read_bytes())
-            with self.assertRaisesRegex(ReleaseValidationError, "must be active"):
-                validate_manifest(manifest, release_inputs, root)
-
-    def test_manifest_validator_rejects_non_ancestor_release_commit(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self._tree(root)
-            manifest, _inputs, release_inputs, _changed_paths = self._build_valid_manifest(root)
-            with (
-                mock.patch("check_release_manifest.git_is_ancestor", return_value=False),
-                self.assertRaisesRegex(ReleaseValidationError, "must descend"),
-            ):
-                validate_manifest(manifest, release_inputs, root)
-
     def test_git_ancestry_distinguishes_descendant_unrelated_and_git_error(self) -> None:
         with mock.patch("release_common.subprocess.run") as run:
             run.return_value.returncode = 0
@@ -1167,6 +756,126 @@ class ReleaseToolTests(unittest.TestCase):
             run.return_value.stderr = "unknown revision"
             with self.assertRaisesRegex(ReleaseValidationError, "unknown revision"):
                 git_is_ancestor("a" * 40, "b" * 40, REPO_ROOT)
+
+    def test_v3_draft_plans_existing_manual_passes_and_inputs_only_waivers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = self._draft(root)
+            data["status"] = "draft"
+            data["runtime_source"] = None
+            for image in data["images"].values():
+                image["digest"] = None
+            (root / "docs/evidence").mkdir(parents=True)
+            (root / "docs/evidence/manual.md").write_text("Planned check; no binding yet.\n")
+            historical = b"Status: partial\nRelease-runtime-source: " + b"f" * 40 + b"\n"
+            (root / "docs/evidence/history.md").write_bytes(historical)
+            data["verification"] = {
+                "ci_run_id": None,
+                "publication_run_id": None,
+                "evidence_record_ids": ["manual.md"],
+                "evidence_waivers": {"history.md": "unchanged modules"},
+            }
+            self.assertEqual(
+                validate_release_inputs(data, root), [("history.md", "unchanged modules")]
+            )
+            self.assertEqual((root / "docs/evidence/history.md").read_bytes(), historical)
+            for changed in ("ci_run_id", "publication_run_id"):
+                data["verification"][changed] = "old-run"
+                with self.assertRaisesRegex(ReleaseValidationError, "must be unset"):
+                    validate_release_inputs(data, root)
+                data["verification"][changed] = None
+
+    def test_v3_active_waivers_preserve_all_historical_content_and_bindings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"].pop()
+            data["verification"]["evidence_waivers"][record_id] = (
+                "unchanged modules; regression coverage"
+            )
+            path = root / "docs/evidence" / record_id
+            for historical in (
+                path.read_bytes(),
+                b"Status: partial\nRelease-runtime-source: " + b"f" * 40,
+                b"Release-evidence-waived: registered\nRelease-evidence-waived: older reason\n",
+                b"",
+                b"historical bytes \xff",
+            ):
+                path.write_bytes(historical)
+                self.assertEqual(
+                    validate_release_inputs(data, root),
+                    list(data["verification"]["evidence_waivers"].items()),
+                )
+                self.assertEqual(path.read_bytes(), historical)
+
+    def test_v3_selection_rejects_overlap_duplicate_empty_reason_missing_and_escaping_ids(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            original = self._active(root)
+            record_id = original["verification"]["evidence_record_ids"][0]
+            for changed, message in (
+                ({"evidence_waivers": {record_id: "overlap"}}, "disjoint"),
+                ({"evidence_record_ids": [record_id, record_id]}, "duplicate"),
+                ({"evidence_waivers": {"missing.md": " "}}, "non-empty"),
+                ({"evidence_waivers": {"missing.md": "unchanged"}}, "cannot read evidence"),
+                ({"evidence_record_ids": ["../escape.md"]}, "bare filenames"),
+                ({"evidence_waivers": {"../escape.md": "unchanged"}}, "bare filenames"),
+            ):
+                data = deepcopy(original)
+                data["verification"].update(changed)
+                with (
+                    self.subTest(changed=changed),
+                    self.assertRaisesRegex(ReleaseValidationError, message),
+                ):
+                    validate_release_inputs(data, root)
+            for schema in (
+                "code_tribunal.release_inputs.v1",
+                "code_tribunal.release_inputs.v2",
+                "future",
+            ):
+                data = deepcopy(original)
+                data["schema_version"] = schema
+                with self.assertRaisesRegex(ReleaseValidationError, "accepts v3 only"):
+                    validate_release_inputs(data, root)
+
+    def test_passing_record_requires_one_unambiguous_status_and_each_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            path = root / "docs/evidence" / data["verification"]["evidence_record_ids"][0]
+            original = path.read_text()
+            for invalid in (
+                original + "\nStatus: passed\n",
+                original + "\nRelease-runtime-source: " + "f" * 40,
+                original + "\nRelease-base-digest: " + data["images"]["base"]["digest"],
+            ):
+                path.write_text(invalid)
+                with self.assertRaises(ReleaseValidationError):
+                    validate_release_inputs(data, root)
+
+    def test_current_tooling_does_not_silently_skip_after_manifest_deletion(self) -> None:
+        for name in REQUIRED_RELEASE_SCRIPTS:
+            self.assertTrue((SCRIPTS / name).is_file(), name)
+        for name in (
+            "build_release_manifest.py",
+            "check_release_manifest.py",
+            "release_finalize.py",
+        ):
+            self.assertFalse((SCRIPTS / name).exists(), name)
+        makefile = (REPO_ROOT / "Makefile").read_text()
+        for command in (
+            "evidence-records",
+            "release-repin",
+            "release-finalize",
+            "release-manifest",
+        ):
+            self.assertNotRegex(makefile, rf"(?m)^{command}:")
+        self.assertIn("release-prepare:", makefile)
 
 
 class WorkflowSyncTests(unittest.TestCase):

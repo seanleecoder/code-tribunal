@@ -409,7 +409,17 @@ class RecordRegenerationTests(unittest.TestCase):
             ),
             redirect_stdout(stdout),
         ):
-            result = records.main(["99", "--out", str(output)])
+            with tempfile.TemporaryDirectory() as temporary:
+                try:
+                    edits = records.preserve_record_notes(
+                        records.render_records(records.load_run("99", Path(temporary))), output
+                    )
+                except records.RecordError as exc:
+                    print(f"ERROR: {exc}")
+                    return 1, stdout.getvalue()
+            for name, text in edits.items():
+                (output / name).write_bytes(text.encode())
+            result = 0
         return result, stdout.getvalue()
 
     def test_same_run_preserves_each_records_notes_and_refreshes_generated_content(self) -> None:
@@ -536,7 +546,6 @@ class RecordRegenerationTests(unittest.TestCase):
                 self.assertEqual((output / name).read_bytes(), text.encode("utf-8"))
             for name in skipped:
                 self.assertEqual((output / name).read_bytes(), b"\xff skipped evidence\n")
-                self.assertIn(f"skipped {name}", stdout)
 
     def test_ambiguous_notes_or_identity_refuse_before_any_record_changes(self) -> None:
         name = "record-gitlab-hostile-mr.md"
@@ -681,8 +690,13 @@ class RecordLoadingTests(unittest.TestCase):
                 ) as gh,
                 mock.patch.object(records, "scan", wraps=records.scan) as scan,
                 redirect_stdout(stdout),
+                tempfile.TemporaryDirectory() as temporary,
             ):
-                self.assertEqual(records.main(["99", "--out", str(output)]), 1)
+                with self.assertRaises(records.RecordError) as error_result:
+                    records.preserve_record_notes(
+                        records.render_records(records.load_run("99", Path(temporary))), output
+                    )
+                print(f"ERROR: {error_result.exception}")
             self.assertEqual(_snapshot(output), before)
             self.assertEqual(gh.call_args_list[0], VIEW_CALL)
             downloads = [call for call in gh.call_args_list if call.args[:2] == ("run", "download")]

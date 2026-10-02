@@ -9,9 +9,9 @@
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "2.0.2",
+  "release_version": "2.1.0",
   "runtime_source": null,
-  "schema_version": "code_tribunal.release_inputs.v2",
+  "schema_version": "code_tribunal.release_inputs.v3",
   "status": "draft",
   "verification": {
     "ci_run_id": null,
