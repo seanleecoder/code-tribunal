@@ -58,24 +58,37 @@ def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None
         )
 
 
-def _github_job_containers(text: str) -> dict[str, str]:
-    """Return job-level containers without coupling validation to raw pin counts."""
-    containers: dict[str, str] = {}
+def _github_job_containers(text: str) -> dict[str, tuple[int, str]]:
+    """Return each registered job's zero-based line index and container value."""
+    containers: dict[str, tuple[int, str]] = {}
     current_job: str | None = None
     in_jobs = False
-    for line in text.splitlines():
+    for index, line in enumerate(text.splitlines()):
         if line == "jobs:":
             in_jobs = True
             continue
         if not in_jobs:
+            continue
+        if line and not line.startswith(" "):
+            in_jobs = False
+            current_job = None
             continue
         job_match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
         if job_match:
             current_job = job_match.group(1)
             continue
         container_match = re.fullmatch(r"    container:\s+(\S+)", line)
-        if container_match and current_job is not None:
-            containers[current_job] = container_match.group(1)
+        if line.startswith("    container:"):
+            if (
+                container_match is None or current_job not in GITHUB_CONTAINER_ROLES
+                or current_job in containers
+            ):
+                raise ReleaseValidationError("unexpected or duplicate GitHub container job")
+            containers[current_job] = (index, container_match.group(1))
+    if set(containers) != set(GITHUB_CONTAINER_ROLES):
+        raise ReleaseValidationError(
+            "GitHub template container jobs do not match the release role registry"
+        )
     return containers
 
 
@@ -94,13 +107,9 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
     expected_refs = {role: image_ref(image, runtime_source) for role, image in images.items()}
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
     containers = _github_job_containers(canonical)
-    if set(containers) != set(GITHUB_CONTAINER_ROLES):
-        raise ReleaseValidationError(
-            "GitHub template container jobs do not match the release role registry"
-        )
     mismatched_jobs = [
         job for job, role in GITHUB_CONTAINER_ROLES.items()
-        if containers[job] != expected_refs[role]
+        if containers[job][1] != expected_refs[role]
     ]
     if mismatched_jobs:
         raise ReleaseValidationError(

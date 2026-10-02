@@ -297,9 +297,87 @@ class ReleaseFinalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "tag the active release"):
             tool.open_next(self.root, "9.9.10")
         _git(self.root, "tag", f"v{VERSION}")
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "new, untagged"):
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "strictly higher"):
             tool.open_next(self.root, VERSION)
         self.assertNotEqual(release_commit, self.runtime_source)
+
+    def test_next_draft_requires_semver_progression_and_an_untagged_version(self) -> None:
+        tool.repin(self.root, self.run)
+        self._finalize()
+        self._commit_release()
+        _git(self.root, "tag", f"v{VERSION}")
+        _git(self.root, "tag", "v10.0.1")
+        for version in ("9.9.8", VERSION, "9.9.9-rc.1", "1.0.0", "10.0.1"):
+            with self.subTest(version=version):
+                before = _snapshot(self.root)
+                with self.assertRaises(tool.ReleaseValidationError):
+                    tool.open_next(self.root, version)
+                self.assertEqual(_snapshot(self.root), before)
+        active = (self.root / "release/release-inputs.json").read_bytes()
+        for version in ("9.9.10", "10.0.0", "9.9.10-alpha.1"):
+            with self.subTest(version=version):
+                tool.open_next(self.root, version)
+                data = tool.load_json(self.root / "release/release-inputs.json")
+                self.assertEqual(data["release_version"], version)
+                (self.root / "release/release-inputs.json").write_bytes(active)
+        data = json.loads(active)
+        data["release_version"] = "9.9.9-rc.1"
+        path = self.root / "release/release-inputs.json"
+        prerelease = tool.canonical_json_bytes(data)
+        path.write_bytes(prerelease)
+        (self.root / "release/9.9.9-rc.1.md").write_bytes(
+            (self.root / f"release/{VERSION}.md").read_bytes()
+        )
+        _git(self.root, "tag", "v9.9.9-rc.1")
+        _git(self.root, "tag", "-d", f"v{VERSION}")
+        for version in ("9.9.9-rc.2", VERSION):
+            with self.subTest(version=version):
+                tool.open_next(self.root, version)
+                path.write_bytes(prerelease)
+
+    def test_finalization_bounds_untracked_paths_and_renders_candidate_once(self) -> None:
+        tool.repin(self.root, self.run)
+        # Permitted evidence remains untracked until the operator reviews and commits it.
+        for filename in ("new runtime.py", "new\nruntime.py"):
+            forbidden = self.root / filename
+            forbidden.write_text("untracked runtime change\n")
+            before = _snapshot(self.root)
+            with self.subTest(filename=filename), self.assertRaisesRegex(
+                tool.ReleaseValidationError, "disallowed paths"
+            ):
+                self._finalize()
+            self.assertEqual(_snapshot(self.root), before)
+            forbidden.unlink()
+        _git(self.root, "config", "core.quotepath", "true")
+        ignored = self.root / "scratch.py"
+        ignored.write_text("ignored local scratch\n")
+        _git(self.root, "config", "core.excludesFile", str(self.root / ".git/fixture-ignore"))
+        (self.root / ".git/fixture-ignore").write_text("scratch.py\n")
+        with mock.patch.object(tool, "render_records", wraps=tool.render_records) as render:
+            self._finalize()
+        render.assert_called_once_with(self.run)
+
+    def test_shared_container_parser_rejects_malformed_repin_without_writes(self) -> None:
+        path = self.root / "ai-review/ci/review.github-actions.yml"
+        original = path.read_text()
+        pin = next(line for line in original.splitlines() if line.startswith("    container:"))
+        for invalid in (
+            original.replace(pin + "\n", "", 1),
+            original.replace(pin, pin + "\n" + pin, 1),
+            original + "\n  unexpected:\n" + pin + "\n",
+            original.replace(pin, "    container:", 1),
+        ):
+            with self.subTest(invalid=invalid):
+                path.write_text(invalid)
+                before = _snapshot(self.root)
+                with self.assertRaises(tool.ReleaseValidationError):
+                    tool.repin(self.root, self.run)
+                self.assertEqual(_snapshot(self.root), before)
+        path.write_text(original)
+        tool.repin(self.root, self.run)
+        self.assertEqual(
+            path.read_bytes(), (self.root / ".github/workflows/ai-review.yml").read_bytes()
+        )
 
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
