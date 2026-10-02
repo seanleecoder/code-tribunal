@@ -66,41 +66,6 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
         exclusion = calls[2].index("--exclude")
         self.assertEqual(calls[2][exclusion + 1], self.checker.RELEASE_EXCLUSION)
 
-    def test_draft_convention_suggests_pinned_urls_and_rejects_wrong_tags_or_escapes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            note = Path(tmp) / "9.9.9.md"
-            prefix = f"https://github.com/{self.checker.REPOSITORY}/blob/v9.9.9/"
-            for target, expected in (
-                ("../docs/guide.md?view=1#intro", prefix + "docs/guide.md?view=1#intro"),
-                ("/docs/guide.md", prefix + "docs/guide.md"),
-                ("other.md", prefix + "release/other.md"),
-            ):
-                with self.subTest(target=target):
-                    note.write_text(f'[guide](<{target}> "Guide")')
-                    with self.assertRaises(self.checker.LinkCheckError) as error:
-                        self.checker._check_draft_destinations(note)
-                    self.assertIn(expected, str(error.exception))
-            for target in (
-                prefix.replace("v9.9.9", "main") + "docs/guide.md",
-                prefix.replace("v9.9.9", "v9.9.8") + "docs/guide.md",
-                prefix + "../../outside.md", prefix + "%2e%2e/outside.md",
-                prefix + "%2foutside.md", prefix,
-                prefix.replace("github.com", "GitHub.Com").replace("v9.9.9", "main") + "a.md",
-            ):
-                with self.subTest(target=target):
-                    note.write_text(f"[guide]({target})")
-                    with self.assertRaisesRegex(
-                        self.checker.LinkCheckError, "repository blob link",
-                    ):
-                        self.checker._check_draft_destinations(note)
-            note.write_text(
-                f'[guide](<{prefix}docs/guide.md#intro> "Title") '
-                '[anchor](#scope) [external](https://example.test/)\n'
-                '```md\n[relative](../example.md)\n```\n'
-                '~~~~\n[wrong](https://github.com/example/repo/blob/main/a.md)\n~~~~\n'
-            )
-            self.checker._check_draft_destinations(note)
-
     def test_exact_draft_and_placeholder_remaps_do_not_check_historical_conventions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -145,13 +110,18 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
             template.write_text(f"[placeholder]({prefix}vX.Y.Z/docs/guide.md#valid-anchor)\n")
             inventory = {"link-checked": ("release/9.9.9.md", "release/TEMPLATE.md"),
                          "released": ()}
-            for destination, succeeds in (
-                ("docs/guide.md#valid-anchor", True),
-                ("docs/missing.md", False),
-                ("docs/guide.md#missing-anchor", False),
+            for destination, succeeds, reference in (
+                ("docs/guide.md#valid-anchor", True, False),
+                ("docs/missing.md", False, False),
+                ("docs/guide.md#missing-anchor", False, False),
+                ("docs/guide.md#valid-anchor", True, True),
+                ("docs/missing.md", False, True),
+                ("docs/guide.md#missing-anchor", False, True),
             ):
-                with self.subTest(destination=destination):
-                    note.write_text(f"[guide]({prefix}v9.9.9/{destination})\n")
+                with self.subTest(destination=destination, reference=reference):
+                    target = f"{prefix}v9.9.9/{destination}"
+                    note.write_text(f"[guide][ref]\n[ref]: <{target}>\n" if reference
+                                    else f"[guide]({target})\n")
                     with (mock.patch.object(self.checker, "ROOT", root),
                           mock.patch.object(self.checker, "_inventories", return_value=inventory)):
                         if succeeds:

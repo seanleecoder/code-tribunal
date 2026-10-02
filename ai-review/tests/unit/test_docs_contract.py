@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +26,83 @@ def _load_docs_checker():
     "repository-only documentation checker is absent from the runtime image",
 )
 class DocumentationContractTests(unittest.TestCase):
+    def test_draft_destinations_check_inline_links_and_reference_definitions(self) -> None:
+        checker = _load_docs_checker()
+        note = checker.ROOT / "release/9.9.9.md"
+        prefix = f"https://github.com/{checker.REPOSITORY}/blob/v9.9.9/"
+        for syntax in ('[guide](<{target}> "Guide")', '[guide][ref]\n[ref]: <{target}> "Guide"',
+                       '[ref]:\n  {target}'):
+            for target, expected in (
+                ("../docs/guide.md?view=1#intro", prefix + "docs/guide.md?view=1#intro"),
+                ("/docs/guide.md", prefix + "docs/guide.md"),
+                ("other.md", prefix + "release/other.md"),
+            ):
+                with self.subTest(syntax=syntax, target=target):
+                    issues = checker._release_note_destination_issues(note, syntax.format(
+                        target=target,
+                    ))
+                    self.assertEqual(len(issues), 1)
+                    self.assertIn(expected, issues[0])
+            for target in (
+                prefix.replace("v9.9.9", "main") + "docs/guide.md",
+                prefix.replace("v9.9.9", "v9.9.8") + "docs/guide.md",
+                prefix + "../../outside.md", prefix + "%2e%2e/outside.md",
+                prefix + "%2foutside.md", prefix,
+                prefix.replace("github.com", "GitHub.Com").replace("v9.9.9", "main") + "a.md",
+            ):
+                with self.subTest(syntax=syntax, target=target):
+                    issues = checker._release_note_destination_issues(note, syntax.format(
+                        target=target,
+                    ))
+                    self.assertEqual(len(issues), 1)
+                    self.assertIn("repository blob link", issues[0])
+            self.assertEqual(checker._release_note_destination_issues(note, syntax.format(
+                target=prefix + "docs/guide.md#intro",
+            )), [])
+
+    def test_draft_destinations_reject_html_links_and_ignore_fenced_examples(self) -> None:
+        checker = _load_docs_checker()
+        note = checker.ROOT / "release/9.9.9.md"
+        for html in ('<a href="../docs/guide.md">Guide</a>', '<img src="image.png">',
+                     "<A HREF='https://example.test'>Guide</A>", '<img\n src = "image.png" />'):
+            with self.subTest(html=html):
+                issues = checker._release_note_destination_issues(note, html)
+                self.assertEqual(len(issues), 1)
+                self.assertIn("raw HTML href/src", issues[0])
+        text = (
+            '[anchor](#scope) [external](https://example.test/)\n'
+            '[ref]: #scope\n[external]: https://example.test\n'
+            '<br> <a id="scope" title="some href=example">Scope</a>\n'
+            '```md\n[relative](../example.md)\n[ref]: ../example.md\n'
+            '<img src="example.png">\n```\n'
+            '~~~~\n[wrong](https://github.com/example/repo/blob/main/a.md)\n~~~~\n'
+        )
+        self.assertEqual(checker._release_note_destination_issues(note, text), [])
+
+    def test_find_issues_checks_current_draft_conventions_and_excludes_frozen_notes(self) -> None:
+        checker = _load_docs_checker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "release").mkdir()
+            for name in ("1.0.0", "9.9.9", "TEMPLATE"):
+                (root / f"release/{name}.md").write_text('[ref]: ../missing.md\n')
+            for args in (("init", "-q"), ("add", ".")):
+                subprocess.run(["git", "-C", str(root), *args], check=True)
+            with (
+                mock.patch.object(checker, "ROOT", root),
+                mock.patch.object(checker, "tag_exists", side_effect=lambda tag, _root:
+                                  tag == "v1.0.0"),
+                mock.patch.object(checker, "_reference_issues", return_value=[]),
+            ):
+                for tags_resolvable in (True, False):
+                    with self.subTest(tags_resolvable=tags_resolvable), mock.patch.object(
+                        checker, "any_tags_resolvable", return_value=tags_resolvable,
+                    ):
+                        issues = checker.find_issues()
+                    self.assertEqual(len(issues), int(tags_resolvable))
+                    if tags_resolvable:
+                        self.assertIn("release/9.9.9.md: relative release-note link", issues[0])
+
     def test_import_does_not_query_git(self) -> None:
         with mock.patch("subprocess.run") as run:
             load_repository_script("check_docs_without_git", _DOCS_CHECK)

@@ -13,7 +13,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 from ai_review.canonical import json_loads_no_duplicates
 from build_release_manifest import build_manifest
@@ -48,12 +48,23 @@ from release_common import (
 from validate_candidate_identity import REPOSITORY
 
 
-def _git(root: Path, *args: str, strip: bool = True) -> str:
+@overload
+def _git(root: Path, *args: str, strip: bool = True, text: Literal[True] = True) -> str: ...
+
+
+@overload
+def _git(root: Path, *args: str, strip: bool = True, text: Literal[False]) -> bytes: ...
+
+
+def _git(root: Path, *args: str, strip: bool = True, text: bool = True) -> str | bytes:
     result = subprocess.run(
-        ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
+        ["git", "-C", str(root), *args], capture_output=True, text=text, check=False
     )
     if result.returncode:
-        raise ReleaseValidationError(result.stderr.strip() or f"git {args[0]} failed")
+        error = result.stderr if text else result.stderr.decode("utf-8", errors="replace")
+        raise ReleaseValidationError(error.strip() or f"git {args[0]} failed")
+    if not text:
+        return result.stdout
     return result.stdout.strip() if strip else result.stdout
 
 
@@ -442,15 +453,8 @@ def publish(
         raise ReleaseValidationError("tagged release inputs require an object with release_version")
     if inputs["release_version"] != version:
         raise ReleaseValidationError("tag must match the tagged release inputs")
-    committed_notes = subprocess.run(
-        ["git", "-C", str(root), "show", f"{release_commit}:release/{version}.md"],
-        capture_output=True, check=False,
-    )
-    if committed_notes.returncode:
-        raise ReleaseValidationError(
-            committed_notes.stderr.decode("utf-8", errors="replace").strip()
-            or "cannot read committed release notes"
-        )
+    # Capture original-root bytes before any signed-tag code executes.
+    committed_notes = _git(root, "show", f"{release_commit}:release/{version}.md", text=False)
     out = out.absolute()
     with tempfile.TemporaryDirectory() as temporary:
         tree = Path(temporary) / "tag"
@@ -478,7 +482,7 @@ def publish(
         if sha256_bytes(manifest.read_bytes()) != digest:
             raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
         notes = out / f"code-tribunal-{tag}-release-notes.md"
-        notes.write_bytes(committed_notes.stdout)
+        notes.write_bytes(committed_notes)
     if github_output is not None:
         with github_output.open("a", encoding="utf-8") as output:
             output.write(f"tag_object={tag_object}\n")
@@ -529,8 +533,6 @@ def main(argv: list[str] | None = None) -> int:
             outputs = manifest_assets(ROOT, args.release_commit, args.out)
         elif args.command == "publish":
             outputs = publish(ROOT, args.tag, args.out, args.github_output)
-        elif args.command == "release-notes":
-            outputs = (release_notes(ROOT, args.tag, args.out),)
         elif args.command == "publication-flags":
             publication_flags(args.tag, args.github_output)
             outputs = (args.github_output,)

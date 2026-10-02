@@ -6,14 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import platform
-import posixpath
 import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -21,7 +19,7 @@ SCRIPTS = Path(__file__).resolve().parent
 # Support importlib/module loading when scripts/ is not already on sys.path.
 sys.path.insert(0, str(SCRIPTS))
 
-from check_docs import _without_fenced_code, markdown_inventories  # noqa: E402
+from check_docs import markdown_inventories  # noqa: E402
 from release_common import RELEASE_VERSION_RE  # noqa: E402
 from validate_candidate_identity import REPOSITORY  # noqa: E402
 
@@ -161,37 +159,6 @@ def _write_inventory(directory: Path, name: str, paths: tuple[str, ...]) -> Path
     return destination
 
 
-def _check_draft_destinations(path: Path) -> None:
-    """Check the inline authoring convention; Lychee verifies paths and anchors."""
-    prefix = f"https://github.com/{REPOSITORY}/blob/v{path.stem}/"
-    text = _without_fenced_code(path.read_text(encoding="utf-8"))
-    for match in re.finditer(r"\]\([ \t]*(?:<([^<>\r\n]+)>|([^\s()]+))", text):
-        target = match.group(1) or match.group(2)
-        parts = urllib.parse.urlsplit(target)
-        if not parts.scheme and not parts.netloc and parts.path:
-            relative = posixpath.normpath(
-                parts.path.lstrip("/") if parts.path.startswith("/")
-                else posixpath.join("release", parts.path)
-            )
-            suggestion = urllib.parse.urlunsplit((
-                "https", "github.com", f"/{REPOSITORY}/blob/v{path.stem}/{relative}",
-                parts.query, parts.fragment,
-            ))
-            raise LinkCheckError(f"{path}: relative release-note link {target!r}; use {suggestion}")
-        repository_blob = f"/{REPOSITORY}/blob/"
-        if (parts.hostname == "github.com"
-                and parts.path.lower().startswith(repository_blob.lower())):
-            version, _, destination = parts.path[len(repository_blob):].partition("/")
-            decoded = urllib.parse.unquote(destination)
-            bounded = posixpath.normpath(decoded)
-            if (not target.startswith(prefix) or version != f"v{path.stem}"
-                    or not destination or decoded.startswith("/")
-                    or bounded == ".." or bounded.startswith("../")):
-                raise LinkCheckError(
-                    f"{path}: repository blob link must use {prefix} and stay within the repository"
-                )
-
-
 def check_links(*, lychee: Path | None = None) -> None:
     pin = load_pin()
     executable = _lychee_path(lychee)
@@ -206,7 +173,6 @@ def check_links(*, lychee: Path | None = None) -> None:
         if path.parent != ROOT / "release":
             continue
         if RELEASE_VERSION_RE.fullmatch(path.stem):
-            _check_draft_destinations(path)
             tag = f"v{path.stem}"
         elif path.name == "TEMPLATE.md":
             tag = "vX.Y.Z"

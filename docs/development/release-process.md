@@ -10,8 +10,10 @@ Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/T
 Replace its `vX.Y.Z` link placeholders with the notes' own version. Author repository
 links as absolute pinned URLs, for example
 `https://github.com/seanleecoder/code-tribunal/blob/v2.0.2/docs/evidence/record-candidate-canary.md`.
-The draft convention check rejects relative inline destinations and repository blob
-links using another version or escaping the repository, outside fenced examples.
+The documentation convention check applies to inline destinations and reference
+definitions outside fenced examples. It rejects relative destinations and
+repository blob links using another version or escaping the repository, as well
+as raw HTML tags with `href` or `src` attributes.
 Local anchors and external URLs are allowed. `make docs-check` uses
 [Lychee URL remapping](https://lychee.cli.rs/recipes/local-folder/) to verify each
 draft's exact tag prefix against local files, including anchors; the template's
@@ -117,8 +119,8 @@ and remove completed spec files from the active
    and extracts the signed checksum before executing any tag code. The signed
    tag rebuilds its certificate: its own `release_finalize.py manifest` command
    runs in a disposable clone checked out detached at the verified commit, using
-   the selected Python environment with an explicit working directory and Python path and no
-   inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
+   the selected Python environment with an explicit working directory and Python
+   path and no inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
    environment; it does not isolate it from files or other same-user processes.
    The certificate step receives no `GH_TOKEN` and makes no GitHub API calls.
    Main reads committed notes bytes through the original checkout before any tag
@@ -131,8 +133,8 @@ and remove completed spec files from the active
    creates no worktree registrations in the source repository. Its temporary
    directory is removed on success or failure; operator registrations are untouched.
    The read-only job installs dependencies and retains the manifest, checksum,
-   and committed notes in a one-day workflow
-   artifact. The write-enabled job downloads those files and creates the release
+   and committed notes in a one-day workflow artifact. The write-enabled job
+   downloads those files and creates the release
    without checking out or executing repository code or installing dependencies.
    It attaches only the manifest and checksum; it carries no signing key.
    Immediately before release creation, the remote tag reference must still match

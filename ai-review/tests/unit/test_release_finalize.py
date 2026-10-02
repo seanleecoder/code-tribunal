@@ -1102,24 +1102,62 @@ class ReleasePublicationTests(unittest.TestCase):
                 manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
                 manifest.write_bytes(b"manifest fixture")
                 data = payload.encode("utf-8")
+                reads = []
+
+                def git(repository, *args, data=data, root=root, reads=reads, **kwargs):
+                    if args[0] == "show":
+                        if args[-1].endswith("release-inputs.json"):
+                            return '{"release_version":"1.0.0"}'
+                        self.assertEqual(repository, root)
+                        self.assertEqual(args[-1], "b" * 40 + ":release/1.0.0.md")
+                        self.assertFalse(kwargs["text"])
+                        reads.append(args)
+                        return data
+                    self.assertEqual(len(reads), 1)
+                    return ""
+
+                def manifest_command(command, reads=reads, **kwargs):
+                    self.assertEqual(len(reads), 1)
+                    self.assertEqual(command[0], tool.sys.executable)
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
                 with (
                     mock.patch.object(tool, "_verify_release_tag", return_value=(
                         "a" * 40, "b" * 40, tool.sha256_bytes(manifest.read_bytes()),
                     )),
-                    mock.patch.object(tool, "_git", return_value='{"release_version":"1.0.0"}'),
-                    mock.patch.object(
-                        tool.subprocess, "run",
-                        side_effect=lambda command, _data=data, **kwargs:
-                        subprocess.CompletedProcess(command, 0, _data, b"")
-                        if command[0] == "git" else subprocess.CompletedProcess(command, 0, "", ""),
-                    ) as processes,
-                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
+                    mock.patch.object(tool, "_git", side_effect=git),
+                    mock.patch.object(tool.subprocess, "run", side_effect=manifest_command),
                 ):
                     notes = tool.publish(root, "v1.0.0", root)[2]
                 self.assertEqual(notes.read_bytes(), data)
-                read = processes.call_args_list[0]
-                self.assertEqual(read.args[0][-1], "b" * 40 + ":release/1.0.0.md")
-                self.assertFalse(read.kwargs.get("text", False))
+                self.assertEqual(len(reads), 1)
+
+    def test_git_binary_mode_preserves_bytes_and_text_mode_controls_stripping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-q")
+            blob = root / "blob"
+            payload = b" \xff Unicode: \xc3\xbc\r\n\r\n "
+            blob.write_bytes(payload)
+            oid = _git(root, "hash-object", "-w", str(blob))
+            for strip in (True, False):
+                self.assertEqual(tool._git(root, "show", oid, text=False, strip=strip), payload)
+            blob.write_bytes(b"  text\r\n\r\n")
+            oid = _git(root, "hash-object", "-w", str(blob))
+            self.assertEqual(tool._git(root, "show", oid), "text")
+            self.assertEqual(tool._git(root, "show", oid, strip=False), "  text\n\n")
+            with self.assertRaises(tool.ReleaseValidationError):
+                tool._git(root, "show", "missing-revision", text=False)
+
+    def test_git_binary_errors_decode_with_replacement_and_retain_fallback(self) -> None:
+        for stderr, message in (
+            (b"bad \xff revision\n", "bad \ufffd revision"), (b"", "git show failed"),
+        ):
+            with self.subTest(stderr=stderr), mock.patch.object(
+                tool.subprocess, "run",
+                return_value=subprocess.CompletedProcess([], 1, b"", stderr),
+            ), self.assertRaisesRegex(tool.ReleaseValidationError, message):
+                tool._git(Path("."), "show", "missing", text=False)
 
     def test_publication_checks_remote_tag_object_before_creation(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
