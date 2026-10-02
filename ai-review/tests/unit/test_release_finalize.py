@@ -408,9 +408,11 @@ class ReleaseFinalizationTests(unittest.TestCase):
             tool.repin(self.root, replace(self.run, summaries=summaries))
         self.assertEqual(_snapshot(self.root), before)
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
-        path.write_text(path.read_text() + '\n  AI_REVIEW_BASE_IMAGE: "duplicate"\n')
+        path.write_text(
+            path.read_text() + '\njob:\n  variables:\n    AI_REVIEW_BASE_IMAGE: "duplicate"\n'
+        )
         before = _snapshot(self.root)
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "exactly one GitLab"):
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "outside top-level variables"):
             tool.repin(self.root, self.run)
         self.assertEqual(_snapshot(self.root), before)
 
@@ -510,6 +512,8 @@ class ReleaseFinalizationTests(unittest.TestCase):
     def test_shared_gitlab_parser_refuses_missing_duplicate_or_malformed_pins_without_writes(
         self,
     ) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
         for key, (index, value) in tool.gitlab_template_pins(original).items():
@@ -520,15 +524,170 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 original.replace(pin, f"  {key}: {value}", 1),
                 original.replace(pin, f'  {key}: ""', 1),
                 original.replace(pin, f'  {key} : "{value}"', 1),
-                original + f'\n  "{key}": "{value}"\n',
+                original + f'\njob:\n  variables:\n    "{key}": "{value}"\n',
             ):
                 with self.subTest(key=key, invalid=invalid):
                     path.write_text(invalid)
                     before = _snapshot(self.root)
-                    with self.assertRaises(tool.ReleaseValidationError):
+                    with self.assertRaises(tool.ReleaseValidationError) as repin_error:
                         tool.repin(self.root, self.run)
                     self.assertEqual(_snapshot(self.root), before)
+                    with self.assertRaises(tool.ReleaseValidationError) as validation_error:
+                        tool.validate_template_pins(
+                            data["images"], data["runtime_source"], self.root,
+                        )
+                    self.assertEqual(str(repin_error.exception), str(validation_error.exception))
+                    self.assertEqual(_snapshot(self.root), before)
         path.write_text(original)
+
+    def test_gitlab_scope_refusals_match_validation_and_repin_without_writes(self) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        invalid_templates = [
+            (original + "\nvariables:\n", "duplicate top-level"),
+            (original.replace("variables:\n", "variables :\n", 1), "canonical top-level"),
+            (original.replace("variables:\n", '"variables":\n', 1), "canonical top-level"),
+            (original.replace("variables:\n", "variables: {}\n", 1), "canonical top-level"),
+            (original.replace("variables:\n", "  variables:\n", 1), "outside top-level"),
+        ]
+        for _key, (index, _value) in tool.gitlab_template_pins(original).items():
+            pin = original.splitlines()[index]
+            removed = original.replace(pin + "\n", "", 1)
+            for indent in ("", " ", "   ", "    ", "\t", " \t"):
+                invalid_templates.append((
+                    original.replace(pin, indent + pin.lstrip(), 1), "outside top-level",
+                ))
+            for prefix in (removed, original):
+                invalid_templates.append((
+                    prefix + "\njob:\n  variables:\n  " + pin + "\n", "outside top-level",
+                ))
+                if prefix == removed:
+                    invalid_templates.append((
+                        prefix + "\njob:\n" + pin + "\n", "exactly one GitLab",
+                    ))
+                invalid_templates.append((
+                    prefix + "\njob:\n  variables: {" + pin.strip() + "}\n",
+                    "outside top-level",
+                ))
+            invalid_templates.append((
+                original.replace(pin, "  # " + pin.lstrip(), 1), "exactly one GitLab",
+            ))
+        for invalid, _message in invalid_templates:
+            with self.subTest(invalid=invalid):
+                path.write_text(invalid)
+                before = _snapshot(self.root)
+                with self.assertRaises(tool.ReleaseValidationError) as validation:
+                    tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+                self.assertEqual(_snapshot(self.root), before)
+                with self.assertRaises(tool.ReleaseValidationError) as repinning:
+                    tool.repin(self.root, self.run)
+                self.assertEqual(str(validation.exception), str(repinning.exception))
+                self.assertEqual(_snapshot(self.root), before)
+        path.write_text(original)
+        tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+        tool.repin(self.root, self.run)
+
+    def test_yaml_variable_overrides_and_interpreted_values_refuse_without_writes(self) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        key = next(iter(tool.GITLAB_PIN_FIELDS))
+        index, value = tool.gitlab_template_pins(original)[key]
+        pin = original.splitlines()[index]
+        cases = [
+            original + f'\njob:\n  parallel:\n    matrix:\n      - {key}: "override"\n',
+            original + f'\nnested:\n  arbitrary:\n    mapping: {{{key}: "override"}}\n',
+            original + f'\n{key}: "override"\n',
+            original.replace("variables:\n", "variables: &pins\n", 1)
+            + '\njob:\n  parallel:\n    matrix: [*pins]\n',
+            original + f'\njob:\n  variables:\n    "{key}": "override"\n',
+            original + f'\njob:\n  variables:\n    ? {key}\n    : "override"\n',
+            original + f'\ndefaults: &pins {{{key}: "override"}}\n'
+            'job:\n  variables:\n    <<: *pins\n',
+            original + f'\njob:\n  variables: {{{key}: "override"}}\n',
+            original.replace(pin, pin.replace(value, r"escaped\nvalue"), 1),
+            original + '\ninvalid: [\n',
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                path.write_text(text)
+                before = _snapshot(self.root)
+                with self.assertRaises(tool.ReleaseValidationError) as validation:
+                    tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+                with self.assertRaises(tool.ReleaseValidationError) as repinning:
+                    tool.repin(self.root, self.run)
+                self.assertEqual(str(validation.exception), str(repinning.exception))
+                self.assertEqual(_snapshot(self.root), before)
+
+    def test_job_pin_inheritance_refusals_match_validation_and_repin_without_writes(self) -> None:
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        for name in ("job", ".hidden_template"):
+            for inherited in (False, [], *[
+                [pin for pin in tool.GITLAB_PIN_FIELDS if pin != omitted]
+                for omitted in tool.GITLAB_PIN_FIELDS
+            ]):
+                with self.subTest(name=name, inherited=inherited):
+                    path.write_text(original + yaml.safe_dump({name: {
+                        "inherit": {"variables": inherited}, "script": ["true"],
+                    }}))
+                    before = _snapshot(self.root)
+                    with self.assertRaisesRegex(
+                        tool.ReleaseValidationError, "must inherit"
+                    ) as valid:
+                        tool.validate_template_pins(
+                            data["images"], data["runtime_source"], self.root
+                        )
+                    with self.assertRaises(tool.ReleaseValidationError) as repinning:
+                        tool.repin(self.root, self.run)
+                    self.assertEqual(str(valid.exception), str(repinning.exception))
+                    self.assertEqual(_snapshot(self.root), before)
+
+    def test_canonical_pin_alias_is_checked_before_the_visited_object_guard(self) -> None:
+        text = (self.root / "ai-review/ci/review.gitlab-ci.yml").read_text()
+        text = text.replace("variables:\n", "variables: &pins\n", 1)
+        text += '\njob:\n  parallel:\n    matrix: [*pins]\n'
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "outside top-level variables"):
+            tool.gitlab_template_pins(text)
+
+    def test_job_pin_inheritance_permits_defaults_true_and_complete_lists(self) -> None:
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        for inheritance in (None, {}, {"variables": True},
+                            {"variables": [*tool.GITLAB_PIN_FIELDS, "ORDINARY"]}):
+            with self.subTest(inheritance=inheritance):
+                jobs = {name: {"script": ["true"]} for name in ("job", ".hidden_template")}
+                if inheritance is not None:
+                    for job in jobs.values():
+                        job["inherit"] = inheritance
+                path.write_text(original + yaml.safe_dump(jobs))
+                tool.repin(self.root, self.run)
+                data, _, _ = tool._candidate_inputs(self.root, self.run)
+                tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+
+    def test_yaml_interpolation_commas_and_recursive_aliases_are_not_overrides(self) -> None:
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        text = path.read_text()
+        key = next(iter(tool.GITLAB_PIN_FIELDS))
+        text += (f'\njob:\n  image: ${key}\n  variables:\n'
+                 f'    ORDINARY: "hello, {key}: value"\n'
+                 'recursive: &recursive [*recursive]\n'
+                 'recursive_mapping: &cycle {self: *cycle}\n')
+        # Repinning accepts arbitrary existing canonical strings before replacing them.
+        index, old_value = tool.gitlab_template_pins(text)[key]
+        text = text.replace(text.splitlines()[index], f'  {key}: "old, image"', 1)
+        path.write_text(text)
+        self.assertEqual(tool.gitlab_template_pins(text)[key][1], "old, image")
+        tool.repin(self.root, self.run)
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+        self.assertIn(f'image: ${key}', path.read_text())
+        self.assertNotEqual(old_value, "old, image")
 
     def test_shared_parsers_preserve_comments_and_repin_the_live_assignment_positions(self) -> None:
         github = self.root / "ai-review/ci/review.github-actions.yml"
@@ -541,6 +700,9 @@ class ReleaseFinalizationTests(unittest.TestCase):
             f'# {key}: "commented-{key}"\n' for key in tool.gitlab_template_pins(original)
         )
         original = comments + original
+        original = original.replace(
+            "variables:\n", "variables: # canonical pins\n# Column-zero comment in variables.\n", 1,
+        )
         # Inline comments and whitespace remain unchanged by the shared parser's repin.
         original = original.replace('  AI_REVIEW_TRUSTED_IMAGE_SHA:',
                                     '  AI_REVIEW_TRUSTED_IMAGE_SHA:   ')

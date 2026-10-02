@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
@@ -30,6 +31,11 @@ GITHUB_CONTAINER_ROLES = {
     "critique": "reviewer",
     "consensus": "base",
     "post": "base",
+}
+GITLAB_PIN_FIELDS = {
+    "AI_REVIEW_BASE_IMAGE": "base_image",
+    "AI_REVIEW_REVIEWER_IMAGE": "reviewer_image",
+    "AI_REVIEW_TRUSTED_IMAGE_SHA": "runtime_source",
 }
 
 EVIDENCE_DIR = Path("docs/evidence")
@@ -96,11 +102,67 @@ def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
 
 def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     """Return the three canonical assignments' zero-based positions and values."""
-    keys = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
-    key_pattern = "|".join(keys)
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ReleaseValidationError(f"cannot parse GitLab template YAML: {exc}") from exc
+    variables = document.get("variables") if isinstance(document, dict) else None
+    if not isinstance(variables, dict):
+        raise ReleaseValidationError("expected one canonical top-level GitLab variables block")
+
+    visited: set[int] = set()
+
+    def check_overrides(value: Any, *, canonical_variables: bool = False) -> None:
+        # Check each occurrence before cycle protection: an alias can reuse the
+        # canonical variables mapping at an overriding location.
+        if isinstance(value, dict) and not canonical_variables:
+            for pin in GITLAB_PIN_FIELDS:
+                if pin in value:
+                    raise ReleaseValidationError(
+                        f"GitLab pin outside top-level variables: {pin}"
+                    )
+        if not isinstance(value, (dict, list)) or id(value) in visited:
+            return
+        visited.add(id(value))
+        if isinstance(value, dict):
+            for key, child in value.items():
+                check_overrides(child, canonical_variables=value is document and key == "variables")
+        else:
+            for child in value:
+                check_overrides(child)
+
+    check_overrides(document)
+    for name, job in document.items():
+        if name == "variables" or not isinstance(job, dict):
+            continue
+        inheritance = job.get("inherit")
+        if not isinstance(inheritance, dict):
+            continue
+        inherited = inheritance.get("variables", True)
+        if inherited is False or (
+            isinstance(inherited, list) and any(pin not in inherited for pin in GITLAB_PIN_FIELDS)
+        ):
+            raise ReleaseValidationError(f"GitLab job {name} must inherit every registered pin")
+    key_pattern = "|".join(map(re.escape, GITLAB_PIN_FIELDS))
     pins: dict[str, tuple[int, str]] = {}
+    in_variables = False
+    blocks = 0
     for index, line in enumerate(text.splitlines()):
-        if line.lstrip().startswith("#"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if re.match(r'''["']?variables["']?[ \t]*:''', line):
+            if not re.fullmatch(r"variables:[ \t]*(?:#.*)?", line):
+                raise ReleaseValidationError(
+                    "expected one canonical top-level GitLab variables block"
+                )
+            blocks += 1
+            if blocks > 1:
+                raise ReleaseValidationError("duplicate top-level GitLab variables blocks")
+            in_variables = True
+            continue
+        if not line.startswith((" ", "\t")):
+            in_variables = False
+        if not in_variables:
             continue
         assignment = re.match(rf"[ \t]*[\"']?({key_pattern})\b", line)
         if assignment is None:
@@ -108,13 +170,17 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
         key = assignment.group(1)
         if key in pins:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
-        value = re.fullmatch(rf'[ \t]*{key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
+        value = re.fullmatch(rf'  {key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
         if value is None:
             raise ReleaseValidationError(f"malformed GitLab {key} pin")
         pins[key] = (index, value.group(1))
-    for key in keys:
-        if key not in pins:
+    if blocks != 1:
+        raise ReleaseValidationError("expected one canonical top-level GitLab variables block")
+    for key in GITLAB_PIN_FIELDS:
+        if key not in pins or key not in variables:
             raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
+        if pins[key][1] != variables[key]:
+            raise ReleaseValidationError(f"GitLab {key} pin differs from parsed YAML value")
     return pins
 
 
@@ -144,12 +210,11 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
         )
     gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
     pins = gitlab_template_pins(gitlab)
-    expected_pins = {
-        "AI_REVIEW_BASE_IMAGE": expected_refs["base"],
-        "AI_REVIEW_REVIEWER_IMAGE": expected_refs["reviewer"],
-        "AI_REVIEW_TRUSTED_IMAGE_SHA": runtime_source,
+    expected_fields = {
+        **{f"{role}_image": reference for role, reference in expected_refs.items()},
+        "runtime_source": runtime_source,
     }
-    if any(pins[key][1] != value for key, value in expected_pins.items()):
+    if any(pins[key][1] != expected_fields[field] for key, field in GITLAB_PIN_FIELDS.items()):
         raise ReleaseValidationError("GitLab template pins do not match release inputs")
 
 
