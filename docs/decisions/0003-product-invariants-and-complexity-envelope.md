@@ -29,8 +29,9 @@ The accepted product dimensions are:
   Code Tribunal verifies its own invocation and credential isolation;
 - one canonical GitHub workflow template and one mechanically synchronized
   installed copy;
-- `release/release-inputs.json` and its source-bound evidence records as release
-  authority.
+- `release/release-inputs.json` and its source-bound evidence records defining
+  candidate identity and selection, with the signed annotated tag committing the
+  released tree as amended by [ADR-0004](0004-signed-release-tree.md).
 
 A new accepted ADR is required before adding a fifth bundled reviewer, a third
 model stage or recursive critique, a third platform, a second state-backend
@@ -59,7 +60,7 @@ migration, and deletion.
 | Current open work | [`docs/improvement-specs/README.md`](../improvement-specs/README.md) |
 | Public compatibility surface | [architecture guide](../development/architecture.md#compatibility-boundary) |
 | Temporary compatibility paths | [compatibility register](../development/temporary-compatibility.md) |
-| Released identity and evidence | [`release/release-inputs.json`](../../release/release-inputs.json) and its cited [evidence records](../evidence/) |
+| Released identity and evidence | Signed annotated tag committing [`release/release-inputs.json`](../../release/release-inputs.json) and its cited [evidence records](../evidence/), [templates](../../ai-review/ci/), and [notes](../../release/), per [ADR-0004](0004-signed-release-tree.md) |
 
 ## Consequences
 

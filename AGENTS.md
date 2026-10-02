@@ -19,8 +19,9 @@ this file is the concise working map, not a replacement for the linked docs.
   Tribunal owns correct invocation, endpoint selection, environment scrubbing,
   and credential isolation.
 - There is one canonical GitHub template and one synchronized installation copy.
-  Release identity comes from `release/release-inputs.json` and source-bound
-  evidence records.
+  Release inputs and source-bound evidence describe the candidate; its signed
+  annotated tag commits the released tree, including inputs, evidence, templates,
+  and notes. See [ADR-0004](docs/decisions/0004-signed-release-tree.md).
 
 Adding a new product dimension — a reviewer, model stage, platform,
 state-backend family, public artifact family, plugin mechanism, decision

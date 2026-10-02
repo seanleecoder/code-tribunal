@@ -16,6 +16,11 @@ a current campaign decision.
 
 ## Decision
 
+This decision amends ADR-0003's release authority and source-of-truth map. Release
+inputs and cited evidence describe candidate identity and selection; the signed
+annotated tag commits the exact released tree. They form one release authority,
+not independent ledgers.
+
 Future releases use the signed annotated tag as the commitment to the complete
 release tree. They publish committed notes and no standalone manifest, checksum,
 or certificate assets. Current tooling supports only
@@ -42,15 +47,20 @@ The normal release sequence is:
 Preparation validates one canary load, generates evidence, synchronizes pins,
 activates inputs, promotes CHANGELOG, and finalizes notes before writing any
 files. It preserves handwritten content and same-identity operator notes.
-Repeating the same candidate preserves the release date; changing an active
-candidate is rejected.
+Repeating the same candidate before tagging preserves the release date; changing
+an active candidate is rejected. Preparation refuses a version whose tag already
+exists, before downloading a canary or writing files.
 
 Source-bound passing evidence, image provenance, `R/P` separation, release-path
 restrictions, canonical-template parity, and local signing remain mandatory.
-The final commit must descend from `R` and change only release paths, including
-staged and pending changes during preparation and quality checks. Any merge
-strategy is acceptable when its final commit satisfies these ancestry, path, and
-CI requirements; a merge commit is no longer mandatory.
+The final commit must descend from `R` and change only release paths. Before
+tagging, preparation and quality checks include staged and pending changes. Once
+the version tag exists, quality requires matching active inputs and tagged `P`
+ancestry to the checkout, and applies release-path restrictions to `R → P` rather
+than subsequent ordinary changes. Evidence bindings, template pins/parity, and
+frozen notes remain checked. Any merge strategy is acceptable when its final
+commit satisfies these ancestry, path, and CI requirements; a merge commit is no
+longer mandatory.
 
 Publication runs protected-main code with no preparation dependencies or tag-code
 execution. It captures the annotated tag object, verifies its SSH signature using
@@ -59,8 +69,9 @@ protected main's signer registry, validates the committed v3 release tree and
 `P`. Pending or failed CI requires a retry from main after CI succeeds. Notes are
 read by captured commit SHA and retain their bytes. Publication is serialized,
 retains prerelease/latest classification, and rechecks the remote tag object
-immediately before creation. An existing release is a no-op; publication never
-edits historical bodies or assets.
+immediately before creation. An existing published release is a no-op. An existing
+draft aborts with instructions to resolve it and retry; publication never promotes
+or edits drafts, historical bodies, or assets.
 
 ## Consequences
 
