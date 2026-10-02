@@ -16,6 +16,7 @@ permissions:
 concurrency:
   group: release-publication
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validate:
@@ -25,6 +26,7 @@ jobs:
     outputs:
       prerelease: ${{ steps.certificate.outputs.prerelease }}
       latest: ${{ steps.certificate.outputs.latest }}
+      tag_object: ${{ steps.certificate.outputs.tag_object }}
     steps:
       - name: Require manual dispatch from main
         env:
@@ -43,12 +45,6 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Refresh protected main validation code
-        run: |
-          set -euo pipefail
-          git fetch origin +refs/heads/main:refs/remotes/origin/main --tags
-          git checkout --detach refs/remotes/origin/main
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -98,6 +94,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
           LATEST: ${{ needs.validate.outputs.latest }}
+          TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}
         run: |
           set -euo pipefail
           case "$PRERELEASE:$LATEST" in
@@ -106,6 +103,15 @@ jobs:
             false:true) flags=(--latest) ;;
             *) echo 'Invalid validated publication flags' >&2; exit 1 ;;
           esac
+          if [[ ! "$TAG_OBJECT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Invalid validated tag object' >&2
+            exit 1
+          fi
+          remote_object=$(gh api "repos/$RELEASE_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')
+          if [[ "$remote_object" != "$TAG_OBJECT" ]]; then
+            echo 'Remote tag changed after validation' >&2
+            exit 1
+          fi
           gh release create "$RELEASE_TAG" \
             "$RUNNER_TEMP/release/code-tribunal-${RELEASE_TAG}-release-manifest.json" \
             "$RUNNER_TEMP/release/code-tribunal-${RELEASE_TAG}-release-manifest.json.sha256" \

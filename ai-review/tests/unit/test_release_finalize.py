@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -68,6 +70,20 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # A runnable signed tag must carry its own certificate implementation.
+        for directory in ("scripts", "ai-review/src"):
+            shutil.copytree(REPO / directory, self.root / directory,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        script = self.root / "scripts/release_finalize.py"
+        content = script.read_text().replace(
+            "from __future__ import annotations\n",
+            "from __future__ import annotations\n\n"
+            "import os\n"
+            "assert not any(k.startswith(('GH_', 'GITHUB_')) for k in os.environ)\n"
+            "assert os.getcwd() == "
+            "str(__import__('pathlib').Path(__file__).resolve().parents[1])\n",
+        )
+        script.write_text(content)
         for relative in (
             "ai-review/ci/review.github-actions.yml",
             "ai-review/ci/review.gitlab-ci.yml",
@@ -381,6 +397,9 @@ class ReleaseFinalizationTests(unittest.TestCase):
 
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
+        gh = mock.patch.object(tool, "_gh", return_value="[[]]")
+        gh.start()
+        self.addCleanup(gh.stop)
         # Generate a fixture-only SSH key; the test never reads an operator key.
         key_directory = tempfile.TemporaryDirectory()
         self.addCleanup(key_directory.cleanup)
@@ -415,12 +434,16 @@ class ReleaseFinalizationTests(unittest.TestCase):
         tag = f"v{VERSION}"
         _git(self.root, "tag", tag)
         with self.assertRaisesRegex(tool.ReleaseValidationError, "annotated signed"):
-            tool.publish_assets(self.root, tag, out)
+            tool.publish(self.root, tag, out)
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-a", tag, "-m", "unsigned")
         worktrees = _git(self.root, "worktree", "list", "--porcelain")
-        with self.assertRaises(tool.ReleaseValidationError):
+        with (
+            mock.patch.object(tool.subprocess, "run", wraps=subprocess.run) as processes,
+            self.assertRaises(tool.ReleaseValidationError),
+        ):
             tool.publish(self.root, tag, out)
+        self.assertFalse(any(call.args[0][0] != "git" for call in processes.call_args_list))
         self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         for invalid in ("0" * 64, None, "duplicate"):
             _git(self.root, "tag", "-d", tag)
@@ -436,34 +459,45 @@ class ReleaseFinalizationTests(unittest.TestCase):
             signed_message.write_text(text)
             _git(self.root, "tag", "-s", tag, "-F", str(signed_message))
             with self.subTest(invalid=invalid), self.assertRaises(tool.ReleaseValidationError):
-                tool.publish_assets(self.root, tag, out)
+                tool.publish(self.root, tag, out)
             # Rebuild the original certificate after the mismatch case wrote scratch assets.
             tool.manifest_assets(self.root, P, out)
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-s", tag, "-F", str(message))
-        self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
-        # Current validation code can publish a historical tag from a newer draft checkout.
+        self.assertEqual(tool.publish(self.root, tag, out)[:2], (manifest, checksum))
+        # A newer main validator must not change the signed tag's certificate.
         tool.open_next(self.root, "9.9.10")
         before = _snapshot(self.root)
         output = Path(key_directory.name) / "github-output"
-        with mock.patch.object(tool, "_gh", return_value="[[]]"):
+        with (
+            mock.patch.object(tool, "build_manifest", side_effect=AssertionError("main policy")),
+            mock.patch.object(tool, "validate_release_inputs",
+                              side_effect=AssertionError("new main policy")),
+            mock.patch.dict(os.environ, {
+                "GH_TOKEN": "fixture-token", "GITHUB_TOKEN": "fixture-token",
+                "GH_ENTERPRISE_TOKEN": "fixture-token", "GITHUB_OUTPUT": str(output),
+                "GITHUB_ENV": str(output), "GITHUB_PATH": str(output),
+                "GITHUB_STATE": str(output), "GITHUB_STEP_SUMMARY": str(output),
+            }),
+        ):
             published = tool.publish(self.root, tag, out, output)
         self.assertEqual(published[:2], (manifest, checksum))
         self.assertEqual(published[2].read_text(), tool.render_release_notes(
             _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
         ))
-        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\n")
+        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\ntag_object="
+                         + _git(self.root, "rev-parse", tag) + "\n")
         self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         after = _snapshot(self.root)
-        after.pop(published[2].relative_to(self.root).as_posix())
         self.assertEqual(after, before)
         _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
-            tool.publish_assets(self.root, tag, out)
+            tool.publish(self.root, tag, out)
         _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        _git(self.root, "tag", "-s", "v9.9.10", "-F", str(message))
         with self.assertRaisesRegex(tool.ReleaseValidationError, "tag must match"):
-            tool.publish_assets(self.root, "v9.9.10", out)
+            tool.publish(self.root, "v9.9.10", out)
 
         replacement = Path(key_directory.name) / "replacement-key"
         subprocess.run(
@@ -476,13 +510,17 @@ class ReleaseFinalizationTests(unittest.TestCase):
         trusted_main = _git(self.root, "rev-parse", "HEAD")
         _git(self.root, "update-ref", "refs/remotes/origin/main", trusted_main)
         _git(self.root, "checkout", "--detach", P)
-        with self.assertRaises(tool.ReleaseValidationError):
-            tool.publish_assets(self.root, tag, out)  # Tagged-tree acceptance is insufficient.
+        with (
+            mock.patch.object(tool.subprocess, "run", wraps=subprocess.run) as processes,
+            self.assertRaises(tool.ReleaseValidationError),
+        ):
+            tool.publish(self.root, tag, out)  # Tagged-tree acceptance is insufficient.
+        self.assertFalse(any(call.args[0][0] != "git" for call in processes.call_args_list))
         _git(self.root, "config", "user.signingkey", str(replacement))
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-s", tag, "-F", str(message))
         self.assertNotIn(replacement.with_suffix(".pub").read_text(), allowed.read_text())
-        self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
+        self.assertEqual(tool.publish(self.root, tag, out)[:2], (manifest, checksum))
         for content in ("", "# no trusted signers\n", None):
             with self.subTest(content=content):
                 _git(self.root, "checkout", "--detach", trusted_main)
@@ -495,9 +533,79 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 _git(self.root, "update-ref", "refs/remotes/origin/main", "HEAD")
                 _git(self.root, "checkout", "--detach", P)
                 with self.assertRaises(tool.ReleaseValidationError):
-                    tool.publish_assets(self.root, tag, out)
+                    tool.publish(self.root, tag, out)
 
 class ReleasePublicationTests(unittest.TestCase):
+    def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
+        for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
+            with self.subTest(version=version), self.assertRaisesRegex(
+                tool.ReleaseValidationError, "leading zeros"
+            ):
+                tool.compare_release_versions(version, "1.0.0")
+        for version in ("1.0.0-0", "1.0.0-rc.0", "1.0.0-01a", "1.0.0-alpha01"):
+            with self.subTest(version=version):
+                self.assertEqual(tool.validate_release_version(version), version)
+                self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
+
+    def test_worktree_cleanup_preserves_an_active_error_but_fails_success(self) -> None:
+        for invalid in (False, True):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(invalid=invalid):
+                root = Path(tmp)
+                manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
+                manifest.write_bytes(b"fixture")
+
+                def git(_root, *args, **kwargs):
+                    if args[:2] == ("worktree", "remove"):
+                        raise tool.ReleaseValidationError("cleanup fixture failure")
+                    if args[0] == "show":
+                        return '{"release_version":"1.0.0"}'
+                    return ""
+
+                stderr = io.StringIO()
+                result = subprocess.CompletedProcess([], int(invalid), "", "primary fixture error")
+                with (
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, "b" * 40, tool.sha256_bytes(b"fixture"),
+                    )),
+                    mock.patch.object(tool, "_git", side_effect=git),
+                    mock.patch.object(tool.subprocess, "run", return_value=result),
+                    mock.patch.object(tool, "release_notes", return_value=root / "notes"),
+                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
+                    mock.patch.object(tool.sys, "stderr", stderr),
+                    self.assertRaisesRegex(
+                        tool.ReleaseValidationError,
+                        "primary fixture error" if invalid else "cleanup fixture failure",
+                    ),
+                ):
+                    tool.publish(root, "v1.0.0", root)
+                self.assertEqual("worktree cleanup also failed" in stderr.getvalue(), invalid)
+
+    def test_publication_checks_remote_tag_object_before_creation(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        command = workflow["jobs"]["publish"]["steps"][-1]["run"]
+        for remote in ("a" * 40, "b" * 40, "missing", "bad-output"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(remote=remote):
+                root = Path(tmp)
+                gh = root / "gh"
+                gh.write_text(
+                    '#!/bin/bash\n'
+                    'if [[ "$1" == api ]]; then\n'
+                    '  [[ "$REMOTE_OBJECT" != missing ]] || exit 1\n'
+                    '  printf "%s\\n" "$REMOTE_OBJECT"\n'
+                    'else\n'
+                    '  printf "%s\\n" "$*" >> "$RUNNER_TEMP/created"\n'
+                    'fi\n'
+                )
+                gh.chmod(0o755)
+                result = subprocess.run(["bash", "-c", command], capture_output=True, env={
+                    **os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                    "RUNNER_TEMP": str(root), "PRERELEASE": "false", "LATEST": "true",
+                    "RELEASE_REPOSITORY": tool.REPOSITORY, "RELEASE_TAG": "v1.0.0",
+                    "TAG_OBJECT": "a" * 40, "REMOTE_OBJECT": remote,
+                })
+                self.assertEqual(result.returncode == 0, remote == "a" * 40)
+                self.assertEqual((root / "created").exists(), remote == "a" * 40)
+
     def test_version_comparison_uses_numeric_core_and_semver_prerelease_precedence(self) -> None:
         versions = [
             "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
@@ -570,6 +678,7 @@ class ReleasePublicationTests(unittest.TestCase):
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
         self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+        self.assertEqual(workflow["concurrency"]["queue"], "max")
         dispatch = workflow[True]["workflow_dispatch"]["inputs"]["tag"]
         self.assertTrue(dispatch["required"])
         validate = workflow["jobs"]["validate"]
@@ -581,6 +690,9 @@ class ReleasePublicationTests(unittest.TestCase):
                         if step.get("uses", "").startswith("actions/checkout@"))
         self.assertEqual(checkout["with"]["ref"], "main")
         self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertFalse(any("git fetch" in step.get("run", "") for step in validate["steps"]))
+        self.assertEqual(validate["outputs"]["tag_object"],
+                         "${{ steps.certificate.outputs.tag_object }}")
         self.assertIn('"$EVENT_REF" != refs/heads/main', validate["steps"][0]["run"])
         uploads = [step for step in validate["steps"]
                    if step.get("uses", "").startswith("actions/upload-artifact@")]

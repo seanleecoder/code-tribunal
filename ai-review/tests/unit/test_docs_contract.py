@@ -611,6 +611,36 @@ class DocumentationReferenceTests(unittest.TestCase):
         )
         self.assertEqual(self.check("docs/current.md", text), [])
 
+    def test_duplicate_basenames_preserve_bare_and_qualified_test_resolution(self) -> None:
+        integration = self.root / "ai-review/tests/integration"
+        integration.mkdir()
+        (integration / "test_present.py").write_text(
+            "def test_integration_only():\n    pass\n"
+        )
+        self.index = self.checker._test_definition_index()
+        for reference in (
+            "test_integration_only", "test_present.py::test_integration_only",
+            "integration/test_present.py::test_integration_only",
+            "ai-review/tests/integration/test_present.py::test_integration_only",
+            "./unit/test_present.py::test_present",
+        ):
+            with self.subTest(reference=reference):
+                self.assertEqual(self.check("docs/current.md", f"`{reference}`"), [])
+        self.assertEqual(self.check("docs/current.md", (
+            "Header\n`unit/test_present.py::test_integration_only`\n"
+            "`integration/test_present.py::test_present`\n"
+        )), [
+            "docs/current.md:2: test 'unit/test_present.py::test_integration_only' does not exist",
+            "docs/current.md:3: test 'integration/test_present.py::test_present' does not exist",
+        ])
+
+    def test_ordinary_code_spans_do_not_resolve_test_candidates(self) -> None:
+        files = mock.MagicMock()
+        self.index = self.checker.TestReferenceIndex(self.index.definition_names, files)
+        text = "`main` `status: active` `review_config.v3` `1.0.0` `client.method()`\n"
+        self.assertEqual(self.check("docs/current.md", text * 100), [])
+        self.assertEqual(files.mock_calls, [])
+
     def test_spec_exemption_does_not_hide_other_contracts_or_links(self) -> None:
         spec = "docs/improvement-specs/proposed.md"
         text = "`scripts/proposed.py` `test_proposed` [broken](missing.md)\n"

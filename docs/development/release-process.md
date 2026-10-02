@@ -11,7 +11,9 @@ Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/T
 ## Release version contract
 
 Release validators accept `MAJOR.MINOR.PATCH` with an optional prerelease suffix,
-for example `1.0.1-rc.1`. They reject build metadata such as `1.0.1+build.1`.
+for example `1.0.1-rc.1`. Numeric prerelease identifiers cannot contain leading
+zeros; alphanumeric identifiers such as `alpha01` remain valid. Validators reject
+build metadata such as `1.0.1+build.1`.
 The active release version also determines the required notes file:
 `release/<release_version>.md`.
 
@@ -101,14 +103,27 @@ and remove completed spec files from the active
    `Release-manifest-sha256` line. Signing stays local and manual. Never reuse a
    certificate generated for a different commit.
 7. Verify publication of the tag, final notes, manifest, and checksum. The tag-push
-   publication workflow fetches protected main's validation code and validates
-   the signed certificate against a temporary detached worktree at the tag,
-   removing it on success or failure. Its read-only job installs dependencies
+   publication workflow checks out protected main, which captures the annotated
+   tag object, verifies ancestry and its signature using main's signer registry,
+   and extracts the signed checksum before executing any tag code. The signed
+   tag rebuilds its certificate: its own `release_finalize.py manifest` command
+   runs in a temporary detached worktree at the verified commit, using the selected
+   Python environment with an explicit working directory and Python path and no
+   GitHub credentials or workflow output-file variables. Main compares the rebuilt
+   manifest with the signed checksum, renders notes, and computes publication flags.
+   The worktree is removed on success or failure; a cleanup failure is reported
+   separately when validation already failed. Its read-only job installs dependencies
    and retains the manifest, checksum, and rendered notes in a one-day workflow
    artifact. The write-enabled job downloads those files and creates the release
    without checking out or executing repository code or installing dependencies.
    It attaches only the manifest and checksum; it carries no signing key.
-   Publication runs are serialized without cancelling an active publication.
+   Immediately before release creation, the remote tag reference must still match
+   the validated tag object; missing or changed tags abort. This check and creation
+   are separate API operations; `--verify-tag` alone only checks tag existence.
+   Publication runs share one concurrency group with `cancel-in-progress: false`
+   and `queue: max`: one runs at a time and up to 100 pending runs wait. Further
+   runs are cancelled when the queue is full. Recover a cancelled or failed
+   unpublished tag by dispatching a fresh retry from main after capacity is available.
    Prereleases are marked prerelease and never latest. A stable release is latest
    only when no higher published, non-draft stable release exists; all release
    pages are queried with pagination, using semantic version precedence.
@@ -119,6 +134,10 @@ and remove completed spec files from the active
    ```bash
    gh workflow run publish-release.yml --ref main -f tag="v$V"
    ```
+
+   Publication and retries require the tag's `manifest` command, currently present
+   from v2.0.1 onward. Older published tags are outside publication retries; their
+   notes can still be rendered for backfill with `release-notes` below.
 
    Existing published releases are never recreated or automatically edited.
    Repository-relative notes links are rendered as tag-pinned GitHub blob URLs,

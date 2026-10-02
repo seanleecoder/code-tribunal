@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import posixpath
 import re
 import subprocess
@@ -349,16 +350,15 @@ def open_next(root: Path, version: str) -> tuple[str, ...]:
     return _write_edits(root, {"release/release-inputs.json": canonical_json_bytes(data)})
 
 
-def publish_assets(root: Path, tag: str, out: Path) -> tuple[Path, Path]:
-    """Revalidate the signed tag's certificate; never sign or choose a release."""
-    data = load_json(root / "release/release-inputs.json")
-    validate_release_inputs(data, root)
-    if tag != f"v{data['release_version']}":
-        raise ReleaseValidationError("tag must match the tagged release inputs")
+def _verify_release_tag(root: Path, tag: str) -> tuple[str, str, str]:
+    """Verify the captured tag object using protected main's signer authority."""
     reference = f"refs/tags/{tag}"
-    if _git(root, "cat-file", "-t", reference) != "tag":
+    tag_object = _git(root, "rev-parse", "--verify", reference)
+    if not FULL_SHA_RE.fullmatch(tag_object):
+        raise ReleaseValidationError("release tag object must be a full SHA")
+    if _git(root, "cat-file", "-t", tag_object) != "tag":
         raise ReleaseValidationError("publication requires an annotated signed tag")
-    release_commit = _git(root, "rev-parse", f"{reference}^{{commit}}")
+    release_commit = _git(root, "rev-parse", f"{tag_object}^{{commit}}")
     _git(root, "merge-base", "--is-ancestor", release_commit, "refs/remotes/origin/main")
     # Signer revocations on protected main apply even to historical tags.
     signers = _git(root, "show", "refs/remotes/origin/main:.github/allowed_signers")
@@ -370,16 +370,13 @@ def publish_assets(root: Path, tag: str, out: Path) -> tuple[Path, Path]:
         trust.write_text(signers + "\n", encoding="utf-8")
         _git(
             root, "-c", "gpg.format=ssh", "-c",
-            f"gpg.ssh.allowedSignersFile={trust}", "verify-tag", tag,
+            f"gpg.ssh.allowedSignersFile={trust}", "verify-tag", tag_object,
         )
-    message = _git(root, "for-each-ref", "--format=%(contents)", reference)
+    message = _git(root, "cat-file", "-p", tag_object)
     markers = re.findall(r"(?m)^Release-manifest-sha256: ([0-9a-f]{64})$", message)
     if len(markers) != 1 or message.count("Release-manifest-sha256:") != 1:
         raise ReleaseValidationError("signed certificate requires exactly one manifest checksum")
-    assets = manifest_assets(root, release_commit, out)
-    if sha256_bytes(assets[0].read_bytes()) != markers[0]:
-        raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
-    return assets[:2]
+    return tag_object, release_commit, markers[0]
 
 
 def render_release_notes(text: str, tag: str) -> str:
@@ -452,22 +449,55 @@ def _publication_flags(version: str) -> tuple[bool, bool]:
 def publish(
     root: Path, tag: str, out: Path, github_output: Path | None = None,
 ) -> tuple[Path, Path, Path]:
-    """Run current-main validators against a disposable detached tag checkout."""
+    """Main verifies trust; the signed tag rebuilds its own certificate."""
     version = validate_release_version(tag.removeprefix("v"))
     if tag != f"v{version}":
         raise ReleaseValidationError("publication requires a v-prefixed release tag")
+    tag_object, release_commit, digest = _verify_release_tag(root, tag)
+    inputs = json_loads_no_duplicates(
+        _git(root, "show", f"{release_commit}:release/release-inputs.json")
+    )
+    if inputs["release_version"] != version:
+        raise ReleaseValidationError("tag must match the tagged release inputs")
+    out = out.absolute()
     with tempfile.TemporaryDirectory() as temporary:
         tree = Path(temporary) / "tag"
-        _git(root, "worktree", "add", "--detach", str(tree), f"refs/tags/{tag}")
+        _git(root, "worktree", "add", "--detach", str(tree), release_commit)
         try:
-            assets = publish_assets(tree, tag, out)
+            environment = {
+                key: value for key, value in os.environ.items()
+                if not key.startswith(("GH_", "GITHUB_"))
+            }
+            environment["PYTHONPATH"] = os.pathsep.join((
+                str(tree / "ai-review/src"), str(tree / "scripts"),
+            ))
+            rebuilt = subprocess.run(
+                [sys.executable, str(tree / "scripts/release_finalize.py"), "manifest",
+                 "--release-commit", release_commit, "--out", str(out)],
+                cwd=tree, env=environment, capture_output=True, text=True, check=False,
+            )
+            if rebuilt.returncode:
+                raise ReleaseValidationError(
+                    rebuilt.stderr.strip() or "signed tag's manifest command failed"
+                )
+            manifest = out / f"code-tribunal-{tag}-release-manifest.json"
+            assets = (manifest, out / f"{manifest.name}.sha256")
+            if sha256_bytes(manifest.read_bytes()) != digest:
+                raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
             notes = release_notes(tree, tag, out)
             prerelease, latest = _publication_flags(version)
         finally:
-            _git(root, "worktree", "remove", "--force", str(tree))
+            active_error = sys.exception()
+            try:
+                _git(root, "worktree", "remove", "--force", str(tree))
+            except (ReleaseValidationError, OSError) as cleanup_error:
+                if active_error is None:
+                    raise
+                print(f"ERROR: worktree cleanup also failed: {cleanup_error}", file=sys.stderr)
     if github_output is not None:
         with github_output.open("a", encoding="utf-8") as output:
             output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
+            output.write(f"tag_object={tag_object}\n")
     return (*assets, notes)
 
 
