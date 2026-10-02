@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-02
+
 ### Added
 
 - Documentation checks report missing concrete repository paths and test
@@ -58,6 +60,9 @@ versioning.
 
 ### Fixed
 
+- GitLab canary GET requests retry bounded transport timeouts before failing, so
+  a transient polling timeout does not prematurely clean up a running campaign.
+  Mutating requests are not replayed after ambiguous transport failures.
 - Failed thread resolutions and reopenings make `post` report `partial_failed`
   and exit nonzero. The prior state and disposition are retained for a retry,
   including failed reopen commands (SPEC-64).
