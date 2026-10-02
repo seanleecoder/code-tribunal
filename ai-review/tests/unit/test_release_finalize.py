@@ -395,6 +395,65 @@ class ReleaseFinalizationTests(unittest.TestCase):
             path.read_bytes(), (self.root / ".github/workflows/ai-review.yml").read_bytes()
         )
 
+    def test_shared_gitlab_parser_refuses_missing_duplicate_or_malformed_pins_without_writes(
+        self,
+    ) -> None:
+        path = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = path.read_text()
+        for key, (index, value) in tool.gitlab_template_pins(original).items():
+            pin = original.splitlines()[index]
+            for invalid in (
+                original.replace(pin + "\n", "", 1),
+                original.replace(pin, pin + "\n" + pin, 1),
+                original.replace(pin, f"  {key}: {value}", 1),
+                original.replace(pin, f'  {key}: ""', 1),
+                original.replace(pin, f'  {key} : "{value}"', 1),
+                original + f'\n  "{key}": "{value}"\n',
+            ):
+                with self.subTest(key=key, invalid=invalid):
+                    path.write_text(invalid)
+                    before = _snapshot(self.root)
+                    with self.assertRaises(tool.ReleaseValidationError):
+                        tool.repin(self.root, self.run)
+                    self.assertEqual(_snapshot(self.root), before)
+        path.write_text(original)
+
+    def test_shared_parsers_preserve_comments_and_repin_the_live_assignment_positions(self) -> None:
+        github = self.root / "ai-review/ci/review.github-actions.yml"
+        github.write_text(github.read_text().replace(
+            "jobs:\n", "jobs:\n# A harmless column-zero comment inside jobs.\n", 1
+        ))
+        gitlab = self.root / "ai-review/ci/review.gitlab-ci.yml"
+        original = gitlab.read_text()
+        comments = "".join(
+            f'# {key}: "commented-{key}"\n' for key in tool.gitlab_template_pins(original)
+        )
+        original = comments + original
+        # Inline comments and whitespace remain unchanged by the shared parser's repin.
+        original = original.replace('  AI_REVIEW_TRUSTED_IMAGE_SHA:',
+                                    '  AI_REVIEW_TRUSTED_IMAGE_SHA:   ')
+        lines = original.splitlines(keepends=True)
+        for _key, (index, _value) in tool.gitlab_template_pins(original).items():
+            lines[index] = lines[index].rstrip("\n") + " # live pin\n"
+        original = "".join(lines)
+        gitlab.write_text(original)
+        pins = tool.gitlab_template_pins(original)
+        expected = original
+        for key, (_, previous) in pins.items():
+            replacement = {
+                "AI_REVIEW_BASE_IMAGE": self.candidate["base_image"],
+                "AI_REVIEW_REVIEWER_IMAGE": self.candidate["reviewer_image"],
+                "AI_REVIEW_TRUSTED_IMAGE_SHA": self.candidate["runtime_source"],
+            }[key]
+            expected = expected.replace(f'"{previous}"', f'"{replacement}"')
+        tool.repin(self.root, self.run)
+        self.assertEqual(gitlab.read_text(), expected)
+        self.assertEqual(github.read_bytes(),
+                         (self.root / ".github/workflows/ai-review.yml").read_bytes())
+        self.assertIn("# A harmless column-zero comment", github.read_text())
+        data, _, _ = tool._candidate_inputs(self.root, self.run)
+        tool.validate_template_pins(data["images"], data["runtime_source"], self.root)
+
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
         gh = mock.patch.object(tool, "_gh", return_value="[[]]")

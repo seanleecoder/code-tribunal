@@ -23,7 +23,8 @@ from canary_evidence_records import CanaryRun, RecordError, _gh, load_run, rende
 from check_release_inputs import (
     EVIDENCE_DIR,
     GITHUB_CONTAINER_ROLES,
-    _github_job_containers,
+    github_job_containers,
+    gitlab_template_pins,
     validate_release_inputs,
     validate_template_pins,
 )
@@ -151,26 +152,25 @@ def repin(root: Path, run: CanaryRun) -> tuple[str, ...]:
     canonical_path = WORKFLOW_PAIRS[0][0]
     text = (root / canonical_path).read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
-    for job, (index, _) in _github_job_containers(text).items():
+    for job, (index, _) in github_job_containers(text).items():
         role = GITHUB_CONTAINER_ROLES[job]
         lines[index] = f"    container: {candidate[f'{role}_image']}\n"
     canonical = "".join(lines).encode()
     edits = {canonical_path: canonical, WORKFLOW_PAIRS[0][1]: canonical}
     gitlab_path = "ai-review/ci/review.gitlab-ci.yml"
     gitlab = (root / gitlab_path).read_text(encoding="utf-8")
+    pins = gitlab_template_pins(gitlab)
+    lines = gitlab.splitlines(keepends=True)
     for key, value in (
         ("AI_REVIEW_BASE_IMAGE", candidate["base_image"]),
         ("AI_REVIEW_REVIEWER_IMAGE", candidate["reviewer_image"]),
         ("AI_REVIEW_TRUSTED_IMAGE_SHA", candidate["runtime_source"]),
     ):
-        gitlab, count = re.subn(
-            rf'(?m)^(  {key}: )"[^"\r\n]+"$',
-            lambda match, value=value: f'{match.group(1)}"{value}"',
-            gitlab,
-        )
-        if count != 1:
-            raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
-    edits[gitlab_path] = gitlab.encode()
+        index, previous = pins[key]
+        prefix, separator, suffix = lines[index].partition(f'"{previous}"')
+        assert separator
+        lines[index] = f'{prefix}"{value}"{suffix}'
+    edits[gitlab_path] = "".join(lines).encode()
     _validate_edits(
         root, edits, data,
         lambda inputs, tree: validate_template_pins(
