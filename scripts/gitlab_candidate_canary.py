@@ -55,16 +55,29 @@ def _request(
         method=method,
         headers={"PRIVATE-TOKEN": token, "Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            body = response.read()
-    except urllib.error.HTTPError as exc:
-        if allow_missing and exc.code == 404:
-            return None
-        raise GitLabCanaryError(
-            f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}",
-            status=exc.code,
-        ) from exc
+    # Read polling must survive a transient timeout without tearing down a live
+    # child pipeline's protected ref. Never replay a mutation after an ambiguous
+    # response: its request may already have taken effect.
+    attempts = 3 if method == "GET" else 1
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                body = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            if allow_missing and exc.code == 404:
+                return None
+            raise GitLabCanaryError(
+                f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}",
+                status=exc.code,
+            ) from exc
+        except (TimeoutError, urllib.error.URLError) as exc:
+            if attempt + 1 == attempts:
+                raise GitLabCanaryError(
+                    f"GitLab API {method} {path.split('?', 1)[0]} transport failed "
+                    f"after {attempts} attempt(s)"
+                ) from exc
+            time.sleep(attempt + 1)
     if raw:
         return body
     return json.loads(body) if body else None

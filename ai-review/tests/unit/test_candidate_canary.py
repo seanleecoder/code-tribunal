@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -697,3 +699,48 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         ):
             self.gitlab._request("DELETE", "resource")
         self.assertEqual(raised.exception.status, 500)
+
+
+class GitLabCanaryTransportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        patch = mock.patch.dict(os.environ, {"GITLAB_CANARY_TOKEN": "fixture-only-token"})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_polling_retries_transient_timeout_then_reads_the_response(self) -> None:
+        with (
+            mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                TimeoutError("read timed out"), io.BytesIO(b'{"status":"running"}'),
+            ]) as request,
+            mock.patch.object(self.gitlab.time, "sleep") as sleep,
+        ):
+            self.assertEqual(self.gitlab._request("GET", "projects/1/pipelines/2"),
+                             {"status": "running"})
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_transport_failures_are_bounded_and_mutations_are_never_replayed(self) -> None:
+        for method, count in (("GET", 3), ("POST", 1), ("PUT", 1), ("DELETE", 1)):
+            with (
+                self.subTest(method=method),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen",
+                                  side_effect=urllib.error.URLError("connection reset")) as request,
+                mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError,
+                                       f"after {count} attempt") as failure,
+            ):
+                self.gitlab._request(method, "projects/1/pipelines/2?private-query")
+            self.assertEqual(request.call_count, count)
+            self.assertEqual(sleep.call_count, count - 1)
+            self.assertNotIn("fixture-only-token", str(failure.exception))
+            self.assertNotIn("private-query", str(failure.exception))
+
+    def test_http_failures_preserve_the_existing_status_and_missing_contract(self) -> None:
+        error = urllib.error.HTTPError("https://fixture", 404, "missing", {}, None)
+        with mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=error) as request:
+            self.assertIsNone(self.gitlab._request("GET", "projects/1", allow_missing=True))
+            with self.assertRaises(self.gitlab.GitLabCanaryError) as failure:
+                self.gitlab._request("GET", "projects/1")
+        self.assertEqual(failure.exception.status, 404)
+        self.assertEqual(request.call_count, 2)
