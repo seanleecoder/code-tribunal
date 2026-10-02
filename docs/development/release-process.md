@@ -101,9 +101,37 @@ and remove completed spec files from the active
    `Release-manifest-sha256` line. Signing stays local and manual. Never reuse a
    certificate generated for a different commit.
 7. Verify publication of the tag, final notes, manifest, and checksum. The tag-push
-   publication workflow revalidates the signed certificate against the tagged
-   inputs and uploads its assets; it carries no signing key. Then open the next
-   draft in a follow-up PR:
+   publication workflow fetches protected main's validation code and validates
+   the signed certificate against a temporary detached worktree at the tag,
+   removing it on success or failure. Its read-only job installs dependencies
+   and retains the manifest, checksum, and rendered notes in a one-day workflow
+   artifact. The write-enabled job downloads those files and creates the release
+   without checking out or executing repository code or installing dependencies.
+   It attaches only the manifest and checksum; it carries no signing key.
+   Publication runs are serialized without cancelling an active publication.
+   Prereleases are marked prerelease and never latest. A stable release is latest
+   only when no higher published, non-draft stable release exists; all release
+   pages are queried with pagination, using semantic version precedence.
+
+   Historical workflow reruns retain their old workflow code. Retry unpublished
+   signed tags using the current workflow dispatched **from main**:
+
+   ```bash
+   gh workflow run publish-release.yml --ref main -f tag="v$V"
+   ```
+
+   Existing published releases are never recreated or automatically edited.
+   Repository-relative notes links are rendered as tag-pinned GitHub blob URLs,
+   preserving queries and fragments. Committed notes remain byte-identical to
+   their tags. To prepare a historical release-body correction for explicit
+   review and approval, render the notes from that tag:
+
+   ```bash
+   PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py release-notes \
+     --tag "v$V" --out /tmp/code-tribunal-release
+   ```
+
+   Then open the next draft in a follow-up PR:
 
    ```bash
    make release-open-next V=2.0.2

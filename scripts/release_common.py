@@ -187,6 +187,29 @@ def validate_release_version(value: object) -> str:
     return value
 
 
+def compare_release_versions(left: str, right: str) -> int:
+    """Compare accepted versions by SemVer precedence, without changing the grammar."""
+    left_core, _, left_pre = validate_release_version(left).partition("-")
+    right_core, _, right_pre = validate_release_version(right).partition("-")
+    left_numbers = tuple(map(int, left_core.split(".")))
+    right_numbers = tuple(map(int, right_core.split(".")))
+    if left_numbers != right_numbers:
+        return (left_numbers > right_numbers) - (left_numbers < right_numbers)
+    if not left_pre or not right_pre:
+        return bool(right_pre) - bool(left_pre)
+    left_parts, right_parts = left_pre.split("."), right_pre.split(".")
+    for left_part, right_part in zip(left_parts, right_parts, strict=False):
+        if left_part.isdigit() and right_part.isdigit():
+            left_value, right_value = int(left_part), int(right_part)
+        elif left_part.isdigit() != right_part.isdigit():
+            return -1 if left_part.isdigit() else 1
+        else:
+            left_value, right_value = left_part, right_part
+        if left_value != right_value:
+            return (left_value > right_value) - (left_value < right_value)
+    return (len(left_parts) > len(right_parts)) - (len(left_parts) < len(right_parts))
+
+
 def validate_release_coordinates(
     tag: object,
     runtime_source: object,

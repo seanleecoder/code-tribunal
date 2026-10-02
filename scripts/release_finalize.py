@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import posixpath
 import re
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from ai_review.canonical import json_loads_no_duplicates
 from build_release_manifest import build_manifest
@@ -31,6 +33,7 @@ from release_common import (
     WORKFLOW_PAIRS,
     ReleaseValidationError,
     canonical_json_bytes,
+    compare_release_versions,
     disallowed_release_paths,
     image_ref,
     load_json,
@@ -42,13 +45,13 @@ from release_common import (
 from validate_candidate_identity import REPOSITORY
 
 
-def _git(root: Path, *args: str) -> str:
+def _git(root: Path, *args: str, strip: bool = True) -> str:
     result = subprocess.run(
         ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
     )
     if result.returncode:
         raise ReleaseValidationError(result.stderr.strip() or f"git {args[0]} failed")
-    return result.stdout.strip()
+    return result.stdout.strip() if strip else result.stdout
 
 
 def _candidate_inputs(root: Path, run: CanaryRun) -> tuple[dict[str, Any], dict[str, str]]:
@@ -383,6 +386,95 @@ def publish_assets(root: Path, tag: str, out: Path) -> tuple[Path, Path]:
     return assets[:2]
 
 
+def render_release_notes(text: str, tag: str) -> str:
+    """Pin repository-relative Markdown destinations to the notes' release tag."""
+    validate_release_version(tag.removeprefix("v"))
+    if not tag.startswith("v"):
+        raise ReleaseValidationError("release notes require a v-prefixed release tag")
+
+    def destination(match: re.Match[str]) -> str:
+        target = match.group("target")
+        parts = urlsplit(target)
+        if parts.scheme or parts.netloc or not parts.path:
+            return match.group(0)
+        path = posixpath.normpath(posixpath.join("release", parts.path))
+        if parts.path.startswith("/") or path == ".." or path.startswith("../"):
+            return match.group(0)
+        pinned = urlunsplit((
+            "https", "github.com", f"/{REPOSITORY}/blob/{tag}/{path}",
+            parts.query, parts.fragment,
+        ))
+        return match.group(0).replace(target, pinned, 1)
+
+    return re.sub(
+        r"\]\((?P<target>[^\s()]+)(?:[ \t]+[\"'][^\n]*?[\"'])?\)", destination, text
+    )
+
+
+def release_notes(root: Path, tag: str, out: Path) -> Path:
+    version = validate_release_version(tag.removeprefix("v"))
+    if tag != f"v{version}":
+        raise ReleaseValidationError("release notes require a v-prefixed release tag")
+    # Read the committed notes, even when the invoking checkout is a newer draft.
+    notes = _git(root, "show", f"refs/tags/{tag}:release/{version}.md", strip=False)
+    body = render_release_notes(notes, tag)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"code-tribunal-{tag}-release-notes.md"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def _publication_flags(version: str) -> tuple[bool, bool]:
+    """Classify against every published stable release, independent of API order."""
+    validate_release_version(version)
+    if "-" in version:
+        return True, False
+    pages = json_loads_no_duplicates(_gh(
+        "api", "--paginate", "--slurp", f"repos/{REPOSITORY}/releases?per_page=100",
+    ))
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ReleaseValidationError("published releases must be paginated arrays")
+    latest = True
+    for page in pages:
+        for release in page:
+            if not isinstance(release, dict):
+                raise ReleaseValidationError("published release must be an object")
+            if release.get("draft") or release.get("prerelease"):
+                continue
+            tag = release.get("tag_name", "")
+            if not isinstance(tag, str) or not tag.startswith("v"):
+                continue
+            try:
+                published = validate_release_version(tag[1:])
+            except ReleaseValidationError:
+                continue
+            if "-" not in published and compare_release_versions(version, published) < 0:
+                latest = False
+    return False, latest
+
+
+def publish(
+    root: Path, tag: str, out: Path, github_output: Path | None = None,
+) -> tuple[Path, Path, Path]:
+    """Run current-main validators against a disposable detached tag checkout."""
+    version = validate_release_version(tag.removeprefix("v"))
+    if tag != f"v{version}":
+        raise ReleaseValidationError("publication requires a v-prefixed release tag")
+    with tempfile.TemporaryDirectory() as temporary:
+        tree = Path(temporary) / "tag"
+        _git(root, "worktree", "add", "--detach", str(tree), f"refs/tags/{tag}")
+        try:
+            assets = publish_assets(tree, tag, out)
+            notes = release_notes(tree, tag, out)
+            prerelease, latest = _publication_flags(version)
+        finally:
+            _git(root, "worktree", "remove", "--force", str(tree))
+    if github_output is not None:
+        with github_output.open("a", encoding="utf-8") as output:
+            output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
+    return (*assets, notes)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -397,9 +489,12 @@ def main(argv: list[str] | None = None) -> int:
     manifest = commands.add_parser("manifest")
     manifest.add_argument("--release-commit", required=True)
     manifest.add_argument("--out", type=Path, required=True)
-    publish = commands.add_parser("publish")
-    publish.add_argument("--tag", required=True)
-    publish.add_argument("--out", type=Path, required=True)
+    for command in ("publish", "release-notes"):
+        subparser = commands.add_parser(command)
+        subparser.add_argument("--tag", required=True)
+        subparser.add_argument("--out", type=Path, required=True)
+        if command == "publish":
+            subparser.add_argument("--github-output", type=Path)
     next_draft = commands.add_parser("open-next")
     next_draft.add_argument("--version", required=True)
     args = parser.parse_args(argv)
@@ -422,7 +517,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "manifest":
             outputs = manifest_assets(ROOT, args.release_commit, args.out)
         elif args.command == "publish":
-            outputs = publish_assets(ROOT, args.tag, args.out)
+            outputs = publish(ROOT, args.tag, args.out, args.github_output)
+        elif args.command == "release-notes":
+            outputs = (release_notes(ROOT, args.tag, args.out),)
         else:
             outputs = open_next(ROOT, args.version)
         for output in outputs:

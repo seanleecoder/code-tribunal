@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 from tests.support.repository_script import load_repository_script
 
 REPO = Path(__file__).resolve().parents[3]
@@ -338,8 +340,10 @@ class ReleaseFinalizationTests(unittest.TestCase):
             tool.publish_assets(self.root, tag, out)
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-a", tag, "-m", "unsigned")
+        worktrees = _git(self.root, "worktree", "list", "--porcelain")
         with self.assertRaises(tool.ReleaseValidationError):
-            tool.publish_assets(self.root, tag, out)
+            tool.publish(self.root, tag, out)
+        self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         for invalid in ("0" * 64, None, "duplicate"):
             _git(self.root, "tag", "-d", tag)
             text = message.read_text()
@@ -360,6 +364,22 @@ class ReleaseFinalizationTests(unittest.TestCase):
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-s", tag, "-F", str(message))
         self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
+        # Current validation code can publish a historical tag from a newer draft checkout.
+        tool.open_next(self.root, "9.9.10")
+        before = _snapshot(self.root)
+        output = Path(key_directory.name) / "github-output"
+        with mock.patch.object(tool, "_gh", return_value="[[]]"):
+            published = tool.publish(self.root, tag, out, output)
+        self.assertEqual(published[:2], (manifest, checksum))
+        self.assertEqual(published[2].read_text(), tool.render_release_notes(
+            _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
+        ))
+        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\n")
+        self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
+        after = _snapshot(self.root)
+        after.pop(published[2].relative_to(self.root).as_posix())
+        self.assertEqual(after, before)
+        _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
             tool.publish_assets(self.root, tag, out)
@@ -398,6 +418,110 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 _git(self.root, "checkout", "--detach", P)
                 with self.assertRaises(tool.ReleaseValidationError):
                     tool.publish_assets(self.root, tag, out)
+
+class ReleasePublicationTests(unittest.TestCase):
+    def test_version_comparison_uses_numeric_core_and_semver_prerelease_precedence(self) -> None:
+        versions = [
+            "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+            "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0",
+            "1.0.2", "1.0.10", "2.0.0", "10.0.0",
+        ]
+        for index, left in enumerate(versions):
+            for other, right in enumerate(versions):
+                with self.subTest(left=left, right=right):
+                    self.assertEqual(tool.compare_release_versions(left, right),
+                                     (index > other) - (index < other))
+        with self.assertRaises(tool.ReleaseValidationError):
+            tool.compare_release_versions("1.0.0+build", "1.0.0")
+
+    def test_published_release_classification_queries_all_pages(self) -> None:
+        pages = [
+            [{"tag_name": "v1.0.9", "draft": False, "prerelease": False}],
+            [{"tag_name": "v1.0.10", "draft": False, "prerelease": False},
+             {"tag_name": "v99.0.0", "draft": True, "prerelease": False},
+             {"tag_name": "v98.0.0", "draft": False, "prerelease": True},
+             {"tag_name": "v97.0.0-rc.1", "draft": False, "prerelease": False},
+             {"tag_name": "unrelated", "draft": False, "prerelease": False}],
+        ]
+        with mock.patch.object(tool, "_gh", return_value=json.dumps(pages)) as gh:
+            self.assertEqual(tool._publication_flags("1.0.9"), (False, False))
+            self.assertEqual(tool._publication_flags("1.0.10"), (False, True))
+            self.assertEqual(tool._publication_flags("2.0.0"), (False, True))
+        self.assertIn("--paginate", gh.call_args.args)
+        self.assertIn("--slurp", gh.call_args.args)
+        with mock.patch.object(tool, "_gh") as gh:
+            self.assertEqual(tool._publication_flags("100.0.0-rc.1"), (True, False))
+        gh.assert_not_called()
+
+    def test_notes_renderer_preserves_tables_fragments_queries_and_surrounding_text(self) -> None:
+        text = (
+            "\n| [record](../docs/evidence/record.md?view=1#result) | Passed |\n"
+            "[notes](1.0.0.md) [guide](../docs/guide.md \"Guide\")\n"
+            "[absolute](https://example.test/path?q=1#part) [anchor](#scope) "
+            "[email](mailto:user@example.test) [external](//example.test/path)\n\n"
+        )
+        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/"
+        expected = text.replace("../docs/evidence/record.md?view=1#result",
+                                prefix + "docs/evidence/record.md?view=1#result")
+        expected = expected.replace("(1.0.0.md)", f"({prefix}release/1.0.0.md)")
+        expected = expected.replace("../docs/guide.md", prefix + "docs/guide.md")
+        self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
+
+    def test_release_notes_reads_tagged_content_without_changing_the_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _git(root, "init", "-q")
+            (root / "release").mkdir()
+            original = "\n[old](../docs/deleted.md#section)\n\n"
+            note = root / "release/1.0.0.md"
+            note.write_text(original)
+            _git(root, "add", ".")
+            _git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "historical release")
+            _git(root, "-c", "tag.gpgsign=false", "tag", "v1.0.0")
+            note.write_text("newer checkout\n")
+            with mock.patch.object(tool, "ROOT", root):
+                self.assertEqual(tool.main([
+                    "release-notes", "--tag", "v1.0.0", "--out", str(root / "out"),
+                ]), 0)
+            rendered = (root / "out/code-tribunal-v1.0.0-release-notes.md").read_text()
+            self.assertEqual(rendered, tool.render_release_notes(original, "v1.0.0"))
+            self.assertEqual(note.read_text(), "newer checkout\n")
+
+    def test_workflow_isolates_dependencies_from_artifact_only_publication(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+        dispatch = workflow[True]["workflow_dispatch"]["inputs"]["tag"]
+        self.assertTrue(dispatch["required"])
+        validate = workflow["jobs"]["validate"]
+        publish = workflow["jobs"]["publish"]
+        self.assertEqual(validate["permissions"], {"contents": "read"})
+        self.assertEqual(publish["permissions"], {"contents": "write"})
+        self.assertEqual(publish["needs"], "validate")
+        checkout = next(step for step in validate["steps"]
+                        if step.get("uses", "").startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"]["ref"], "main")
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertIn('"$EVENT_REF" != refs/heads/main', validate["steps"][0]["run"])
+        uploads = [step for step in validate["steps"]
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(uploads[0]["with"]["retention-days"], 1)
+        for step in publish["steps"]:
+            self.assertNotIn("checkout", step.get("uses", ""))
+            run = step.get("run", "")
+            self.assertNotIn("python", run)
+            self.assertNotIn("pip install", run)
+            self.assertNotIn("scripts/", run)
+        command = publish["steps"][-1]["run"]
+        self.assertIn('--repo "$RELEASE_REPOSITORY"', command)
+        self.assertIn('--notes-file "$RUNNER_TEMP/release/', command)
+        self.assertIn("flags=(--prerelease --latest=false)", command)
+        self.assertIn("flags=(--latest=false)", command)
+        self.assertIn("flags=(--latest)", command)
+        self.assertEqual(command.count('"$RUNNER_TEMP/release/'), 3)
+
 
 class ReleaseRunLookupTests(unittest.TestCase):
     def test_lookup_requires_the_latest_successful_main_push_for_R(self) -> None:
