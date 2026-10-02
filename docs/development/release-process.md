@@ -156,6 +156,9 @@ and remove completed spec files from the active
    make release-open-next V=2.0.2
    ```
 
+   The new version must be strictly higher by semantic version precedence and
+   must not already have a tag. Finalization bounds tracked changes and
+   non-ignored untracked files to the release-path allowlist before writing.
    This resets all candidate and verification fields and creates no notes file.
    Copy `release/TEMPLATE.md` when the next release is scoped.
 

@@ -795,6 +795,56 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseValidationError, "GitLab template pins"):
                 validate_release_inputs(data, root)
 
+    def test_commented_gitlab_values_do_not_validate_incorrect_live_pins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            path = root / "ai-review/ci/review.gitlab-ci.yml"
+            original = path.read_text()
+            pins = release_input_checker.gitlab_template_pins(original)
+            for key, (index, value) in pins.items():
+                with self.subTest(key=key):
+                    lines = original.splitlines(keepends=True)
+                    lines[index] = f'  {key}: "incorrect-live-value"\n'
+                    path.write_text(f'# {key}: "{value}"\n' + "".join(lines))
+                    with self.assertRaisesRegex(ReleaseValidationError, "GitLab template pins"):
+                        validate_release_inputs(data, root)
+
+    def test_gitlab_validation_refuses_missing_duplicate_and_malformed_pins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            path = root / "ai-review/ci/review.gitlab-ci.yml"
+            original = path.read_text()
+            pins = release_input_checker.gitlab_template_pins(original)
+            for key, (index, value) in pins.items():
+                line = original.splitlines()[index]
+                for invalid in (
+                    original.replace(line + "\n", "", 1),
+                    original.replace(line, line + "\n" + line, 1),
+                    original.replace(line, f"  {key}: {value}", 1),
+                    original.replace(line, f'  {key}: "{value}', 1),
+                ):
+                    with self.subTest(key=key, invalid=invalid):
+                        path.write_text(invalid)
+                        with self.assertRaisesRegex(ReleaseValidationError, "GitLab"):
+                            validate_release_inputs(data, root)
+
+    def test_template_parsers_return_live_zero_based_positions_despite_comments(self) -> None:
+        github = (REPO_ROOT / "ai-review/ci/review.github-actions.yml").read_text()
+        github = github.replace("jobs:\n", "jobs:\n# comment\n", 1)
+        gitlab = (REPO_ROOT / "ai-review/ci/review.gitlab-ci.yml").read_text()
+        gitlab = '# AI_REVIEW_BASE_IMAGE: "ignored"\n' + gitlab
+        for text, parser in (
+            (github, release_input_checker.github_job_containers),
+            (gitlab, release_input_checker.gitlab_template_pins),
+        ):
+            for _key, (index, value) in parser(text).items():
+                self.assertIn(value, text.splitlines()[index])
+                self.assertFalse(text.splitlines()[index].lstrip().startswith("#"))
+
     def test_wrong_role_image_name_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

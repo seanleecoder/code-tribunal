@@ -23,6 +23,8 @@ from canary_evidence_records import CanaryRun, RecordError, _gh, load_run, rende
 from check_release_inputs import (
     EVIDENCE_DIR,
     GITHUB_CONTAINER_ROLES,
+    github_job_containers,
+    gitlab_template_pins,
     validate_release_inputs,
     validate_template_pins,
 )
@@ -55,9 +57,11 @@ def _git(root: Path, *args: str, strip: bool = True) -> str:
     return result.stdout.strip() if strip else result.stdout
 
 
-def _candidate_inputs(root: Path, run: CanaryRun) -> tuple[dict[str, Any], dict[str, str]]:
+def _candidate_inputs(
+    root: Path, run: CanaryRun,
+) -> tuple[dict[str, Any], dict[str, str], tuple[str, ...]]:
     # Rendering enforces the loader's existing candidate/result contract.
-    render_records(run)
+    record_names = tuple(render_records(run))
     candidate = next(iter(run.summaries.values()))["candidate"]
     data = copy.deepcopy(load_json(root / "release/release-inputs.json"))
     validate_release_inputs(data, root)
@@ -77,7 +81,7 @@ def _candidate_inputs(root: Path, run: CanaryRun) -> tuple[dict[str, Any], dict[
             raise ReleaseValidationError(
                 f"candidate {role} image does not match release image identity"
             )
-    return data, candidate
+    return data, candidate, record_names
 
 
 def _check_paths(paths: list[str]) -> None:
@@ -144,41 +148,29 @@ def _write_edits(root: Path, edits: dict[str, bytes]) -> tuple[str, ...]:
 
 
 def repin(root: Path, run: CanaryRun) -> tuple[str, ...]:
-    data, candidate = _candidate_inputs(root, run)
+    data, candidate, _ = _candidate_inputs(root, run)
     canonical_path = WORKFLOW_PAIRS[0][0]
     text = (root / canonical_path).read_text(encoding="utf-8")
-    lines = []
-    current_job = None
-    replaced = set()
-    for line in text.splitlines(keepends=True):
-        if match := re.fullmatch(r"  ([A-Za-z0-9_-]+):\n?", line):
-            current_job = match.group(1)
-        if line.startswith("    container:"):
-            if current_job not in GITHUB_CONTAINER_ROLES or current_job in replaced:
-                raise ReleaseValidationError("unexpected or duplicate GitHub container job")
-            role = GITHUB_CONTAINER_ROLES[current_job]
-            line = f"    container: {candidate[f'{role}_image']}\n"
-            replaced.add(current_job)
-        lines.append(line)
-    if replaced != set(GITHUB_CONTAINER_ROLES):
-        raise ReleaseValidationError("missing GitHub container jobs")
+    lines = text.splitlines(keepends=True)
+    for job, (index, _) in github_job_containers(text).items():
+        role = GITHUB_CONTAINER_ROLES[job]
+        lines[index] = f"    container: {candidate[f'{role}_image']}\n"
     canonical = "".join(lines).encode()
     edits = {canonical_path: canonical, WORKFLOW_PAIRS[0][1]: canonical}
     gitlab_path = "ai-review/ci/review.gitlab-ci.yml"
     gitlab = (root / gitlab_path).read_text(encoding="utf-8")
+    pins = gitlab_template_pins(gitlab)
+    lines = gitlab.splitlines(keepends=True)
     for key, value in (
         ("AI_REVIEW_BASE_IMAGE", candidate["base_image"]),
         ("AI_REVIEW_REVIEWER_IMAGE", candidate["reviewer_image"]),
         ("AI_REVIEW_TRUSTED_IMAGE_SHA", candidate["runtime_source"]),
     ):
-        gitlab, count = re.subn(
-            rf'(?m)^(  {key}: )"[^"\r\n]+"$',
-            lambda match, value=value: f'{match.group(1)}"{value}"',
-            gitlab,
-        )
-        if count != 1:
-            raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
-    edits[gitlab_path] = gitlab.encode()
+        index, previous = pins[key]
+        prefix, separator, suffix = lines[index].partition(f'"{previous}"')
+        assert separator
+        lines[index] = f'{prefix}"{value}"{suffix}'
+    edits[gitlab_path] = "".join(lines).encode()
     _validate_edits(
         root, edits, data,
         lambda inputs, tree: validate_template_pins(
@@ -254,12 +246,10 @@ def finalize(
     *,
     release_date: date | None = None,
 ) -> tuple[str, ...]:
-    data, _ = _candidate_inputs(root, run)
-    if data["status"] != "draft":
-        raise ReleaseValidationError("release-finalize requires draft release inputs")
+    data, _, record_names = _candidate_inputs(root, run)
     if len(evidence) != len(set(evidence)):
         raise ReleaseValidationError("evidence selection contains duplicate IDs")
-    required = set(render_records(run)) | set(waivers)
+    required = set(record_names) | set(waivers)
     if omitted := required - set(evidence):
         raise ReleaseValidationError("evidence selection omits: " + ", ".join(sorted(omitted)))
     data["verification"] = {
@@ -288,7 +278,9 @@ def finalize(
     }
     # Include already-prepared evidence and repins when bounding the release checkout.
     _git(root, "merge-base", "--is-ancestor", data["runtime_source"], "HEAD")
-    existing_paths = _git(root, "diff", "--name-only", data["runtime_source"]).splitlines()
+    tracked = _git(root, "diff", "--name-only", "-z", data["runtime_source"], strip=False)
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
+    existing_paths = [path for path in (tracked + untracked).split("\0") if path]
     _check_paths(existing_paths + list(edits))
     _validate_edits(root, edits, data, validate_release_inputs)
     return _write_edits(root, edits)
@@ -341,7 +333,11 @@ def open_next(root: Path, version: str) -> tuple[str, ...]:
     validate_release_inputs(data, root)
     if data["status"] != "active" or not tag_exists(f"v{data['release_version']}", root):
         raise ReleaseValidationError("tag the active release before opening the next draft")
-    if version == data["release_version"] or tag_exists(f"v{version}", root):
+    if compare_release_versions(version, data["release_version"]) <= 0:
+        raise ReleaseValidationError(
+            "next draft version must be strictly higher than the active release"
+        )
+    if tag_exists(f"v{version}", root):
         raise ReleaseValidationError("next draft must name a new, untagged release version")
     data.update(release_version=version, status="draft", runtime_source=None)
     for image in data["images"].values():

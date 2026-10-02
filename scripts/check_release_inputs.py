@@ -58,25 +58,64 @@ def _require_keys(value: dict[str, Any], expected: set[str], label: str) -> None
         )
 
 
-def _github_job_containers(text: str) -> dict[str, str]:
-    """Return job-level containers without coupling validation to raw pin counts."""
-    containers: dict[str, str] = {}
+def github_job_containers(text: str) -> dict[str, tuple[int, str]]:
+    """Return each registered job's zero-based line index and container value."""
+    containers: dict[str, tuple[int, str]] = {}
     current_job: str | None = None
     in_jobs = False
-    for line in text.splitlines():
+    for index, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("#"):
+            continue
         if line == "jobs:":
             in_jobs = True
             continue
         if not in_jobs:
+            continue
+        if line and not line.startswith(" "):
+            in_jobs = False
+            current_job = None
             continue
         job_match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
         if job_match:
             current_job = job_match.group(1)
             continue
         container_match = re.fullmatch(r"    container:\s+(\S+)", line)
-        if container_match and current_job is not None:
-            containers[current_job] = container_match.group(1)
+        if line.startswith("    container:"):
+            if (
+                container_match is None or current_job not in GITHUB_CONTAINER_ROLES
+                or current_job in containers
+            ):
+                raise ReleaseValidationError("unexpected or duplicate GitHub container job")
+            containers[current_job] = (index, container_match.group(1))
+    if set(containers) != set(GITHUB_CONTAINER_ROLES):
+        raise ReleaseValidationError(
+            "GitHub template container jobs do not match the release role registry"
+        )
     return containers
+
+
+def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
+    """Return the three canonical assignments' zero-based positions and values."""
+    keys = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
+    key_pattern = "|".join(keys)
+    pins: dict[str, tuple[int, str]] = {}
+    for index, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("#"):
+            continue
+        assignment = re.match(rf"[ \t]*[\"']?({key_pattern})\b", line)
+        if assignment is None:
+            continue
+        key = assignment.group(1)
+        if key in pins:
+            raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
+        value = re.fullmatch(rf'[ \t]*{key}:[ \t]*"([^"\r\n]+)"[ \t]*(?:#.*)?', line)
+        if value is None:
+            raise ReleaseValidationError(f"malformed GitLab {key} pin")
+        pins[key] = (index, value.group(1))
+    for key in keys:
+        if key not in pins:
+            raise ReleaseValidationError(f"expected exactly one GitLab {key} pin")
+    return pins
 
 
 def _first_match(pattern: re.Pattern[str], text: str) -> str | None:
@@ -93,14 +132,10 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
     """Validate candidate pins independently of release activation."""
     expected_refs = {role: image_ref(image, runtime_source) for role, image in images.items()}
     canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
-    containers = _github_job_containers(canonical)
-    if set(containers) != set(GITHUB_CONTAINER_ROLES):
-        raise ReleaseValidationError(
-            "GitHub template container jobs do not match the release role registry"
-        )
+    containers = github_job_containers(canonical)
     mismatched_jobs = [
         job for job, role in GITHUB_CONTAINER_ROLES.items()
-        if containers[job] != expected_refs[role]
+        if containers[job][1] != expected_refs[role]
     ]
     if mismatched_jobs:
         raise ReleaseValidationError(
@@ -108,12 +143,13 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
             + ", ".join(mismatched_jobs)
         )
     gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
-    expected_lines = (
-        f'AI_REVIEW_BASE_IMAGE: "{expected_refs["base"]}"',
-        f'AI_REVIEW_REVIEWER_IMAGE: "{expected_refs["reviewer"]}"',
-        f'AI_REVIEW_TRUSTED_IMAGE_SHA: "{runtime_source}"',
-    )
-    if any(gitlab.count(line) != 1 for line in expected_lines):
+    pins = gitlab_template_pins(gitlab)
+    expected_pins = {
+        "AI_REVIEW_BASE_IMAGE": expected_refs["base"],
+        "AI_REVIEW_REVIEWER_IMAGE": expected_refs["reviewer"],
+        "AI_REVIEW_TRUSTED_IMAGE_SHA": runtime_source,
+    }
+    if any(pins[key][1] != value for key, value in expected_pins.items()):
         raise ReleaseValidationError("GitLab template pins do not match release inputs")
 
 
