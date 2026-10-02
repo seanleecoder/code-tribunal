@@ -305,6 +305,22 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 _git(self.root, "mv", "release/moved.txt", "release/spare.txt")
         self.assertEqual(*enumerations)
 
+    def test_finalization_refuses_staged_but_reverted_runtime_without_writes(self) -> None:
+        tool.repin(self.root, self.run)
+        path = self.root / "runtime.py"
+        original = path.read_bytes()
+        path.write_bytes(b"staged runtime change\n")
+        _git(self.root, "add", "runtime.py")
+        path.write_bytes(original)
+        self.assertEqual(_git(self.root, "diff", self.runtime_source, "--", "runtime.py"), "")
+        self.assertIn("runtime.py", tool._working_tree_paths(self.root, self.runtime_source))
+        before = _snapshot(self.root)
+        index_before = (self.root / ".git/index").read_bytes()
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "disallowed.*runtime.py"):
+            self._finalize()
+        self.assertEqual(_snapshot(self.root), before)
+        self.assertEqual((self.root / ".git/index").read_bytes(), index_before)
+
     def test_unicode_release_paths_survive_both_quote_settings(self) -> None:
         tool.repin(self.root, self.run)
         tracked = "release/überblick.md"

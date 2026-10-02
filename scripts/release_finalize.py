@@ -35,6 +35,7 @@ from release_common import (
     ROOT,
     WORKFLOW_PAIRS,
     ReleaseValidationError,
+    _diff_paths,
     canonical_json_bytes,
     compare_release_versions,
     disallowed_release_paths,
@@ -90,12 +91,11 @@ def _check_paths(paths: list[str]) -> None:
 
 
 def _working_tree_paths(root: Path, runtime_source: str) -> list[str]:
-    """Enumerate both sides of tracked renames and non-ignored untracked paths."""
-    tracked = _git(
-        root, "diff", "--no-renames", "--name-only", "-z", runtime_source, strip=False
-    )
+    """Bound working-tree and staged changes plus non-ignored untracked paths."""
+    tracked = _diff_paths(root, runtime_source)
+    staged = _diff_paths(root, runtime_source, cached=True)
     untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
-    return sorted(filter(None, (tracked + untracked).split("\0")))
+    return sorted(set(tracked) | set(staged) | set(filter(None, untracked.split("\0"))))
 
 
 def _check_destinations(root: Path, edits: dict[str, bytes]) -> None:
