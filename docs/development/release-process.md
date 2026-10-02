@@ -109,10 +109,18 @@ and remove completed spec files from the active
    tag rebuilds its certificate: its own `release_finalize.py manifest` command
    runs in a temporary detached worktree at the verified commit, using the selected
    Python environment with an explicit working directory and Python path and no
-   GitHub credentials or workflow output-file variables. Main compares the rebuilt
-   manifest with the signed checksum, renders notes, and computes publication flags.
+   inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
+   environment; it does not isolate it from files or other same-user processes.
+   The certificate step receives no `GH_TOKEN` and makes no GitHub API calls.
+   Main compares the rebuilt manifest with the signed checksum and reads notes
+   from the verified commit, even if the local tag moves. A subsequent authenticated
+   `publication-flags` step computes only `prerelease` and `latest`; the certificate
+   step outputs only `tag_object`.
    The worktree is removed on success or failure; a cleanup failure is reported
-   separately when validation already failed. Its read-only job installs dependencies
+   separately when validation or worktree addition already failed. If removal
+   fails, the temporary directory is deleted before stale worktree registrations
+   are pruned; prune failures are secondary, and removal failure still fails an
+   otherwise successful publication. Its read-only job installs dependencies
    and retains the manifest, checksum, and rendered notes in a one-day workflow
    artifact. The write-enabled job downloads those files and creates the release
    without checking out or executing repository code or installing dependencies.
@@ -142,7 +150,17 @@ and remove completed spec files from the active
    Existing published releases are never recreated or automatically edited.
    Repository-relative notes links are rendered as tag-pinned GitHub blob URLs,
    preserving queries and fragments. Committed notes remain byte-identical to
-   their tags. To prepare a historical release-body correction for explicit
+   their tags. The renderer supports simple inline links and single-line reference
+   definitions, with whitespace-free bare or angle-wrapped destinations and optional
+   single- or double-quoted titles. Full, collapsed, and shortcut reference links
+   use those definitions. Bare destinations cannot contain parentheses or escapes;
+   use angle brackets for parentheses and percent encoding for spaces. Labels
+   cannot contain nested brackets, and explicit reference links must be defined.
+   Fenced code and inline backtick spans (including multiple backticks) are preserved.
+   External URLs and local anchors are unchanged. Images (including reference
+   images), HTML links, root-absolute repository paths, paths escaping the repository,
+   duplicate reference definitions, and unsupported link-like syntax are rejected.
+   To prepare a historical release-body correction for explicit
    review and approval, render the notes from that tag:
 
    ```bash

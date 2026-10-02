@@ -603,6 +603,11 @@ class DocumentationReferenceTests(unittest.TestCase):
         self.assertEqual(len(issues), 2)
         self.assertIn("docs/current.md:3:", issues[0])
         self.assertIn("docs/current.md:7:", issues[1])
+        masked = self.checker.mask_markdown_code(text)
+        self.assertEqual(len(masked), len(text))
+        self.assertEqual([index for index, char in enumerate(masked) if char == "\n"],
+                         [index for index, char in enumerate(text) if char == "\n"])
+        self.assertEqual(masked[:text.index("```text")], text[:text.index("```text")])
 
     def test_patterns_and_placeholders_are_not_concrete_references(self) -> None:
         text = (

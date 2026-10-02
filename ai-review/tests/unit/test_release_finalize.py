@@ -456,7 +456,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
 
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
-        gh = mock.patch.object(tool, "_gh", return_value="[[]]")
+        gh = mock.patch.object(tool, "_gh", side_effect=AssertionError("certificate API call"))
         gh.start()
         self.addCleanup(gh.stop)
         # Generate a fixture-only SSH key; the test never reads an operator key.
@@ -544,11 +544,26 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.assertEqual(published[2].read_text(), tool.render_release_notes(
             _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
         ))
-        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\ntag_object="
+        self.assertEqual(output.read_text(), "tag_object="
                          + _git(self.root, "rev-parse", tag) + "\n")
         self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         after = _snapshot(self.root)
         self.assertEqual(after, before)
+        tag_object = _git(self.root, "rev-parse", tag)
+        verify = tool._verify_release_tag
+
+        def move_after_verification(root, requested_tag):
+            verified = verify(root, requested_tag)
+            _git(root, "update-ref", f"refs/tags/{requested_tag}", self.runtime_source)
+            return verified
+
+        with mock.patch.object(tool, "_verify_release_tag", side_effect=move_after_verification):
+            pinned_notes = tool.publish(self.root, tag, out)[2].read_text()
+        _git(self.root, "update-ref", f"refs/tags/{tag}", tag_object)
+        self.assertEqual(pinned_notes, tool.render_release_notes(
+            _git(self.root, "show", f"{P}:release/{VERSION}.md") + "\n", tag,
+        ))
+        self.assertNotEqual(pinned_notes, tool.render_release_notes(self.notes, tag))
         _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
@@ -595,6 +610,158 @@ class ReleaseFinalizationTests(unittest.TestCase):
                     tool.publish(self.root, tag, out)
 
 class ReleasePublicationTests(unittest.TestCase):
+    def test_all_tag_consumers_report_the_same_validation_error_without_writes(self) -> None:
+        for tag in ("", "1.0.0", "v", "vv1.0.0", "v1.0.0+build", "v1.0.0-01"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(tag=tag):
+                root = Path(tmp)
+                messages = []
+                for command in ("publish", "release-notes", "publication-flags"):
+                    stderr = io.StringIO()
+                    arguments = [command, "--tag", tag]
+                    if command == "publication-flags":
+                        arguments += ["--github-output", str(root / "output")]
+                    else:
+                        arguments += ["--out", str(root / "assets")]
+                    with mock.patch.object(tool.sys, "stderr", stderr):
+                        self.assertEqual(tool.main(arguments), 1)
+                    messages.append(stderr.getvalue())
+                self.assertEqual(len(set(messages)), 1)
+                self.assertIn("release tag must be v-prefixed", messages[0])
+                self.assertEqual(_snapshot(root), {})
+                with self.assertRaisesRegex(tool.ReleaseValidationError, "release tag must"):
+                    tool.render_release_notes("notes", tag)
+
+    def test_tagged_input_shapes_fail_cleanly_before_worktree_addition(self) -> None:
+        for value in (None, [], "text", 1, True, {}, {"other": "1.0.0"},
+                      *({"release_version": item} for item in (None, 1, [], {}, True))):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(value=value):
+                root = Path(tmp)
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(tool, "ROOT", root),
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, "b" * 40, "c" * 64,
+                    )),
+                    mock.patch.object(tool, "_git", return_value=json.dumps(value)) as git,
+                    mock.patch.object(tool.sys, "stderr", stderr),
+                ):
+                    with self.assertRaisesRegex(tool.ReleaseValidationError,
+                                                "object with release_version"):
+                        tool.publish(root, "v1.0.0", root / "assets")
+                    self.assertEqual(tool.main([
+                        "publish", "--tag", "v1.0.0", "--out", str(root / "assets"),
+                    ]), 1)
+                self.assertTrue(all(call.args[1] == "show" for call in git.call_args_list))
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertEqual(_snapshot(root), {})
+
+    def test_publication_flags_command_writes_only_classification(self) -> None:
+        for tag, expected in (("v1.0.0", "prerelease=false\nlatest=true\n"),
+                              ("v1.0.0-rc.1", "prerelease=true\nlatest=false\n")):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(tag=tag):
+                output = Path(tmp) / "output"
+                with (
+                    mock.patch.object(tool, "_gh", return_value="[[]]") as gh,
+                    mock.patch.object(tool, "_verify_release_tag") as verify,
+                    mock.patch.object(tool, "_git") as git,
+                ):
+                    self.assertEqual(tool.main([
+                        "publication-flags", "--tag", tag, "--github-output", str(output),
+                    ]), 0)
+                self.assertEqual(output.read_text(), expected)
+                self.assertEqual(gh.call_count, int("-" not in tag))
+                verify.assert_not_called()
+                git.assert_not_called()
+
+    def test_validation_workflow_credentials_are_only_in_flags_step(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        self.assertNotIn("env", workflow)
+        validate = workflow["jobs"]["validate"]
+        self.assertNotIn("env", validate)
+        steps = validate["steps"]
+        credential_steps = [step.get("id") for step in steps if any(
+            key.startswith(("GH_", "GITHUB_")) for key in step.get("env", {})
+        )]
+        self.assertEqual(credential_steps, ["flags"])
+        ids = [step.get("id") for step in steps]
+        self.assertLess(ids.index("certificate"), ids.index("flags"))
+        flags = steps[ids.index("flags")]
+        self.assertIn(" publication-flags ", flags["run"])
+        self.assertNotIn(" publish ", flags["run"])
+        self.assertEqual(validate["outputs"], {
+            "prerelease": "${{ steps.flags.outputs.prerelease }}",
+            "latest": "${{ steps.flags.outputs.latest }}",
+            "tag_object": "${{ steps.certificate.outputs.tag_object }}",
+        })
+        checkout = next(step for step in steps if "actions/checkout@" in step.get("uses", ""))
+        self.assertFalse(checkout["with"]["persist-credentials"])
+
+    def test_real_worktree_cleanup_prunes_stale_registration_and_preserves_valid_tree(self) -> None:
+        for failure in ("none", "validation", "addition", "removal", "both", "prune"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(failure=failure):
+                root = Path(tmp) / "repository"
+                root.mkdir()
+                for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                             ("config", "user.email", "fixture@example.test"),
+                             ("config", "commit.gpgsign", "false")):
+                    _git(root, *args)
+                (root / "file").write_text("fixture")
+                _git(root, "add", ".")
+                _git(root, "commit", "-qm", "fixture")
+                valid = Path(tmp) / "valid"
+                _git(root, "worktree", "add", "--detach", str(valid), "HEAD")
+                before = _git(root, "worktree", "list", "--porcelain")
+                real_git = tool._git
+                calls = []
+                tree = None
+
+                def git(repository, *args, _failure=failure, _calls=calls,
+                        _real_git=real_git, **kwargs):
+                    nonlocal tree
+                    _calls.append(args)
+                    if args[:2] == ("worktree", "add"):
+                        tree = Path(args[-2])
+                        result = _real_git(repository, *args, **kwargs)
+                        if _failure == "addition":
+                            raise tool.ReleaseValidationError("addition failed after registration")
+                        return result
+                    if args[:2] == ("worktree", "remove") and _failure in (
+                        "addition", "removal", "both", "prune",
+                    ):
+                        raise tool.ReleaseValidationError("removal failure")
+                    if args[:2] == ("worktree", "prune"):
+                        self.assertIsNotNone(tree)
+                        self.assertFalse(tree.exists())
+                        if _failure == "prune":
+                            raise tool.ReleaseValidationError("prune failure")
+                    return _real_git(repository, *args, **kwargs)
+
+                stderr = io.StringIO()
+                expected = ("addition" if failure == "addition" else "validation"
+                            if failure in ("validation", "both") else "removal")
+                with mock.patch.object(tool, "_git", side_effect=git), \
+                        mock.patch.object(tool.sys, "stderr", stderr):
+                    if failure == "none":
+                        with tool._tag_worktree(root, "HEAD") as active:
+                            self.assertTrue(active.is_dir())
+                    else:
+                        with self.assertRaisesRegex(tool.ReleaseValidationError, expected), \
+                                tool._tag_worktree(root, "HEAD"):
+                            if failure in ("validation", "both"):
+                                raise tool.ReleaseValidationError("validation failure")
+                self.assertTrue(valid.is_dir())
+                self.assertFalse(tree.exists())
+                pruned = any(args[:2] == ("worktree", "prune") for args in calls)
+                self.assertEqual(pruned, failure in ("addition", "removal", "both", "prune"))
+                if failure == "prune":
+                    self.assertIn("worktree prune also failed: prune failure", stderr.getvalue())
+                    self.assertNotEqual(_git(root, "worktree", "list", "--porcelain"), before)
+                    _git(root, "worktree", "prune", "--expire", "now")
+                self.assertEqual(_git(root, "worktree", "list", "--porcelain"), before)
+                if failure in ("addition", "both"):
+                    self.assertIn("worktree cleanup also failed: removal failure",
+                                  stderr.getvalue())
+
     def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
         for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
             with self.subTest(version=version), self.assertRaisesRegex(
@@ -711,6 +878,62 @@ class ReleasePublicationTests(unittest.TestCase):
         expected = expected.replace("(1.0.0.md)", f"({prefix}release/1.0.0.md)")
         expected = expected.replace("../docs/guide.md", prefix + "docs/guide.md")
         self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
+
+    def test_notes_renderer_supports_angle_destinations_titles_and_reference_forms(self) -> None:
+        text = (
+            "Before [angle](<../docs/a(b).md?q=1#part> 'Title') after.\n"
+            "[full][Guide] [Guide][] [Guide]\n"
+            "[Guide]: <../docs/guide.md?view=1#intro> \"A guide\"\n"
+            "[bare]: ../docs/other.md 'Other guide'\n"
+            "[other][bare]\n"
+            "[web]: <https://example.test/a(b)?q=1#part> 'External'\n"
+            "[anchor]: #scope\n"
+        )
+        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/"
+        expected = text
+        for path in ("a(b).md?q=1#part", "guide.md?view=1#intro", "other.md"):
+            expected = expected.replace("../docs/" + path, prefix + "docs/" + path)
+        self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
+        self.assertEqual(tool.render_release_notes(text.replace("\n", "\r\n"), "v1.0.0"),
+                         expected.replace("\n", "\r\n"))
+
+    def test_notes_renderer_preserves_fences_and_multi_backtick_code_byte_for_byte(self) -> None:
+        code = (
+            "```markdown\r\n[link](../../outside) ![image][id]\r\n```\r\n"
+            "  ~~~~text\n[ref]: ../docs/code.md\n~~~\n~~~~\n"
+            "`[single](../docs/code.md)` and `` `[double](../../outside)` ``\n"
+            "``` [triple](../docs/code.md) `` inside ```\n"
+            "``multi\n[line](../docs/code.md)``\n"
+        )
+        live = "[live](../docs/live.md)\n"
+        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/docs/"
+        self.assertEqual(tool.render_release_notes(code + live, "v1.0.0"),
+                         code + live.replace("../docs/", prefix))
+
+    def test_notes_renderer_rejects_unsupported_link_forms(self) -> None:
+        invalid = (
+            "[root](/docs/guide.md)", "[escape](../../outside.md)",
+            "[encoded](../%2e%2e/outside.md)", "[encoded](%2fdocs/guide.md)",
+            "![image](../docs/image.png)", "![image][ref]\n[ref]: ../docs/image.png",
+            "![image][]", "![image]", "[space](../docs/my guide.md)",
+            "[space](<../docs/my guide.md>)", "[parentheses](../docs/a(b).md)",
+            "[title](../docs/guide.md (Title))", "[nested [label]](../docs/guide.md)",
+            "[link][missing]", "[ref]:\n  ../docs/guide.md",
+            "[ref]: ../docs/guide.md\n[REF]: ../docs/other.md",
+            '<a href="../docs/guide.md">guide</a>', '<img src="../docs/image.png">',
+            "[escaped](../docs/a\\ b.md)",
+        )
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises(tool.ReleaseValidationError):
+                tool.render_release_notes(text, "v1.0.0")
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with (
+                    mock.patch.object(tool, "_git", return_value=text),
+                    self.assertRaises(tool.ReleaseValidationError),
+                ):
+                    tool.release_notes(root, "v1.0.0", root / "assets")
+                self.assertEqual(_snapshot(root), {})
 
     def test_release_notes_reads_tagged_content_without_changing_the_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

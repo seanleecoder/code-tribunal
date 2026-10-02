@@ -11,11 +11,12 @@ import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from ai_review.canonical import json_loads_no_duplicates
 from build_release_manifest import build_manifest
@@ -29,6 +30,7 @@ from check_release_inputs import (
     validate_template_pins,
 )
 from check_release_manifest import validate_manifest
+from markdown_code import mask_markdown_code
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
@@ -379,37 +381,90 @@ def _verify_release_tag(root: Path, tag: str) -> tuple[str, str, str]:
     return tag_object, release_commit, markers[0]
 
 
-def render_release_notes(text: str, tag: str) -> str:
-    """Pin repository-relative Markdown destinations to the notes' release tag."""
-    validate_release_version(tag.removeprefix("v"))
-    if not tag.startswith("v"):
-        raise ReleaseValidationError("release notes require a v-prefixed release tag")
+def _tag_version(tag: str) -> str:
+    try:
+        if not tag.startswith("v"):
+            raise ReleaseValidationError("missing v prefix")
+        return validate_release_version(tag[1:])
+    except ReleaseValidationError as exc:
+        raise ReleaseValidationError(
+            "release tag must be v-prefixed with a valid release version"
+        ) from exc
 
-    def destination(match: re.Match[str]) -> str:
-        target = match.group("target")
+
+def render_release_notes(text: str, tag: str) -> str:
+    """Render the bounded link syntax documented in the release runbook."""
+    _tag_version(tag)
+    masked = mask_markdown_code(text, inline=True)
+    if re.search(r"!\[|</?(?:a|img)\b", masked, re.I):
+        raise ReleaseValidationError("release notes do not support images or HTML links")
+    if re.search(r"\[[^\]\n]*\[[^\n]*\]\s*[\[(]", masked):
+        raise ReleaseValidationError("release notes do not support nested link labels")
+    target_pattern = r'''(?P<target><[^<>\s]+>|[^<>\s()"'\\\[\]]+)'''
+    title_pattern = r'''(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?'''
+    edits: list[tuple[int, int, str]] = []
+
+    def destination(target: str) -> str:
+        wrapped = target.startswith("<")
+        target = target[1:-1] if wrapped else target
+        if "\\" in target:
+            raise ReleaseValidationError("release notes do not support escaped link destinations")
         parts = urlsplit(target)
         if parts.scheme or parts.netloc or not parts.path:
-            return match.group(0)
+            return f"<{target}>" if wrapped else target
+        decoded = unquote(parts.path)
+        bounded = posixpath.normpath(posixpath.join("release", decoded))
+        if decoded.startswith("/") or bounded == ".." or bounded.startswith("../"):
+            raise ReleaseValidationError("release notes destination escapes the repository")
         path = posixpath.normpath(posixpath.join("release", parts.path))
-        if parts.path.startswith("/") or path == ".." or path.startswith("../"):
-            return match.group(0)
         pinned = urlunsplit((
             "https", "github.com", f"/{REPOSITORY}/blob/{tag}/{path}",
             parts.query, parts.fragment,
         ))
-        return match.group(0).replace(target, pinned, 1)
+        return f"<{pinned}>" if wrapped else pinned
 
-    return re.sub(
-        r"\]\((?P<target>[^\s()]+)(?:[ \t]+[\"'][^\n]*?[\"'])?\)", destination, text
+    def consume(pattern: str) -> list[re.Match[str]]:
+        nonlocal masked
+        matches = list(re.finditer(pattern, masked, re.M))
+        for match in reversed(matches):
+            if "target" in match.groupdict():
+                start, end = match.span("target")
+                # Read the original destination; a backtick in a URL is unsupported.
+                target = text[start:end]
+                if target != match["target"]:
+                    raise ReleaseValidationError("release notes destination contains code syntax")
+                edits.append((start, end, destination(target)))
+            masked = (masked[:match.start()] + re.sub(r"[^\r\n]", " ", match[0])
+                      + masked[match.end():])
+        return matches
+
+    def reference_key(label: str) -> str:
+        return " ".join(label.split()).casefold()
+
+    definitions = consume(
+        r"^ {0,3}\[(?P<label>[^\[\]\n]+)\]:[ \t]*"
+        + target_pattern + title_pattern + r"[ \t]*\r?$"
     )
+    keys = [reference_key(match["label"]) for match in definitions]
+    if len(keys) != len(set(keys)):
+        raise ReleaseValidationError("release notes contain duplicate reference definitions")
+    consume(r"\[[^\[\]\n]*\]\([ \t]*" + target_pattern + title_pattern + r"[ \t]*\)")
+    references = consume(r"\[(?P<label>[^\[\]\n]+)\]\[(?P<reference>[^\[\]\n]*)\]")
+    for match in references:
+        if reference_key(match["reference"] or match["label"]) not in keys:
+            raise ReleaseValidationError("release notes contain an undefined reference link")
+    if re.search(r"\]\s*(?:\(|\[|:)", masked):
+        raise ReleaseValidationError("release notes contain unsupported link syntax")
+    for start, end, replacement in sorted(edits, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    return text
 
 
-def release_notes(root: Path, tag: str, out: Path) -> Path:
-    version = validate_release_version(tag.removeprefix("v"))
-    if tag != f"v{version}":
-        raise ReleaseValidationError("release notes require a v-prefixed release tag")
+def release_notes(root: Path, tag: str, out: Path, *, revision: str | None = None) -> Path:
+    version = _tag_version(tag)
     # Read the committed notes, even when the invoking checkout is a newer draft.
-    notes = _git(root, "show", f"refs/tags/{tag}:release/{version}.md", strip=False)
+    source = revision if revision is not None else f"refs/tags/{tag}"
+    notes = _git(root, "show", f"{source}:release/{version}.md", strip=False)
     body = render_release_notes(notes, tag)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"code-tribunal-{tag}-release-notes.md"
@@ -446,57 +501,77 @@ def _publication_flags(version: str) -> tuple[bool, bool]:
     return False, latest
 
 
+def publication_flags(tag: str, github_output: Path) -> None:
+    prerelease, latest = _publication_flags(_tag_version(tag))
+    with github_output.open("a", encoding="utf-8") as output:
+        output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
+
+
+@contextmanager
+def _tag_worktree(root: Path, release_commit: str) -> Iterator[Path]:
+    removal_failed = False
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary) / "tag"
+            try:
+                _git(root, "worktree", "add", "--detach", str(tree), release_commit)
+                yield tree
+            finally:
+                active_error = sys.exception()
+                try:
+                    _git(root, "worktree", "remove", "--force", str(tree))
+                except (ReleaseValidationError, OSError) as cleanup_error:
+                    removal_failed = True
+                    if active_error is None:
+                        raise
+                    print(f"ERROR: worktree cleanup also failed: {cleanup_error}", file=sys.stderr)
+    finally:
+        # TemporaryDirectory has deleted the tree, making its registration stale.
+        if removal_failed:
+            try:
+                _git(root, "worktree", "prune", "--expire", "now")
+            except (ReleaseValidationError, OSError) as prune_error:
+                print(f"ERROR: worktree prune also failed: {prune_error}", file=sys.stderr)
+
+
 def publish(
     root: Path, tag: str, out: Path, github_output: Path | None = None,
 ) -> tuple[Path, Path, Path]:
     """Main verifies trust; the signed tag rebuilds its own certificate."""
-    version = validate_release_version(tag.removeprefix("v"))
-    if tag != f"v{version}":
-        raise ReleaseValidationError("publication requires a v-prefixed release tag")
+    version = _tag_version(tag)
     tag_object, release_commit, digest = _verify_release_tag(root, tag)
     inputs = json_loads_no_duplicates(
         _git(root, "show", f"{release_commit}:release/release-inputs.json")
     )
+    if not isinstance(inputs, dict) or not isinstance(inputs.get("release_version"), str):
+        raise ReleaseValidationError("tagged release inputs require an object with release_version")
     if inputs["release_version"] != version:
         raise ReleaseValidationError("tag must match the tagged release inputs")
     out = out.absolute()
-    with tempfile.TemporaryDirectory() as temporary:
-        tree = Path(temporary) / "tag"
-        _git(root, "worktree", "add", "--detach", str(tree), release_commit)
-        try:
-            environment = {
-                key: value for key, value in os.environ.items()
-                if not key.startswith(("GH_", "GITHUB_"))
-            }
-            environment["PYTHONPATH"] = os.pathsep.join((
-                str(tree / "ai-review/src"), str(tree / "scripts"),
-            ))
-            rebuilt = subprocess.run(
-                [sys.executable, str(tree / "scripts/release_finalize.py"), "manifest",
-                 "--release-commit", release_commit, "--out", str(out)],
-                cwd=tree, env=environment, capture_output=True, text=True, check=False,
+    with _tag_worktree(root, release_commit) as tree:
+        environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith(("GH_", "GITHUB_"))
+        }
+        environment["PYTHONPATH"] = os.pathsep.join((
+            str(tree / "ai-review/src"), str(tree / "scripts"),
+        ))
+        rebuilt = subprocess.run(
+            [sys.executable, str(tree / "scripts/release_finalize.py"), "manifest",
+             "--release-commit", release_commit, "--out", str(out)],
+            cwd=tree, env=environment, capture_output=True, text=True, check=False,
+        )
+        if rebuilt.returncode:
+            raise ReleaseValidationError(
+                rebuilt.stderr.strip() or "signed tag's manifest command failed"
             )
-            if rebuilt.returncode:
-                raise ReleaseValidationError(
-                    rebuilt.stderr.strip() or "signed tag's manifest command failed"
-                )
-            manifest = out / f"code-tribunal-{tag}-release-manifest.json"
-            assets = (manifest, out / f"{manifest.name}.sha256")
-            if sha256_bytes(manifest.read_bytes()) != digest:
-                raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
-            notes = release_notes(tree, tag, out)
-            prerelease, latest = _publication_flags(version)
-        finally:
-            active_error = sys.exception()
-            try:
-                _git(root, "worktree", "remove", "--force", str(tree))
-            except (ReleaseValidationError, OSError) as cleanup_error:
-                if active_error is None:
-                    raise
-                print(f"ERROR: worktree cleanup also failed: {cleanup_error}", file=sys.stderr)
+        manifest = out / f"code-tribunal-{tag}-release-manifest.json"
+        assets = (manifest, out / f"{manifest.name}.sha256")
+        if sha256_bytes(manifest.read_bytes()) != digest:
+            raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
+        notes = release_notes(tree, tag, out, revision=release_commit)
     if github_output is not None:
         with github_output.open("a", encoding="utf-8") as output:
-            output.write(f"prerelease={str(prerelease).lower()}\nlatest={str(latest).lower()}\n")
             output.write(f"tag_object={tag_object}\n")
     return (*assets, notes)
 
@@ -523,6 +598,9 @@ def main(argv: list[str] | None = None) -> int:
             subparser.add_argument("--github-output", type=Path)
     next_draft = commands.add_parser("open-next")
     next_draft.add_argument("--version", required=True)
+    flags = commands.add_parser("publication-flags")
+    flags.add_argument("--tag", required=True)
+    flags.add_argument("--github-output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command in {"repin", "finalize"}:
@@ -546,6 +624,9 @@ def main(argv: list[str] | None = None) -> int:
             outputs = publish(ROOT, args.tag, args.out, args.github_output)
         elif args.command == "release-notes":
             outputs = (release_notes(ROOT, args.tag, args.out),)
+        elif args.command == "publication-flags":
+            publication_flags(args.tag, args.github_output)
+            outputs = (args.github_output,)
         else:
             outputs = open_next(ROOT, args.version)
         for output in outputs:

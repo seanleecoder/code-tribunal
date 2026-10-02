@@ -24,8 +24,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      prerelease: ${{ steps.certificate.outputs.prerelease }}
-      latest: ${{ steps.certificate.outputs.latest }}
+      prerelease: ${{ steps.flags.outputs.prerelease }}
+      latest: ${{ steps.flags.outputs.latest }}
       tag_object: ${{ steps.certificate.outputs.tag_object }}
     steps:
       - name: Require manual dispatch from main
@@ -57,12 +57,21 @@ jobs:
       - name: Verify signed certificate and render publication files
         id: certificate
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publish \
             --tag "$RELEASE_TAG" --out "$RUNNER_TEMP/release" --github-output "$GITHUB_OUTPUT"
+
+      - name: Compute publication flags
+        id: flags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publication-flags \
+            --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
 
       - name: Retain private publication files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

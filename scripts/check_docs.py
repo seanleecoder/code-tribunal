@@ -19,6 +19,7 @@ SCRIPTS = Path(__file__).resolve().parent
 # Support importlib/module loading when scripts/ is not already on sys.path.
 sys.path.insert(0, str(SCRIPTS))
 
+from markdown_code import mask_markdown_code  # noqa: E402
 from pipeline_trust import find_trust_issues  # noqa: E402
 from release_common import (  # noqa: E402
     RELEASE_VERSION_RE,
@@ -145,34 +146,9 @@ REJECTED_ENV_NAMES = {
 }
 
 
-def _without_fenced_code(text: str) -> str:
-    """Remove CommonMark fenced blocks while preserving surrounding Markdown."""
-    output: list[str] = []
-    marker: str | None = None
-    marker_length = 0
-    for line in text.splitlines(keepends=True):
-        if marker is None:
-            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-            if opening is None:
-                output.append(line)
-                continue
-            marker = opening.group(1)[0]
-            marker_length = len(opening.group(1))
-        else:
-            closing = re.match(
-                rf"^ {{0,3}}{re.escape(marker)}{{{marker_length},}}[ \t]*(?:\r?\n)?$",
-                line,
-            )
-            if closing is not None:
-                marker = None
-                marker_length = 0
-        output.append("\n" if line.endswith("\n") else "")
-    return "".join(output)
-
-
 def _inline_code_values(text: str) -> set[str]:
     """Return single-backtick inline code values outside fenced examples."""
-    return set(INLINE_CODE_RE.findall(_without_fenced_code(text)))
+    return set(INLINE_CODE_RE.findall(mask_markdown_code(text)))
 
 
 @dataclass(frozen=True)
@@ -205,7 +181,7 @@ def _reference_issues(path: Path, text: str, tests: TestReferenceIndex) -> list[
     relative = path.relative_to(ROOT)
     if relative.is_relative_to("docs/improvement-specs"):
         return []  # Proposed names remain subject to every other documentation check.
-    lines = _without_fenced_code(text).splitlines()
+    lines = mask_markdown_code(text).splitlines()
     if relative.as_posix() == "CHANGELOG.md":
         start = next((i for i, line in enumerate(lines) if line == "## [Unreleased]"), None)
         if start is None:
@@ -364,7 +340,7 @@ def _github_install_issues(text: str) -> list[str]:
     issues: list[str] = []
     if not re.search(
         rf"\[[^\]]+\]\({re.escape(GITHUB_INSTALL_SOURCE)}(?:\s+[^)]*)?\)",
-        _without_fenced_code(text),
+        mask_markdown_code(text),
     ):
         issues.append(
             f"docs/getting-started/github.md: install source must link to {GITHUB_INSTALL_SOURCE}"
@@ -450,7 +426,7 @@ def _release_state_issues() -> list[str]:
         )
 
     if EVIDENCE_INDEX.exists():
-        index = _without_fenced_code(EVIDENCE_INDEX.read_text(encoding="utf-8"))
+        index = mask_markdown_code(EVIDENCE_INDEX.read_text(encoding="utf-8"))
         pending = index.count("**Pending**")
         if pending:
             issues.append(
