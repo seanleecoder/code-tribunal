@@ -11,7 +11,9 @@ Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/T
 ## Release version contract
 
 Release validators accept `MAJOR.MINOR.PATCH` with an optional prerelease suffix,
-for example `1.0.1-rc.1`. They reject build metadata such as `1.0.1+build.1`.
+for example `1.0.1-rc.1`. Numeric prerelease identifiers cannot contain leading
+zeros; alphanumeric identifiers such as `alpha01` remain valid. Validators reject
+build metadata such as `1.0.1+build.1`.
 The active release version also determines the required notes file:
 `release/<release_version>.md`.
 
@@ -101,9 +103,54 @@ and remove completed spec files from the active
    `Release-manifest-sha256` line. Signing stays local and manual. Never reuse a
    certificate generated for a different commit.
 7. Verify publication of the tag, final notes, manifest, and checksum. The tag-push
-   publication workflow revalidates the signed certificate against the tagged
-   inputs and uploads its assets; it carries no signing key. Then open the next
-   draft in a follow-up PR:
+   publication workflow checks out protected main, which captures the annotated
+   tag object, verifies ancestry and its signature using main's signer registry,
+   and extracts the signed checksum before executing any tag code. The signed
+   tag rebuilds its certificate: its own `release_finalize.py manifest` command
+   runs in a temporary detached worktree at the verified commit, using the selected
+   Python environment with an explicit working directory and Python path and no
+   GitHub credentials or workflow output-file variables. Main compares the rebuilt
+   manifest with the signed checksum, renders notes, and computes publication flags.
+   The worktree is removed on success or failure; a cleanup failure is reported
+   separately when validation already failed. Its read-only job installs dependencies
+   and retains the manifest, checksum, and rendered notes in a one-day workflow
+   artifact. The write-enabled job downloads those files and creates the release
+   without checking out or executing repository code or installing dependencies.
+   It attaches only the manifest and checksum; it carries no signing key.
+   Immediately before release creation, the remote tag reference must still match
+   the validated tag object; missing or changed tags abort. This check and creation
+   are separate API operations; `--verify-tag` alone only checks tag existence.
+   Publication runs share one concurrency group with `cancel-in-progress: false`
+   and `queue: max`: one runs at a time and up to 100 pending runs wait. Further
+   runs are cancelled when the queue is full. Recover a cancelled or failed
+   unpublished tag by dispatching a fresh retry from main after capacity is available.
+   Prereleases are marked prerelease and never latest. A stable release is latest
+   only when no higher published, non-draft stable release exists; all release
+   pages are queried with pagination, using semantic version precedence.
+
+   Historical workflow reruns retain their old workflow code. Retry unpublished
+   signed tags using the current workflow dispatched **from main**:
+
+   ```bash
+   gh workflow run publish-release.yml --ref main -f tag="v$V"
+   ```
+
+   Publication and retries require the tag's `manifest` command, currently present
+   from v2.0.1 onward. Older published tags are outside publication retries; their
+   notes can still be rendered for backfill with `release-notes` below.
+
+   Existing published releases are never recreated or automatically edited.
+   Repository-relative notes links are rendered as tag-pinned GitHub blob URLs,
+   preserving queries and fragments. Committed notes remain byte-identical to
+   their tags. To prepare a historical release-body correction for explicit
+   review and approval, render the notes from that tag:
+
+   ```bash
+   PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py release-notes \
+     --tag "v$V" --out /tmp/code-tribunal-release
+   ```
+
+   Then open the next draft in a follow-up PR:
 
    ```bash
    make release-open-next V=2.0.2
@@ -200,6 +247,13 @@ git verify-tag v1.0.2     # expects: Good "git" signature for <signer>
 Verification resolves signers from [`.github/allowed_signers`](../../.github/allowed_signers).
 Add an entry when a new releaser joins, and remove one when they leave — an
 unlisted key verifies as `No principal matched`, not as a bad signature.
+
+Publication uses only the signer registry fetched from protected `origin/main`,
+copied to a temporary trust file. A key retained in a historical tag's tree no
+longer authorizes publication after it is removed from main; a key registered
+only on main can authorize a historical tag. Missing or empty main trust data
+fails closed. Local `git verify-tag` uses the configured local file and does not
+establish this publication policy by itself.
 
 For GitHub to display the tag as **Verified**, the same public key must be registered
 on the account as a *signing* key (distinct from an authentication key):

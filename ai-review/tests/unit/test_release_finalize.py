@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -11,6 +13,8 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from unittest import mock
+
+import yaml
 
 from tests.support.repository_script import load_repository_script
 
@@ -66,6 +70,20 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # A runnable signed tag must carry its own certificate implementation.
+        for directory in ("scripts", "ai-review/src"):
+            shutil.copytree(REPO / directory, self.root / directory,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        script = self.root / "scripts/release_finalize.py"
+        content = script.read_text().replace(
+            "from __future__ import annotations\n",
+            "from __future__ import annotations\n\n"
+            "import os\n"
+            "assert not any(k.startswith(('GH_', 'GITHUB_')) for k in os.environ)\n"
+            "assert os.getcwd() == "
+            "str(__import__('pathlib').Path(__file__).resolve().parents[1])\n",
+        )
+        script.write_text(content)
         for relative in (
             "ai-review/ci/review.github-actions.yml",
             "ai-review/ci/review.gitlab-ci.yml",
@@ -301,6 +319,9 @@ class ReleaseFinalizationTests(unittest.TestCase):
 
 
     def test_publication_requires_signed_reachable_tag_and_matching_certificate(self) -> None:
+        gh = mock.patch.object(tool, "_gh", return_value="[[]]")
+        gh.start()
+        self.addCleanup(gh.stop)
         # Generate a fixture-only SSH key; the test never reads an operator key.
         key_directory = tempfile.TemporaryDirectory()
         self.addCleanup(key_directory.cleanup)
@@ -335,11 +356,17 @@ class ReleaseFinalizationTests(unittest.TestCase):
         tag = f"v{VERSION}"
         _git(self.root, "tag", tag)
         with self.assertRaisesRegex(tool.ReleaseValidationError, "annotated signed"):
-            tool.publish_assets(self.root, tag, out)
+            tool.publish(self.root, tag, out)
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-a", tag, "-m", "unsigned")
-        with self.assertRaises(tool.ReleaseValidationError):
-            tool.publish_assets(self.root, tag, out)
+        worktrees = _git(self.root, "worktree", "list", "--porcelain")
+        with (
+            mock.patch.object(tool.subprocess, "run", wraps=subprocess.run) as processes,
+            self.assertRaises(tool.ReleaseValidationError),
+        ):
+            tool.publish(self.root, tag, out)
+        self.assertFalse(any(call.args[0][0] != "git" for call in processes.call_args_list))
+        self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
         for invalid in ("0" * 64, None, "duplicate"):
             _git(self.root, "tag", "-d", tag)
             text = message.read_text()
@@ -354,18 +381,259 @@ class ReleaseFinalizationTests(unittest.TestCase):
             signed_message.write_text(text)
             _git(self.root, "tag", "-s", tag, "-F", str(signed_message))
             with self.subTest(invalid=invalid), self.assertRaises(tool.ReleaseValidationError):
-                tool.publish_assets(self.root, tag, out)
+                tool.publish(self.root, tag, out)
             # Rebuild the original certificate after the mismatch case wrote scratch assets.
             tool.manifest_assets(self.root, P, out)
         _git(self.root, "tag", "-d", tag)
         _git(self.root, "tag", "-s", tag, "-F", str(message))
-        self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
+        self.assertEqual(tool.publish(self.root, tag, out)[:2], (manifest, checksum))
+        # A newer main validator must not change the signed tag's certificate.
+        tool.open_next(self.root, "9.9.10")
+        before = _snapshot(self.root)
+        output = Path(key_directory.name) / "github-output"
+        with (
+            mock.patch.object(tool, "build_manifest", side_effect=AssertionError("main policy")),
+            mock.patch.object(tool, "validate_release_inputs",
+                              side_effect=AssertionError("new main policy")),
+            mock.patch.dict(os.environ, {
+                "GH_TOKEN": "fixture-token", "GITHUB_TOKEN": "fixture-token",
+                "GH_ENTERPRISE_TOKEN": "fixture-token", "GITHUB_OUTPUT": str(output),
+                "GITHUB_ENV": str(output), "GITHUB_PATH": str(output),
+                "GITHUB_STATE": str(output), "GITHUB_STEP_SUMMARY": str(output),
+            }),
+        ):
+            published = tool.publish(self.root, tag, out, output)
+        self.assertEqual(published[:2], (manifest, checksum))
+        self.assertEqual(published[2].read_text(), tool.render_release_notes(
+            _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
+        ))
+        self.assertEqual(output.read_text(), "prerelease=false\nlatest=true\ntag_object="
+                         + _git(self.root, "rev-parse", tag) + "\n")
+        self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
+        after = _snapshot(self.root)
+        self.assertEqual(after, before)
+        _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
-            tool.publish_assets(self.root, tag, out)
+            tool.publish(self.root, tag, out)
         _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        _git(self.root, "tag", "-s", "v9.9.10", "-F", str(message))
         with self.assertRaisesRegex(tool.ReleaseValidationError, "tag must match"):
-            tool.publish_assets(self.root, "v9.9.10", out)
+            tool.publish(self.root, "v9.9.10", out)
+
+        replacement = Path(key_directory.name) / "replacement-key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(replacement)],
+            check=True,
+        )
+        allowed.write_text("fixture@example.test " + replacement.with_suffix(".pub").read_text())
+        _git(self.root, "add", ".github/allowed_signers")
+        _git(self.root, "commit", "-qm", "rotate trusted main signer")
+        trusted_main = _git(self.root, "rev-parse", "HEAD")
+        _git(self.root, "update-ref", "refs/remotes/origin/main", trusted_main)
+        _git(self.root, "checkout", "--detach", P)
+        with (
+            mock.patch.object(tool.subprocess, "run", wraps=subprocess.run) as processes,
+            self.assertRaises(tool.ReleaseValidationError),
+        ):
+            tool.publish(self.root, tag, out)  # Tagged-tree acceptance is insufficient.
+        self.assertFalse(any(call.args[0][0] != "git" for call in processes.call_args_list))
+        _git(self.root, "config", "user.signingkey", str(replacement))
+        _git(self.root, "tag", "-d", tag)
+        _git(self.root, "tag", "-s", tag, "-F", str(message))
+        self.assertNotIn(replacement.with_suffix(".pub").read_text(), allowed.read_text())
+        self.assertEqual(tool.publish(self.root, tag, out)[:2], (manifest, checksum))
+        for content in ("", "# no trusted signers\n", None):
+            with self.subTest(content=content):
+                _git(self.root, "checkout", "--detach", trusted_main)
+                if content is None:
+                    allowed.unlink()
+                else:
+                    allowed.write_text(content)
+                _git(self.root, "add", ".github/allowed_signers")
+                _git(self.root, "commit", "-qm", "remove main trust")
+                _git(self.root, "update-ref", "refs/remotes/origin/main", "HEAD")
+                _git(self.root, "checkout", "--detach", P)
+                with self.assertRaises(tool.ReleaseValidationError):
+                    tool.publish(self.root, tag, out)
+
+class ReleasePublicationTests(unittest.TestCase):
+    def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
+        for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
+            with self.subTest(version=version), self.assertRaisesRegex(
+                tool.ReleaseValidationError, "leading zeros"
+            ):
+                tool.compare_release_versions(version, "1.0.0")
+        for version in ("1.0.0-0", "1.0.0-rc.0", "1.0.0-01a", "1.0.0-alpha01"):
+            with self.subTest(version=version):
+                self.assertEqual(tool.validate_release_version(version), version)
+                self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
+
+    def test_worktree_cleanup_preserves_an_active_error_but_fails_success(self) -> None:
+        for invalid in (False, True):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(invalid=invalid):
+                root = Path(tmp)
+                manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
+                manifest.write_bytes(b"fixture")
+
+                def git(_root, *args, **kwargs):
+                    if args[:2] == ("worktree", "remove"):
+                        raise tool.ReleaseValidationError("cleanup fixture failure")
+                    if args[0] == "show":
+                        return '{"release_version":"1.0.0"}'
+                    return ""
+
+                stderr = io.StringIO()
+                result = subprocess.CompletedProcess([], int(invalid), "", "primary fixture error")
+                with (
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, "b" * 40, tool.sha256_bytes(b"fixture"),
+                    )),
+                    mock.patch.object(tool, "_git", side_effect=git),
+                    mock.patch.object(tool.subprocess, "run", return_value=result),
+                    mock.patch.object(tool, "release_notes", return_value=root / "notes"),
+                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
+                    mock.patch.object(tool.sys, "stderr", stderr),
+                    self.assertRaisesRegex(
+                        tool.ReleaseValidationError,
+                        "primary fixture error" if invalid else "cleanup fixture failure",
+                    ),
+                ):
+                    tool.publish(root, "v1.0.0", root)
+                self.assertEqual("worktree cleanup also failed" in stderr.getvalue(), invalid)
+
+    def test_publication_checks_remote_tag_object_before_creation(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        command = workflow["jobs"]["publish"]["steps"][-1]["run"]
+        for remote in ("a" * 40, "b" * 40, "missing", "bad-output"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(remote=remote):
+                root = Path(tmp)
+                gh = root / "gh"
+                gh.write_text(
+                    '#!/bin/bash\n'
+                    'if [[ "$1" == api ]]; then\n'
+                    '  [[ "$REMOTE_OBJECT" != missing ]] || exit 1\n'
+                    '  printf "%s\\n" "$REMOTE_OBJECT"\n'
+                    'else\n'
+                    '  printf "%s\\n" "$*" >> "$RUNNER_TEMP/created"\n'
+                    'fi\n'
+                )
+                gh.chmod(0o755)
+                result = subprocess.run(["bash", "-c", command], capture_output=True, env={
+                    **os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                    "RUNNER_TEMP": str(root), "PRERELEASE": "false", "LATEST": "true",
+                    "RELEASE_REPOSITORY": tool.REPOSITORY, "RELEASE_TAG": "v1.0.0",
+                    "TAG_OBJECT": "a" * 40, "REMOTE_OBJECT": remote,
+                })
+                self.assertEqual(result.returncode == 0, remote == "a" * 40)
+                self.assertEqual((root / "created").exists(), remote == "a" * 40)
+
+    def test_version_comparison_uses_numeric_core_and_semver_prerelease_precedence(self) -> None:
+        versions = [
+            "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+            "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0",
+            "1.0.2", "1.0.10", "2.0.0", "10.0.0",
+        ]
+        for index, left in enumerate(versions):
+            for other, right in enumerate(versions):
+                with self.subTest(left=left, right=right):
+                    self.assertEqual(tool.compare_release_versions(left, right),
+                                     (index > other) - (index < other))
+        with self.assertRaises(tool.ReleaseValidationError):
+            tool.compare_release_versions("1.0.0+build", "1.0.0")
+
+    def test_published_release_classification_queries_all_pages(self) -> None:
+        pages = [
+            [{"tag_name": "v1.0.9", "draft": False, "prerelease": False}],
+            [{"tag_name": "v1.0.10", "draft": False, "prerelease": False},
+             {"tag_name": "v99.0.0", "draft": True, "prerelease": False},
+             {"tag_name": "v98.0.0", "draft": False, "prerelease": True},
+             {"tag_name": "v97.0.0-rc.1", "draft": False, "prerelease": False},
+             {"tag_name": "unrelated", "draft": False, "prerelease": False}],
+        ]
+        with mock.patch.object(tool, "_gh", return_value=json.dumps(pages)) as gh:
+            self.assertEqual(tool._publication_flags("1.0.9"), (False, False))
+            self.assertEqual(tool._publication_flags("1.0.10"), (False, True))
+            self.assertEqual(tool._publication_flags("2.0.0"), (False, True))
+        self.assertIn("--paginate", gh.call_args.args)
+        self.assertIn("--slurp", gh.call_args.args)
+        with mock.patch.object(tool, "_gh") as gh:
+            self.assertEqual(tool._publication_flags("100.0.0-rc.1"), (True, False))
+        gh.assert_not_called()
+
+    def test_notes_renderer_preserves_tables_fragments_queries_and_surrounding_text(self) -> None:
+        text = (
+            "\n| [record](../docs/evidence/record.md?view=1#result) | Passed |\n"
+            "[notes](1.0.0.md) [guide](../docs/guide.md \"Guide\")\n"
+            "[absolute](https://example.test/path?q=1#part) [anchor](#scope) "
+            "[email](mailto:user@example.test) [external](//example.test/path)\n\n"
+        )
+        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/"
+        expected = text.replace("../docs/evidence/record.md?view=1#result",
+                                prefix + "docs/evidence/record.md?view=1#result")
+        expected = expected.replace("(1.0.0.md)", f"({prefix}release/1.0.0.md)")
+        expected = expected.replace("../docs/guide.md", prefix + "docs/guide.md")
+        self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
+
+    def test_release_notes_reads_tagged_content_without_changing_the_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _git(root, "init", "-q")
+            (root / "release").mkdir()
+            original = "\n[old](../docs/deleted.md#section)\n\n"
+            note = root / "release/1.0.0.md"
+            note.write_text(original)
+            _git(root, "add", ".")
+            _git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "historical release")
+            _git(root, "-c", "tag.gpgsign=false", "tag", "v1.0.0")
+            note.write_text("newer checkout\n")
+            with mock.patch.object(tool, "ROOT", root):
+                self.assertEqual(tool.main([
+                    "release-notes", "--tag", "v1.0.0", "--out", str(root / "out"),
+                ]), 0)
+            rendered = (root / "out/code-tribunal-v1.0.0-release-notes.md").read_text()
+            self.assertEqual(rendered, tool.render_release_notes(original, "v1.0.0"))
+            self.assertEqual(note.read_text(), "newer checkout\n")
+
+    def test_workflow_isolates_dependencies_from_artifact_only_publication(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+        self.assertEqual(workflow["concurrency"]["queue"], "max")
+        dispatch = workflow[True]["workflow_dispatch"]["inputs"]["tag"]
+        self.assertTrue(dispatch["required"])
+        validate = workflow["jobs"]["validate"]
+        publish = workflow["jobs"]["publish"]
+        self.assertEqual(validate["permissions"], {"contents": "read"})
+        self.assertEqual(publish["permissions"], {"contents": "write"})
+        self.assertEqual(publish["needs"], "validate")
+        checkout = next(step for step in validate["steps"]
+                        if step.get("uses", "").startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"]["ref"], "main")
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertFalse(any("git fetch" in step.get("run", "") for step in validate["steps"]))
+        self.assertEqual(validate["outputs"]["tag_object"],
+                         "${{ steps.certificate.outputs.tag_object }}")
+        self.assertIn('"$EVENT_REF" != refs/heads/main', validate["steps"][0]["run"])
+        uploads = [step for step in validate["steps"]
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(uploads[0]["with"]["retention-days"], 1)
+        for step in publish["steps"]:
+            self.assertNotIn("checkout", step.get("uses", ""))
+            run = step.get("run", "")
+            self.assertNotIn("python", run)
+            self.assertNotIn("pip install", run)
+            self.assertNotIn("scripts/", run)
+        command = publish["steps"][-1]["run"]
+        self.assertIn('--repo "$RELEASE_REPOSITORY"', command)
+        self.assertIn('--notes-file "$RUNNER_TEMP/release/', command)
+        self.assertIn("flags=(--prerelease --latest=false)", command)
+        self.assertIn("flags=(--latest=false)", command)
+        self.assertIn("flags=(--latest)", command)
+        self.assertEqual(command.count('"$RUNNER_TEMP/release/'), 3)
+
 
 class ReleaseRunLookupTests(unittest.TestCase):
     def test_lookup_requires_the_latest_successful_main_push_for_R(self) -> None:
