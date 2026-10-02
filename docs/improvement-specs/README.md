@@ -22,7 +22,6 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
-| [SPEC-61](spec-61-release-process-simplification.md) | Delivered; live campaign passed, publication tail open | Release-process simplification umbrella and handover: delivered items, design decisions, remaining validation, operational follow-ups. |
 
 ## What to do next
 
@@ -32,10 +31,9 @@ completed spec is a description of work already visible in the code, tests, and
    platform clients.
 2. Close the open evidence gaps before the next release. These are evidence-tier
    matters, not specification work, and are tracked in the
-   [evidence index](../evidence/README.md#known-gaps-and-missing-evidence) — most
-   notably that no record binds the SPEC-50 structured-output canary to a
-   *released* image pair.
-3. For release work, follow the [release process](../development/release-process.md).
-   SPEC-61 remains open only for the live publication and next-draft checks.
+   [evidence index](../evidence/README.md#known-gaps-and-missing-evidence). The
+   four-seat panel and lifecycle records now bind to the released 2.0.1 image pair.
+3. For release work, follow the [release process](../development/release-process.md)
+   and the [evidence runbook](../evidence/RUNBOOK.md).
 4. Take SPEC-41 next among the proposals. A reviewer silently losing every
    finding is a correctness defect in the panel, not a feature request.

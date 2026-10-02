@@ -1,33 +1,22 @@
 {
   "images": {
     "base": {
-      "digest": "sha256:6f2715a62bbdfe19a228848644ddef2fedcef17c4e769ac9b3c3775a16ecfe47",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:1ee0b432fcedfc0e8bba11269f8cb2f410cfbe912ece808b54949dcff38cf8aa",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "2.0.1",
-  "runtime_source": "c525ccff5e90beab8f498410dd4e3fe36ce10031",
+  "release_version": "2.0.2",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v2",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "36982113841",
-    "evidence_record_ids": [
-      "record-candidate-canary.md",
-      "record-github-current-image.md",
-      "record-gitlab-current-image.md",
-      "record-gitlab-hostile-mr.md",
-      "record-gitlab-body-refresh.md",
-      "record-model-effort-routes.md",
-      "record-github-revision-failures.md"
-    ],
-    "evidence_waivers": {
-      "record-github-revision-failures.md": "input_bundle.py and platform/github.py are unchanged since v2.0.0. The SPEC-34 prepare-race and HTTP 406 cases remain covered by test_input_bundle.py and test_github_platform.py; the current lifecycle exercises stale-head posting as a no-op. The remaining millisecond race windows are covered by those regression tests.",
-      "record-model-effort-routes.md": "config/review.yaml, adapter_runner.py, adapter_process.py, adapter_output.py, opencode_client.py, and adapters are unchanged since v2.0.0, and no effort profile changed. test_openrouter_adapters.py and test_adapter_runner.py cover route mapping. The full canary exercises shipped effort defaults; non-default max/xhigh provider routes are not claimed as new live evidence."
-    },
-    "publication_run_id": "36982113862"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "evidence_waivers": {},
+    "publication_run_id": null
   }
 }
