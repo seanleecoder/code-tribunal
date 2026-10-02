@@ -1,9 +1,8 @@
 # SPEC-61 — Simplify the release process
 
 - **Severity:** Medium (operator toil and late-discovered drift) · **Effort:** M overall
-- **Status:** Phases 1–2 delivered (#137–#146) and live-validated, except for the panel
-  record-generation check (see Handover). Phase 3 tooling is delivered;
-  Phase 4 documentation drift checks are delivered.
+- **Status:** All implementation and campaign checks are delivered and validated.
+  The 2.0.1 release publication and next-draft reset remain pending.
 - **Depends on:** ADR-0003 source-of-truth map; the Candidate Canary (#129, #132).
 
 ## Why
@@ -76,17 +75,18 @@ workflow metadata, artifact inventory, and summaries are captured in
 `ai-review/tests/fixtures/release/canary-lifecycle-hostile.json` for offline
 release-command tests.
 
-The **panel record** still needs a real panel run, which spends tokens. The next
-release's full canary will prove it. Older runs missing current job families stay
-rejected, and runs whose overall conclusion is not `success` stay rejected even
-when some summaries passed (`36855687237`).
+The full canary [`36988314788`](https://github.com/seanleecoder/code-tribunal/actions/runs/36988314788)
+passed both real four-seat panels, both lifecycle surfaces, and the hostile probe.
+All four generated records bind to the frozen 2.0.1 candidate. Older incomplete
+formats and failed runs remain rejected.
 
 ### Next phases
 
 - SPEC-62 tooling is delivered: `release-repin`, `release-finalize`,
   `release-manifest`, a tag-push publish workflow, and the next-draft reset.
   See the [release process](../development/release-process.md) for the lasting
-  single-PR sequence. Its live publication proof is still pending.
+  single-PR sequence. Its live publication proof is still pending. Implementation PRs #148–#153
+  are merged, including the SPEC-64 failure policy and COMPAT-005 retirement.
 - SPEC-63 is delivered: `check_docs.py` checks concrete code-span paths and test
   names in current docs, with a same-line historical marker. Proposed specs keep
   their link checks while their future paths are exempt from existence checks.
@@ -97,11 +97,21 @@ when some summaries passed (`36855687237`).
 
 - **COMPAT-005 is retired.** The gate-free 2.0.0 release satisfies its removal
   condition; the auditor no longer reserves `ai_review_gate`.
-- **GitLab body refresh not run.** The 1.0.0-format GitLab note `3601861614` on demo
-  MR !11 has not been refreshed live (RUNBOOK coverage-gap table).
+- **GitLab body refresh passed.** Note `3601861614` on demo MR !11 was updated
+  once by child pipeline `2906159343`, with zero creates and unchanged identity.
+  The [record](../evidence/record-gitlab-body-refresh.md) binds to the frozen
+  candidate; the demo configuration was restored and preflight passed.
 - **Signing key registered.** The configured public key matches the trusted
   signer and is registered on GitHub as a signing key (account key `1214802`).
-- **Draft state.** `release/release-inputs.json` is the `2.0.1` draft (#136).
+- **2.0.1 validation passed; publication pending.** Runtime source `R` is
+  `c525ccff5e90beab8f498410dd4e3fe36ce10031`. The first full canary
+  `36978347766` passed both lifecycle surfaces and hostile checks but failed the
+  panel: GitLab polling timed out, and Cursor emitted a malformed critique ID on
+  GitHub. #154 adds bounded GET transport retries; fresh full canary `36988314788` passed.
+  CI `36982113841` passed; image publication `36982113862` hit GHCR
+  `unknown blob` after build/preflight passed, and its publish job succeeded on
+  retry using the same preflighted artifact.
+  The release PR activates inputs from the complete evidence selection.
 
 ### Working conventions in this repo
 

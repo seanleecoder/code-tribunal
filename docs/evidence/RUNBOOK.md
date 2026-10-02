@@ -147,7 +147,24 @@ needed only when the canary cannot run.
 When the posted-body format changed, confirm before the repin that a bot thread
 in the **previous** format survives on the demo (see the preserved threads in
 [`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md#threads-that-must-not-be-deleted));
-without one there is nothing older to refresh.
+without one there is nothing older to refresh. This remains a manual check:
+
+1. Capture the old root note, author, creation time, finding identity, and footer.
+   Use a preserved released-image fixture; keep its content, anchor, and reviewer
+   identities unchanged.
+2. Temporarily adopt the current trusted topology and candidate image pins on
+   that fixture branch. Enable mocks only through the explicit safe mock setup
+   below, using the scenario that authored the old body. On GitLab, update the
+   existing branch through the commits API without `start_branch`; the canary's
+   new-branch helper is intended for newly created branches.
+3. Reopen the change and drive one pipeline. Require successful `post`, exactly
+   one updated discussion, zero created discussions, no warnings, and the same
+   root note, author, creation time, and finding identity. Confirm the new footer.
+4. Close the change before restoring its original CI configuration; remove mock
+   variables and temporary template branches. Keep the refreshed note and
+   preserved fixture branch. Run `make demo-preflight` and record the exact
+   candidate bindings and scoped audit. The [GitLab refresh record](record-gitlab-body-refresh.md)
+   demonstrates this procedure.
 
 ## What only you (the operator) can do
 
@@ -412,7 +429,6 @@ discovered, so the next release starts here instead of rediscovering it.
 
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
-| GitLab refresh of an older-format note | v3→v4 was proven on GitHub at 2.0.0 ([record](record-render-body-v4-refresh.md)); no GitLab note has been migrated live | refresh the 1.0.0-format note `3601861614` on MR !11 after merging `main` into its branch, and assert `updated_discussions=1`, `created=0`, same `issue_id` |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |

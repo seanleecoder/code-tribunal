@@ -103,13 +103,14 @@ retains them.
   invocation; see
   [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
 - **The added-file path is proven live on both platforms — closed 2026-09-27.**
-  The 2.0.0 Chain B ran an **adding** fixture on GitHub and GitLab, with every seat
+  The current candidate Chain B ran an **adding** fixture on GitHub and GitLab, with every seat
   accepting its finding on the added file
   ([GitHub](record-github-current-image.md), [GitLab](record-gitlab-current-image.md)).
-- **`render-body.v4` refresh is proven on GitHub only.** A v3 thread was
-  refreshed exactly once to v4 at 2.0.0 ([record](record-render-body-v4-refresh.md)),
-  and new v4 bodies rendered on both platforms in Chain B. No GitLab note has been
-  migrated from an older format live.
+- **`render-body.v4` refresh is proven on both platforms.** A v3 GitHub thread
+  was refreshed once at 2.0.0 ([record](record-render-body-v4-refresh.md)). The
+  preserved 1.0.0-format GitLab note was refreshed once by the 2.0.1 candidate
+  with no duplicate and unchanged identity ([record](record-gitlab-body-refresh.md)).
+  Long bodies subject to truncation remain unexercised.
 - **Trusted-image enforcement is not established.** The hostile-MR probe showed a
   consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
   declaring them in its own top-level `variables:` and enabling variable
