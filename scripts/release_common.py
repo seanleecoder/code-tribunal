@@ -184,11 +184,17 @@ def validate_release_version(value: object) -> str:
             "with an optional prerelease suffix such as 1.0.1-rc.1; build metadata "
             "is not supported"
         )
+    prerelease = value.partition("-")[2]
+    if any(part.isdigit() and len(part) > 1 and part.startswith("0")
+           for part in prerelease.split(".")):
+        raise ReleaseValidationError(
+            "numeric prerelease identifiers must not contain leading zeros"
+        )
     return value
 
 
 def compare_release_versions(left: str, right: str) -> int:
-    """Compare accepted versions by SemVer precedence, without changing the grammar."""
+    """Compare accepted versions by SemVer precedence."""
     left_core, _, left_pre = validate_release_version(left).partition("-")
     right_core, _, right_pre = validate_release_version(right).partition("-")
     left_numbers = tuple(map(int, left_core.split(".")))

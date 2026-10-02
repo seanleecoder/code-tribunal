@@ -11,7 +11,9 @@ Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/T
 ## Release version contract
 
 Release validators accept `MAJOR.MINOR.PATCH` with an optional prerelease suffix,
-for example `1.0.1-rc.1`. They reject build metadata such as `1.0.1+build.1`.
+for example `1.0.1-rc.1`. Numeric prerelease identifiers cannot contain leading
+zeros; alphanumeric identifiers such as `alpha01` remain valid. Validators reject
+build metadata such as `1.0.1+build.1`.
 The active release version also determines the required notes file:
 `release/<release_version>.md`.
 

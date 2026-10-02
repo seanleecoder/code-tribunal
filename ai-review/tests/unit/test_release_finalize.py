@@ -458,6 +458,17 @@ class ReleaseFinalizationTests(unittest.TestCase):
                     tool.publish(self.root, tag, out)
 
 class ReleasePublicationTests(unittest.TestCase):
+    def test_prerelease_numeric_identifiers_reject_leading_zeros(self) -> None:
+        for version in ("1.0.0-01", "1.0.0-rc.01", "1.0.0-alpha.00.beta"):
+            with self.subTest(version=version), self.assertRaisesRegex(
+                tool.ReleaseValidationError, "leading zeros"
+            ):
+                tool.compare_release_versions(version, "1.0.0")
+        for version in ("1.0.0-0", "1.0.0-rc.0", "1.0.0-01a", "1.0.0-alpha01"):
+            with self.subTest(version=version):
+                self.assertEqual(tool.validate_release_version(version), version)
+                self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
+
     def test_worktree_cleanup_preserves_an_active_error_but_fails_success(self) -> None:
         for invalid in (False, True):
             with tempfile.TemporaryDirectory() as tmp, self.subTest(invalid=invalid):
