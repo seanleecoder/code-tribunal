@@ -617,6 +617,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         manifest, checksum, _ = tool.manifest_assets(self.root, release_commit, out)
         expected_manifest = manifest.read_bytes()
         expected_checksum = checksum.read_bytes()
+        _git(self.root, "repack", "-ad")
         _git(self.root, "config", "worktree.useRelativePaths", "true")
         _git(self.root, "config", "fixture.operator", "preserved")
         with tempfile.TemporaryDirectory() as operator_directory:
@@ -647,9 +648,12 @@ class ReleaseFinalizationTests(unittest.TestCase):
                     _git(tree, "update-ref", "-d", "refs/remotes/origin/main")
                     for tag in _git(tree, "tag", "--list").splitlines():
                         _git(tree, "tag", "-d", tag)
-                    obj = Path("objects") / release_commit[:2] / release_commit[2:]
-                    self.assertNotEqual((self.root / ".git" / obj).stat().st_ino,
-                                        (tree / ".git" / obj).stat().st_ino)
+                    objects = self.root / ".git/objects"
+                    source_files = [path for path in objects.rglob("*") if path.is_file()]
+                    self.assertTrue(source_files)
+                    for source in source_files:
+                        copied = tree / ".git/objects" / source.relative_to(objects)
+                        self.assertFalse(source.samefile(copied))
                 return real_run(command, **kwargs)
 
             with (
