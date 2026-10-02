@@ -112,24 +112,37 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
 
     visited: set[int] = set()
 
-    def check_overrides(value: Any, *, top_level: bool = False) -> None:
+    def check_overrides(value: Any, *, canonical_variables: bool = False) -> None:
+        # Check each occurrence before cycle protection: an alias can reuse the
+        # canonical variables mapping at an overriding location.
+        if isinstance(value, dict) and not canonical_variables:
+            for pin in GITLAB_PIN_FIELDS:
+                if pin in value:
+                    raise ReleaseValidationError(
+                        f"GitLab pin outside top-level variables: {pin}"
+                    )
         if not isinstance(value, (dict, list)) or id(value) in visited:
             return
         visited.add(id(value))
         if isinstance(value, dict):
             for key, child in value.items():
-                if key == "variables" and not top_level and isinstance(child, dict):
-                    for pin in GITLAB_PIN_FIELDS:
-                        if pin in child:
-                            raise ReleaseValidationError(
-                                f"GitLab pin outside top-level variables: {pin}"
-                            )
-                check_overrides(child)
+                check_overrides(child, canonical_variables=value is document and key == "variables")
         else:
             for child in value:
                 check_overrides(child)
 
-    check_overrides(document, top_level=True)
+    check_overrides(document)
+    for name, job in document.items():
+        if name == "variables" or not isinstance(job, dict):
+            continue
+        inheritance = job.get("inherit")
+        if not isinstance(inheritance, dict):
+            continue
+        inherited = inheritance.get("variables", True)
+        if inherited is False or (
+            isinstance(inherited, list) and any(pin not in inherited for pin in GITLAB_PIN_FIELDS)
+        ):
+            raise ReleaseValidationError(f"GitLab job {name} must inherit every registered pin")
     key_pattern = "|".join(map(re.escape, GITLAB_PIN_FIELDS))
     pins: dict[str, tuple[int, str]] = {}
     in_variables = False
