@@ -201,6 +201,13 @@ Verification resolves signers from [`.github/allowed_signers`](../../.github/all
 Add an entry when a new releaser joins, and remove one when they leave — an
 unlisted key verifies as `No principal matched`, not as a bad signature.
 
+Publication uses only the signer registry fetched from protected `origin/main`,
+copied to a temporary trust file. A key retained in a historical tag's tree no
+longer authorizes publication after it is removed from main; a key registered
+only on main can authorize a historical tag. Missing or empty main trust data
+fails closed. Local `git verify-tag` uses the configured local file and does not
+establish this publication policy by itself.
+
 For GitHub to display the tag as **Verified**, the same public key must be registered
 on the account as a *signing* key (distinct from an authentication key):
 

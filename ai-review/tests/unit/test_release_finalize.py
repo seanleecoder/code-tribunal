@@ -367,6 +367,38 @@ class ReleaseFinalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "tag must match"):
             tool.publish_assets(self.root, "v9.9.10", out)
 
+        replacement = Path(key_directory.name) / "replacement-key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(replacement)],
+            check=True,
+        )
+        allowed.write_text("fixture@example.test " + replacement.with_suffix(".pub").read_text())
+        _git(self.root, "add", ".github/allowed_signers")
+        _git(self.root, "commit", "-qm", "rotate trusted main signer")
+        trusted_main = _git(self.root, "rev-parse", "HEAD")
+        _git(self.root, "update-ref", "refs/remotes/origin/main", trusted_main)
+        _git(self.root, "checkout", "--detach", P)
+        with self.assertRaises(tool.ReleaseValidationError):
+            tool.publish_assets(self.root, tag, out)  # Tagged-tree acceptance is insufficient.
+        _git(self.root, "config", "user.signingkey", str(replacement))
+        _git(self.root, "tag", "-d", tag)
+        _git(self.root, "tag", "-s", tag, "-F", str(message))
+        self.assertNotIn(replacement.with_suffix(".pub").read_text(), allowed.read_text())
+        self.assertEqual(tool.publish_assets(self.root, tag, out), (manifest, checksum))
+        for content in ("", "# no trusted signers\n", None):
+            with self.subTest(content=content):
+                _git(self.root, "checkout", "--detach", trusted_main)
+                if content is None:
+                    allowed.unlink()
+                else:
+                    allowed.write_text(content)
+                _git(self.root, "add", ".github/allowed_signers")
+                _git(self.root, "commit", "-qm", "remove main trust")
+                _git(self.root, "update-ref", "refs/remotes/origin/main", "HEAD")
+                _git(self.root, "checkout", "--detach", P)
+                with self.assertRaises(tool.ReleaseValidationError):
+                    tool.publish_assets(self.root, tag, out)
+
 class ReleaseRunLookupTests(unittest.TestCase):
     def test_lookup_requires_the_latest_successful_main_push_for_R(self) -> None:
         runtime_source = "a" * 40

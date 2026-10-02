@@ -361,11 +361,18 @@ def publish_assets(root: Path, tag: str, out: Path) -> tuple[Path, Path]:
         raise ReleaseValidationError("publication requires an annotated signed tag")
     release_commit = _git(root, "rev-parse", f"{reference}^{{commit}}")
     _git(root, "merge-base", "--is-ancestor", release_commit, "refs/remotes/origin/main")
-    _git(
-        root, "-c", "gpg.format=ssh", "-c",
-        f"gpg.ssh.allowedSignersFile={root / '.github/allowed_signers'}",
-        "verify-tag", tag,
-    )
+    # Signer revocations on protected main apply even to historical tags.
+    signers = _git(root, "show", "refs/remotes/origin/main:.github/allowed_signers")
+    if not any(line.strip() and not line.lstrip().startswith("#")
+               for line in signers.splitlines()):
+        raise ReleaseValidationError("protected main has no allowed release signers")
+    with tempfile.TemporaryDirectory() as temporary:
+        trust = Path(temporary) / "allowed_signers"
+        trust.write_text(signers + "\n", encoding="utf-8")
+        _git(
+            root, "-c", "gpg.format=ssh", "-c",
+            f"gpg.ssh.allowedSignersFile={trust}", "verify-tag", tag,
+        )
     message = _git(root, "for-each-ref", "--format=%(contents)", reference)
     markers = re.findall(r"(?m)^Release-manifest-sha256: ([0-9a-f]{64})$", message)
     if len(markers) != 1 or message.count("Release-manifest-sha256:") != 1:
