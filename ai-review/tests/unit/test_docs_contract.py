@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -537,6 +538,107 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("it is your policy", gitlab_collapsed)
         self.assertIn("the template neither sets it nor depends on it", gitlab_collapsed)
 
+
+
+class DocumentationReferenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.checker = _load_docs_checker()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.checker.ROOT = self.root
+        tests = self.root / "ai-review/tests/unit"
+        tests.mkdir(parents=True)
+        (tests / "test_present.py").write_text(
+            'class Cases:\n    def test_present(self):\n        pass\n'
+            '# def test_comment():\n'
+            'text = "def test_string():"\n'
+        )
+        (tests / "test_other.py").write_text('async def test_other():\n    pass\n')
+        self.index = self.checker._test_definition_index()
+
+    def check(self, relative: str, text: str) -> list[str]:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return self.checker._reference_issues(path, text, self.index)
+
+    def test_paths_test_files_and_real_definitions_report_file_and_line(self) -> None:
+        text = "Header\n`scripts/missing.py:12`\n`test_absent.py`\n`test_absent`\n"
+        self.assertEqual(self.check("docs/current.md", text), [
+            "docs/current.md:2: repository path 'scripts/missing.py' does not exist",
+            "docs/current.md:3: test file 'test_absent.py' does not exist",
+            "docs/current.md:4: test 'test_absent' does not exist",
+        ])
+        for reference in (
+            "test_present", "test_present.py", "test_present.py::test_present",
+            "unit/test_present.py::test_present",
+            "ai-review/tests/unit/test_present.py:10",
+            "ai-review/tests/unit/test_present.py::test_present", "test_other",
+        ):
+            with self.subTest(reference=reference):
+                self.assertEqual(self.check("docs/current.md", f"`{reference}`"), [])
+        for reference in (
+            "test_other.py::test_present", "test_absent.py::test_present",
+            "test_comment", "test_string",
+        ):
+            with self.subTest(reference=reference):
+                self.assertTrue(self.check("docs/current.md", f"`{reference}`"))
+        for prefix in ("scripts", "ai-review", "docs", "release", ".github"):
+            with self.subTest(prefix=prefix):
+                self.assertTrue(self.check("docs/current.md", f"`{prefix}/missing.md`"))
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/present.py").touch()
+        self.assertEqual(self.check("docs/current.md", "`scripts/present.py:99`"), [])
+
+    def test_historical_marker_is_same_line_only_and_fences_preserve_locations(self) -> None:
+        text = (
+            "`scripts/old.py` <!-- docs-check: historical -->\n"
+            "<!-- docs-check: historical -->\n"
+            "`scripts/missing.py`\n"
+            "```text\n`test_fenced`\n```\n"
+            "`test_missing`\n"
+        )
+        issues = self.check("docs/current.md", text)
+        self.assertEqual(len(issues), 2)
+        self.assertIn("docs/current.md:3:", issues[0])
+        self.assertIn("docs/current.md:7:", issues[1])
+
+    def test_patterns_and_placeholders_are_not_concrete_references(self) -> None:
+        text = (
+            "`release/<release_version>.md` `docs/evidence/*.md` `scripts/…`\n"
+            "`ai-review/adapters/...` `release/$V.md` `test_<name>`\n"
+        )
+        self.assertEqual(self.check("docs/current.md", text), [])
+
+    def test_spec_exemption_does_not_hide_other_contracts_or_links(self) -> None:
+        spec = "docs/improvement-specs/proposed.md"
+        text = "`scripts/proposed.py` `test_proposed` [broken](missing.md)\n"
+        self.assertEqual(self.check(spec, text), [])
+        self.assertEqual(len(self.check("docs/current.md", text)), 2)
+        executable = shutil.which("lychee") or str(_REPO_ROOT / ".venv/bin/lychee")
+        if not Path(executable).is_file():
+            self.skipTest("the pinned Lychee binary is installed by the repository CI")
+        links = load_repository_script(
+            "check_markdown_links", _REPO_ROOT / "scripts/check_markdown_links.py"
+        )
+        with (
+            mock.patch.object(links, "ROOT", self.root),
+            mock.patch.object(links, "_inventories", return_value={
+                "link-checked": (spec,), "released": (),
+            }),
+            self.assertRaises(links.LinkCheckError),
+        ):
+            links.check_links(lychee=Path(executable))
+
+    def test_changelog_checks_unreleased_only_with_original_line_numbers(self) -> None:
+        text = (
+            "# Changelog\n\n## [Unreleased]\n\n`test_current_missing`\n"
+            "\n## [1.0.0] - date\n\n`test_historical_missing`\n"
+        )
+        self.assertEqual(self.check("CHANGELOG.md", text), [
+            "CHANGELOG.md:5: test 'test_current_missing' does not exist"
+        ])
 
 if __name__ == "__main__":
     unittest.main()

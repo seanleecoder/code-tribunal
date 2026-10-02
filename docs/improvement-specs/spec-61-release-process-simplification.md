@@ -3,7 +3,7 @@
 - **Severity:** Medium (operator toil and late-discovered drift) · **Effort:** M overall
 - **Status:** Phases 1–2 delivered (#137–#146) and live-validated, except for the panel
   record-generation check (see Handover). Phase 3 tooling is delivered;
-  Phase 4 is [SPEC-63](spec-63-documentation-drift-checks.md).
+  Phase 4 documentation drift checks are delivered.
 - **Depends on:** ADR-0003 source-of-truth map; the Candidate Canary (#129, #132).
 
 ## Why
@@ -87,8 +87,9 @@ when some summaries passed (`36855687237`).
   `release-manifest`, a tag-push publish workflow, and the next-draft reset.
   See the [release process](../development/release-process.md) for the lasting
   single-PR sequence. Its live publication proof is still pending.
-- [SPEC-63](spec-63-documentation-drift-checks.md): code-span path and test-name
-  checks in `check_docs.py`.
+- SPEC-63 is delivered: `check_docs.py` checks concrete code-span paths and test
+  names in current docs, with a same-line historical marker. Proposed specs keep
+  their link checks while their future paths are exempt from existence checks.
 - SPEC-64 is delivered: failed thread resolutions and reopenings report
   `partial_failed`, retain the previous disposition for a retry, and fail `post`.
 
@@ -98,9 +99,8 @@ when some summaries passed (`36855687237`).
   condition; the auditor no longer reserves `ai_review_gate`.
 - **GitLab body refresh not run.** The 1.0.0-format GitLab note `3601861614` on demo
   MR !11 has not been refreshed live (RUNBOOK coverage-gap table).
-- **The tag shows "Unverified" on GitHub.** The maintainer's SSH key isn't
-  registered as a GitHub *signing* key. That's an account action
-  (`release-process.md#tag-signing`).
+- **Signing key registered.** The configured public key matches the trusted
+  signer and is registered on GitHub as a signing key (account key `1214802`).
 - **Draft state.** `release/release-inputs.json` is the `2.0.1` draft (#136).
 
 ### Working conventions in this repo

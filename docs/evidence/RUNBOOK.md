@@ -263,7 +263,7 @@ line is "first added", changing the anchor and opening a new discussion.
 > proven by
 > `integration/test_revision_lifecycle_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
 > (two independently prepared revisions, each with its own head SHA, diff digest, and
-> run_id) plus the `test_anchors` remap and `test_post.py` run-to-run upsert unit
+> run_id) plus the `test_anchors.py` remap and `test_post.py` run-to-run upsert unit
 > tests. What that test does **not** prove is *platform-visible* re-anchoring:
 > updating an existing GitHub/GitLab comment rewrites its body, not its original diff
 > position, and `post.py` marks visible placement as requiring separate live
@@ -490,7 +490,7 @@ model quality is irrelevant, so no tokens are spent:
    placement optional live** (see the note above): the cross-revision remap that
    keeps finding identity and moves the persisted state anchor (so the one existing
    discussion is updated, not duplicated) is proven by the two-revision e2e and the
-   `test_anchors`/`test_post` remap tests. The *platform-visible* re-anchoring of the
+   `test_anchors.py`/`test_post.py` remap tests. The *platform-visible* re-anchoring of the
    moved comment is not reproduced by the mock and remains a live-optional
    confirmation, not release-gating; skip it as a token-free step and confirm live
    only if convenient;
