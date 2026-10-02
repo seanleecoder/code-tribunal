@@ -1,8 +1,9 @@
 # SPEC-60 handoff — critique-quality observability
 
-SPEC-54 through SPEC-59 are implemented. SPEC-61's dual-platform candidate
-canary is implemented by the protected manual workflow and release procedure.
-SPEC-60 is the only remaining cleanup/consolidation follow-up.
+SPEC-54 through SPEC-59 are implemented. The dual-platform candidate canary and
+single-PR promotion process are delivered; see the
+[release procedure](../../development/release-process.md). SPEC-60 is the only
+remaining cleanup/consolidation follow-up.
 
 ## Objective
 
