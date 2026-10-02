@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import copy
 import os
-import posixpath
 import re
 import subprocess
 import sys
@@ -15,7 +14,6 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from ai_review.canonical import json_loads_no_duplicates
 from build_release_manifest import build_manifest
@@ -241,7 +239,8 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
             "Registered waiver; reason in release inputs"
             if record_id in data["verification"]["evidence_waivers"] else "Passed"
         )
-        campaign.append(f"| [{record_id}](../docs/evidence/{record_id}) | {result} |")
+        url = f"https://github.com/{REPOSITORY}/blob/v{version}/docs/evidence/{record_id}"
+        campaign.append(f"| [{record_id}]({url}) | {result} |")
     return _replace_section(text, "Live campaign", "\n".join(campaign))
 
 
@@ -395,43 +394,6 @@ def _tag_version(tag: str) -> str:
         ) from exc
 
 
-def render_release_notes(text: str, tag: str) -> str:
-    """Pin repository-relative Markdown destinations to the notes' release tag."""
-    validate_release_version(tag.removeprefix("v"))
-    if not tag.startswith("v"):
-        raise ReleaseValidationError("release notes require a v-prefixed release tag")
-
-    def destination(match: re.Match[str]) -> str:
-        target = match.group("target")
-        parts = urlsplit(target)
-        if parts.scheme or parts.netloc or not parts.path:
-            return match.group(0)
-        path = posixpath.normpath(posixpath.join("release", parts.path))
-        if parts.path.startswith("/") or path == ".." or path.startswith("../"):
-            return match.group(0)
-        pinned = urlunsplit((
-            "https", "github.com", f"/{REPOSITORY}/blob/{tag}/{path}",
-            parts.query, parts.fragment,
-        ))
-        return match.group(0).replace(target, pinned, 1)
-
-    return re.sub(
-        r"\]\((?P<target>[^\s()]+)(?:[ \t]+[\"'][^\n]*?[\"'])?\)", destination, text
-    )
-
-
-def release_notes(root: Path, tag: str, out: Path, *, revision: str | None = None) -> Path:
-    version = _tag_version(tag)
-    # Read the committed notes, even when the invoking checkout is a newer draft.
-    source = revision if revision is not None else f"refs/tags/{tag}"
-    notes = _git(root, "show", f"{source}:release/{version}.md", strip=False)
-    body = render_release_notes(notes, tag)
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / f"code-tribunal-{tag}-release-notes.md"
-    path.write_text(body, encoding="utf-8")
-    return path
-
-
 def _publication_flags(version: str) -> tuple[bool, bool]:
     """Classify against every published stable release, independent of API order."""
     validate_release_version(version)
@@ -480,6 +442,15 @@ def publish(
         raise ReleaseValidationError("tagged release inputs require an object with release_version")
     if inputs["release_version"] != version:
         raise ReleaseValidationError("tag must match the tagged release inputs")
+    committed_notes = subprocess.run(
+        ["git", "-C", str(root), "show", f"{release_commit}:release/{version}.md"],
+        capture_output=True, check=False,
+    )
+    if committed_notes.returncode:
+        raise ReleaseValidationError(
+            committed_notes.stderr.decode("utf-8", errors="replace").strip()
+            or "cannot read committed release notes"
+        )
     out = out.absolute()
     with tempfile.TemporaryDirectory() as temporary:
         tree = Path(temporary) / "tag"
@@ -506,7 +477,8 @@ def publish(
         assets = (manifest, out / f"{manifest.name}.sha256")
         if sha256_bytes(manifest.read_bytes()) != digest:
             raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
-        notes = release_notes(tree, tag, out, revision=release_commit)
+        notes = out / f"code-tribunal-{tag}-release-notes.md"
+        notes.write_bytes(committed_notes.stdout)
     if github_output is not None:
         with github_output.open("a", encoding="utf-8") as output:
             output.write(f"tag_object={tag_object}\n")
@@ -527,12 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     manifest = commands.add_parser("manifest")
     manifest.add_argument("--release-commit", required=True)
     manifest.add_argument("--out", type=Path, required=True)
-    for command in ("publish", "release-notes"):
-        subparser = commands.add_parser(command)
-        subparser.add_argument("--tag", required=True)
-        subparser.add_argument("--out", type=Path, required=True)
-        if command == "publish":
-            subparser.add_argument("--github-output", type=Path)
+    publication = commands.add_parser("publish")
+    publication.add_argument("--tag", required=True)
+    publication.add_argument("--out", type=Path, required=True)
+    publication.add_argument("--github-output", type=Path)
     next_draft = commands.add_parser("open-next")
     next_draft.add_argument("--version", required=True)
     flags = commands.add_parser("publication-flags")

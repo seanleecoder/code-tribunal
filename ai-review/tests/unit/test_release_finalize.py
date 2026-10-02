@@ -203,7 +203,10 @@ class ReleaseFinalizationTests(unittest.TestCase):
         self.assertNotIn("These are working notes", notes)
         self.assertTrue(notes.startswith("# Code Tribunal 9.9.9\n"))
         for name in self.evidence:
-            self.assertIn(f"[{name}](../docs/evidence/{name})", notes)
+            self.assertIn(
+                f"[{name}](https://github.com/{tool.REPOSITORY}/blob/v{VERSION}/docs/evidence/{name})",
+                notes,
+            )
         self.assertNotIn(self.waivers[WAIVED], notes)
         tool.validate_release_inputs(expected, self.root)
         release_commit = self._commit_release()
@@ -758,6 +761,11 @@ class ReleaseFinalizationTests(unittest.TestCase):
             record.write_text(record.read_text().replace(old_source, self.runtime_source))
         tool.repin(self.root, self.run)
         self._finalize()
+        notes_path = self.root / f"release/{VERSION}.md"
+        notes_path.write_bytes(
+            (notes_path.read_text() + "\nUnicode release: überblick 日本語\n")
+            .replace("\n", "\r\n").rstrip("\r\n").encode("utf-8")
+        )
         P = self._commit_release()
         out = self.root / "assets"
         manifest, checksum, message = tool.manifest_assets(self.root, P, out)
@@ -815,9 +823,10 @@ class ReleaseFinalizationTests(unittest.TestCase):
         ):
             published = tool.publish(self.root, tag, out, output)
         self.assertEqual(published[:2], (manifest, checksum))
-        self.assertEqual(published[2].read_text(), tool.render_release_notes(
-            _git(self.root, "show", f"{tag}:release/{VERSION}.md") + "\n", tag
-        ))
+        expected_notes = subprocess.check_output([
+            "git", "-C", str(self.root), "show", f"{P}:release/{VERSION}.md",
+        ])
+        self.assertEqual(published[2].read_bytes(), expected_notes)
         self.assertEqual(output.read_text(), "tag_object="
                          + _git(self.root, "rev-parse", tag) + "\n")
         self.assertEqual(_git(self.root, "worktree", "list", "--porcelain"), worktrees)
@@ -832,12 +841,11 @@ class ReleaseFinalizationTests(unittest.TestCase):
             return verified
 
         with mock.patch.object(tool, "_verify_release_tag", side_effect=move_after_verification):
-            pinned_notes = tool.publish(self.root, tag, out)[2].read_text()
+            self.assertEqual(tool.publish(self.root, tag, out)[2].read_bytes(), expected_notes)
         _git(self.root, "update-ref", f"refs/tags/{tag}", tag_object)
-        self.assertEqual(pinned_notes, tool.render_release_notes(
-            _git(self.root, "show", f"{P}:release/{VERSION}.md") + "\n", tag,
-        ))
-        self.assertNotEqual(pinned_notes, tool.render_release_notes(self.notes, tag))
+        self.assertIn(b"\r\n", expected_notes)
+        self.assertFalse(expected_notes.endswith(b"\n"))
+        self.assertNotEqual(expected_notes, self.notes.encode())
         _git(self.root, "checkout", "--", "release/release-inputs.json")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(tool.ReleaseValidationError):
@@ -992,7 +1000,7 @@ class ReleasePublicationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp, self.subTest(tag=tag):
                 root = Path(tmp)
                 messages = []
-                for command in ("publish", "release-notes", "publication-flags"):
+                for command in ("publish", "publication-flags"):
                     stderr = io.StringIO()
                     arguments = [command, "--tag", tag]
                     if command == "publication-flags":
@@ -1086,6 +1094,33 @@ class ReleasePublicationTests(unittest.TestCase):
                 self.assertEqual(tool.validate_release_version(version), version)
                 self.assertLess(tool.compare_release_versions(version, "1.0.0"), 0)
 
+    def test_publication_preserves_note_bytes_and_trailing_newline_state(self) -> None:
+        for payload in ("Unicode: überblick 日本語\n", "Unicode: überblick 日本語",
+                        "Unicode: überblick 日本語\r\n", "Unicode: überblick 日本語\r\n\r\n"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(payload=payload):
+                root = Path(tmp)
+                manifest = root / "code-tribunal-v1.0.0-release-manifest.json"
+                manifest.write_bytes(b"manifest fixture")
+                data = payload.encode("utf-8")
+                with (
+                    mock.patch.object(tool, "_verify_release_tag", return_value=(
+                        "a" * 40, "b" * 40, tool.sha256_bytes(manifest.read_bytes()),
+                    )),
+                    mock.patch.object(tool, "_git", return_value='{"release_version":"1.0.0"}'),
+                    mock.patch.object(
+                        tool.subprocess, "run",
+                        side_effect=lambda command, _data=data, **kwargs:
+                        subprocess.CompletedProcess(command, 0, _data, b"")
+                        if command[0] == "git" else subprocess.CompletedProcess(command, 0, "", ""),
+                    ) as processes,
+                    mock.patch.object(tool, "_publication_flags", return_value=(False, True)),
+                ):
+                    notes = tool.publish(root, "v1.0.0", root)[2]
+                self.assertEqual(notes.read_bytes(), data)
+                read = processes.call_args_list[0]
+                self.assertEqual(read.args[0][-1], "b" * 40 + ":release/1.0.0.md")
+                self.assertFalse(read.kwargs.get("text", False))
+
     def test_publication_checks_remote_tag_object_before_creation(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
         command = workflow["jobs"]["publish"]["steps"][-1]["run"]
@@ -1144,41 +1179,6 @@ class ReleasePublicationTests(unittest.TestCase):
         with mock.patch.object(tool, "_gh") as gh:
             self.assertEqual(tool._publication_flags("100.0.0-rc.1"), (True, False))
         gh.assert_not_called()
-
-    def test_notes_renderer_preserves_tables_fragments_queries_and_surrounding_text(self) -> None:
-        text = (
-            "\n| [record](../docs/evidence/record.md?view=1#result) | Passed |\n"
-            "[notes](1.0.0.md) [guide](../docs/guide.md \"Guide\")\n"
-            "[absolute](https://example.test/path?q=1#part) [anchor](#scope) "
-            "[email](mailto:user@example.test) [external](//example.test/path)\n\n"
-        )
-        prefix = f"https://github.com/{tool.REPOSITORY}/blob/v1.0.0/"
-        expected = text.replace("../docs/evidence/record.md?view=1#result",
-                                prefix + "docs/evidence/record.md?view=1#result")
-        expected = expected.replace("(1.0.0.md)", f"({prefix}release/1.0.0.md)")
-        expected = expected.replace("../docs/guide.md", prefix + "docs/guide.md")
-        self.assertEqual(tool.render_release_notes(text, "v1.0.0"), expected)
-
-    def test_release_notes_reads_tagged_content_without_changing_the_checkout(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            _git(root, "init", "-q")
-            (root / "release").mkdir()
-            original = "\n[old](../docs/deleted.md#section)\n\n"
-            note = root / "release/1.0.0.md"
-            note.write_text(original)
-            _git(root, "add", ".")
-            _git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
-                 "-c", "commit.gpgsign=false", "commit", "-qm", "historical release")
-            _git(root, "-c", "tag.gpgsign=false", "tag", "v1.0.0")
-            note.write_text("newer checkout\n")
-            with mock.patch.object(tool, "ROOT", root):
-                self.assertEqual(tool.main([
-                    "release-notes", "--tag", "v1.0.0", "--out", str(root / "out"),
-                ]), 0)
-            rendered = (root / "out/code-tribunal-v1.0.0-release-notes.md").read_text()
-            self.assertEqual(rendered, tool.render_release_notes(original, "v1.0.0"))
-            self.assertEqual(note.read_text(), "newer checkout\n")
 
     def test_workflow_isolates_dependencies_from_artifact_only_publication(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())

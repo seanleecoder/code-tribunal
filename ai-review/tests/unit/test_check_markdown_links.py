@@ -66,6 +66,108 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
         exclusion = calls[2].index("--exclude")
         self.assertEqual(calls[2][exclusion + 1], self.checker.RELEASE_EXCLUSION)
 
+    def test_draft_convention_suggests_pinned_urls_and_rejects_wrong_tags_or_escapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            note = Path(tmp) / "9.9.9.md"
+            prefix = f"https://github.com/{self.checker.REPOSITORY}/blob/v9.9.9/"
+            for target, expected in (
+                ("../docs/guide.md?view=1#intro", prefix + "docs/guide.md?view=1#intro"),
+                ("/docs/guide.md", prefix + "docs/guide.md"),
+                ("other.md", prefix + "release/other.md"),
+            ):
+                with self.subTest(target=target):
+                    note.write_text(f'[guide](<{target}> "Guide")')
+                    with self.assertRaises(self.checker.LinkCheckError) as error:
+                        self.checker._check_draft_destinations(note)
+                    self.assertIn(expected, str(error.exception))
+            for target in (
+                prefix.replace("v9.9.9", "main") + "docs/guide.md",
+                prefix.replace("v9.9.9", "v9.9.8") + "docs/guide.md",
+                prefix + "../../outside.md", prefix + "%2e%2e/outside.md",
+                prefix + "%2foutside.md", prefix,
+                prefix.replace("github.com", "GitHub.Com").replace("v9.9.9", "main") + "a.md",
+            ):
+                with self.subTest(target=target):
+                    note.write_text(f"[guide]({target})")
+                    with self.assertRaisesRegex(
+                        self.checker.LinkCheckError, "repository blob link",
+                    ):
+                        self.checker._check_draft_destinations(note)
+            note.write_text(
+                f'[guide](<{prefix}docs/guide.md#intro> "Title") '
+                '[anchor](#scope) [external](https://example.test/)\n'
+                '```md\n[relative](../example.md)\n```\n'
+                '~~~~\n[wrong](https://github.com/example/repo/blob/main/a.md)\n~~~~\n'
+            )
+            self.checker._check_draft_destinations(note)
+
+    def test_exact_draft_and_placeholder_remaps_do_not_check_historical_conventions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "release").mkdir()
+            for name in ("9.9.9", "9.9.10", "TEMPLATE", "1.0.0"):
+                (root / f"release/{name}.md").write_text(
+                    '[historical](../missing.md)' if name == "1.0.0" else '# Notes\n'
+                )
+            calls = []
+
+            def run(command):
+                calls.append(command)
+                return _completed(command, stdout="lychee 0.24.2\n")
+
+            with (mock.patch.object(self.checker, "ROOT", root),
+                  mock.patch.object(self.checker, "_run", side_effect=run),
+                  mock.patch.object(self.checker, "_inventories", return_value={
+                      "link-checked": tuple(f"release/{name}.md" for name in (
+                          "9.9.9", "9.9.10", "TEMPLATE",
+                      )),
+                      "released": ("release/1.0.0.md",),
+                  })):
+                self.checker.check_links(lychee=Path("lychee"))
+            remaps = [calls[1][index + 1] for index, value in enumerate(calls[1])
+                      if value == "--remap"]
+            self.assertEqual(len(remaps), 3)
+            for version, remap in zip(("v9.9.9", "v9.9.10", "vX.Y.Z"), remaps, strict=True):
+                self.assertIn(self.checker.re.escape(f"/blob/{version}/"), remap)
+                self.assertTrue(remap.endswith(root.resolve().as_uri() + "/"))
+            self.assertNotIn("--remap", calls[2])
+
+    def test_real_offline_remapping_checks_draft_files_and_anchors(self) -> None:
+        executable = self.checker._lychee_path(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "release").mkdir()
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text("# Valid anchor\n")
+            note = root / "release/9.9.9.md"
+            template = root / "release/TEMPLATE.md"
+            prefix = f"https://github.com/{self.checker.REPOSITORY}/blob/"
+            template.write_text(f"[placeholder]({prefix}vX.Y.Z/docs/guide.md#valid-anchor)\n")
+            inventory = {"link-checked": ("release/9.9.9.md", "release/TEMPLATE.md"),
+                         "released": ()}
+            for destination, succeeds in (
+                ("docs/guide.md#valid-anchor", True),
+                ("docs/missing.md", False),
+                ("docs/guide.md#missing-anchor", False),
+            ):
+                with self.subTest(destination=destination):
+                    note.write_text(f"[guide]({prefix}v9.9.9/{destination})\n")
+                    with (mock.patch.object(self.checker, "ROOT", root),
+                          mock.patch.object(self.checker, "_inventories", return_value=inventory)):
+                        if succeeds:
+                            self.checker.check_links(lychee=executable)
+                        else:
+                            with self.assertRaises(self.checker.LinkCheckError) as error:
+                                self.checker.check_links(lychee=executable)
+                            self.assertIn(destination.split("#")[0], str(error.exception))
+            # Placeholder links also receive real offline anchor verification.
+            note.write_text(f"[guide]({prefix}v9.9.9/docs/guide.md#valid-anchor)\n")
+            template.write_text(f"[placeholder]({prefix}vX.Y.Z/docs/guide.md#missing)\n")
+            with (mock.patch.object(self.checker, "ROOT", root),
+                  mock.patch.object(self.checker, "_inventories", return_value=inventory),
+                  self.assertRaises(self.checker.LinkCheckError)):
+                self.checker.check_links(lychee=executable)
+
     def test_version_mismatch_fails(self) -> None:
         with (
             mock.patch.object(

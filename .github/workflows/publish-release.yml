@@ -64,7 +64,7 @@ jobs:
           PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publication-flags \
             --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
 
-      - name: Verify signed certificate and render publication files
+      - name: Verify signed certificate and prepare publication files
         id: certificate
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
