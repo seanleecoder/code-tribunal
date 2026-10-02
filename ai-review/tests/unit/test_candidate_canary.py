@@ -5,6 +5,7 @@ import http.client
 import io
 import json
 import os
+import ssl
 import subprocess
 import tempfile
 import unittest
@@ -670,6 +671,8 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
 
             def request(method: str, path: str, **_kwargs: object) -> None:
                 calls.append((method, path))
+                if method == "DELETE":
+                    self.assertEqual(_kwargs, {"allow_missing": True, "idempotent": True})
                 if len(calls) == 1:
                     raise self.gitlab.GitLabCanaryError("close failed", status=500)
 
@@ -736,6 +739,7 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             self.assertEqual(sleep.call_count, count - 1)
             self.assertNotIn("fixture-only-token", str(failure.exception))
             self.assertNotIn("private-query", str(failure.exception))
+            self.assertEqual(failure.exception.transient, method == "GET")
 
     def test_http_failures_preserve_the_existing_status_and_missing_contract(self) -> None:
         error = urllib.error.HTTPError("https://fixture", 404, "missing", {}, None)
@@ -765,6 +769,7 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                 self.assertEqual(sleep.call_args_list,
                                  [mock.call(1), mock.call(2)] if method == "GET" else [])
                 self.assertEqual(failure.exception.status, status)
+                self.assertEqual(failure.exception.transient, method == "GET")
                 self.assertNotIn("private-query", str(failure.exception))
                 self.assertNotIn("fixture-only-token", str(failure.exception))
             with (
@@ -785,6 +790,7 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             http.client.HTTPException("fixture-only-token"),
             http.client.IncompleteRead(b"fixture-only-token", 40),
             http.client.RemoteDisconnected("fixture-only-token"),
+            ssl.SSLError("fixture-only-token"),
         )
         for error in errors:
             for phase in ("open", "read"):
@@ -884,5 +890,152 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             ):
                 self.gitlab._request("GET", "projects/1")
             self.assertEqual(failure.exception.status, status)
+            self.assertFalse(failure.exception.transient)
             request.assert_called_once()
             sleep.assert_not_called()
+
+    def test_cleanup_delete_retries_and_accepts_an_already_deleted_resource(self) -> None:
+        for failure in (
+            urllib.error.HTTPError("https://fixture", 503, "unavailable", {}, None),
+            ssl.SSLError("lost response"),
+        ):
+            for missing in (False, True):
+                result = (
+                    urllib.error.HTTPError("https://fixture", 404, "missing", {}, None)
+                    if missing else io.BytesIO(b"")
+                )
+                with (
+                    self.subTest(failure=type(failure), missing=missing),
+                    mock.patch.object(self.gitlab.urllib.request, "urlopen",
+                                      side_effect=[failure, result]) as request,
+                    mock.patch.object(self.gitlab.time, "sleep") as sleep,
+                ):
+                    self.assertIsNone(self.gitlab._request(
+                        "DELETE", "resource", allow_missing=True, idempotent=True
+                    ))
+                self.assertEqual(request.call_count, 2)
+                sleep.assert_called_once_with(1)
+
+    def test_idempotent_opt_in_refuses_other_mutations_and_missing_false(self) -> None:
+        for method, missing in (("GET", True), ("POST", True), ("PUT", True),
+                                ("PATCH", True), ("DELETE", False)):
+            with (
+                self.subTest(method=method, missing=missing),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen") as request,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "require DELETE"),
+            ):
+                self.gitlab._request(method, "resource", allow_missing=missing, idempotent=True)
+            request.assert_not_called()
+
+
+class GitLabCanaryPollingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        for patch in (
+            mock.patch.object(self.gitlab.time, "monotonic", side_effect=lambda: self.now),
+            mock.patch.object(self.gitlab.time, "sleep", side_effect=self._sleep),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _sleep(self, delay: float) -> None:
+        self.sleeps.append(delay)
+        self.now += delay
+
+    def _poll(self, protection: bool, tmp: str, timeout: int = 20):
+        if protection:
+            return self.gitlab._await_protection("candidate", timeout_seconds=timeout)
+        state = Path(tmp) / "state.json"
+        state.write_text(json.dumps({"mr_iid": "7"}), encoding="utf-8")
+        return self.gitlab.collect_campaign(argparse.Namespace(
+            state=str(state), destination=str(Path(tmp) / "out"), timeout_seconds=timeout
+        ))
+
+    def test_polling_recovers_after_exhausted_request_retries(self) -> None:
+        for protection in (False, True):
+            self.now = 0
+            responses = (
+                [b'{"protected":true}'] if protection else [
+                    b'[{"id":11}]', b'[{"downstream_pipeline":{"id":22}}]',
+                    b'{"id":22,"status":"success","web_url":"child"}', b'[]',
+                ]
+            )
+            with (
+                self.subTest(protection=protection),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.dict(os.environ, {"GITLAB_CANARY_TOKEN": "fixture-only-token"}),
+                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
+                    *[ssl.SSLError("fixture-only-token") for _ in range(3)],
+                    *[io.BytesIO(body) for body in responses],
+                ]),
+            ):
+                self._poll(protection, tmp)
+
+    def test_both_deadlines_include_last_transient_error_and_cap_sleep(self) -> None:
+        for protection in (False, True):
+            self.now = 0
+            self.sleeps.clear()
+            with (
+                self.subTest(protection=protection),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.object(
+                    self.gitlab, "_request",
+                    side_effect=self.gitlab.GitLabCanaryError("sanitized outage", transient=True),
+                ),
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError,
+                                       "last transient error: sanitized outage"),
+            ):
+                self._poll(protection, tmp, timeout=3)
+            self.assertEqual(self.now, 3)
+            self.assertEqual(self.sleeps, [2, 1] if protection else [3])
+
+    def test_permanent_errors_fail_immediately_in_both_loops(self) -> None:
+        for protection in (False, True):
+            with (
+                self.subTest(protection=protection),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.object(
+                    self.gitlab, "_request",
+                    side_effect=self.gitlab.GitLabCanaryError("forbidden", status=403),
+                ) as request,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "forbidden"),
+            ):
+                self._poll(protection, tmp)
+            request.assert_called_once()
+        self.assertEqual(self.sleeps, [])
+
+    def test_child_poll_outage_retains_discovery_and_settled_failure_is_immediate(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(self.gitlab, "_request", side_effect=[
+                [{"id": 11}], [{"downstream_pipeline": {"id": 22}}],
+                self.gitlab.GitLabCanaryError("outage", transient=True),
+                {"id": 22, "status": "failed"},
+            ]) as request,
+            self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "ended with failed"),
+        ):
+            self._poll(False, tmp)
+        self.assertEqual(request.call_count, 4)
+        self.assertEqual(request.call_args_list[-1], request.call_args_list[-2])
+        self.assertEqual(self.sleeps, [15])
+
+    def test_artifact_collection_does_not_restart_pipeline_polling(self) -> None:
+        for final in (self.gitlab.GitLabCanaryError("job-list outage", transient=True),
+                      [{"id": 33, "status": "success", "artifacts_file": {"filename": "out.zip"}}]):
+            responses = [
+                [{"id": 11}], [{"downstream_pipeline": {"id": 22}}],
+                {"id": 22, "status": "success", "web_url": "child"}, final,
+            ]
+            if isinstance(final, list):
+                responses.append(self.gitlab.GitLabCanaryError("artifact outage", transient=True))
+            with (
+                self.subTest(final=type(final)),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.object(self.gitlab, "_request", side_effect=responses) as request,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "outage"),
+            ):
+                self._poll(False, tmp)
+            self.assertEqual(request.call_count, len(responses))
+        self.assertEqual(self.sleeps, [])

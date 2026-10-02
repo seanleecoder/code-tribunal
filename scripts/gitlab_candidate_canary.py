@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -35,9 +36,12 @@ SETTLED_STATUSES = frozenset({"success", "failed", "canceled", "skipped", "manua
 
 
 class GitLabCanaryError(RuntimeError):
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status: int | None = None, transient: bool = False
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.transient = transient
 
 
 def _retry_after(value: str | None, backoff: int) -> float:
@@ -62,7 +66,10 @@ def _request(
     payload: dict[str, Any] | None = None,
     raw: bool = False,
     allow_missing: bool = False,
+    idempotent: bool = False,
 ) -> Any:
+    if idempotent and (method != "DELETE" or not allow_missing):
+        raise GitLabCanaryError("idempotent retries require DELETE with allow_missing=True")
     token = os.environ.get("GITLAB_CANARY_TOKEN", "")
     if not token:
         raise GitLabCanaryError("GITLAB_CANARY_TOKEN is required")
@@ -74,9 +81,9 @@ def _request(
         headers={"PRIVATE-TOKEN": token, "Content-Type": "application/json"},
     )
     # Read polling must survive a transient timeout without tearing down a live
-    # child pipeline's protected ref. Never replay a mutation after an ambiguous
-    # response: its request may already have taken effect.
-    attempts = 3 if method == "GET" else 1
+    # child pipeline's protected ref. Only cleanup DELETEs explicitly accepting
+    # an already-missing resource may be replayed after an ambiguous response.
+    attempts = 3 if method == "GET" or idempotent else 1
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
@@ -97,14 +104,17 @@ def _request(
             raise GitLabCanaryError(
                 f"GitLab API {method} {path.split('?', 1)[0]} failed with HTTP {exc.code}",
                 status=exc.code,
+                transient=attempts > 1 and exc.code in {429, 502, 503, 504},
             ) from exc
         except (
             TimeoutError, ConnectionError, urllib.error.URLError, http.client.HTTPException,
+            ssl.SSLError,
         ) as exc:
             if attempt + 1 == attempts:
                 raise GitLabCanaryError(
                     f"GitLab API {method} {path.split('?', 1)[0]} transport failed "
-                    f"after {attempts} attempt(s)"
+                    f"after {attempts} attempt(s)",
+                    transient=attempts > 1,
                 ) from exc
             time.sleep(attempt + 1)
     if raw:
@@ -249,13 +259,19 @@ def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
     """Wait until GitLab reports ``branch`` protected before any pipeline can start."""
     encoded = urllib.parse.quote(branch, safe="")
     deadline = time.monotonic() + timeout_seconds
-    while True:
-        status = _request("GET", f"projects/{DEMO_PROJECT}/repository/branches/{encoded}")
-        if status.get("protected") is True:
-            return
-        if time.monotonic() >= deadline:
-            raise GitLabCanaryError(f"demo branch {branch} never reported as protected")
-        time.sleep(2)
+    last_error: GitLabCanaryError | None = None
+    while time.monotonic() < deadline:
+        try:
+            status = _request("GET", f"projects/{DEMO_PROJECT}/repository/branches/{encoded}")
+            if status.get("protected") is True:
+                return
+        except GitLabCanaryError as exc:
+            if not exc.transient:
+                raise
+            last_error = exc
+        time.sleep(max(0, min(2, deadline - time.monotonic())))
+    detail = f"; last transient error: {last_error}" if last_error else ""
+    raise GitLabCanaryError(f"demo branch {branch} never reported as protected{detail}")
 
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
@@ -275,29 +291,38 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     mr_iid = state["mr_iid"]
     deadline = time.monotonic() + args.timeout_seconds
     child: dict[str, Any] | None = None
+    last_error: GitLabCanaryError | None = None
     while time.monotonic() < deadline:
-        if child is None:
-            pipelines = _request(
-                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines"
-            )
-            if pipelines:
-                parent_id = pipelines[0]["id"]
-                bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges")
-                for bridge in bridges:
-                    if bridge.get("downstream_pipeline"):
-                        child = bridge["downstream_pipeline"]
-                        break
-        if child is not None:
-            pipeline = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}")
-            status = pipeline.get("status")
-            if status == "success":
-                child = pipeline
-                break
-            if status in SETTLED_STATUSES:
-                raise GitLabCanaryError(f"GitLab child pipeline ended with {status}")
-        time.sleep(15)
+        try:
+            if child is None:
+                pipelines = _request(
+                    "GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines"
+                )
+                if pipelines:
+                    parent_id = pipelines[0]["id"]
+                    bridges = _request(
+                        "GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges"
+                    )
+                    for bridge in bridges:
+                        if bridge.get("downstream_pipeline"):
+                            child = bridge["downstream_pipeline"]
+                            break
+            if child is not None:
+                pipeline = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}")
+                status = pipeline.get("status")
+                if status == "success":
+                    child = pipeline
+                    break
+                if status in SETTLED_STATUSES:
+                    raise GitLabCanaryError(f"GitLab child pipeline ended with {status}")
+        except GitLabCanaryError as exc:
+            if not exc.transient:
+                raise
+            last_error = exc
+        time.sleep(max(0, min(15, deadline - time.monotonic())))
     else:
-        raise GitLabCanaryError("timed out waiting for GitLab candidate pipeline")
+        detail = f"; last transient error: {last_error}" if last_error else ""
+        raise GitLabCanaryError(f"timed out waiting for GitLab candidate pipeline{detail}")
 
     destination = Path(args.destination)
     inputs = destination / "inputs"
@@ -350,7 +375,7 @@ def cleanup_campaign(args: argparse.Namespace) -> None:
         f"projects/{TEMPLATE_PROJECT}/repository/branches/{encoded}",
     ):
         try:
-            _request("DELETE", path, allow_missing=True)
+            _request("DELETE", path, allow_missing=True, idempotent=True)
         except GitLabCanaryError as exc:
             failures.append(str(exc))
     if failures:
