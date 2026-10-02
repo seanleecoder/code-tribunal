@@ -284,10 +284,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
             with self.subTest(renames=renames):
                 _git(self.root, "config", "diff.renames", renames)
                 _git(self.root, "mv", "runtime.py", "release/runtime.py")
-                paths = tool._git(
-                    self.root, "diff", "--no-renames", "--name-only", "-z",
-                    self.runtime_source, strip=False,
-                ).split("\0")
+                paths = tool._working_tree_paths(self.root, self.runtime_source)
                 enumerations.append(paths)
                 self.assertIn("runtime.py", paths)
                 self.assertIn("release/runtime.py", paths)
@@ -306,6 +303,33 @@ class ReleaseFinalizationTests(unittest.TestCase):
                 ):
                     (self.root / relative).write_bytes(content)
                 _git(self.root, "mv", "release/moved.txt", "release/spare.txt")
+        self.assertEqual(*enumerations)
+
+    def test_unicode_release_paths_survive_both_quote_settings(self) -> None:
+        tool.repin(self.root, self.run)
+        tracked = "release/überblick.md"
+        untracked = "docs/evidence/日本語.md"
+        (self.root / tracked).write_text("Unicode release path\n")
+        _git(self.root, "add", tracked)
+        self._finalize()
+        release_commit = self._commit_release()
+        (self.root / untracked).write_text("Unicode evidence path\n")
+        enumerations = []
+        for quoted in ("true", "false"):
+            with self.subTest(quoted=quoted):
+                _git(self.root, "config", "core.quotePath", quoted)
+                paths = common.git_changed_paths(self.runtime_source, release_commit, self.root)
+                self.assertIn(tracked, paths)
+                self.assertFalse(tool.disallowed_release_paths(paths))
+                working = tool._working_tree_paths(self.root, self.runtime_source)
+                self.assertIn(tracked, working)
+                self.assertIn(untracked, working)
+                enumerations.append((paths, working))
+                inputs = self.root / "release/release-inputs.json"
+                manifest = tool.build_manifest(
+                    f"v{VERSION}", self.runtime_source, release_commit, inputs, self.root,
+                )
+                tool.validate_manifest(manifest, inputs, self.root)
         self.assertEqual(*enumerations)
 
     def test_manifest_bounds_committed_renames_regardless_of_git_config(self) -> None:

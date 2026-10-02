@@ -89,6 +89,15 @@ def _check_paths(paths: list[str]) -> None:
         raise ReleaseValidationError("release contains disallowed paths: " + ", ".join(forbidden))
 
 
+def _working_tree_paths(root: Path, runtime_source: str) -> list[str]:
+    """Enumerate both sides of tracked renames and non-ignored untracked paths."""
+    tracked = _git(
+        root, "diff", "--no-renames", "--name-only", "-z", runtime_source, strip=False
+    )
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
+    return sorted(filter(None, (tracked + untracked).split("\0")))
+
+
 def _check_destinations(root: Path, edits: dict[str, bytes]) -> None:
     _check_paths(list(edits))
     resolved_root = root.resolve()
@@ -278,11 +287,7 @@ def finalize(
     }
     # Include already-prepared evidence and repins when bounding the release checkout.
     _git(root, "merge-base", "--is-ancestor", data["runtime_source"], "HEAD")
-    tracked = _git(
-        root, "diff", "--no-renames", "--name-only", "-z", data["runtime_source"], strip=False
-    )
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
-    existing_paths = [path for path in (tracked + untracked).split("\0") if path]
+    existing_paths = _working_tree_paths(root, data["runtime_source"])
     _check_paths(existing_paths + list(edits))
     _validate_edits(root, edits, data, validate_release_inputs)
     return _write_edits(root, edits)

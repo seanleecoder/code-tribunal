@@ -118,7 +118,7 @@ def image_ref(image: dict[str, Any], runtime_source: str) -> str:
 
 def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROOT) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--no-renames", "--name-only", "--diff-filter=ACDMRTUXB",
+        ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB",
          runtime_source, release_commit],
         cwd=root,
         check=False,
@@ -127,7 +127,7 @@ def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROO
     )
     if completed.returncode:
         raise ReleaseValidationError(completed.stderr.strip() or "git diff failed")
-    return sorted(filter(None, completed.stdout.splitlines()))
+    return sorted(filter(None, completed.stdout.split("\0")))
 
 
 def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT) -> bool:
