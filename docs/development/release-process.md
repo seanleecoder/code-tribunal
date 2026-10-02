@@ -7,6 +7,17 @@ generated external manifest records both commits without creating a commit
 self-reference.
 
 Draft notes for a new release start from [`release/TEMPLATE.md`](../../release/TEMPLATE.md).
+Replace its `vX.Y.Z` link placeholders with the notes' own version. Author repository
+links as absolute pinned URLs, for example
+`https://github.com/seanleecoder/code-tribunal/blob/v2.0.2/docs/evidence/record-candidate-canary.md`.
+The documentation convention check applies to inline destinations and reference
+definitions outside fenced examples. It rejects relative destinations and
+repository blob links using another version or escaping the repository, as well
+as raw HTML tags with `href` or `src` attributes.
+Local anchors and external URLs are allowed. `make docs-check` uses
+[Lychee URL remapping](https://lychee.cli.rs/recipes/local-folder/) to verify each
+draft's exact tag prefix against local files, including anchors; the template's
+placeholder prefix is remapped the same way. Lychee owns path and anchor checking.
 
 ## Release version contract
 
@@ -108,12 +119,13 @@ and remove completed spec files from the active
    and extracts the signed checksum before executing any tag code. The signed
    tag rebuilds its certificate: its own `release_finalize.py manifest` command
    runs in a disposable clone checked out detached at the verified commit, using
-   the selected Python environment with an explicit working directory and Python path and no
-   inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
+   the selected Python environment with an explicit working directory and Python
+   path and no inherited `GH_*` or `GITHUB_*` environment variables. This scrubs the child's
    environment; it does not isolate it from files or other same-user processes.
    The certificate step receives no `GH_TOKEN` and makes no GitHub API calls.
-   Main compares the rebuilt manifest with the signed checksum and reads notes
-   from the verified commit, even if the local tag moves. A preceding authenticated
+   Main reads committed notes bytes through the original checkout before any tag
+   code executes and compares the rebuilt manifest with the signed checksum.
+   A moved local tag cannot change those notes. A preceding authenticated
    `publication-flags` step computes only `prerelease` and `latest`; the certificate
    step outputs only `tag_object`.
    The clone uses `--no-checkout --no-hardlinks` and an absolute source path,
@@ -121,8 +133,8 @@ and remove completed spec files from the active
    creates no worktree registrations in the source repository. Its temporary
    directory is removed on success or failure; operator registrations are untouched.
    The read-only job installs dependencies and retains the manifest, checksum,
-   and rendered notes in a one-day workflow
-   artifact. The write-enabled job downloads those files and creates the release
+   and committed notes in a one-day workflow artifact. The write-enabled job
+   downloads those files and creates the release
    without checking out or executing repository code or installing dependencies.
    It attaches only the manifest and checksum; it carries no signing key.
    Immediately before release creation, the remote tag reference must still match
@@ -144,19 +156,14 @@ and remove completed spec files from the active
    ```
 
    Publication and retries require the tag's `manifest` command, currently present
-   from v2.0.1 onward. Older published tags are outside publication retries; their
-   notes can still be rendered for backfill with `release-notes` below.
+   from v2.0.1 onward. Older published tags are outside publication retries.
 
    Existing published releases are never recreated or automatically edited.
-   Repository-relative notes links are rendered as tag-pinned GitHub blob URLs,
-   preserving queries and fragments. Committed notes remain byte-identical to
-   their tags. To prepare a historical release-body correction for explicit
-   review and approval, render the notes from that tag:
-
-   ```bash
-   PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py release-notes \
-     --tag "v$V" --out /tmp/code-tribunal-release
-   ```
+   Publication reads `release/<version>.md` directly from the verified commit and
+   writes those bytes to the notes artifact, preserving Unicode, line endings,
+   and the presence or absence of a trailing newline even if the local tag moves.
+   Author links in the committed notes using the pinned-link convention above.
+   Historical versioned notes and published bodies remain frozen.
 
    Then open the next draft in a follow-up PR:
 

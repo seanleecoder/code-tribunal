@@ -6,12 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -20,6 +20,8 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 from check_docs import markdown_inventories  # noqa: E402
+from release_common import RELEASE_VERSION_RE  # noqa: E402
+from validate_candidate_identity import REPOSITORY  # noqa: E402
 
 ROOT = SCRIPTS.parent
 PIN_PATH = ROOT / "ai-review/images/lychee.pin"
@@ -165,6 +167,19 @@ def check_links(*, lychee: Path | None = None) -> None:
         reported = version.stdout.strip() or version.stderr.strip() or "unavailable"
         raise LinkCheckError(f"Lychee version mismatch: expected {pin['version']}, got {reported}")
     inventories = _inventories()
+    remaps: list[str] = []
+    for relative in inventories["link-checked"]:
+        path = ROOT / relative
+        if path.parent != ROOT / "release":
+            continue
+        if RELEASE_VERSION_RE.fullmatch(path.stem):
+            tag = f"v{path.stem}"
+        elif path.name == "TEMPLATE.md":
+            tag = "vX.Y.Z"
+        else:
+            continue
+        prefix = f"https://github.com/{REPOSITORY}/blob/{tag}/"
+        remaps.extend(("--remap", f"^{re.escape(prefix)} {ROOT.resolve().as_uri()}/"))
     with tempfile.TemporaryDirectory(prefix="code-tribunal-links-") as temporary:
         directory = Path(temporary)
         current_file = _write_inventory(directory, "link-checked.txt", inventories["link-checked"])
@@ -174,6 +189,7 @@ def check_links(*, lychee: Path | None = None) -> None:
                 str(executable),
                 "--offline",
                 "--include-fragments=anchor-only",
+                *remaps,
                 "--no-progress",
                 "--files-from",
                 str(current_file),

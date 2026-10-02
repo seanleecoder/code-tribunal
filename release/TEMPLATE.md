@@ -2,7 +2,8 @@
 
 <!-- Copy to release/<release_version>.md when opening a new draft. The notes path
      is derived from `release_version` in release/release-inputs.json and enforced
-     by scripts/check_docs.py. Keep the draft banner until the release commit. -->
+     by scripts/check_docs.py. Replace vX.Y.Z in both links below with the draft's
+     own version. Keep the draft banner until the release commit. -->
 
 > These are working notes for the next release. They are not release evidence or a
 > release certificate until `vX.Y.Z` is tagged and the external manifest validates
@@ -17,7 +18,7 @@
 - Base / reviewer image digests: unset until the pair is published from `R`
 
 For the accepted release-version grammar and derived notes path, see the
-[release version contract](../docs/development/release-process.md#release-version-contract).
+[release version contract](https://github.com/seanleecoder/code-tribunal/blob/vX.Y.Z/docs/development/release-process.md#release-version-contract).
 
 ## Scope
 
@@ -34,7 +35,7 @@ For the accepted release-version grammar and derived notes path, see the
 ## Live campaign
 
 Scoped with the
-[change-impact triage table](../docs/development/release-process.md#scoping-the-live-campaign)
+[change-impact triage table](https://github.com/seanleecoder/code-tribunal/blob/vX.Y.Z/docs/development/release-process.md#scoping-the-live-campaign)
 against `git diff v<previous>..R`. Rows re-run live:
 
 | Row | Why it must re-run | Record |
