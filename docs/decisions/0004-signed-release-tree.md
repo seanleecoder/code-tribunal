@@ -55,9 +55,12 @@ Source-bound passing evidence, image provenance, `R/P` separation, release-path
 restrictions, canonical-template parity, and local signing remain mandatory.
 The final commit must descend from `R` and change only release paths. Before
 tagging, preparation and quality checks include staged and pending changes. Once
-the version tag exists, quality requires matching active inputs and tagged `P`
-ancestry to the checkout, and applies release-path restrictions to `R → P` rather
-than subsequent ordinary changes. Evidence bindings, template pins/parity, and
+the version has an annotated SSH-signed tag verified against protected main's
+signer registry, quality requires matching active inputs, `P → main`, and tagged
+`P` ancestry to the checkout, and applies release-path restrictions to `R → P`
+rather than subsequent ordinary changes. Invalid or untrusted tags fail closed.
+This transition does not depend on notes publication completing. Evidence
+bindings, template pins/parity, and
 frozen notes remain checked. Any merge strategy is acceptable when its final
 commit satisfies these ancestry, path, and CI requirements; a merge commit is no
 longer mandatory.
