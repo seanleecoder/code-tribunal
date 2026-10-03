@@ -23,7 +23,7 @@ case module must still belong to exactly one scope in the existing mapping.
 |---|---|
 | S02 | Modified: removed documentation-policy inventories, exact-heading/prose/retired-name checks, and generalized code/test references. Retained pinned Lychee installation, offline links/anchors, draft-note conventions/remapping, historical-note handling, and tagged-note byte checks. |
 | S17 | Accepted: one scope-to-module mapping and standard unittest loading, with unknown-scope, load-failure, and zero-test rejection. Removed test-ID manifests/reflection/parity tests; retained resource/binary inventories and all seat probes. Added the missing base-image resource probe. |
-| S10 | Completed locally: removed the union-find prepass and its single-use splitting helper. Findings are sorted once, bucketed by normalized path/category, and assigned to the first group matching every member. Exact output ordering, duplicate links, object identity, and consensus behavior are preserved. |
+| S10 | Implemented in [#170](https://github.com/seanleecoder/code-tribunal/pull/170): removed the union-find prepass and its single-use splitting helper. Findings are sorted once, bucketed by normalized path/category, and assigned to the first group matching every member. Output ordering, duplicate links, object identity, and consensus behavior are preserved for normalizer output, whose source IDs bind normalized path/category. Artifacts reusing an ID across buckets may order tied groups differently. |
 | S18 | Partial: pytest is invoked directly by `make test`; removed `test-strict`, the standalone compile target, and tests of retired machinery. Ruff, coverage, mypy, supply-chain/release-input checks, workflow parity, and image-build compilation remain. |
 | S19 | Partial: affected contributor docs and this work status updated. Accepted authorities and open proposals remain; broader policy/docs cuts need individual decisions. |
 | S01 | Modified, pending: retain the selected future-only 2.1.0 signed-tag/committed-inputs direction, source-bound evidence, and inputs-only waivers. No release migration was implemented in this slice. |
@@ -70,8 +70,8 @@ separately from the implementation counts; their presence adds no product gate.
 
 ### S10 grouping verification
 
-Implemented on `simplify/grouping`, rebased onto `72d326d` after both peripheral
-changes merged.
+Implemented in [#170](https://github.com/seanleecoder/code-tribunal/pull/170), based
+on `72d326d` after both peripheral changes merged.
 
 The focused grouping, reducer, integrity, state-matching, golden, import-boundary,
 publication, and revision-lifecycle suites passed: 71 tests and 54 subtests. Four
@@ -85,8 +85,17 @@ refactor. It found zero mismatches in 45,880 comparisons: 12 corpus permutations
 33,867 exhaustive graph/path-label cases through five findings, 12,000 generated
 payload/order/link variants (seed `20261003`), and one complete golden consensus.
 Checks included exact ordered findings, member object identity, and input
-immutability. The baseline was used only as a verification oracle, not retained
-as another implementation.
+immutability. These cases used unique IDs or repeated IDs within the same bucket;
+they did not test one ID reused across different path/category buckets. The
+baseline was used only as a verification oracle, not retained as another
+implementation.
+
+Review reproduced different tied-group ordering when a hand-built batch reuses
+one source ID across buckets. Normalization computes the ID from reviewer,
+normalized path, category, side, context hash, and title fingerprint, so normalizer
+output binds each ID to its bucket. Existing consensus validation does not
+recompute those IDs; S10 makes no integrity-contract change. The ordering
+equivalence guarantee applies to findings with that ID/bucket binding.
 
 Socket-capable `PATH="$PWD/.venv/bin:$PATH" make PYTHON=.venv/bin/python quality`
 passed on the rebased change: 1,093 tests passed, one skipped, and every non-test
@@ -96,7 +105,7 @@ calls, live platform checks, or release publication.
 | S10 changed content against `72d326d`, excluding audit/index status | Before | After | Delta |
 |---|---:|---:|---:|
 | Implementation/configuration physical lines | 197 | 164 | -33 |
-| Test physical lines | 151 | 194 | +43 |
+| Test physical lines | 151 | 198 | +47 |
 | Contributor/reference documentation physical lines | 78 | 78 | 0 |
 
 S10 removes the `UnionFind` class and `_split_transitive_component` helper, with

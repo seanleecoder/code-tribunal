@@ -14,9 +14,10 @@ peripheral slice with packaged smoke loading. Full quality and both image smoke
 scopes passed without mounting checkout tests. S01 and the other runtime/policy
 cuts remain pending; S18 and S19 are only partially addressed.
 
-S10's equivalent grouping refactor is implemented on `simplify/grouping`, based
-on `72d326d` after both peripheral changes merged. Its verification is recorded
-in the handoff.
+S10's grouping refactor is implemented in
+[#170](https://github.com/seanleecoder/code-tribunal/pull/170), based on `72d326d`
+after both peripheral changes merged. Its verification and the scope of its
+ordering guarantee are recorded in the handoff.
 
 `grouping_equivalence_check.py` and `grouping_equivalence_results.json` support
 the historical S10 proposal. They model the inspected control flow independently

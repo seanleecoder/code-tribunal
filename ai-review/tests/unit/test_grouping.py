@@ -77,10 +77,14 @@ class GroupingTests(unittest.TestCase):
         first = _finding("1" * 64, "src/foo.py", "a" * 64)
         other_path = _finding("2" * 64, "src/bar.py", "a" * 64)
         other_category = _finding("3" * 64, "src/foo.py", "a" * 64, category="security")
-        normalized_path = _finding("4" * 64, "./src/foo.py", "a" * 64)
+        normalized_path = _finding("4" * 64, "./src/foo.py", "b" * 64, line=500)
         links = {("1" * 64, str(index) * 64) for index in range(2, 5)}
+        findings = [normalized_path, other_category, other_path, first]
         self.assertEqual(
-            group_findings([normalized_path, other_category, other_path, first], links),
+            group_findings(findings), [[first], [other_path], [other_category], [normalized_path]]
+        )
+        self.assertEqual(
+            group_findings(findings, links),
             [[first, normalized_path], [other_path], [other_category]],
         )
 
