@@ -55,7 +55,7 @@ from the package at all.
 | `notes.py` | Marker and review-note parsing | **never** |
 | `commands.py` | `/ai-review` command collection and author authorization | yes |
 | `consensus.py` | `python -m ai_review.consensus`; the deterministic reducer API | no |
-| `grouping.py` | Overlap, similarity, union-find grouping | **never** |
+| `grouping.py` | Path/category buckets and complete-link grouping by anchor/fingerprint identity | **never** |
 | `critique.py` | Critique application and group re-decision | **never** |
 | `consensus_errors.py` | `ConsensusIntegrityError`, nothing else | **never** |
 | `adapter_runner.py` | `python -m ai_review.adapter_runner`; `run_adapter` | no |
