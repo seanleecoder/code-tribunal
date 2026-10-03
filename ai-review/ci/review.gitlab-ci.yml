@@ -186,14 +186,12 @@ consensus_ai_review:
 # posting failure remains a failed job unless the consuming project marks it
 # allowed to fail.
 #
-# Deliberately NOT mirroring the GitHub template's `if: always()` guard here.
-# GitLab enforces at pipeline level through "Pipelines must succeed", so a failed
-# consensus_ai_review already blocks and this job staying skipped is correct.
-# GitHub enforces per job, where a skipped required check never reports at all.
-# The asymmetry follows from the platforms; do not "restore symmetry" by adding
-# an unreachable guard.
+# Publish a validated failed-panel artifact's health notice even when consensus
+# exits 3. Its failure still fails the pipeline. Missing/invalid artifacts fail
+# before posting, including a failed prepare; no model failure is hidden.
 post_ai_review:
   stage: ai_review
+  when: always
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
