@@ -1,17 +1,4 @@
-"""The declared contents of the packaged smoke suite.
-
-Two kinds of manifest live here, and both are identity checks rather than counts:
-
-* :data:`MANIFEST` names every test ID each image tag must run. The loader builds
-  the suite from it and refuses to run when the set it loaded is not equal to it,
-  so adding or removing a smoke case requires editing this file in the same
-  change. A sentinel case could only prove that *something* ran; it cannot detect
-  a case that stopped matching collection -- a renamed method, a class that no
-  longer subclasses ``TestCase``, a decorator that swallowed it -- and would
-  still exit 0 while publishing an image that quietly lost a check.
-* :data:`RUNTIME_FILES`, :data:`PACKAGED_FIXTURES`, and :data:`PINNED_CLIS`
-  name non-Python runtime contents that cannot be discovered from the package.
-"""
+"""Resource and binary inventories for the packaged image smoke checks."""
 
 from __future__ import annotations
 
@@ -65,43 +52,3 @@ PINNED_CLIS: tuple[str, ...] = (
     "cursor-agent",
     "rg",
 )
-
-_BASE_CASES = "ai_review_smoke.base_cases.PackagedBaseImageTests"
-_REVIEWER_CASES = "ai_review_smoke.reviewer_cases.PackagedReviewerImageTests"
-
-# The test IDs each scope must run. Keyed by the image tag the preflight targets:
-# the properties split across the two tags, because the reviewer cases need the
-# pinned CLIs that only the reviewer image has, so one run against one tag cannot
-# cover both.
-MANIFEST: dict[str, frozenset[str]] = {
-    "base": frozenset(
-        {
-            f"{_BASE_CASES}.test_default_config_loads",
-            f"{_BASE_CASES}.test_every_runtime_module_imports",
-            f"{_BASE_CASES}.test_packaged_cli_entry_points_are_callable",
-            f"{_BASE_CASES}.test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them",
-            f"{_BASE_CASES}.test_packaged_runtime_root_is_read_only",
-            f"{_BASE_CASES}.test_shipped_schemas_load",
-            f"{_BASE_CASES}.test_tmp_is_writable_for_adapter_scratch_space",
-        }
-    ),
-    "reviewer": frozenset(
-        {
-            f"{_REVIEWER_CASES}.test_every_adapter_script_is_executable",
-            f"{_REVIEWER_CASES}.test_local_mock_critique_completes_for_every_seat",
-            f"{_REVIEWER_CASES}.test_local_mock_review_validates_every_seats_batch",
-            f"{_REVIEWER_CASES}.test_local_consensus_validates_against_its_schema",
-            f"{_REVIEWER_CASES}.test_pinned_clis_report_a_version",
-        }
-    ),
-}
-
-# Derived, not declared: every test ID already carries its scope (the key it is
-# filed under) and its module (everything before the class), so a second and third
-# table naming the same things could only ever drift from this one.
-SCOPES: tuple[str, ...] = tuple(MANIFEST)
-
-
-def scope_case_modules(scope: str) -> frozenset[str]:
-    """The modules ``scope``'s declared IDs live in, read back off the IDs."""
-    return frozenset(test_id.rsplit(".", 2)[0] for test_id in MANIFEST[scope])

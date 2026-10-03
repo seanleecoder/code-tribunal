@@ -4,18 +4,20 @@ The static [review](SIMPLIFICATION_REVIEW.md) describes `main` at
 `ec7e82754db062797a9c4d0646ced79ac2d8e7ff`. Its recommendations are evidence for
 future decisions. The dispositions below govern the completed peripheral slice.
 
-## Implemented branches
+## Completed peripheral slice
 
-Two independent branches start from the refreshed `ec7e827` main baseline:
+Documentation and developer checks merged in #168 at `286b673`; #169 completes
+the slice with packaged smoke loading, rebased onto that main revision.
 
-| Change | Branch | Result |
+| Change | Pull request | Result |
 |---|---|---|
-| Documentation and developer checks | `simplify/docs-developer-checks` | Implemented and full quality passed: 1,084 tests passed, one skipped |
-| Packaged smoke loading | `simplify/packaged-smoke-loading` | Implemented and full quality passed: 1,113 tests passed, one skipped |
+| Documentation and developer checks | [#168](https://github.com/seanleecoder/code-tribunal/pull/168) | Merged; full quality passed: 1,085 tests passed, one skipped |
+| Packaged smoke loading | [#169](https://github.com/seanleecoder/code-tribunal/pull/169) | Completes the peripheral slice; full quality passed: 1,089 tests passed, one skipped |
 
-These changes are independently reviewable against main. The original checkout
-and its staged audit files are preserved. Both changes still need review and
-merge before the entire slice is landed.
+S17 deliberately accepts a single case dropping out of a scope, for example
+when a method loses its `test` prefix or a class stops inheriting `TestCase`.
+Private case names and per-scope counts are not distribution contracts. Every
+case module must still belong to exactly one scope in the existing mapping.
 
 | Item | Disposition and completed scope |
 |---|---|
@@ -33,12 +35,16 @@ are unchanged.
 
 ## Verification and size
 
-Both branches passed socket-capable `PATH="$PWD/.venv/bin:$PATH" make
-PYTHON=.venv/bin/python quality`, including every non-test gate. Focused checks
+Both changes passed socket-capable `PATH="$PWD/.venv/bin:$PATH" make
+PYTHON=.venv/bin/python quality`, including every non-test gate. The final smoke
+loader follow-up passed all 23 focused smoke/distribution tests. Focused checks
 covered broken local paths/anchors, draft pinned links, tagged-note bytes, valid
 and deliberately invalid/malformed GitLab examples, missing active notes,
 ordinary prose changes, failed/empty smoke loading, automatically collected
-added/renamed tests, and missing runtime resources/binaries.
+added/renamed tests, scope-module coverage, and missing runtime resources/binaries.
+Import and unittest-loading exceptions retain their tracebacks. A mutation
+check confirmed that the focused test detects a disabled loader-error guard and
+its premature runner execution.
 
 Both linux/amd64 images were built with the existing pinned Dockerfiles. Without
 mounting checkout tests, the base scope passed eight cases and the reviewer
@@ -51,9 +57,9 @@ changes were performed.
 
 | Changed content, excluding supplied audit material and status | Documentation change | Smoke change |
 |---|---:|---:|
-| Implementation/configuration physical lines | -497 | -90 |
-| Test physical lines | -632 | -13 |
-| Contributor/reference documentation physical lines | +3 | +2 |
+| Implementation/configuration physical lines | -497 | -92 |
+| Test physical lines | -576 | -4 |
+| Contributor/reference documentation physical lines | +5 | +2 |
 
 Two implementation targets (`test-strict`, `compile`) and the `check_docs.py`
 script are deleted without aliases. The test-ID resolver and its parallel

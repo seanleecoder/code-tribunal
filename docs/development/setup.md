@@ -38,7 +38,9 @@ on `PATH`, installed as shown in the first code block. Ruff parses the Python
 sources during linting; image builds retain their compilation pass.
 
 `make packaged-smoke` runs the curated packaged-runtime smoke suite that ships in
-the published images, by the same module name the image preflight uses.
+the published images, by the same module name the image preflight uses. Each scope uses standard
+`unittest` module loading, rejects loading failures and zero collected tests, and
+collects added or renamed test methods without a separate test-ID inventory.
 `SCOPE=base` covers the runtime files, fixtures, module imports, schemas, and
 default config; `SCOPE=reviewer` additionally drives every seat's local mock
 review, critique, and consensus run and needs the pinned CLIs, so it is fully

@@ -12,22 +12,25 @@ import argparse
 import sys
 import unittest
 
-from .loader import build_suite
-from .manifest import SCOPES
+from .loader import SCOPE_MODULES, SmokeLoadError, build_suite
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ai_review_smoke")
     parser.add_argument(
         "scope",
-        choices=SCOPES,
+        choices=SCOPE_MODULES,
         help="which image tag's packaged properties to run",
     )
     parser.add_argument("-v", "--verbose", action="count", default=1)
     args = parser.parse_args(argv)
 
-    suite = build_suite(args.scope)
-    print(f"packaged smoke scope {args.scope}: {suite.countTestCases()} declared cases")
+    try:
+        suite = build_suite(args.scope)
+    except SmokeLoadError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"packaged smoke scope {args.scope}: {suite.countTestCases()} collected cases")
     result = unittest.TextTestRunner(verbosity=args.verbose, stream=sys.stderr).run(suite)
     return 0 if result.wasSuccessful() else 1
 
