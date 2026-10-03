@@ -1,4 +1,4 @@
-"""Finding grouping: overlap, fingerprint identity, and union-find components.
+"""Finding grouping: path/category buckets and deterministic complete-link groups.
 
 Needs neither render nor memory, so pulling it out of consensus is a
 real coupling reduction rather than motion. The grouping range references nothing
@@ -93,23 +93,6 @@ def same_issue(
     )
 
 
-class UnionFind:
-    def __init__(self, size: int) -> None:
-        self.parent = list(range(size))
-
-    def find(self, item: int) -> int:
-        while self.parent[item] != item:
-            self.parent[item] = self.parent[self.parent[item]]
-            item = self.parent[item]
-        return item
-
-    def union(self, left: int, right: int) -> None:
-        left_root = self.find(left)
-        right_root = self.find(right)
-        if left_root != right_root:
-            self.parent[right_root] = left_root
-
-
 def choose_primary_signature_finding(findings: list[dict[str, Any]]) -> dict[str, Any]:
     return sorted(
         findings,
@@ -157,41 +140,25 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
     return (1, title, path, source_hash, "")
 
 
-def _split_transitive_component(
-    component: list[dict[str, Any]],
-    duplicate_links: set[DuplicateLink] | None,
-) -> list[list[dict[str, Any]]]:
-    groups: list[list[dict[str, Any]]] = []
-    for finding in sorted(component, key=lambda item: item["source_finding_id"]):
-        for group in groups:
-            if all(same_issue(member, finding, duplicate_links) for member in group):
-                group.append(finding)
-                break
-        else:
-            groups.append([finding])
-    return groups
-
-
 def group_findings(
     findings: list[dict[str, Any]],
     duplicate_links: set[DuplicateLink] | None = None,
 ) -> list[list[dict[str, Any]]]:
-    ordered = sorted(findings, key=lambda item: item["source_finding_id"])
-    uf = UnionFind(len(ordered))
-    for left_index, left in enumerate(ordered):
-        for right_index in range(left_index + 1, len(ordered)):
-            if same_issue(left, ordered[right_index], duplicate_links):
-                uf.union(left_index, right_index)
-    components: dict[int, list[dict[str, Any]]] = {}
-    for index, finding in enumerate(ordered):
-        components.setdefault(uf.find(index), []).append(finding)
-    split_components: list[list[dict[str, Any]]] = []
-    for component in components.values():
-        buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for finding in component:
-            buckets.setdefault(
-                (finding["category"], anchor_path_key(finding["anchor"])), []
-            ).append(finding)
-        for bucket in sorted(buckets.values(), key=lambda group: group[0]["source_finding_id"]):
-            split_components.extend(_split_transitive_component(bucket, duplicate_links))
-    return sorted(split_components, key=lambda group: group[0]["source_finding_id"])
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for finding in sorted(findings, key=lambda item: item["source_finding_id"]):
+        buckets.setdefault(
+            (finding["category"], anchor_path_key(finding["anchor"])), []
+        ).append(finding)
+    result: list[list[dict[str, Any]]] = []
+    for bucket in buckets.values():
+        groups: list[list[dict[str, Any]]] = []
+        for finding in bucket:
+            for group in groups:
+                # Every member must match; a transitive chain is not one issue.
+                if all(same_issue(member, finding, duplicate_links) for member in group):
+                    group.append(finding)
+                    break
+            else:
+                groups.append([finding])
+        result.extend(groups)
+    return sorted(result, key=lambda group: group[0]["source_finding_id"])
