@@ -13,8 +13,8 @@ from release_common import (
     RELEASE_INPUTS,
     ROOT,
     ReleaseValidationError,
+    diff_paths,
     disallowed_release_paths,
-    git_changed_paths,
     git_is_ancestor,
     image_ref,
     load_json,
@@ -103,7 +103,7 @@ def validate_manifest(
             raise ReleaseValidationError(f"manifest images.{role} does not match release inputs")
     if not git_is_ancestor(runtime_source, release_commit, root):
         raise ReleaseValidationError("release commit P must descend from runtime source R")
-    expected_paths = git_changed_paths(runtime_source, release_commit, root)
+    expected_paths = diff_paths(root, runtime_source, release_commit)
     if manifest["changed_paths"] != expected_paths:
         raise ReleaseValidationError("manifest changed_paths does not match git R..P")
     disallowed = disallowed_release_paths(expected_paths)

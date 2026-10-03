@@ -106,8 +106,9 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
             (root / "docs/guide.md").write_text("# Valid anchor\n")
             note = root / "release/9.9.9.md"
             template = root / "release/TEMPLATE.md"
-            prefix = f"https://github.com/{self.checker.REPOSITORY}/blob/"
-            template.write_text(f"[placeholder]({prefix}vX.Y.Z/docs/guide.md#valid-anchor)\n")
+            prefix = self.checker.release_blob_url("v9.9.9")
+            placeholder = self.checker.release_blob_url("vX.Y.Z", "docs/guide.md")
+            template.write_text(f"[placeholder]({placeholder}#valid-anchor)\n")
             inventory = {"link-checked": ("release/9.9.9.md", "release/TEMPLATE.md"),
                          "released": ()}
             for destination, succeeds, reference in (
@@ -119,7 +120,7 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
                 ("docs/guide.md#missing-anchor", False, True),
             ):
                 with self.subTest(destination=destination, reference=reference):
-                    target = f"{prefix}v9.9.9/{destination}"
+                    target = f"{prefix}{destination}"
                     note.write_text(f"[guide][ref]\n[ref]: <{target}>\n" if reference
                                     else f"[guide]({target})\n")
                     with (mock.patch.object(self.checker, "ROOT", root),
@@ -131,8 +132,8 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
                                 self.checker.check_links(lychee=executable)
                             self.assertIn(destination.split("#")[0], str(error.exception))
             # Placeholder links also receive real offline anchor verification.
-            note.write_text(f"[guide]({prefix}v9.9.9/docs/guide.md#valid-anchor)\n")
-            template.write_text(f"[placeholder]({prefix}vX.Y.Z/docs/guide.md#missing)\n")
+            note.write_text(f"[guide]({prefix}docs/guide.md#valid-anchor)\n")
+            template.write_text(f"[placeholder]({placeholder}#missing)\n")
             with (mock.patch.object(self.checker, "ROOT", root),
                   mock.patch.object(self.checker, "_inventories", return_value=inventory),
                   self.assertRaises(self.checker.LinkCheckError)):

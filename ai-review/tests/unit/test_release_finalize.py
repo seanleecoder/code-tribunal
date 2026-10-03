@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from datetime import date
+from fnmatch import fnmatchcase
 from pathlib import Path
 from unittest import mock
 
@@ -337,7 +338,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         for quoted in ("true", "false"):
             with self.subTest(quoted=quoted):
                 _git(self.root, "config", "core.quotePath", quoted)
-                paths = common.git_changed_paths(self.runtime_source, release_commit, self.root)
+                paths = common.diff_paths(self.root, self.runtime_source, release_commit)
                 self.assertIn(tracked, paths)
                 self.assertFalse(tool.disallowed_release_paths(paths))
                 working = tool._working_tree_paths(self.root, self.runtime_source)
@@ -363,7 +364,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         for renames in ("true", "false"):
             _git(self.root, "config", "diff.renames", renames)
             self.assertEqual(
-                common.git_changed_paths(self.runtime_source, release_commit, self.root),
+                common.diff_paths(self.root, self.runtime_source, release_commit),
                 manifest["changed_paths"],
             )
             self.assertIn("release/spare.txt", manifest["changed_paths"])
@@ -375,7 +376,7 @@ class ReleaseFinalizationTests(unittest.TestCase):
         for renames in ("true", "false"):
             with self.subTest(renames=renames):
                 _git(self.root, "config", "diff.renames", renames)
-                paths = common.git_changed_paths(self.runtime_source, forbidden_commit, self.root)
+                paths = common.diff_paths(self.root, self.runtime_source, forbidden_commit)
                 enumerations.append(paths)
                 self.assertIn("runtime.py", paths)
                 self.assertIn("release/runtime.py", paths)
@@ -1058,7 +1059,7 @@ class ReleasePublicationTests(unittest.TestCase):
 
     def test_validation_workflow_credentials_are_only_in_flags_step(self) -> None:
         workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
-        self.assertNotIn("env", workflow)
+        self.assertEqual(workflow["env"], {"RELEASE_TAG": "${{ inputs.tag || github.ref_name }}"})
         validate = workflow["jobs"]["validate"]
         self.assertNotIn("env", validate)
         steps = validate["steps"]
@@ -1255,6 +1256,26 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertIn("flags=(--latest=false)", command)
         self.assertIn("flags=(--latest)", command)
         self.assertEqual(command.count('"$RUNNER_TEMP/release/'), 3)
+
+    def test_workflow_asset_paths_match_generated_publication_names(self) -> None:
+        workflow = yaml.safe_load((REPO / ".github/workflows/publish-release.yml").read_text())
+        tag = f"v{VERSION}"
+        manifest = tool._asset_name(tag, "release-manifest.json")
+        expected = [manifest, f"{manifest}.sha256", tool._asset_name(tag, "release-notes.md")]
+        upload = next(
+            step for step in workflow["jobs"]["validate"]["steps"]
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        )
+        retained = [Path(path).name for path in upload["with"]["path"].splitlines()]
+        self.assertEqual(len(retained), len(expected))
+        for name in expected:
+            with self.subTest(asset=name):
+                self.assertEqual(sum(fnmatchcase(name, pattern) for pattern in retained), 1)
+        command = workflow["jobs"]["publish"]["steps"][-1]["run"]
+        published = re.findall(
+            r'"\$RUNNER_TEMP/release/([^"]+)"', command.replace("${RELEASE_TAG}", tag)
+        )
+        self.assertCountEqual(published, expected)
 
 
 class ReleaseRunLookupTests(unittest.TestCase):

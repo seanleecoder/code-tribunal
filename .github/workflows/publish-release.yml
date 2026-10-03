@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 concurrency:
   group: release-publication
   cancel-in-progress: false
@@ -58,7 +61,6 @@ jobs:
         id: flags
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publication-flags \
@@ -66,8 +68,6 @@ jobs:
 
       - name: Verify signed certificate and prepare publication files
         id: certificate
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           PYTHONPATH=ai-review/src:scripts python scripts/release_finalize.py publish \
@@ -102,7 +102,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
           LATEST: ${{ needs.validate.outputs.latest }}
           TAG_OBJECT: ${{ needs.validate.outputs.tag_object }}

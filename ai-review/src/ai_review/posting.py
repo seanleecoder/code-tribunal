@@ -655,9 +655,7 @@ def finalize_state(
             )
             previous = prior_records.get(record["issue_id"])
             record["status"] = previous.get("status", "open") if previous else "open"
-            record["human_disposition"] = (
-                previous.get("human_disposition") if previous else None
-            )
+            record["human_disposition"] = previous.get("human_disposition") if previous else None
     final_state, overflow = _process_state_for_persistence(
         {
             **state_plan.planned_state,

@@ -12,11 +12,11 @@ from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
     IMAGE_NAME_RE,
+    REPOSITORY,
     git_is_ancestor,
     image_ref,
 )
 
-REPOSITORY = "seanleecoder/code-tribunal"
 SOURCE_REF = "refs/heads/main"
 SIGNER_IDENTITY = (
     f"https://github.com/{REPOSITORY}/.github/workflows/publish-ai-review-images.yml@{SOURCE_REF}"

@@ -31,21 +31,25 @@ from check_release_manifest import validate_manifest
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
+    GITHUB_INSTALLED,
+    GITHUB_TEMPLATE,
+    GITLAB_TEMPLATE,
+    REPOSITORY,
     ROOT,
-    WORKFLOW_PAIRS,
     ReleaseValidationError,
-    _diff_paths,
     canonical_json_bytes,
     compare_release_versions,
+    diff_paths,
     disallowed_release_paths,
+    git_is_ancestor,
     image_ref,
     load_json,
+    release_blob_url,
     sha256_bytes,
     sync_workflows,
     tag_exists,
     validate_release_version,
 )
-from validate_candidate_identity import REPOSITORY
 
 
 @overload
@@ -102,8 +106,8 @@ def _check_paths(paths: list[str]) -> None:
 
 def _working_tree_paths(root: Path, runtime_source: str) -> list[str]:
     """Bound working-tree and staged changes plus non-ignored untracked paths."""
-    tracked = _diff_paths(root, runtime_source)
-    staged = _diff_paths(root, runtime_source, cached=True)
+    tracked = diff_paths(root, runtime_source)
+    staged = diff_paths(root, runtime_source, cached=True)
     untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", strip=False)
     return sorted(set(tracked) | set(staged) | set(filter(None, untracked.split("\0"))))
 
@@ -132,9 +136,9 @@ def _validate_edits(
     """Validate the planned tree before the first write to the real checkout."""
     _check_destinations(root, edits)
     paths = {
-        "ai-review/ci/review.github-actions.yml",
-        "ai-review/ci/review.gitlab-ci.yml",
-        ".github/workflows/ai-review.yml",
+        GITHUB_TEMPLATE,
+        GITHUB_INSTALLED,
+        GITLAB_TEMPLATE,
         *edits,
     }
     for record_id in data["verification"]["evidence_record_ids"]:
@@ -168,16 +172,14 @@ def _write_edits(root: Path, edits: dict[str, bytes]) -> tuple[str, ...]:
 
 def repin(root: Path, run: CanaryRun) -> tuple[str, ...]:
     data, candidate, _ = _candidate_inputs(root, run)
-    canonical_path = WORKFLOW_PAIRS[0][0]
-    text = (root / canonical_path).read_text(encoding="utf-8")
+    text = (root / GITHUB_TEMPLATE).read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     for job, (index, _) in github_job_containers(text).items():
         role = GITHUB_CONTAINER_ROLES[job]
         lines[index] = f"    container: {candidate[f'{role}_image']}\n"
     canonical = "".join(lines).encode()
-    edits = {canonical_path: canonical, WORKFLOW_PAIRS[0][1]: canonical}
-    gitlab_path = "ai-review/ci/review.gitlab-ci.yml"
-    gitlab = (root / gitlab_path).read_text(encoding="utf-8")
+    edits = {GITHUB_TEMPLATE: canonical, GITHUB_INSTALLED: canonical}
+    gitlab = (root / GITLAB_TEMPLATE).read_text(encoding="utf-8")
     pins = gitlab_template_pins(gitlab)
     lines = gitlab.splitlines(keepends=True)
     for key, field in GITLAB_PIN_FIELDS.items():
@@ -186,7 +188,7 @@ def repin(root: Path, run: CanaryRun) -> tuple[str, ...]:
         prefix, separator, suffix = lines[index].partition(f'"{previous}"')
         assert separator
         lines[index] = f'{prefix}"{value}"{suffix}'
-    edits[gitlab_path] = "".join(lines).encode()
+    edits[GITLAB_TEMPLATE] = "".join(lines).encode()
     _validate_edits(
         root, edits, data,
         lambda inputs, tree: validate_template_pins(
@@ -218,8 +220,12 @@ def _successful_run(runtime_source: str, workflow: str) -> str:
     return str(run["databaseId"])
 
 
+def _section_pattern(heading: str) -> re.Pattern[str]:
+    return re.compile(rf"(?ms)^## {re.escape(heading)}\n(.*?)(?=^## |\Z)")
+
+
 def _replace_section(text: str, heading: str, body: str) -> str:
-    pattern = re.compile(rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)")
+    pattern = _section_pattern(heading)
     if len(list(pattern.finditer(text))) != 1:
         raise ReleaseValidationError(f"release notes require exactly one {heading} section")
     return pattern.sub(lambda _: f"## {heading}\n\n{body.rstrip()}\n\n", text)
@@ -250,7 +256,7 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
             "Registered waiver; reason in release inputs"
             if record_id in data["verification"]["evidence_waivers"] else "Passed"
         )
-        url = f"https://github.com/{REPOSITORY}/blob/v{version}/docs/evidence/{record_id}"
+        url = release_blob_url(f"v{version}", f"{EVIDENCE_DIR.as_posix()}/{record_id}")
         campaign.append(f"| [{record_id}]({url}) | {result} |")
     return _replace_section(text, "Live campaign", "\n".join(campaign))
 
@@ -294,11 +300,16 @@ def finalize(
         notes_path: _final_notes((root / notes_path).read_text(encoding="utf-8"), data).encode(),
     }
     # Include already-prepared evidence and repins when bounding the release checkout.
-    _git(root, "merge-base", "--is-ancestor", data["runtime_source"], "HEAD")
+    if not git_is_ancestor(data["runtime_source"], "HEAD", root):
+        raise ReleaseValidationError("runtime source R is not an ancestor of HEAD")
     existing_paths = _working_tree_paths(root, data["runtime_source"])
-    _check_paths(existing_paths + list(edits))
+    _check_paths(existing_paths)
     _validate_edits(root, edits, data, validate_release_inputs)
     return _write_edits(root, edits)
+
+
+def _asset_name(tag: str, kind: str) -> str:
+    return f"code-tribunal-{tag}-{kind}"
 
 
 def manifest_assets(root: Path, release_commit: str, out: Path) -> tuple[Path, Path, Path]:
@@ -315,7 +326,7 @@ def manifest_assets(root: Path, release_commit: str, out: Path) -> tuple[Path, P
     validate_manifest(manifest, inputs_path, root)
     content = canonical_json_bytes(manifest)
     digest = sha256_bytes(content)
-    name = f"code-tribunal-v{version}-release-manifest.json"
+    name = _asset_name(f"v{version}", "release-manifest.json")
     verification = data["verification"]
     message = [
         f"Code Tribunal {version}", "",
@@ -330,12 +341,13 @@ def manifest_assets(root: Path, release_commit: str, out: Path) -> tuple[Path, P
         *sorted(verification["evidence_waivers"]),
     ]
     notes = (root / f"release/{version}.md").read_text(encoding="utf-8")
-    limitations = re.search(r"(?ms)^## Carried known limitations\n(.*?)(?=^## |\Z)", notes)
+    limitations = _section_pattern("Carried known limitations").search(notes)
     if limitations:
         message.extend(["", "Known limitations:", limitations.group(1).strip()])
     message.extend(["", f"Release-manifest-sha256: {digest}", ""])
     out.mkdir(parents=True, exist_ok=True)
-    assets = (out / name, out / f"{name}.sha256", out / f"code-tribunal-v{version}-tag-message.txt")
+    assets = (out / name, out / f"{name}.sha256",
+              out / _asset_name(f"v{version}", "tag-message.txt"))
     assets[0].write_bytes(content)
     assets[1].write_text(f"{digest}  {name}\n", encoding="utf-8")
     assets[2].write_text("\n".join(message), encoding="utf-8")
@@ -374,7 +386,8 @@ def _verify_release_tag(root: Path, tag: str) -> tuple[str, str, str]:
     if _git(root, "cat-file", "-t", tag_object) != "tag":
         raise ReleaseValidationError("publication requires an annotated signed tag")
     release_commit = _git(root, "rev-parse", f"{tag_object}^{{commit}}")
-    _git(root, "merge-base", "--is-ancestor", release_commit, "refs/remotes/origin/main")
+    if not git_is_ancestor(release_commit, "refs/remotes/origin/main", root):
+        raise ReleaseValidationError("release commit is not on protected main")
     # Signer revocations on protected main apply even to historical tags.
     signers = _git(root, "show", "refs/remotes/origin/main:.github/allowed_signers")
     if not any(line.strip() and not line.lstrip().startswith("#")
@@ -395,14 +408,14 @@ def _verify_release_tag(root: Path, tag: str) -> tuple[str, str, str]:
 
 
 def _tag_version(tag: str) -> str:
-    try:
-        if not tag.startswith("v"):
-            raise ReleaseValidationError("missing v prefix")
-        return validate_release_version(tag[1:])
-    except ReleaseValidationError as exc:
-        raise ReleaseValidationError(
-            "release tag must be v-prefixed with a valid release version"
-        ) from exc
+    if tag.startswith("v"):
+        try:
+            return validate_release_version(tag[1:])
+        except ReleaseValidationError:
+            pass
+    raise ReleaseValidationError(
+        "release tag must be v-prefixed with a valid release version"
+    )
 
 
 def _publication_flags(version: str) -> tuple[bool, bool]:
@@ -423,10 +436,10 @@ def _publication_flags(version: str) -> tuple[bool, bool]:
             if release.get("draft") or release.get("prerelease"):
                 continue
             tag = release.get("tag_name", "")
-            if not isinstance(tag, str) or not tag.startswith("v"):
+            if not isinstance(tag, str):
                 continue
             try:
-                published = validate_release_version(tag[1:])
+                published = _tag_version(tag)
             except ReleaseValidationError:
                 continue
             if "-" not in published and compare_release_versions(version, published) < 0:
@@ -477,11 +490,11 @@ def publish(
             raise ReleaseValidationError(
                 rebuilt.stderr.strip() or "signed tag's manifest command failed"
             )
-        manifest = out / f"code-tribunal-{tag}-release-manifest.json"
+        manifest = out / _asset_name(tag, "release-manifest.json")
         assets = (manifest, out / f"{manifest.name}.sha256")
         if sha256_bytes(manifest.read_bytes()) != digest:
             raise ReleaseValidationError("rebuilt manifest differs from the signed certificate")
-        notes = out / f"code-tribunal-{tag}-release-notes.md"
+        notes = out / _asset_name(tag, "release-notes.md")
         notes.write_bytes(committed_notes)
     if github_output is not None:
         with github_output.open("a", encoding="utf-8") as output:
