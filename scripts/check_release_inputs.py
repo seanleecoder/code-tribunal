@@ -13,6 +13,8 @@ import yaml
 from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
+    GITHUB_TEMPLATE,
+    GITLAB_TEMPLATE,
     IMAGE_NAME_RE,
     PLACEHOLDER_RE,
     RELEASE_INPUTS,
@@ -197,7 +199,7 @@ def _strip_html_comments(text: str) -> str:
 def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Path = ROOT) -> None:
     """Validate candidate pins independently of release activation."""
     expected_refs = {role: image_ref(image, runtime_source) for role, image in images.items()}
-    canonical = (root / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
+    canonical = (root / GITHUB_TEMPLATE).read_text(encoding="utf-8")
     containers = github_job_containers(canonical)
     mismatched_jobs = [
         job for job, role in GITHUB_CONTAINER_ROLES.items()
@@ -208,7 +210,7 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
             "GitHub template pins do not match release inputs for jobs: "
             + ", ".join(mismatched_jobs)
         )
-    gitlab = (root / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
+    gitlab = (root / GITLAB_TEMPLATE).read_text(encoding="utf-8")
     pins = gitlab_template_pins(gitlab)
     expected_fields = {
         **{f"{role}_image": reference for role, reference in expected_refs.items()},

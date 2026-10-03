@@ -14,7 +14,7 @@ configuration together, in this order.
    ruleset entry that requires the `gate` check: 2.0 has no such job, and a
    required check that never reports leaves pull requests permanently
    unmergeable. On GitLab, remove custom jobs, `needs`, or rules that reference
-   `ai_review_gate`; the name stays reserved, so a consumer job cannot take it.
+   `ai_review_gate`.
 3. **Delete retired variables.** Config load rejects each of these with a
    migration message rather than ignoring it:
    `AI_REVIEW_CLAUDE_ENABLED`, `AI_REVIEW_CODEX_ENABLED`,

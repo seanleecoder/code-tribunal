@@ -13,8 +13,8 @@ from release_common import (
     ROOT,
     ReleaseValidationError,
     canonical_json_bytes,
+    diff_paths,
     disallowed_release_paths,
-    git_changed_paths,
     git_is_ancestor,
     image_ref,
     load_json,
@@ -44,7 +44,7 @@ def build_manifest(
         raise ReleaseValidationError("--runtime-source does not match release inputs")
     if not git_is_ancestor(runtime_source, release_commit, root):
         raise ReleaseValidationError("release commit P must descend from runtime source R")
-    paths = git_changed_paths(runtime_source, release_commit, root)
+    paths = diff_paths(root, runtime_source, release_commit)
     disallowed = disallowed_release_paths(paths)
     if disallowed:
         raise ReleaseValidationError(f"R..P contains disallowed paths: {', '.join(disallowed)}")

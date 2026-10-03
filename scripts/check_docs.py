@@ -25,12 +25,13 @@ sys.path.insert(0, str(SCRIPTS))
 from pipeline_trust import find_trust_issues  # noqa: E402
 from release_common import (  # noqa: E402
     RELEASE_VERSION_RE,
+    REPOSITORY,
     ReleaseValidationError,
     any_tags_resolvable,
+    release_blob_url,
     tag_exists,
     validate_release_version,
 )
-from validate_candidate_identity import REPOSITORY  # noqa: E402
 
 ROOT = SCRIPTS.parent
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
@@ -43,6 +44,10 @@ GITHUB_INSTALL_DESTINATION = ".github/workflows/ai-review.yml"
 
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 EVIDENCE_INDEX = ROOT / "docs/evidence/README.md"
+
+
+def _is_versioned_release_note(path: Path) -> bool:
+    return path.parent == ROOT / "release" and bool(RELEASE_VERSION_RE.fullmatch(path.stem))
 
 
 def _is_released_note(path: Path, *, tags_resolvable: bool) -> bool:
@@ -69,7 +74,7 @@ def _is_released_note(path: Path, *, tags_resolvable: bool) -> bool:
 
     Scoped to release/<version>.md. release/TEMPLATE.md stays checked.
     """
-    if path.parent != ROOT / "release" or not RELEASE_VERSION_RE.fullmatch(path.stem):
+    if not _is_versioned_release_note(path):
         return False
     if not tags_resolvable:
         return True
@@ -176,7 +181,8 @@ def _without_fenced_code(text: str) -> str:
 
 def _release_note_destination_issues(path: Path, text: str) -> list[str]:
     """Check draft authoring conventions; Lychee verifies paths and anchors."""
-    prefix = f"https://github.com/{REPOSITORY}/blob/v{path.stem}/"
+    prefix = release_blob_url(f"v{path.stem}")
+    repository_blob = f"/{REPOSITORY}/blob/"
     label = path.relative_to(ROOT)
     text = _without_fenced_code(text)
     issues: list[str] = []
@@ -194,18 +200,15 @@ def _release_note_destination_issues(path: Path, text: str) -> list[str]:
                 parts.path.lstrip("/") if parts.path.startswith("/")
                 else posixpath.join("release", parts.path)
             )
-            suggestion = urlunsplit((
-                "https", "github.com", f"/{REPOSITORY}/blob/v{path.stem}/{relative}",
-                parts.query, parts.fragment,
-            ))
+            pinned = urlsplit(release_blob_url(f"v{path.stem}", relative))
+            suggestion = urlunsplit(pinned._replace(query=parts.query, fragment=parts.fragment))
             issues.append(f"{label}: relative release-note link {target!r}; use {suggestion}")
-        repository_blob = f"/{REPOSITORY}/blob/"
         if (parts.hostname == "github.com"
                 and parts.path.lower().startswith(repository_blob.lower())):
-            version, _, destination = parts.path[len(repository_blob):].partition("/")
+            destination = parts.path[len(repository_blob):].partition("/")[2]
             decoded = unquote(destination)
             bounded = posixpath.normpath(decoded)
-            if (not target.startswith(prefix) or version != f"v{path.stem}"
+            if (not target.startswith(prefix)
                     or not destination or decoded.startswith("/")
                     or bounded == ".." or bounded.startswith("../")):
                 issues.append(
@@ -246,7 +249,7 @@ def _test_definition_index() -> TestReferenceIndex:
         }
         definition_names.update(names)
         for key in (
-            path.name, path.as_posix(), path.relative_to(ROOT).as_posix(),
+            path.name, path.relative_to(ROOT).as_posix(),
             path.relative_to(test_root).as_posix(),
         ):
             definitions_by_file.setdefault(key, set()).update(names)
@@ -547,7 +550,7 @@ def find_issues() -> list[str]:
     tests = _test_definition_index()
     for path in markdown_inventory("current"):
         text = path.read_text(encoding="utf-8")
-        if path.parent == ROOT / "release" and RELEASE_VERSION_RE.fullmatch(path.stem):
+        if _is_versioned_release_note(path):
             issues.extend(_release_note_destination_issues(path, text))
         issues.extend(_reference_issues(path, text, tests))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:

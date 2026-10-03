@@ -11,6 +11,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
+REPOSITORY = "seanleecoder/code-tribunal"
 
 class ReleaseValidationError(ValueError):
     """Raised when release metadata violates its checked contract."""
@@ -20,8 +21,11 @@ class ReleaseValidationError(ValueError):
 # Canonical template -> installed copy. GitHub only executes workflows that are
 # real files under .github/workflows, so the installed copy must stay a byte
 # duplicate of the canonical template rather than a symlink to it.
+GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
+GITHUB_INSTALLED = ".github/workflows/ai-review.yml"
+GITLAB_TEMPLATE = "ai-review/ci/review.gitlab-ci.yml"
 WORKFLOW_PAIRS: tuple[tuple[str, str], ...] = (
-    ("ai-review/ci/review.github-actions.yml", ".github/workflows/ai-review.yml"),
+    (GITHUB_TEMPLATE, GITHUB_INSTALLED),
 )
 
 
@@ -73,9 +77,9 @@ RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
 IMAGE_TAG_SERIES = "2.0"
 
 ALLOWED_RELEASE_PATHS = (
-    ".github/workflows/ai-review.yml",
-    "ai-review/ci/review.github-actions.yml",
-    "ai-review/ci/review.gitlab-ci.yml",
+    GITHUB_INSTALLED,
+    GITHUB_TEMPLATE,
+    GITLAB_TEMPLATE,
     "CHANGELOG.md",
     "docs/evidence/",
     "docs/improvement-specs/",
@@ -92,6 +96,10 @@ IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)"
 PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
 
+
+
+def release_blob_url(tag: str, relative: str = "") -> str:
+    return f"https://github.com/{REPOSITORY}/blob/{tag}/{relative}"
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -116,7 +124,7 @@ def image_ref(image: dict[str, Any], runtime_source: str) -> str:
     return f"{image['name']}:{IMAGE_TAG_SERIES}-{runtime_source}@{image['digest']}"
 
 
-def _diff_paths(root: Path, *revisions: str, cached: bool = False) -> list[str]:
+def diff_paths(root: Path, *revisions: str, cached: bool = False) -> list[str]:
     completed = subprocess.run(
         ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB",
          *(["--cached"] if cached else []), *revisions],
@@ -128,10 +136,6 @@ def _diff_paths(root: Path, *revisions: str, cached: bool = False) -> list[str]:
     if completed.returncode:
         raise ReleaseValidationError(completed.stderr.strip() or "git diff failed")
     return sorted(filter(None, completed.stdout.split("\0")))
-
-
-def git_changed_paths(runtime_source: str, release_commit: str, root: Path = ROOT) -> list[str]:
-    return _diff_paths(root, runtime_source, release_commit)
 
 
 def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT) -> bool:

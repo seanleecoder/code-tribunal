@@ -20,8 +20,7 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 from check_docs import markdown_inventories  # noqa: E402
-from release_common import RELEASE_VERSION_RE  # noqa: E402
-from validate_candidate_identity import REPOSITORY  # noqa: E402
+from release_common import RELEASE_VERSION_RE, release_blob_url  # noqa: E402
 
 ROOT = SCRIPTS.parent
 PIN_PATH = ROOT / "ai-review/images/lychee.pin"
@@ -178,7 +177,7 @@ def check_links(*, lychee: Path | None = None) -> None:
             tag = "vX.Y.Z"
         else:
             continue
-        prefix = f"https://github.com/{REPOSITORY}/blob/{tag}/"
+        prefix = release_blob_url(tag)
         remaps.extend(("--remap", f"^{re.escape(prefix)} {ROOT.resolve().as_uri()}/"))
     with tempfile.TemporaryDirectory(prefix="code-tribunal-links-") as temporary:
         directory = Path(temporary)

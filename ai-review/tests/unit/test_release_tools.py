@@ -233,7 +233,7 @@ class ReleaseToolTests(unittest.TestCase):
         with (
             mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
             mock.patch(
-                "build_release_manifest.git_changed_paths", return_value=changed_paths
+                "build_release_manifest.diff_paths", return_value=changed_paths
             ),
         ):
             manifest = build_manifest(
@@ -915,7 +915,7 @@ class ReleaseToolTests(unittest.TestCase):
             with (
                 mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
                 mock.patch(
-                    "check_release_manifest.git_changed_paths", return_value=changed_paths
+                    "check_release_manifest.diff_paths", return_value=changed_paths
                 ),
             ):
                 validate_manifest(manifest, release_inputs, root)
@@ -1016,7 +1016,7 @@ class ReleaseToolTests(unittest.TestCase):
             with (
                 mock.patch("check_release_manifest.git_is_ancestor", return_value=True),
                 mock.patch(
-                    "check_release_manifest.git_changed_paths", return_value=changed_paths
+                    "check_release_manifest.diff_paths", return_value=changed_paths
                 ),
                 self.assertRaisesRegex(ReleaseValidationError, "canonical"),
             ):
@@ -1030,7 +1030,7 @@ class ReleaseToolTests(unittest.TestCase):
             with (
                 mock.patch("build_release_manifest.git_is_ancestor", return_value=True),
                 mock.patch(
-                    "build_release_manifest.git_changed_paths",
+                    "build_release_manifest.diff_paths",
                     return_value=["ai-review/src/ai_review/config.py"],
                 ),
                 self.assertRaisesRegex(ReleaseValidationError, "disallowed paths"),
@@ -1098,7 +1098,7 @@ class ReleaseToolTests(unittest.TestCase):
                             "check_release_manifest.git_is_ancestor", return_value=True
                         ),
                         mock.patch(
-                            "check_release_manifest.git_changed_paths",
+                            "check_release_manifest.diff_paths",
                             return_value=changed_paths,
                         ),
                         self.assertRaisesRegex(ReleaseValidationError, message),
