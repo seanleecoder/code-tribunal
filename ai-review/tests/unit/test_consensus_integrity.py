@@ -111,7 +111,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             critique = {
-                "schema_version": "critique_batch.v1",
+                "schema_version": "critique_batch.v2",
                 "run_id": "run-1",
                 "critic": "claude",
                 "adapter_status": "success",
@@ -124,7 +124,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                         "duplicate_of_source_finding_id": None,
                         "rationale": "valid",
                         "adjusted_severity": None,
-                        "confidence": 0.8,
                     }
                 ],
             }
@@ -242,7 +241,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             write_canonical_json(
                 critiques_dir / "claude.json",
                 {
-                    "schema_version": "critique_batch.v1",
+                    "schema_version": "critique_batch.v2",
                     "run_id": "wrong-run",
                     "critic": "claude",
                     "adapter_status": "success",
@@ -255,7 +254,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                             "duplicate_of_source_finding_id": None,
                             "rationale": "valid",
                             "adjusted_severity": None,
-                            "confidence": 0.8,
                         }
                     ],
                 },
@@ -298,7 +296,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             write_canonical_json(
                 findings_dir / "claude.json",
                 {
-                    "schema_version": "finding_batch.v1",
+                    "schema_version": "finding_batch.v2",
                     "run_id": "run-1",
                     "reviewer": "claude",
                     "adapter_status": "success",
@@ -433,7 +431,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             critique = {
-                "schema_version": "critique_batch.v1",
+                "schema_version": "critique_batch.v2",
                 "run_id": "run-1",
                 "critic": "claude",
                 "adapter_status": "success",
@@ -486,7 +484,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             write_canonical_json(
                 critiques_dir / "codex.json",
                 {
-                    "schema_version": "critique_batch.v1",
+                    "schema_version": "critique_batch.v2",
                     "run_id": "run-1",
                     "critic": "codex",
                     "adapter_status": "success",
@@ -582,7 +580,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             write_canonical_json(
                 critiques_dir / "claude.json",
                 {
-                    "schema_version": "critique_batch.v1",
+                    "schema_version": "critique_batch.v2",
                     "run_id": "run-1",
                     "critic": "spoofed",
                     "adapter_status": "success",
@@ -632,7 +630,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             write_canonical_json(
                 critiques_dir / "claude.json",
                 {
-                    "schema_version": "critique_batch.v1",
+                    "schema_version": "critique_batch.v2",
                     "run_id": "run-1",
                     "critic": "claude",
                     "adapter_status": "success",
@@ -644,7 +642,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                             "duplicate_of_source_finding_id": None,
                             "rationale": "valid",
                             "adjusted_severity": None,
-                            "confidence": 0.8,
                         }
                     ],
                 },
@@ -697,7 +694,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     write_canonical_json(
                         critiques_dir / "claude.json",
                         {
-                            "schema_version": "critique_batch.v1",
+                            "schema_version": "critique_batch.v2",
                             "run_id": "run-1",
                             "critic": "claude",
                             "adapter_status": "success",
@@ -740,7 +737,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 (
                     "missing_top_level",
                     {
-                        "schema_version": "critique_batch.v1",
+                        "schema_version": "critique_batch.v2",
                         "run_id": "run-1",
                         "adapter_status": "success",
                         "effective_config_sha256": digest,
@@ -750,7 +747,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 (
                     "missing_per_entry",
                     {
-                        "schema_version": "critique_batch.v1",
+                        "schema_version": "critique_batch.v2",
                         "run_id": "run-1",
                         "critic": "claude",
                         "adapter_status": "success",
@@ -762,7 +759,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                                 "duplicate_of_source_finding_id": None,
                                 "rationale": "valid",
                                 "adjusted_severity": None,
-                                "confidence": 0.8,
                             }
                         ],
                     },

@@ -838,6 +838,38 @@ class GitLabCiTemplateTests(unittest.TestCase):
         for need in (*critique_needs, *consensus_needs):
             self.assertNotIn("parallel", need)
 
+    def test_failed_panel_artifact_can_publish_health_without_hiding_failure(self) -> None:
+        github = yaml.safe_load(_GITHUB_TEMPLATE.read_text())["jobs"]
+        consensus_steps = github["consensus"]["steps"]
+        build = next(step for step in consensus_steps if step.get("name") == "Build consensus")
+        self.assertTrue(build["continue-on-error"])
+        upload = next(
+            step
+            for step in consensus_steps
+            if step.get("with", {}).get("name") == "ai-review-consensus"
+        )
+        self.assertEqual(upload["with"]["if-no-files-found"], "error")
+        failure = next(
+            step for step in consensus_steps if step.get("name") == "Preserve consensus failure"
+        )
+        self.assertEqual(failure["if"], "steps.consensus.outcome != 'success'")
+        self.assertEqual(failure["run"], "exit 1")
+        self.assertLess(consensus_steps.index(upload), consensus_steps.index(failure))
+        post_steps = github["post"]["steps"]
+        publish = next(step for step in post_steps if step.get("name") == "Post GitHub review")
+        failure = next(
+            step
+            for step in post_steps
+            if step.get("name") == "Preserve upstream operational failure"
+        )
+        self.assertEqual(failure["if"], "needs.consensus.result != 'success'")
+        self.assertEqual(failure["run"], "exit 1")
+        self.assertLess(post_steps.index(publish), post_steps.index(failure))
+        gitlab = yaml.safe_load(_CI_TEMPLATE.read_text())
+        self.assertEqual(gitlab["post_ai_review"]["when"], "always")
+        self.assertEqual(gitlab["consensus_ai_review"]["artifacts"]["when"], "always")
+        self.assertNotIn("allow_failure", gitlab["consensus_ai_review"])
+
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
 

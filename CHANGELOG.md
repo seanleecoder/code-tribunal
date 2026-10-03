@@ -7,6 +7,18 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- S05 removes model-authored confidence and runtime metadata. Reviewers author
+  compact diff locations; trusted normalization derives anchors and identities.
+  Critiques use deterministic short IDs resolved from a runner-held pool.
+  Finding, critique, and pool artifacts become v2; consensus becomes v3. Old
+  artifacts are rejected. Deploy in the next breaking release with matched
+  images and fresh artifacts; config and persisted state versions stay unchanged.
+- Consensus and both posted summaries show dropped and cap-omitted findings and
+  unavailable seats, including health-only output and recovery updates. SPEC-41
+  is closed: valid findings no longer need confidence or hash placeholders.
+
 ## [2.0.1] - 2026-10-02
 
 ### Added

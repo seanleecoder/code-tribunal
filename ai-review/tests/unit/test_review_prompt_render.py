@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.prompt_render import _diff_stats_text, render_review_prompt
+from ai_review.prompt_render import _diff_stats_text, render_prompt
 from ai_review.schema import write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
@@ -75,7 +75,7 @@ class ReviewPromptRenderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp) / "inputs"
             _write_inputs(input_dir, _FIXTURE_DIFF)
-            rendered = render_review_prompt(input_dir, _REPO_CONFIG, "claude")
+            rendered, _pool = render_prompt(input_dir, _REPO_CONFIG, "claude", "review")
 
         self.assertIn("<DIFF_STATS>", rendered)
         self.assertIn("files_changed: 2\ninsertions: 3\ndeletions: 1", rendered)

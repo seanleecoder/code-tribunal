@@ -2,7 +2,7 @@
 
 The static [review](SIMPLIFICATION_REVIEW.md) describes `main` at
 `ec7e82754db062797a9c4d0646ced79ac2d8e7ff`. Its recommendations are evidence for
-future decisions. The dispositions below record the peripheral slice and S10.
+future decisions. The dispositions below record the peripheral slice, S10, and S05.
 
 ## Completed peripheral slice
 
@@ -112,10 +112,84 @@ S10 removes the `UnionFind` class and `_split_transitive_component` helper, with
 no replacement framework, configuration option, operator command, or workflow
 step. The historical independent experiment remains audit evidence only.
 
+## S05 implemented: compact authoring and visible finding loss
+
+Against `db7449405a7ab69b7116ae1ff92feb96e82ae010`, models author compact
+locations and finding text without confidence or runtime hashes. Trusted
+normalization requires the prepared diff, resolves complete contiguous ranges,
+and computes the existing anchor/identity formulas. It validates every candidate
+before the severity/source/content cap and counts malformed siblings individually.
+Representatives use the same stable ordering; primary signatures retain side/line
+precedence. Persisted-state identities and reconciliation remain in place.
+
+Critiques author short IDs and assessment text only. The exact, blinded compact
+pool is deterministic and bound to run/config/critic. The runner holds the map
+in memory; an overwrite of the pool audit file cannot redirect a critique.
+Unknown or malformed references reject the entire batch as `schema_error`.
+Prompts retain project/revision context, rules, diff, decisions, and finding text.
+One renderer replaces duplicated context and size handling across both stages.
+
+The cutover versions finding, critique, and pooled artifacts to v2 and consensus
+to v3, with no old-version decoders. Config, state, and adapter-status versions
+stay unchanged. This deliberately crosses authoring, normalization, consensus,
+and publication together: strict producers/consumers must land in the same PR,
+and both templates must deliver the new health-only output for failed panels.
+The GitHub consensus artifact uploads before failure is reported; post publishes
+its notice before preserving the upstream failure. GitLab post runs after failed
+consensus while consensus continues to fail the pipeline. Missing or invalid
+artifacts still fail before mutation.
+
+Consensus aggregates raw/accepted/dropped/cap-omitted counts from enabled-seat
+batches. Both platforms publish loss/panel notices even with no findings or FYI
+output disabled, reserve notice space during truncation, and refresh the same
+summary on recovery. Stale-head and publication-failure behavior is retained.
+SPEC-41 is complete and its active spec/index entry is deleted.
+
+Socket-capable `PATH="$PWD/.venv/bin:$PATH" make PYTHON=.venv/bin/python quality`
+passed: 1,099 tests passed, one skipped, 91% aggregate runtime coverage, with all
+non-test gates green. Added coverage includes compact nonempty output through
+all four CLI transports, missing confidence/hashes, diff-side/range edge cases,
+1,220-candidate accounting with one diff parse/schema load, permutation ties,
+unknown short IDs, audit-file tampering, both-platform health-only posting,
+recovery/idempotency, hostile rendering/size fitting, and failed-panel workflow
+wiring. Existing golden, integrity, state-matching, and lifecycle gates pass.
+
+Both packaged smoke scopes passed **from the checkout** (base: 8 cases with one
+image-only skip; reviewer: 5 cases, including all-seat mock review/critique and
+consensus). This is local evidence, not rebuilt-image or live-provider evidence.
+
+| Whole-tree measurement | Before | After | Delta |
+|---|---:|---:|---:|
+| Implementation files / physical lines | 72 / 19,556 | 72 / 19,460 | 0 / -96 |
+| Configuration, schemas, CI files / lines | 17 / 2,688 | 19 / 2,729 | +2 / +41 |
+| Test files / physical lines | 88 / 30,965 | 88 / 31,163 | 0 / +198 |
+| Contributor/reference/spec docs files / lines | 52 / 9,027 | 51 / 9,058 | -1 / +31 |
+| Implementation function/class definitions | 836 | 836 | 0 |
+| Test function/class definitions | 1,696 | 1,708 | +12 |
+
+Counts include the entire source/adapters/scripts tree, schemas/config/canonical
+and installed CI workflows, and tests. Documentation excludes frozen release
+notes and historical/live evidence records, and includes this handoff. Runtime
+plus configuration has a net reduction of **55 lines**. One shared prompt context,
+one candidate ordering, and removal of confidence ranking/per-item batch
+validation replace redundant runtime machinery. Two schemas describe the smaller
+critic-authoring contract and the existing pool audit artifact. There are no new
+operator commands or release steps; GitHub adds one automated failure-reporting
+step so warning publication cannot hide a failed panel. Tests grow while retaining
+meaningful coverage.
+
+Release evidence remains separate and outstanding: rebuild **both** images from
+the final runtime source; run read-only packaged smoke against those images;
+obtain fresh real-model panel, GitHub/GitLab lifecycle, and GitLab hostile-MR
+evidence under the existing release process. Ship this cutover in the next breaking release using
+matched images and fresh run artifacts. Publication and consumer repinning,
+S01, mock removal, launcher/parser rewrites, and lifecycle-policy cuts are outside
+this PR.
+
 ## Remaining work
 
-- Prioritize S05 among behavior changes because it addresses confidence-related
-  finding loss; keep SPEC-41 open until implemented.
+- S05 runtime implementation and local regressions are complete; collect its
+  matched-image, real-model panel, both-platform lifecycle, and GitLab hostile-MR evidence.
 - Revisit consensus and lifecycle cuts individually. Other runtime, policy,
   adapter, and lifecycle recommendations remain outside this completed slice.
 - S01 needs its own policy/ADR and coordinated future-only 2.1.0 migration. Current

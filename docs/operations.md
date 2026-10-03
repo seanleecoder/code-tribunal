@@ -41,8 +41,10 @@ configuration together, in this order.
    `AI review: [claude]` remain, but a custom job that needed one of them must
    now use `needs:parallel:matrix` against the matrix job.
 8. **Update artifact consumers.** Tools that read `consensus.json` must accept
-   `consensus.v2`: independent support and informational decisions replace the
-   removed blocking and vote-count fields. There is no `out/gate/` artifact.
+   `consensus.v3`: independent support and informational decisions replace the
+   removed blocking and vote-count fields; aggregate finding-loss counts report
+   dropped and capped candidates. Review/critique batches use v2. There is no
+   `out/gate/` artifact. Restart at prepare with matched images and fresh artifacts.
 9. **Expect one cosmetic thread update.** Existing threads keep their hidden
    marker and are refreshed once from `render-body.v3` to `render-body.v4`,
    which uses a `Support:` footer. Identities are updated, not duplicated.

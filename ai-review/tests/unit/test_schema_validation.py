@@ -36,19 +36,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import CONFIG_TAIL, panel_filler  # noqa: E402
 
 
-def _critique(
-    target: str,
-    *,
-    verdict: str = "agree",
-    duplicate_of: str | None = None,
-) -> dict[str, object]:
+def _pool() -> dict:
     return {
-        "target_source_finding_id": target,
-        "verdict": verdict,
-        "duplicate_of_source_finding_id": duplicate_of,
+        "schema_version": "pooled_findings.v2",
+        "run_id": "local",
+        "critic": "codex",
+        "effective_config_sha256": "0" * 64,
+        "source_finding_ids": {"F001": "1" * 64, "F002": "2" * 64},
+    }
+
+
+def _critique(target: str = "F001", **changes: object) -> dict:
+    return {
+        "target_id": target,
+        "verdict": "agree",
+        "duplicate_of_id": None,
         "rationale": "reviewed",
         "adjusted_severity": None,
-        "confidence": 0.8,
+        **changes,
     }
 
 
@@ -69,13 +74,14 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertEqual(consensus_group["category"]["enum"], finding_group["category"]["enum"])
 
     def test_consensus_v1_and_removed_fields_are_rejected(self) -> None:
-        """v2 is a version, not a suggestion: v1 documents and v1-only fields fail."""
+        """Older artifacts and removed decision fields fail without decoders."""
         fixture = load_json_file(_GOLDEN_CONSENSUS)
 
         stale_version = copy.deepcopy(fixture)
-        stale_version["schema_version"] = "consensus.v1"
-        with self.assertRaises(SchemaValidationError):
-            validate_instance(stale_version, "consensus.schema.json")
+        for version in ("consensus.v1", "consensus.v2"):
+            stale_version["schema_version"] = version
+            with self.assertRaises(SchemaValidationError):
+                validate_instance(stale_version, "consensus.schema.json")
 
         removed = [
             ("group block_merge", "groups", {"block_merge": False}),
@@ -154,82 +160,141 @@ class SchemaValidationTests(unittest.TestCase):
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
 
-    def test_finalize_finding_batch_resolves_dev_null_anchor_sides(self) -> None:
-        # Any reviewer reading the raw diff can echo git's `/dev/null` sentinel
-        # for an added or deleted file's absent side. Normalizing centrally keeps
-        # that finding inline instead of dropping it as an absolute path. The
-        # sentinel is matched leniently because reviewer output is not parser
-        # output — a stray timestamp or surrounding space must still resolve.
-        sentinels = ["/dev/null", "/dev/null\t2026-07-27 10:00:00 +0200", " /dev/null "]
-        for added in (True, False):
-            for sentinel in sentinels:
-                with self.subTest(added=added, sentinel=sentinel):
-                    path = "src/new.py" if added else "src/gone.py"
-                    diff_text = "\n".join(
-                        [
-                            f"diff --git a/{path} b/{path}",
-                            "new file mode 100644" if added else "deleted file mode 100644",
-                            "--- /dev/null" if added else f"--- a/{path}",
-                            f"+++ b/{path}" if added else "+++ /dev/null",
-                            "@@ -0,0 +1,2 @@" if added else "@@ -1,2 +0,0 @@",
-                            ("+" if added else "-") + "def f():",
-                            ("+" if added else "-") + "    return records[0]",
-                            "",
-                        ]
-                    )
-                    line = {
-                        "old_line": None if added else 2,
-                        "new_line": 2 if added else None,
-                        "line_code": None,
-                    }
-                    batch = {
-                        "schema_version": "finding_batch.v1",
-                        "run_id": "local",
-                        "reviewer": "claude",
-                        "adapter_status": "success",
-                        "model": "model",
-                        "started_at": "2026-06-29T00:00:00Z",
-                        "completed_at": "2026-06-29T00:00:01Z",
-                        "findings": [
-                            {
-                                "anchor": {
-                                    "old_path": sentinel if added else path,
-                                    "new_path": path if added else sentinel,
-                                    "side": "new" if added else "old",
-                                    "start": dict(line),
-                                    "end": dict(line),
-                                    "hunk_header": (
-                                        "@@ -0,0 +1,2 @@" if added else "@@ -1,2 +0,0 @@"
-                                    ),
-                                    "context_hash": "",
-                                    "symbol": None,
-                                },
-                                "severity": "major",
-                                "category": "correctness",
-                                "title": "Unguarded index",
-                                "body": "records[0] can raise IndexError.",
-                                "evidence": ["    return records[0]"],
-                                "suggestion": None,
-                                "confidence": 0.6,
-                            }
-                        ],
-                    }
-                    with tempfile.TemporaryDirectory() as tmp:
-                        (Path(tmp) / "mr.diff").write_text(diff_text, encoding="utf-8")
-                        finalized = finalize_finding_batch(
-                            batch,
-                            reviewer="claude",
-                            model="model",
-                            run_id="local",
-                            started_at="2026-06-29T00:00:00Z",
-                            input_dir=tmp,
-                            effective_config_sha256="0" * 64,
-                        )
+    def test_compact_locations_derive_trusted_anchors(self) -> None:
+        from .test_finding_cap import _finding
 
-                    self.assertEqual(finalized["accepted_finding_count"], 1)
-                    anchor = finalized["findings"][0]["anchor"]
-                    self.assertEqual(anchor["old_path"], path)
-                    self.assertEqual(anchor["new_path"], path)
+        cases = [
+            ("added", "/dev/null", "b/new.py", "@@ -0,0 +1,2 @@", "+a\n+b", "new", 1, 2, None, 1),
+            (
+                "deleted",
+                "a/gone.py",
+                "/dev/null",
+                "@@ -1,2 +0,0 @@",
+                "-a\n-b",
+                "old",
+                1,
+                2,
+                1,
+                None,
+            ),
+            (
+                "renamed",
+                "a/old.py",
+                "b/new.py",
+                "@@ -3,2 +4,2 @@",
+                " a\n-b\n+c",
+                "new",
+                5,
+                5,
+                None,
+                5,
+            ),
+            (
+                "context",
+                "a/old.py",
+                "b/new.py",
+                "@@ -3,2 +4,2 @@",
+                " a\n b",
+                "unchanged",
+                4,
+                5,
+                3,
+                4,
+            ),
+            ("old context", "a/old.py", "b/new.py", "@@ -3,2 +4,2 @@", " a\n b", "old", 3, 4, 3, 4),
+        ]
+        for label, old, new, hunk, lines, side, start, end, old_line, new_line in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                path = old[2:] if side == "old" else new[2:]
+                diff = f"diff --git a/{path} b/{path}\n--- {old}\n+++ {new}\n{hunk}\n{lines}\n"
+                Path(tmp, "mr.diff").write_text(diff)
+                finding = _finding(start, "major", "Retain without confidence or hashes")
+                finding["location"].update(path=path, side=side, end_line=end, symbol="f")
+                batch = finalize_finding_batch(
+                    {"findings": [finding]},
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at=now_iso(),
+                    effective_config_sha256="0" * 64,
+                    input_dir=tmp,
+                )
+                self.assertEqual(batch["accepted_finding_count"], 1)
+                finalized = batch["findings"][0]
+                anchor = finalized["anchor"]
+                self.assertEqual(anchor["start"]["old_line"], old_line)
+                self.assertEqual(anchor["start"]["new_line"], new_line)
+                self.assertEqual(anchor["hunk_header"], hunk)
+                self.assertEqual(anchor["old_path"], "old.py" if old == "a/old.py" else path)
+                self.assertEqual(anchor["new_path"], "new.py" if new == "b/new.py" else path)
+                self.assertEqual(anchor["symbol"], "f")
+                self.assertEqual(len(anchor["context_hash"]), 64)
+                self.assertIsNotNone(anchor["end"]["line_code"])
+                self.assertNotIn("confidence", finalized)
+                self.assertNotIn("location", finalized)
+                self.assertEqual(finalized["candidate_issue_signature"]["path_key"], path)
+
+    def test_invalid_locations_do_not_discard_valid_siblings(self) -> None:
+        from .test_finding_cap import DIFF, _finding
+
+        cases = [
+            {"path": "../foo.py"},
+            {"path": "/dev/null"},
+            {"path": "missing.py"},
+            {"side": "old", "start_line": 2},
+            {"side": "unchanged", "start_line": 2},
+            {"start_line": 0},
+            {"start_line": True},
+            {"start_line": 999},
+            {"start_line": 3, "end_line": 2},
+            {"end_line": 7},
+            {"end_line": 10**12},
+        ]
+        for changes in cases:
+            with self.subTest(changes), tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "mr.diff").write_text(DIFF)
+                bad = _finding(2, "blocker", "Bad")
+                bad["location"].update(changes)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    batch = finalize_finding_batch(
+                        {"findings": [bad, _finding(2, "major", "Good")]},
+                        reviewer="claude",
+                        model="model",
+                        run_id="local",
+                        started_at=now_iso(),
+                        effective_config_sha256="0" * 64,
+                        input_dir=tmp,
+                    )
+                self.assertEqual(
+                    (batch["accepted_finding_count"], batch["dropped_finding_count"]), (1, 1)
+                )
+
+    def test_ambiguous_and_cross_hunk_ranges_are_rejected(self) -> None:
+        from .test_finding_cap import _finding
+
+        diffs = [
+            "diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n"
+            "@@ -0,0 +2,1 @@\n+a\n@@ -0,0 +3,1 @@\n+b\n",
+            "diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n"
+            "@@ -0,0 +2,2 @@\n+a\n+b\n@@ -0,0 +2,2 @@\n+a\n+b\n",
+        ]
+        for diff in diffs:
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "mr.diff").write_text(diff)
+                finding = _finding(2, "major", "Bad")
+                finding["location"]["end_line"] = 3
+                with contextlib.redirect_stderr(io.StringIO()):
+                    batch = finalize_finding_batch(
+                        {"findings": [finding]},
+                        reviewer="claude",
+                        model="model",
+                        run_id="local",
+                        started_at=now_iso(),
+                        effective_config_sha256="0" * 64,
+                        input_dir=tmp,
+                    )
+                self.assertEqual(batch["dropped_finding_count"], 1)
+                self.assertFalse(batch["usable_for_resolution"])
 
     def test_critique_batch_rejects_whitespace_only_identity_and_rationale(self) -> None:
         batch = empty_critique_batch(
@@ -247,7 +312,6 @@ class SchemaValidationTests(unittest.TestCase):
                 "duplicate_of_source_finding_id": None,
                 "rationale": "valid",
                 "adjusted_severity": None,
-                "confidence": 0.7,
             }
         ]
         mutations = [
@@ -268,6 +332,62 @@ class SchemaValidationTests(unittest.TestCase):
                 mutate(invalid)
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(invalid, "critique_batch.schema.json")
+
+    def test_old_artifact_versions_and_model_bookkeeping_are_rejected(self) -> None:
+        from .test_finding_cap import DIFF, _finding
+
+        for name, batch in [
+            (
+                "finding_batch",
+                empty_finding_batch(
+                    "claude",
+                    "success",
+                    run_id="local",
+                    model="model",
+                    started_at="start",
+                    effective_config_sha256="0" * 64,
+                ),
+            ),
+            (
+                "critique_batch",
+                empty_critique_batch(
+                    "codex",
+                    "success",
+                    run_id="local",
+                    started_at="start",
+                    effective_config_sha256="0" * 64,
+                ),
+            ),
+        ]:
+            batch["schema_version"] = name + ".v1"
+            with self.subTest(name), self.assertRaises(SchemaValidationError):
+                validate_instance(batch, name + ".schema.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "mr.diff").write_text(DIFF)
+            with self.assertRaises(SchemaValidationError):
+                finalize_finding_batch(
+                    {"findings": [], "schema_version": "finding_batch.v1"},
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at="start",
+                    effective_config_sha256="0" * 64,
+                    input_dir=tmp,
+                )
+            bad = {**_finding(2, "major", "Bookkeeping"), "confidence": 1.0}
+            with contextlib.redirect_stderr(io.StringIO()):
+                batch = finalize_finding_batch(
+                    {"findings": [bad, _finding(2, "major", "Compact")]},
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at="start",
+                    effective_config_sha256="0" * 64,
+                    input_dir=tmp,
+                )
+            self.assertEqual(
+                (batch["accepted_finding_count"], batch["dropped_finding_count"]), (1, 1)
+            )
 
     def test_empty_raw_finding_batch_validates_only_against_raw_schema(self) -> None:
         raw = {"findings": []}
@@ -316,212 +436,113 @@ class SchemaValidationTests(unittest.TestCase):
                 "duplicate_of_source_finding_id": "2" * 64,
                 "rationale": "same issue",
                 "adjusted_severity": None,
-                "confidence": 0.7,
             }
         ]
 
         validate_instance(batch, "critique_batch.schema.json")
 
-    def test_finalize_critique_batch_binds_top_level_and_per_critique_identity(self) -> None:
+    def test_short_critique_references_bind_trusted_identity(self) -> None:
         finalized = finalize_critique_batch(
             {
-                "critic": "spoofed",
                 "critiques": [
-                    {
-                        "target_source_finding_id": "1" * 64,
-                        "critic": "spoofed",
-                        "verdict": "agree",
-                        "rationale": "same finding",
-                        "adjusted_severity": None,
-                        "confidence": 0.7,
-                    }
-                ],
+                    _critique(),
+                    _critique("F002", verdict="duplicate", duplicate_of_id="F001"),
+                ]
             },
             critic="codex",
             run_id="local",
             effective_config_sha256="0" * 64,
-            pooled_finding_ids={"1" * 64},
+            pooled_findings=_pool(),
         )
-
-        self.assertEqual(finalized["schema_version"], "critique_batch.v1")
-        self.assertEqual(finalized["run_id"], "local")
         self.assertEqual(finalized["critic"], "codex")
-        self.assertEqual(finalized["adapter_status"], "success")
         self.assertEqual(finalized["critiques"][0]["critic"], "codex")
-        self.assertIsNone(finalized["critiques"][0]["duplicate_of_source_finding_id"])
+        self.assertEqual(finalized["critiques"][0]["target_source_finding_id"], "1" * 64)
+        self.assertEqual(finalized["critiques"][1]["duplicate_of_source_finding_id"], "1" * 64)
+        self.assertNotIn("confidence", finalized["critiques"][0])
         validate_instance(finalized, "critique_batch.schema.json")
 
-    def test_finalize_critique_batch_drops_critiques_of_unpooled_finding_ids(self) -> None:
-        # Observed live (2026-09-25 candidate canary): a critic transcribed a
-        # pooled 64-hex id with three characters displaced. Consensus rejects an
-        # unknown target as forged evidence, so one slip failed the whole run.
-        pooled = "b360cd3caf1001162dd989843348b3ae076ddfc422a754b0fa85fd6c15177f74"
-        miscopied = "b360cd3caf1001162dd989843b3ae076ddfc422a754b0fa85fd6c15177f74c3b"
-        other = "2" * 64
+    def test_unknown_or_malformed_critique_invalidates_entire_batch(self) -> None:
+        for item in [
+            _critique("F003"),
+            _critique("F001\n"),
+            _critique("1" * 64),
+            _critique(duplicate_of_id="F999"),
+            _critique(duplicate_of_id="F002\n"),
+            _critique(verdict="maybe"),
+            _critique(critic="spoof"),
+            _critique(rationale=" "),
+            _critique(adjusted_severity="critical"),
+            {"verdict": "agree"},
+        ]:
+            with self.subTest(item), self.assertRaises(SchemaValidationError):
+                finalize_critique_batch(
+                    {"critiques": [_critique(), item]},
+                    critic="codex",
+                    run_id="local",
+                    effective_config_sha256="0" * 64,
+                    pooled_findings=_pool(),
+                )
 
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            finalized = finalize_critique_batch(
-                {
-                    "critiques": [
-                        _critique(pooled),
-                        _critique(miscopied),
-                        _critique(other, verdict="duplicate", duplicate_of=miscopied),
-                        _critique(other, verdict="duplicate", duplicate_of=pooled),
-                    ]
-                },
-                critic="codex",
-                run_id="local",
-                effective_config_sha256="0" * 64,
-                pooled_finding_ids={pooled, other},
-            )
-
-        self.assertEqual(finalized["adapter_status"], "success")
-        self.assertEqual(
-            [
-                (item["target_source_finding_id"], item["duplicate_of_source_finding_id"])
-                for item in finalized["critiques"]
-            ],
-            [(pooled, None), (other, pooled)],
-        )
-        self.assertIn("codex kept 2 critique(s), dropped 2", stderr.getvalue())
-        self.assertNotIn(miscopied, stderr.getvalue())
-        validate_instance(finalized, "critique_batch.schema.json")
-
-    def test_finalize_critique_batch_rejects_malformed_items_before_unknown_id_drop(
-        self,
-    ) -> None:
-        pooled = "1" * 64
-        unknown = "2" * 64
-        valid = _critique(pooled)
-        missing_target = {
-            key: value for key, value in valid.items() if key != "target_source_finding_id"
-        }
-        missing_target["duplicate_of_source_finding_id"] = unknown
-        malformed = [
-            ("missing target", missing_target),
-            (
-                "malformed duplicate",
-                _critique(unknown, duplicate_of="bad"),
-            ),
-            ("invalid verdict", _critique(unknown, verdict="maybe")),
-            ("newline target", _critique(pooled + "\n")),
-            (
-                "newline duplicate",
-                _critique(pooled, verdict="duplicate", duplicate_of=pooled + "\n"),
-            ),
-        ]
-
-        for label, critique in malformed:
-            with self.subTest(label=label):
-                stderr = io.StringIO()
-                with contextlib.redirect_stderr(stderr), self.assertRaises(SchemaValidationError):
-                    finalize_critique_batch(
-                        {"critiques": [valid, critique]},
-                        critic="codex",
-                        run_id="local",
-                        effective_config_sha256="0" * 64,
-                        pooled_finding_ids={pooled},
-                    )
-                self.assertEqual(stderr.getvalue(), "")
-
-    def test_finalize_critique_batch_requires_an_explicit_array(self) -> None:
-        for label, batch in (
-            ("missing", {}),
-            ("empty object", {"critiques": {}}),
-            ("empty string", {"critiques": ""}),
-        ):
-            with self.subTest(label=label), self.assertRaises(SchemaValidationError):
+    def test_pool_binding_and_raw_root_fail_closed(self) -> None:
+        for key, value in [
+            ("run_id", "other"),
+            ("critic", "claude"),
+            ("effective_config_sha256", "f" * 64),
+            ("schema_version", "pooled_findings.v1"),
+        ]:
+            pool = {**_pool(), key: value}
+            with self.subTest(key), self.assertRaises(SchemaValidationError):
+                finalize_critique_batch(
+                    {"critiques": []},
+                    critic="codex",
+                    run_id="local",
+                    effective_config_sha256="0" * 64,
+                    pooled_findings=pool,
+                )
+        for batch in [
+            {},
+            {"critiques": {}},
+            {"critiques": ""},
+            {"critiques": [], "critic": "spoof"},
+            {"critiques": [], "adapter_status": "success"},
+        ]:
+            with self.subTest(batch), self.assertRaises(SchemaValidationError):
                 finalize_critique_batch(
                     batch,
                     critic="codex",
                     run_id="local",
                     effective_config_sha256="0" * 64,
-                    pooled_finding_ids=set(),
+                    pooled_findings=_pool(),
                 )
-
-        finalized = finalize_critique_batch(
-            {"critiques": []},
-            critic="codex",
-            run_id="local",
-            effective_config_sha256="0" * 64,
-            pooled_finding_ids=set(),
-        )
-        self.assertEqual(finalized["adapter_status"], "success")
-        self.assertEqual(finalized["critiques"], [])
-
-    def test_finalize_critique_batch_preserves_non_success_status_and_discards_critiques(
-        self,
-    ) -> None:
-        finalized = finalize_critique_batch(
-            {
-                "adapter_status": "model_error",
-                "critic": "claude",
-                "critiques": [
-                    {
-                        "target_source_finding_id": "1" * 64,
-                        "critic": "claude",
-                        "verdict": "agree",
-                        "duplicate_of_source_finding_id": None,
-                        "rationale": "valid",
-                        "adjusted_severity": None,
-                        "confidence": 0.9,
-                    }
-                ],
-            },
-            critic="claude",
-            run_id="local",
-            effective_config_sha256="0" * 64,
-            pooled_finding_ids={"1" * 64},
-        )
-
-        self.assertEqual(finalized["adapter_status"], "model_error")
-        self.assertEqual(finalized["critiques"], [])
-        validate_instance(finalized, "critique_batch.schema.json")
-
-    def test_finalize_critique_batch_normalizes_unknown_status_to_schema_error(self) -> None:
-        finalized = finalize_critique_batch(
-            {
-                "adapter_status": "provider_sideways",
-                "critic": "claude",
-                "critiques": [
-                    {
-                        "target_source_finding_id": "1" * 64,
-                        "critic": "claude",
-                        "verdict": "agree",
-                        "duplicate_of_source_finding_id": None,
-                        "rationale": "valid",
-                        "adjusted_severity": None,
-                        "confidence": 0.9,
-                    }
-                ],
-            },
-            critic="claude",
-            run_id="local",
-            effective_config_sha256="0" * 64,
-            pooled_finding_ids={"1" * 64},
-        )
-
-        self.assertEqual(finalized["adapter_status"], "schema_error")
-        self.assertEqual(finalized["critiques"], [])
-        validate_instance(finalized, "critique_batch.schema.json")
-
-    def test_critique_schema_is_provider_structured_output_compatible(self) -> None:
-        schema_path = Path(__file__).resolve().parents[2] / "schemas" / "critique_batch.schema.json"
-        schema = load_json_file(schema_path)
-        critique_props = schema["properties"]["critiques"]["items"]["properties"]
-
-        required = schema["properties"]["critiques"]["items"]["required"]
-
         self.assertEqual(
-            schema["properties"]["schema_version"], {"type": "string", "const": "critique_batch.v1"}
+            finalize_critique_batch(
+                {"critiques": []},
+                critic="codex",
+                run_id="local",
+                effective_config_sha256="0" * 64,
+                pooled_findings=_pool(),
+            )["critiques"],
+            [],
         )
-        self.assertEqual(schema["properties"]["adapter_status"]["type"], "string")
-        self.assertEqual(critique_props["verdict"]["type"], "string")
-        self.assertIn("duplicate_of_source_finding_id", required)
-        self.assertEqual(
-            critique_props["duplicate_of_source_finding_id"]["type"], ["string", "null"]
-        )
+
+    def test_authoring_schemas_are_provider_compatible(self) -> None:
+        for name in ("raw_finding_batch", "raw_critique_batch"):
+            schema = load_json_file(
+                Path(__file__).resolve().parents[2] / "schemas" / f"{name}.schema.json"
+            )
+
+            def check(node: object) -> None:
+                if isinstance(node, dict):
+                    if node.get("type") == "object":
+                        self.assertFalse(node["additionalProperties"])
+                        self.assertEqual(set(node["required"]), set(node["properties"]))
+                    for value in node.values():
+                        check(value)
+                elif isinstance(node, list):
+                    for value in node:
+                        check(value)
+
+            check(schema)
 
     def test_malformed_adapter_output_becomes_schema_error_empty_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -606,84 +627,6 @@ class SchemaValidationTests(unittest.TestCase):
             self.assertEqual(batch["adapter_status"], "schema_error")
             self.assertEqual(batch["findings"], [])
             validate_instance(batch, "finding_batch.schema.json")
-
-    def test_candidate_issue_signature_is_recomputed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            input_dir = Path(tmp)
-            (input_dir / "mr.diff").write_text(
-                "\n".join(
-                    [
-                        "diff --git a/src/foo.py b/src/foo.py",
-                        "--- a/src/foo.py",
-                        "+++ b/src/foo.py",
-                        "@@ -1,1 +1,2 @@",
-                        " def f():",
-                        "+    return records[0]",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            raw = {
-                "schema_version": "finding_batch.v1",
-                "run_id": "local",
-                "reviewer": "claude",
-                "adapter_status": "success",
-                "model": "model",
-                "started_at": "2026-06-29T00:00:00Z",
-                "completed_at": "2026-06-29T00:00:01Z",
-                "findings": [
-                    {
-                        "source_finding_id": "0" * 64,
-                        "run_local_id": "claude-0001",
-                        "anchor": {
-                            "new_path": "src/foo.py",
-                            "old_path": "src/foo.py",
-                            "side": "new",
-                            "start": {"old_line": None, "new_line": 2, "line_code": None},
-                            "end": {"old_line": None, "new_line": 2, "line_code": None},
-                            "hunk_header": "@@ -1,1 +1,2 @@",
-                            "context_hash": "0" * 64,
-                            "symbol": "f",
-                        },
-                        "severity": "major",
-                        "category": "correctness",
-                        "title": "Validate before indexing",
-                        "body": "records[0] is used without a guard.",
-                        "evidence": ["records[0]"],
-                        "suggestion": None,
-                        "confidence": 0.8,
-                        "extra_model_note": "ignored",
-                        "fingerprints": {
-                            "title_fingerprint": "0" * 64,
-                            "evidence_fingerprint": "0" * 64,
-                        },
-                        "candidate_issue_signature": {
-                            "path_key": "wrong.py",
-                            "category": "style",
-                            "side": "old",
-                            "context_hash": "0" * 64,
-                            "title_fingerprint": "0" * 64,
-                            "symbol": None,
-                        },
-                    }
-                ],
-            }
-            finalized = finalize_finding_batch(
-                raw,
-                reviewer="claude",
-                model="model",
-                run_id="local",
-                started_at="2026-06-29T00:00:00Z",
-                input_dir=input_dir,
-                effective_config_sha256="0" * 64,
-            )
-            signature = finalized["findings"][0]["candidate_issue_signature"]
-            self.assertEqual(signature["path_key"], "src/foo.py")
-            self.assertEqual(signature["category"], "correctness")
-            self.assertEqual(signature["side"], "new")
-            self.assertEqual(signature["symbol"], "f")
-            self.assertNotIn("extra_model_note", finalized["findings"][0])
-            validate_instance(finalized, "finding_batch.schema.json")
 
 
 if __name__ == "__main__":

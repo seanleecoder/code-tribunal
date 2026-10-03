@@ -27,6 +27,14 @@ validated by the pipeline-trust tests; active release notes must exist under
 release-input validation. IDs in the temporary-compatibility register are checked
 against their code markers by `test_temporary_compatibility.py`.
 
+The compact model-contract regressions cover prepared-diff range resolution,
+confidence-free authoring, severity caps and permutations, short critique IDs,
+and loss/recovery notices on both platforms. All four fake CLI transports carry
+nonempty review and critique output. `make packaged-smoke SCOPE=reviewer` also
+exercises review, critique, and consensus using the shipped deterministic mock.
+For this contract cutover, rebuild both images and collect fresh real-model panel
+and both-platform lifecycle evidence before release under the release guide.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their

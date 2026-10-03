@@ -70,7 +70,6 @@ def _finding(
         "body": "The new config access can raise a KeyError.",
         "evidence": ["config['required']"],
         "suggestion": None,
-        "confidence": 0.8,
         "fingerprints": {
             "title_fingerprint": title_fingerprint,
             "evidence_fingerprint": evidence_fingerprint,
@@ -89,7 +88,7 @@ def _finding(
 def _batch(reviewer: str, finding: dict) -> dict:
     findings = [finding]
     return {
-        "schema_version": "finding_batch.v1",
+        "schema_version": "finding_batch.v2",
         "run_id": "run",
         "reviewer": reviewer,
         "adapter_status": "success",
@@ -149,7 +148,6 @@ def _critique(
         "verdict": verdict,
         "rationale": rationale,
         "adjusted_severity": adjusted_severity,
-        "confidence": 0.8,
     }
     if duplicate_of is not None:
         critique["duplicate_of_source_finding_id"] = duplicate_of
@@ -158,7 +156,7 @@ def _critique(
 
 def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
     return {
-        "schema_version": "critique_batch.v1",
+        "schema_version": "critique_batch.v2",
         "run_id": "run",
         "critic": critic,
         "adapter_status": status,
@@ -197,7 +195,16 @@ class ConsensusStateMatchingTests(unittest.TestCase):
         self.assertEqual(consensus["groups"][0]["support_count"], 2)
         self.assertEqual(consensus["groups"][0]["decision"], "surface")
         self.assertEqual(
-            consensus["summary"], {"surface_count": 1, "fyi_count": 0, "drop_count": 0}
+            consensus["summary"],
+            {
+                "surface_count": 1,
+                "fyi_count": 0,
+                "drop_count": 0,
+                "raw_finding_count": 2,
+                "accepted_finding_count": 2,
+                "dropped_finding_count": 0,
+                "cap_omitted_finding_count": 0,
+            },
         )
         validate_instance(consensus, "consensus.schema.json")
 
