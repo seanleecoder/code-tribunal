@@ -15,7 +15,7 @@ _PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_tr
 # is not one of them, by the same reasoning that moved it out of the ai_review
 # package. A sparse checkout or archive export can likewise arrive without
 # scripts/, so this module skips rather than failing to import, matching
-# test_release_tools.py and test_docs_contract.py. pytest runs every case below
+# test_release_tools.py. pytest runs every case below
 # under `make quality`, where scripts/ is present.
 if not _PIPELINE_TRUST.is_file():
     raise unittest.SkipTest("repository-only trust auditor is absent from the runtime image")
@@ -329,3 +329,17 @@ def test_reserved_direct_jobs_cover_every_shipped_template_job() -> None:
     shipped_jobs = set(template) - {"variables"}
 
     assert shipped_jobs <= RESERVED_DIRECT_JOB_NAMES
+
+
+def test_shipped_gitlab_installation_examples_respect_trust_boundaries() -> None:
+    examples = Path(__file__).resolve().parents[3] / "docs/getting-started/examples"
+    for mode in ("direct", "child"):
+        path = examples / f"gitlab-{mode}.yml"
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(config, dict), f"{path}: YAML root must be a mapping"
+        issues = find_trust_issues(
+            config, mode=mode,
+            expected_template_project=TRUSTED_PROJECT,
+            expected_template_sha="1" * 40,
+        )
+        assert issues == [], f"{path}: {issues}"

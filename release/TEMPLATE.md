@@ -2,7 +2,7 @@
 
 <!-- Copy to release/<release_version>.md when opening a new draft. The notes path
      is derived from `release_version` in release/release-inputs.json and enforced
-     by scripts/check_docs.py. Replace vX.Y.Z in both links below with the draft's
+     by scripts/check_release_inputs.py. Replace vX.Y.Z in both links below with the draft's
      own version. Keep the draft banner until the release commit. -->
 
 > These are working notes for the next release. They are not release evidence or a

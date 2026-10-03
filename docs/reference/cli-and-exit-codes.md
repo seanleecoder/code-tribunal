@@ -14,7 +14,7 @@ importable Python functions are not a public API.
 | `python -m ai_review.schema validate --schema NAME --input PATH` | Validate one JSON artifact | 0 | 1 for invalid input/schema; argparse uses 2 |
 | `python scripts/pipeline_trust.py PATH --mode MODE --template-project PROJECT --template-sha SHA` | Audit a GitLab consumer composition (`MODE` is `direct` or `child`); repository-only, not shipped in the images | 0 | 1 for trust violations, 2 for malformed input/arguments |
 | `python -m ai_review.mock_reviewer REVIEWER STAGE` | Emit deterministic local/preflight review or critique JSON | 0 | argparse uses 2; fixture/artifact errors propagate nonzero |
-| `python scripts/check_docs.py` | Audit links, anchors, configuration/environment inventory, and install examples | 0 | 1 when the documentation contract fails |
+| `python scripts/check_markdown_links.py` | Check offline Markdown links, anchors, and draft-release links with pinned Lychee | 0 | 1 for link or tool failures |
 | `scripts/check_supply_chain_pins.py` | Audit shipped dependency and image pins | 0 | 1 when any pin contract fails |
 
 `post` is the terminal product stage and its exit status is the pipeline's whole
@@ -41,6 +41,6 @@ make validate-local
 ```
 
 `make quality` is the sole canonical contributor gate. It runs documentation,
-lint, tests with coverage, whole-package typing, supply-chain checks, and Python
-compilation without converting an installed checker failure into a fallback
-success.
+lint, pytest with coverage, whole-package typing, supply-chain checks,
+release-input validation, and workflow parity. `make test` invokes pytest directly;
+`make docs-check` runs the pinned Lychee wrapper.

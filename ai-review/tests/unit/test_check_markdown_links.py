@@ -226,31 +226,117 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
                 )
             self.assertEqual(installed.read_bytes(), payload)
 
-    def test_deliberately_broken_link_fixture_fails_current_documents(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            fixture = Path(tmp) / "broken.md"
-            fixture.write_text("[missing](does-not-exist.md)\n", encoding="utf-8")
-            calls = 0
-
-            def run(command: list[str]):
-                nonlocal calls
-                calls += 1
-                if calls == 1:
-                    return _completed(command, stdout="lychee 0.24.2\n")
-                if "--include-fragments=anchor-only" in command:
-                    return _completed(command, returncode=2, stderr=str(fixture))
-                return _completed(command)
-
-            with (
-                mock.patch.object(self.checker, "_run", side_effect=run),
-                mock.patch.object(
-                    self.checker,
-                    "_inventories",
-                    return_value={
-                        "link-checked": (str(fixture),),
-                        "released": (),
-                    },
-                ),
-                self.assertRaisesRegex(self.checker.LinkCheckError, "broken.md"),
+    def test_draft_destinations_check_inline_links_and_reference_definitions(self) -> None:
+        checker = self.checker
+        note = checker.ROOT / "release/9.9.9.md"
+        prefix = f"https://github.com/{checker.REPOSITORY}/blob/v9.9.9/"
+        for syntax in ('[guide](<{target}> "Guide")', '[guide][ref]\n[ref]: <{target}> "Guide"',
+                       '[ref]:\n  {target}'):
+            for target, expected in (
+                ("../docs/guide.md?view=1#intro", prefix + "docs/guide.md?view=1#intro"),
+                ("/docs/guide.md", prefix + "docs/guide.md"),
+                ("other.md", prefix + "release/other.md"),
             ):
-                self.checker.check_links(lychee=Path("lychee"))
+                with self.subTest(syntax=syntax, target=target):
+                    issues = checker._release_note_destination_issues(note, syntax.format(
+                        target=target,
+                    ))
+                    self.assertEqual(len(issues), 1)
+                    self.assertIn(expected, issues[0])
+            for target in (
+                prefix.replace("v9.9.9", "main") + "docs/guide.md",
+                prefix.replace("v9.9.9", "v9.9.8") + "docs/guide.md",
+                prefix + "../../outside.md", prefix + "%2e%2e/outside.md",
+                prefix + "%2foutside.md", prefix,
+                prefix.replace("github.com", "GitHub.Com").replace("v9.9.9", "main") + "a.md",
+            ):
+                with self.subTest(syntax=syntax, target=target):
+                    issues = checker._release_note_destination_issues(note, syntax.format(
+                        target=target,
+                    ))
+                    self.assertEqual(len(issues), 1)
+                    self.assertIn("repository blob link", issues[0])
+            self.assertEqual(checker._release_note_destination_issues(note, syntax.format(
+                target=prefix + "docs/guide.md#intro",
+            )), [])
+
+    def test_draft_destinations_reject_html_links_and_ignore_fenced_examples(self) -> None:
+        checker = self.checker
+        note = checker.ROOT / "release/9.9.9.md"
+        for html in ('<a href="../docs/guide.md">Guide</a>', '<img src="image.png">',
+                     "<A HREF='https://example.test'>Guide</A>", '<img\n src = "image.png" />'):
+            with self.subTest(html=html):
+                issues = checker._release_note_destination_issues(note, html)
+                self.assertEqual(len(issues), 1)
+                self.assertIn("raw HTML href/src", issues[0])
+        text = (
+            '[anchor](#scope) [external](https://example.test/)\n'
+            '[ref]: #scope\n[external]: https://example.test\n'
+            '<br> <a id="scope" title="some href=example">Scope</a>\n'
+            '```md\n[relative](../example.md)\n[ref]: ../example.md\n'
+            '<img src="example.png">\n```\n'
+            '~~~~\n[wrong](https://github.com/example/repo/blob/main/a.md)\n~~~~\n'
+        )
+        self.assertEqual(checker._release_note_destination_issues(note, text), [])
+
+    def test_inventory_separates_draft_historical_and_archive_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            names = ("release/1.0.0.md", "release/9.9.9.md", "release/TEMPLATE.md",
+                     "archive/old.md", "docs/current.md")
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("# Notes\n")
+            for args in (("init", "-q"), ("add", ".")):
+                subprocess.run(["git", "-C", str(root), *args], check=True)
+            (root / "untracked.md").write_text("[untracked](missing.md)")
+            with (mock.patch.object(self.checker, "ROOT", root),
+                  mock.patch.object(self.checker, "tag_exists",
+                                    side_effect=lambda tag, _root: tag == "v1.0.0")):
+                for tags_resolvable in (True, False):
+                    with self.subTest(tags_resolvable=tags_resolvable), mock.patch.object(
+                        self.checker, "any_tags_resolvable", return_value=tags_resolvable,
+                    ):
+                        inventory = self.checker._inventories()
+                    released = {"release/1.0.0.md"}
+                    if not tags_resolvable:
+                        released.add("release/9.9.9.md")
+                    self.assertEqual(set(inventory["released"]), released)
+                    self.assertEqual(set(inventory["link-checked"]), set(names) - released)
+
+    def test_current_links_check_paths_anchors_and_allow_prose_changes(self) -> None:
+        executable = self.checker._lychee_path(None)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "guide.md").write_text("# Guide\n")
+            document = root / "current.md"
+            inventory = {"link-checked": ("current.md",), "released": ()}
+            for target, succeeds in (("guide.md#guide", True), ("missing.md", False),
+                                     ("guide.md#missing", False)):
+                with self.subTest(target=target):
+                    document.write_text(
+                        "# Freely renamed heading\n`AI_REVIEW_UNDOCUMENTED` `test_deleted`\n"
+                        "| `retired.option` | Ordinary prose |\n"
+                        f"[guide]({target})\n"
+                    )
+                    with (mock.patch.object(self.checker, "ROOT", root),
+                          mock.patch.object(self.checker, "_inventories", return_value=inventory)):
+                        if succeeds:
+                            self.checker.check_links(lychee=executable)
+                        else:
+                            with self.assertRaises(self.checker.LinkCheckError):
+                                self.checker.check_links(lychee=executable)
+
+    def test_draft_conventions_run_in_the_link_gate(self) -> None:
+        executable = self.checker._lychee_path(None)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "release").mkdir()
+            (root / "guide.md").write_text("# Guide\n")
+            (root / "release/9.9.9.md").write_text("[guide](../guide.md)\n")
+            with (mock.patch.object(self.checker, "ROOT", root),
+                  mock.patch.object(self.checker, "_inventories", return_value={
+                      "link-checked": ("release/9.9.9.md",), "released": (),
+                  }), self.assertRaisesRegex(self.checker.LinkCheckError, "relative release-note")):
+                self.checker.check_links(lychee=executable)

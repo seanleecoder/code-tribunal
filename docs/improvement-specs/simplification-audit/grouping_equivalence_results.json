@@ -1,0 +1,15 @@
+{
+  "scope": "Independent control-flow model, not repository tests",
+  "reviewed_commit": "ec7e82754db062797a9c4d0646ced79ac2d8e7ff",
+  "exhaustive_single_bucket_cases_nodes_0_to_6": 33868,
+  "exhaustive_two_label_cases_nodes_0_to_5": 33867,
+  "randomized_cases_nodes_1_to_60": 2000,
+  "total_cases": 69735,
+  "mismatches": 0,
+  "assumptions": [
+    "symmetric same_issue relation",
+    "stable source-ID ordering",
+    "unchanged path/category bucketing",
+    "unchanged greedy complete-link split"
+  ]
+}

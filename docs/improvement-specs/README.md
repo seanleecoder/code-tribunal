@@ -23,6 +23,15 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
 
+## Simplification work
+
+The [audit handoff](simplification-audit/AGENT_HANDOFF.md) records the completed
+local peripheral slice: S02 and S17, plus partial S18/S19. Its two branches still
+need review and merge. S01's future-only 2.1.0 migration remains pending; plan S10
+as an equivalent grouping refactor, then prioritize S05 among behavior changes.
+Existing proposals above remain open. Broader audit recommendations and X01
+require separate decisions before implementation.
+
 ## What to do next
 
 1. Keep the SPEC-31–36 and SPEC-39 regression gates green: the golden consensus

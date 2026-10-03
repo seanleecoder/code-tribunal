@@ -75,7 +75,7 @@ class ReleaseToolTests(unittest.TestCase):
     # Every file validate_release_inputs() reads. It used to be derived from
     # hash_groups(), which additionally forced the synthetic tree to be a real git
     # checkout so `git ls-files` could enumerate fixtures for the image-recipe hash.
-    # With the hash groups gone, the templates it actually parses are the whole list.
+    # Active notes are created separately by _active().
     VALIDATED_FILES = (
         ".github/workflows/ai-review.yml",
         "ai-review/ci/review.github-actions.yml",
@@ -216,12 +216,15 @@ class ReleaseToolTests(unittest.TestCase):
             "evidence_record_ids": evidence_ids,
             "evidence_waivers": {},
         }
+        notes = root / "release" / f"{data['release_version']}.md"
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text("# Release notes\n", encoding="utf-8")
         return data
 
     def _write_active_inputs(self, root: Path) -> tuple[dict[str, object], Path]:
         inputs = self._active(root)
         release_inputs = root / "release/release-inputs.json"
-        release_inputs.parent.mkdir(parents=True)
+        release_inputs.parent.mkdir(parents=True, exist_ok=True)
         release_inputs.write_bytes(canonical_json_bytes(inputs))
         return inputs, release_inputs
 
@@ -324,7 +327,7 @@ class ReleaseToolTests(unittest.TestCase):
         for path in notes:
             tag = f"v{path.stem}"
             if not tag_exists(tag, REPO_ROOT):
-                # Still being drafted. check_docs.py treats it as a current
+                # Still being drafted. The link checker treats it as a current
                 # document and link-checks it; it is frozen only once tagged.
                 continue
             with self.subTest(release=path.stem):
@@ -432,6 +435,23 @@ class ReleaseToolTests(unittest.TestCase):
             root = Path(temporary)
             self._tree(root)
             validate_release_inputs(self._active(root), root)
+
+    def test_active_requires_version_derived_notes_file(self) -> None:
+        for version in ("9.9.9", "9.9.9-rc.1"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._tree(root)
+                data = self._active(root)
+                data["release_version"] = version
+                notes = root / "release" / f"{version}.md"
+                with self.assertRaisesRegex(ReleaseValidationError, "corresponding release notes"):
+                    validate_release_inputs(data, root)
+                notes.mkdir()
+                with self.assertRaisesRegex(ReleaseValidationError, "corresponding release notes"):
+                    validate_release_inputs(data, root)
+                notes.rmdir()
+                notes.write_text("# Freely edited notes\nNo literal source SHA required.\n")
+                validate_release_inputs(data, root)
 
     def test_active_rejects_partial_or_mismatched_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
