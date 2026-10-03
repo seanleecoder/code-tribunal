@@ -1,14 +1,20 @@
+<!-- release-generated:header:start -->
 # Code Tribunal X.Y.Z (draft)
 
 > These are working notes for the next release. Release identity and evidence
 > become final when the prepared commit is signed as `vX.Y.Z`.
 
+<!-- release-generated:header:end -->
+
 ## Release identity
 
+<!-- release-generated:identity:start -->
 - Target release: `X.Y.Z`
 - Target tag: `vX.Y.Z`
 - Release inputs: `release/release-inputs.json`, `status: draft`
 - Runtime source and image digests: unset until preparation
+
+<!-- release-generated:identity:end -->
 
 ## Scope
 
@@ -20,9 +26,12 @@
 
 ## Live campaign
 
+<!-- release-generated:campaign:start -->
 Preparation fills this section from passing records and inputs-only waivers.
 Plan selections in `verification` using the
 [impact table](https://github.com/seanleecoder/code-tribunal/blob/vX.Y.Z/docs/development/release-process.md#scoping-the-live-campaign).
+
+<!-- release-generated:campaign:end -->
 
 ## Carried known limitations
 

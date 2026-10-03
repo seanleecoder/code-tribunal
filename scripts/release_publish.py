@@ -13,47 +13,13 @@ import release_common
 from ai_review.canonical import json_loads_no_duplicates
 from check_release_inputs import validate_release_commit, validate_release_inputs
 from release_common import (
-    FULL_SHA_RE,
     ROOT,
     ReleaseValidationError,
     compare_release_versions,
-    git,
+    release_tag_version,
     validate_release_version,
 )
 from validate_candidate_identity import REPOSITORY
-
-
-def _tag_version(tag: str) -> str:
-    if not tag.startswith("v"):
-        raise ReleaseValidationError("release tag must be v-prefixed with a valid release version")
-    return validate_release_version(tag[1:])
-
-
-def verify_release_tag(root: Path, tag: str) -> tuple[str, str]:
-    """Capture the immutable object; current protected-main signers authorize it."""
-    tag_object = git(root, "rev-parse", "--verify", f"refs/tags/{tag}")
-    if not FULL_SHA_RE.fullmatch(tag_object) or git(root, "cat-file", "-t", tag_object) != "tag":
-        raise ReleaseValidationError("publication requires an annotated signed tag")
-    release_commit = git(root, "rev-parse", f"{tag_object}^{{commit}}")
-    git(root, "merge-base", "--is-ancestor", release_commit, "refs/remotes/origin/main")
-    signers = git(root, "show", "refs/remotes/origin/main:.github/allowed_signers", text=False)
-    if not any(
-        line.strip() and not line.lstrip().startswith(b"#") for line in signers.splitlines()
-    ):
-        raise ReleaseValidationError("protected main has no allowed release signers")
-    with tempfile.TemporaryDirectory() as temporary:
-        trust = Path(temporary) / "allowed_signers"
-        trust.write_bytes(signers)
-        git(
-            root,
-            "-c",
-            "gpg.format=ssh",
-            "-c",
-            f"gpg.ssh.allowedSignersFile={trust}",
-            "verify-tag",
-            tag_object,
-        )
-    return tag_object, release_commit
 
 
 def published_releases() -> list[dict[str, Any]]:
@@ -90,7 +56,7 @@ def publication_flags(version: str, releases: list[dict[str, Any]]) -> tuple[boo
 
 
 def publish(root: Path, tag: str) -> bool:
-    version = _tag_version(tag)
+    version = release_tag_version(tag)
     releases = published_releases()
     for release in releases:
         if release.get("tag_name") != tag:
@@ -101,19 +67,15 @@ def publish(root: Path, tag: str) -> bool:
             f"existing release for {tag} is not published; resolve the draft and retry publication "
             "from main; the publisher never promotes or edits existing releases"
         )
-    tag_object, release_commit = verify_release_tag(root, tag)
-
-    def read_file(relative: str) -> bytes:
-        return git(root, "show", f"{release_commit}:{relative}", text=False)
-
-    inputs = json_loads_no_duplicates(read_file("release/release-inputs.json").decode("utf-8"))
-    if not isinstance(inputs, dict) or inputs.get("release_version") != version:
-        raise ReleaseValidationError("tag must match the tagged release inputs")
-    if inputs.get("status") != "active":
-        raise ReleaseValidationError("publication requires active release inputs")
+    release = release_common.tagged_release(root, tag)
+    tag_object, release_commit = release.tag_object, release.release_commit
+    inputs = release.inputs
     # Canonical push CI for exactly P checks template semantics and parity using
     # the one validator. Do not import preparation's YAML/model dependencies here.
-    validate_release_inputs(inputs, root, read_file=read_file, check_templates=False)
+    validate_release_inputs(
+        inputs, root, read_file=release.read_file, file_exists=release.file_exists,
+        check_templates=False,
+    )
     validate_release_commit(inputs["runtime_source"], release_commit, root)
     try:
         release_common.successful_run(release_commit, "ci.yml", repository=REPOSITORY)
@@ -121,7 +83,7 @@ def publish(root: Path, tag: str) -> bool:
         raise ReleaseValidationError(
             f"{exc}; retry publication from main after CI succeeds"
         ) from exc
-    notes = read_file(f"release/{version}.md")
+    notes = release.read_file(f"release/{version}.md")
     prerelease, latest = publication_flags(version, releases)
     with tempfile.TemporaryDirectory() as temporary:
         notes_file = Path(temporary) / "notes.md"

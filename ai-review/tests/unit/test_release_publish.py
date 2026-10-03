@@ -14,7 +14,7 @@ from unittest import mock
 import yaml
 
 from tests.support.repository_script import load_repository_script
-from tests.unit.test_release_prepare import REPO, VERSION, ReleaseFixture, _git, _snapshot
+from tests.unit.test_release_prepare import REPO, VERSION, WAIVED, ReleaseFixture, _git, _snapshot
 
 publisher = load_repository_script("release_publish", REPO / "scripts/release_publish.py")
 checker = load_repository_script("check_release_inputs", REPO / "scripts/check_release_inputs.py")
@@ -24,39 +24,14 @@ common = load_repository_script("release_common", REPO / "scripts/release_common
 class ReleasePublicationTests(ReleaseFixture):
     def setUp(self) -> None:
         super().setUp()
-        self.key_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.key_directory.cleanup)
-        self.key = Path(self.key_directory.name) / "key"
-        subprocess.run(
-            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True
-        )
-        allowed = self.root / ".github/allowed_signers"
-        allowed.write_text("fixture@example.test " + self.key.with_suffix(".pub").read_text())
         (self.root / "scripts").mkdir()
         (self.root / "scripts/release_publish.py").write_text(
             "raise RuntimeError('tag code executed')"
         )
-        _git(self.root, "add", ".")
-        _git(self.root, "commit", "-qm", "register signer and hostile tag code before R")
-        old_source = self.runtime_source
-        self.runtime_source = _git(self.root, "rev-parse", "HEAD")
-        for summary in self.run.summaries.values():
-            summary["candidate"]["runtime_source"] = self.runtime_source
-            for role in ("base", "reviewer"):
-                key = f"{role}_image"
-                summary["candidate"][key] = summary["candidate"][key].replace(
-                    old_source, self.runtime_source
-                )
-        self.candidate = copy.deepcopy(next(iter(self.run.summaries.values()))["candidate"])
-        for record in (self.root / "docs/evidence").glob("*.md"):
-            record.write_text(record.read_text().replace(old_source, self.runtime_source))
+        self._register_signer()
         self._prepare()
-        self.P = self._commit_release()
+        self.P = self._tag_release()
         self.tag = f"v{VERSION}"
-        _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
-        _git(self.root, "config", "gpg.format", "ssh")
-        _git(self.root, "config", "user.signingkey", str(self.key))
-        _git(self.root, "tag", "-s", self.tag, "-m", "Code Tribunal fixture")
         self.tag_object = _git(self.root, "rev-parse", self.tag)
         self.releases = [[]]
         self.ci = {
@@ -100,7 +75,7 @@ class ReleasePublicationTests(ReleaseFixture):
         self.ci["headSha"] = self.P
         self.tag_object = _git(self.root, "rev-parse", self.tag)
         self.remote_object = self.tag_object
-        verify = publisher.verify_release_tag
+        verify = common.tagged_release
 
         def move_local_tag(root, tag):
             captured = verify(root, tag)
@@ -109,7 +84,7 @@ class ReleasePublicationTests(ReleaseFixture):
             return captured
 
         with (
-            mock.patch.object(publisher, "verify_release_tag", side_effect=move_local_tag),
+            mock.patch.object(common, "tagged_release", side_effect=move_local_tag),
             mock.patch.object(common.subprocess, "run", wraps=subprocess.run) as processes,
         ):
             self.assertTrue(self.publish())
@@ -128,11 +103,13 @@ class ReleasePublicationTests(ReleaseFixture):
                 _git(self.root, "tag", "-a", self.tag, "-m", "unsigned")
             with self.assertRaises(publisher.ReleaseValidationError):
                 self.publish()
+            self.assertEqual(self._quality()[0], 1)
         _git(self.root, "tag", "-d", self.tag)
         _git(self.root, "tag", "-s", self.tag, "-m", "signed")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaises(publisher.ReleaseValidationError):
             self.publish()
+        self.assertEqual(self._quality()[0], 1)
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
         allowed = self.root / ".github/allowed_signers"
         allowed.write_text("# revoked signer\n")
@@ -142,6 +119,7 @@ class ReleasePublicationTests(ReleaseFixture):
         _git(self.root, "checkout", "--detach", self.P)
         with self.assertRaisesRegex(publisher.ReleaseValidationError, "no allowed release signers"):
             self.publish()
+        self.assertEqual(self._quality()[0], 1)
         self.assertFalse(self.created)
 
     def test_current_main_signer_registry_overrides_the_tag_tree(self) -> None:
@@ -157,12 +135,70 @@ class ReleasePublicationTests(ReleaseFixture):
         _git(self.root, "checkout", "--detach", self.P)
         with self.assertRaises(publisher.ReleaseValidationError):
             self.publish()
+        self.assertEqual(self._quality()[0], 1)
         _git(self.root, "config", "user.signingkey", str(replacement))
         _git(self.root, "tag", "-d", self.tag)
         _git(self.root, "tag", "-s", self.tag, "-m", "new main signer")
         self.remote_object = _git(self.root, "rev-parse", self.tag)
         self.assertTrue(self.publish())
+        self.assertEqual(self._quality()[0], 0)
         self.assertNotIn(replacement.with_suffix(".pub").read_text(), allowed.read_text())
+
+    def test_waivers_use_one_captured_tree_inventory_without_reading_historical_bodies(
+        self,
+    ) -> None:
+        inputs = self.root / "release/release-inputs.json"
+        data = common.load_json(inputs)
+        data["verification"]["evidence_waivers"][WAIVED] = "unchanged since it was replaced in 2.0"
+        inputs.write_bytes(common.canonical_json_bytes(data))
+        self.P = self._commit_release()
+        _git(self.root, "tag", "-d", self.tag)
+        _git(self.root, "tag", "-s", self.tag, "-m", "waiver fixture")
+        _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
+        self.remote_object = _git(self.root, "rev-parse", self.tag)
+        self.ci["headSha"] = self.P
+        with mock.patch.object(common, "git", wraps=common.git) as git:
+            self.assertTrue(self.publish())
+        commands = [call.args[1:] for call in git.call_args_list]
+        self.assertEqual(sum(command[0] == "ls-tree" for command in commands), 1)
+        self.assertNotIn(("show", f"{self.P}:docs/evidence/{WAIVED}"), commands)
+
+    def test_waivers_require_regular_blobs_in_the_captured_tree(self) -> None:
+        original = self.P
+        relative = f"docs/evidence/{WAIVED}"
+        path = self.root / relative
+        for kind in ("missing", "directory", "symlink", "parent symlink", "submodule"):
+            _git(self.root, "reset", "--hard", original)
+            _git(self.root, "tag", "-d", self.tag)
+            if kind == "submodule":
+                _git(
+                    self.root, "update-index", "--cacheinfo",
+                    f"160000,{self.runtime_source},{relative}",
+                )
+                _git(self.root, "commit", "-qm", "gitlink is not evidence")
+            else:
+                if kind == "parent symlink":
+                    directory = path.parent
+                    directory.rename(self.root / "release/historical-evidence")
+                    directory.symlink_to(
+                        self.root / "release/historical-evidence", target_is_directory=True
+                    )
+                else:
+                    path.unlink()
+                    if kind == "directory":
+                        path.mkdir()
+                        (path / "child").write_text("historical")
+                    elif kind == "symlink":
+                        path.symlink_to("record-body-refresh.md")
+                self._commit_release()
+            self.P = _git(self.root, "rev-parse", "HEAD")
+            _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
+            _git(self.root, "tag", "-s", self.tag, "-m", "invalid evidence fixture")
+            with self.subTest(kind=kind), self.assertRaisesRegex(
+                publisher.ReleaseValidationError, "not a regular file"
+            ):
+                self.publish()
+            self.assertFalse(self.created)
 
     def test_remote_tag_movement_pending_failed_wrong_commit_and_wrong_origin_ci_refuse(
         self,
@@ -222,7 +258,7 @@ class ReleasePublicationTests(ReleaseFixture):
         ]
         before = _snapshot(self.root)
         with mock.patch.object(
-            publisher, "verify_release_tag", side_effect=AssertionError("no validation needed")
+            common, "tagged_release", side_effect=AssertionError("no validation needed")
         ):
             self.assertFalse(self.publish())
         self.assertEqual(_snapshot(self.root), before)
@@ -245,7 +281,7 @@ class ReleasePublicationTests(ReleaseFixture):
         with (
             mock.patch.object(common, "gh", side_effect=self.gh) as gh,
             mock.patch.object(publisher, "ROOT", self.root),
-            mock.patch.object(publisher, "verify_release_tag") as verify,
+            mock.patch.object(common, "tagged_release") as verify,
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
@@ -284,7 +320,8 @@ def gh(*args):
     if args[0] == "api": return json.dumps(dict(object=dict(sha=obj)))
     assert args[:2] == ("release", "create")
     notes = Path(args[args.index("--notes-file")+1]).read_bytes()
-    assert notes == publisher.git(root, "show", f"{P}:release/{tag[1:]}.md", text=False)
+    assert notes == publisher.release_common.git(
+        root, "show", f"{P}:release/{tag[1:]}.md", text=False)
     return ""
 publisher.release_common.gh = gh
 assert publisher.publish(root, tag)

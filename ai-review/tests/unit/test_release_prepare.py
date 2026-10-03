@@ -171,6 +171,38 @@ class ReleaseFixture(unittest.TestCase):
         _git(self.root, "commit", "-qm", "release finalization")
         return _git(self.root, "rev-parse", "HEAD")
 
+    def _register_signer(self) -> None:
+        self.key_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.key_directory.cleanup)
+        self.key = Path(self.key_directory.name) / "key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True
+        )
+        allowed = self.root / ".github/allowed_signers"
+        allowed.write_text("fixture@example.test " + self.key.with_suffix(".pub").read_text())
+        _git(self.root, "config", "gpg.format", "ssh")
+        _git(self.root, "config", "user.signingkey", str(self.key))
+        _git(self.root, "add", ".")
+        _git(self.root, "commit", "-qm", "register signer before R")
+        old_source = self.runtime_source
+        self.runtime_source = _git(self.root, "rev-parse", "HEAD")
+        for summary in self.run.summaries.values():
+            summary["candidate"]["runtime_source"] = self.runtime_source
+            for role in ("base", "reviewer"):
+                key = f"{role}_image"
+                summary["candidate"][key] = summary["candidate"][key].replace(
+                    old_source, self.runtime_source
+                )
+        self.candidate = copy.deepcopy(next(iter(self.run.summaries.values()))["candidate"])
+        for record in (self.root / "docs/evidence").glob("*.md"):
+            record.write_text(record.read_text().replace(old_source, self.runtime_source))
+
+    def _tag_release(self) -> str:
+        P = self._commit_release()
+        _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        _git(self.root, "tag", "-s", f"v{VERSION}", "-m", "signed release fixture")
+        return P
+
     def _quality(self) -> tuple[int, str]:
         stderr = io.StringIO()
         with (
@@ -648,6 +680,90 @@ class ReleasePreparationTests(ReleaseFixture):
         self._prepare()
         self.assertEqual(_snapshot(self.root), before)
 
+    def test_prepare_preserves_prose_subsections_fenced_markers_and_crlf_outside_blocks(
+        self,
+    ) -> None:
+        path = self.root / f"release/{VERSION}.md"
+        additions = {}
+        text = path.read_text()
+        for name in ("header", "identity", "campaign"):
+            additions[name] = (
+                f"\nHandwritten {name} prose.\n\n### Operator {name}\n\n"
+                "~~~~markdown\n<!-- release-generated:identity:start -->\n"
+                "## Release identity\n<!-- release-generated:identity:end -->\n~~~~\n"
+            )
+        text = re.sub(
+            r"(?m)^<!-- release-generated:(header|identity|campaign):end -->\n",
+            lambda marker: marker[0] + additions[marker[1]], text,
+        )
+        path.write_bytes(text.replace("\n", "\r\n").encode())
+        self._prepare()
+        for addition in additions.values():
+            self.assertIn(addition.replace("\n", "\r\n").encode(), path.read_bytes())
+        before = _snapshot(self.root)
+        self._prepare()
+        self.assertEqual(_snapshot(self.root), before)
+
+    def test_bad_generated_markers_fail_before_any_write(self) -> None:
+        path = self.root / f"release/{VERSION}.md"
+        original = path.read_text()
+        start = "<!-- release-generated:identity:start -->"
+        end = "<!-- release-generated:identity:end -->"
+        for invalid in (
+            original.replace(start, ""),
+            original.replace(start, start + "\n" + start),
+            original.replace(start, "SWAP").replace(end, start).replace("SWAP", end),
+            original.replace(start, "```\n" + start + "\n```"),
+        ):
+            path.write_text(invalid)
+            before = _snapshot(self.root)
+            with self.assertRaisesRegex(tool.ReleaseValidationError, "generated-block markers"):
+                self._prepare()
+            self.assertEqual(_snapshot(self.root), before)
+
+    def test_preserved_operator_logs_do_not_change_certification_metadata(self) -> None:
+        self._prepare()
+        path = self.root / "docs/evidence" / next(iter(self.generated))
+        log = (
+            "Operator log:\n```\nStatus: failed\nRelease-base-digest: stale\n```\n"
+            "\nObserved Status: failed before recovery.\n"
+        )
+        path.write_text(path.read_text().replace("None recorded.", log))
+        self._prepare()
+        self.assertIn(log, path.read_text())
+        data = tool.load_json(self.root / "release/release-inputs.json")
+        checker.validate_release_inputs(data, self.root)
+
+    def test_prepare_accepts_normal_waiver_prose(self) -> None:
+        self.draft["verification"]["evidence_waivers"] = {
+            WAIVED: "unchanged since it was replaced in 2.0",
+        }
+        path = self.root / "release/release-inputs.json"
+        path.write_bytes(tool.canonical_json_bytes(self.draft))
+        self._prepare()
+        self._commit_release()
+        self.assertEqual(self._quality()[0], 0)
+
+    def test_open_next_orders_numeric_prerelease_identifiers(self) -> None:
+        self._prepare()
+        current = VERSION + "-rc.2"
+        path = self.root / "release/release-inputs.json"
+        data = tool.load_json(path)
+        data["release_version"] = current
+        path.write_bytes(tool.canonical_json_bytes(data))
+        (self.root / f"release/{current}.md").write_text(
+            (self.root / f"release/{VERSION}.md").read_text().replace(VERSION, current)
+        )
+        self._commit_release()
+        _git(self.root, "tag", f"v{current}")
+        for version in (VERSION + "-rc.1", current):
+            with self.assertRaisesRegex(tool.ReleaseValidationError, "strictly higher"):
+                tool.open_next(self.root, version)
+        following = VERSION + "-rc.10"
+        tool.open_next(self.root, following)
+        self.assertEqual(tool.load_json(path)["release_version"], following)
+        self.assertTrue((self.root / f"release/{following}.md").is_file())
+
     def test_tagged_release_refuses_preparation_before_loading_any_run_or_writing(self) -> None:
         self._prepare()
         record = self.root / "docs/evidence" / next(iter(self.generated))
@@ -878,9 +994,9 @@ class ReleasePreparationTests(ReleaseFixture):
     def test_tagged_quality_allows_subsequent_staged_worktree_and_committed_runtime_changes(
         self,
     ) -> None:
+        self._register_signer()
         self._prepare()
-        self._commit_release()
-        _git(self.root, "tag", "-a", f"v{VERSION}", "-m", "frozen release")
+        self._tag_release()
         self.assertEqual(self._quality()[0], 0)
         runtime = self.root / "runtime.py"
         runtime.write_text("staged update\n")
@@ -895,9 +1011,9 @@ class ReleasePreparationTests(ReleaseFixture):
         self.assertEqual(self._quality()[0], 0)
 
     def test_tagged_quality_requires_matching_inputs_and_checkout_ancestry(self) -> None:
+        self._register_signer()
         self._prepare()
-        P = self._commit_release()
-        _git(self.root, "tag", f"v{VERSION}")
+        P = self._tag_release()
         inputs = self.root / "release/release-inputs.json"
         original = inputs.read_bytes()
         data = tool.load_json(inputs)
@@ -914,18 +1030,18 @@ class ReleasePreparationTests(ReleaseFixture):
         self.assertIn("checkout must descend", error)
 
     def test_tagged_quality_still_rejects_disallowed_paths_in_the_release_commit(self) -> None:
+        self._register_signer()
         self._prepare()
         (self.root / "runtime.py").write_text("changed during release\n")
-        self._commit_release()
-        _git(self.root, "tag", f"v{VERSION}")
+        self._tag_release()
         status, error = self._quality()
         self.assertEqual(status, 1)
         self.assertIn("release contains disallowed paths: runtime.py", error)
 
     def test_tagged_quality_still_checks_current_evidence_pins_and_workflow_parity(self) -> None:
+        self._register_signer()
         self._prepare()
-        self._commit_release()
-        _git(self.root, "tag", f"v{VERSION}")
+        self._tag_release()
         mutations = (
             (self.root / "docs/evidence" / MANUAL[0], self.runtime_source, "f" * 40),
             (self.root / "ai-review/ci/review.gitlab-ci.yml", self.runtime_source, "f" * 40),

@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
 """Generate the installed GitHub workflow copies from their canonical templates.
 
-This is both the generator and the only gate. Parity was previously checked three
-further times — by check_supply_chain_pins.py, by check_release_inputs.py, and by
-GitHubActionsTemplateTests in ai-review/tests/unit/test_ci_template.py — none of
-which could repair what they reported, and one of which ran inside an image with
-no .github/ directory to compare against. Those copies are gone.
+The comparison has one implementation in release_common.sync_workflows. Both
+this CLI and active release-input validation call it. It is byte-exact: GitHub
+executes the installed file verbatim, including its line endings.
 
     make workflow-parity          # the gate, wired into `make quality`
     make sync-workflows           # write installed copies
     make CHECK=1 sync-workflows   # report drift, write nothing
 
-Or through the interpreter directly. This file is not executable by design,
-matching its sibling repository-only checkers (check_docs.py,
-check_release_inputs.py and release_prepare.py,
-scan_evidence_leaks.py), none of which is ever invoked by bare path:
+Or through the interpreter directly:
 
     python3 scripts/sync_workflows.py [--check]
-
-The comparison itself lives in release_common.sync_workflows, which
-check_release_inputs.py also delegates to. It is byte-exact: GitHub executes the
-installed file verbatim, so a line-ending difference is real drift.
 """
 
 from __future__ import annotations

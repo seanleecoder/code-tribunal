@@ -14,6 +14,9 @@ is unsupported. The notes path is `release/<release_version>.md`.
 
 Draft notes start from [`release/TEMPLATE.md`](../../release/TEMPLATE.md).
 `release-open-next` substitutes the version in its heading, identity, and links.
+Keep the generated-block markers in order. Preparation replaces only the header,
+identity, and campaign content inside those markers. Write prose and subsections
+outside them; handwritten content and line endings outside the blocks are preserved.
 Author repository links as absolute URLs pinned to the notes' own tag, for example
 `https://github.com/seanleecoder/code-tribunal/blob/v2.1.0/docs/evidence/record-candidate-canary.md`.
 Relative repository destinations, other-version blob URLs, and HTML `href`/`src`
@@ -38,7 +41,9 @@ with `git fetch origin --tags` before release commands.
    verifies OCI revision, digests, reachability, and publication provenance.
    Run required manual checks against the same candidate, recording exact
    `Status: passed`, `Release-runtime-source`, `Release-base-digest`, and
-   `Release-reviewer-digest` fields. Audit sanitized evidence with
+   `Release-reviewer-digest` fields in the header before the first H2 section.
+   Comments, fenced examples, and section observations are not certification
+   fields. Audit sanitized evidence with
    `scripts/scan_evidence_leaks.py` and record the scan's scope. One successful
    scoped campaign suffices; repeat after a concrete fix, never just to spend more
    tokens. Plan manual passing IDs in `verification.evidence_record_ids` and
@@ -112,8 +117,10 @@ with `git fetch origin --tags` before release commands.
    It requires a higher, untagged version and refuses an existing notes destination.
    Review and commit the draft reset in a follow-up PR.
 
-Once the version tag exists, `make quality` requires the current active inputs to
-match the tagged inputs and the checkout to descend from tagged `P`. Release-path
+Once the version has an annotated SSH-signed tag verified against protected
+main's signer registry, `make quality` requires the current active inputs to match
+the tagged inputs, `P → main`, and the checkout to descend from tagged `P`. Invalid
+or untrusted tags fail closed. Release-path
 restrictions then apply to `R → P`, allowing ordinary PRs while publication or
 open-next is pending. Current evidence bindings, pins/parity, and tag-identical
 notes remain checked. CI fetches full history and tags for this boundary.
@@ -192,8 +199,8 @@ Verification resolves signers from [`.github/allowed_signers`](../../.github/all
 Add an entry when a new releaser joins, and remove one when they leave — an
 unlisted key verifies as `No principal matched`, not as a bad signature.
 
-Publication uses only the signer registry fetched from protected `origin/main`,
-copied to a temporary trust file. A key retained in a historical tag's tree no
+Publication and post-tag quality use only the signer registry fetched from
+protected `origin/main`, copied to a temporary trust file. A key retained in a historical tag's tree no
 longer authorizes publication after it is removed from main; a key registered
 only on main can authorize a historical tag. Missing or empty main trust data
 fails closed. Local `git verify-tag` uses the configured local file and does not

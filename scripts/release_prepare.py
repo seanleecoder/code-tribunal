@@ -26,6 +26,7 @@ from check_release_inputs import (
     GITLAB_PIN_FIELDS,
     github_job_containers,
     gitlab_template_pins,
+    validate_evidence_selection,
     validate_release_commit,
     validate_release_inputs,
 )
@@ -37,13 +38,15 @@ from release_common import (
     ReleaseValidationError,
     canonical_json_bytes,
     compare_release_versions,
-    disallowed_release_paths,
     git,
     image_ref,
     load_json,
+    markdown_headings,
     successful_run,
     tag_exists,
+    validate_release_paths,
     validate_release_version,
+    without_fenced_code,
 )
 from validate_candidate_identity import REPOSITORY
 
@@ -75,19 +78,14 @@ def _candidate_inputs(
     return data, candidate
 
 
-def _check_paths(paths: list[str]) -> None:
-    if forbidden := disallowed_release_paths(paths):
-        raise ReleaseValidationError("release contains disallowed paths: " + ", ".join(forbidden))
-
-
 def _check_destinations(root: Path, edits: dict[str, bytes]) -> None:
-    _check_paths(list(edits))
+    validate_release_paths(list(edits))
     resolved_root = root.resolve()
     for relative in edits:
         target = resolved_root / relative
         if not target.resolve().is_relative_to(resolved_root):
             raise ReleaseValidationError(f"release destination escapes the checkout: {relative}")
-        _check_paths([target.resolve().relative_to(resolved_root).as_posix()])
+        validate_release_paths([target.resolve().relative_to(resolved_root).as_posix()])
         current = target
         while current != resolved_root:
             if current.is_symlink():
@@ -108,12 +106,7 @@ def _validate_edits(
         ".github/workflows/ai-review.yml",
         *edits,
     }
-    for record_id in [
-        *data["verification"]["evidence_record_ids"],
-        *data["verification"]["evidence_waivers"],
-    ]:
-        if Path(record_id).name != record_id or "/" in record_id or "\\" in record_id:
-            raise ReleaseValidationError("evidence IDs must be bare filenames")
+    for record_id in validate_evidence_selection(data):
         paths.add(f"{EVIDENCE_DIR.as_posix()}/{record_id}")
     with tempfile.TemporaryDirectory() as temporary:
         scratch = Path(temporary)
@@ -164,17 +157,29 @@ def _template_edits(root: Path, candidate: dict[str, str]) -> dict[str, bytes]:
     return edits
 
 
-def _replace_section(text: str, heading: str, body: str) -> str:
-    pattern = re.compile(rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)")
-    if len(list(pattern.finditer(text))) != 1:
-        raise ReleaseValidationError(f"release notes require exactly one {heading} section")
-    return pattern.sub(lambda _: f"## {heading}\n\n{body.rstrip()}\n\n", text)
+def _replace_generated_blocks(text: str, bodies: dict[str, str]) -> str:
+    headings = [heading for heading, _, _ in markdown_headings(text)]
+    for heading in ("Release identity", "Live campaign"):
+        if headings.count(heading) != 1:
+            raise ReleaseValidationError(f"release notes require exactly one {heading} section")
+    matches = list(re.finditer(
+        r"(?m)^<!-- release-generated:([a-z-]+):(start|end) -->[ \t]*(?:\r?\n|$)",
+        without_fenced_code(text),
+    ))
+    expected = [(name, edge) for name in bodies for edge in ("start", "end")]
+    if [(match[1], match[2]) for match in matches] != expected:
+        raise ReleaseValidationError(
+            "release notes require ordered, unique generated-block markers"
+        )
+    for start, end in reversed(list(zip(matches[::2], matches[1::2], strict=True))):
+        newline = "\r\n" if start[0].endswith("\r\n") else "\n"
+        body = bodies[start[1]].rstrip("\n").replace("\n", newline) + newline
+        text = text[:start.end()] + body + text[end.start():]
+    return text
 
 
 def _final_notes(text: str, data: dict[str, Any]) -> str:
     version = data["release_version"]
-    text = re.sub(r"\A# [^\n]+", f"# Code Tribunal {version}", text, count=1)
-    text = re.sub(r"(?m)^> These are working notes[^\n]*\n(?:>[^\n]*\n)*\n?", "", text, count=1)
     identity = [
         f"- Release: `{version}`",
         f"- Tag: `v{version}`",
@@ -187,7 +192,6 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
         f"- {role.title()} image: `{image_ref(image, data['runtime_source'])}`"
         for role, image in data["images"].items()
     )
-    text = _replace_section(text, "Release identity", "\n".join(identity))
     campaign = ["| Record | Result |", "|---|---|"]
     for record_id in [
         *data["verification"]["evidence_record_ids"],
@@ -200,7 +204,11 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
         )
         url = f"https://github.com/{REPOSITORY}/blob/v{version}/docs/evidence/{record_id}"
         campaign.append(f"| [{record_id}]({url}) | {result} |")
-    return _replace_section(text, "Live campaign", "\n".join(campaign))
+    return _replace_generated_blocks(text, {
+        "header": f"# Code Tribunal {version}",
+        "identity": "\n".join(identity),
+        "campaign": "\n".join(campaign),
+    })
 
 
 def _require_untagged(root: Path, version: str) -> None:
@@ -266,7 +274,7 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
             "release/release-inputs.json": canonical_json_bytes(data),
             "CHANGELOG.md": changelog.encode(),
             notes_path: _final_notes(
-                (root / notes_path).read_text(encoding="utf-8"), data
+                (root / notes_path).read_bytes().decode("utf-8"), data
             ).encode(),
         }
     )

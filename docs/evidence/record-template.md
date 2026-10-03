@@ -3,7 +3,10 @@
 Status: pending
 
 <!-- Passing records selected by active release inputs must have Status exactly
-     "passed" and matching source/digest bindings below. To waive a record, remove
+     "passed" and matching source/digest bindings below. These certification
+     fields belong in the header before the first H2 section; comments, fenced
+     examples, and observations in sections do not declare certification fields.
+     To waive a record, remove
      its ID from verification.evidence_record_ids and register its nonempty reason
      only under verification.evidence_waivers in release/release-inputs.json.
      Preserve the record's historical status and bindings; no record-side waiver

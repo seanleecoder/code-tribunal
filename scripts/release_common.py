@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, overload
 
@@ -88,7 +90,38 @@ RELEASE_VERSION_RE = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
 IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)")
-PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
+PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)\b", re.I)
+
+
+def without_fenced_code(text: str) -> str:
+    """Mask CommonMark fences, retaining offsets and line endings for callers."""
+    output: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines(keepends=True):
+        if fence is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if opening is None:
+                output.append(line)
+                continue
+            fence = opening.group(1)
+        elif re.fullmatch(
+            rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*", line.rstrip("\r\n")
+        ):
+            fence = None
+        output.append(re.sub(r"[^\r\n]", " ", line))
+    return "".join(output)
+
+
+def markdown_headings(text: str) -> list[tuple[str, int, int]]:
+    """Return real H2 headings with their original start/end offsets."""
+    text = without_fenced_code(text)
+    text = re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text, flags=re.S)
+    return [
+        (match[1], match.start(), match.end())
+        for match in re.finditer(
+            r"(?m)^ {0,3}##[ \t]+([^\r\n]+?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)", text
+        )
+    ]
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -288,6 +321,11 @@ def disallowed_release_paths(paths: list[str]) -> list[str]:
     return [path for path in paths if not allowed(path)]
 
 
+def validate_release_paths(paths: list[str]) -> None:
+    if forbidden := disallowed_release_paths(paths):
+        raise ReleaseValidationError("release contains disallowed paths: " + ", ".join(forbidden))
+
+
 @overload
 def git(root: Path, *args: str, strip: bool = True, text: Literal[True] = True) -> str: ...
 
@@ -316,3 +354,73 @@ def working_tree_paths(root: Path, runtime_source: str) -> list[str]:
         | set(_diff_paths(root, runtime_source, cached=True))
         | set(filter(None, untracked.split("\0")))
     )
+
+
+def release_tag_version(tag: str) -> str:
+    if not tag.startswith("v"):
+        raise ReleaseValidationError("release tag must be v-prefixed with a valid release version")
+    return validate_release_version(tag[1:])
+
+
+@dataclass(frozen=True)
+class TaggedRelease:
+    root: Path
+    tag_object: str
+    release_commit: str
+    inputs: dict[str, Any]
+    regular_files: frozenset[bytes]
+
+    def file_exists(self, relative: str) -> bool:
+        return relative.encode("utf-8") in self.regular_files
+
+    def read_file(self, relative: str) -> bytes:
+        if not self.file_exists(relative):
+            raise ReleaseValidationError(f"tagged release requires a regular file: {relative}")
+        return git(self.root, "show", f"{self.release_commit}:{relative}", text=False)
+
+
+def tagged_release(root: Path, tag: str) -> TaggedRelease:
+    """Capture a release tree authorized by current protected-main SSH signers."""
+    from ai_review.canonical import json_loads_no_duplicates
+
+    version = release_tag_version(tag)
+    tag_object = git(root, "rev-parse", "--verify", f"refs/tags/{tag}")
+    if not FULL_SHA_RE.fullmatch(tag_object) or git(root, "cat-file", "-t", tag_object) != "tag":
+        raise ReleaseValidationError("release requires an annotated signed tag")
+    annotation = git(root, "cat-file", "tag", tag_object, text=False)
+    if not re.search(
+        rb"\n-----BEGIN SSH SIGNATURE-----\n[A-Za-z0-9+/=\n]+-----END SSH SIGNATURE-----\n?\Z",
+        annotation,
+    ):
+        raise ReleaseValidationError("release requires an SSH-signed annotated tag")
+    release_commit = git(root, "rev-parse", f"{tag_object}^{{commit}}")
+    main = git(root, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+    git(root, "merge-base", "--is-ancestor", release_commit, main)
+    signers = git(root, "show", f"{main}:.github/allowed_signers", text=False)
+    if not any(
+        line.strip() and not line.lstrip().startswith(b"#") for line in signers.splitlines()
+    ):
+        raise ReleaseValidationError("protected main has no allowed release signers")
+    with tempfile.TemporaryDirectory() as temporary:
+        trust = Path(temporary) / "allowed_signers"
+        trust.write_bytes(signers)
+        git(
+            root, "-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={trust}",
+            "verify-tag", tag_object,
+        )
+    tree = git(root, "ls-tree", "-r", "-z", "--full-tree", release_commit, text=False)
+    files = frozenset(
+        entry.split(b"\t", 1)[1] for entry in tree.split(b"\0")
+        if entry.startswith((b"100644 blob ", b"100755 blob "))
+    )
+    relative = "release/release-inputs.json"
+    if relative.encode() not in files:
+        raise ReleaseValidationError(f"tagged release requires a regular file: {relative}")
+    inputs = json_loads_no_duplicates(
+        git(root, "show", f"{release_commit}:{relative}", text=False).decode("utf-8")
+    )
+    if not isinstance(inputs, dict) or inputs.get("release_version") != version:
+        raise ReleaseValidationError("tag must match the tagged release inputs")
+    if inputs.get("status") != "active":
+        raise ReleaseValidationError("tag requires active release inputs")
+    return TaggedRelease(root, tag_object, release_commit, inputs, files)

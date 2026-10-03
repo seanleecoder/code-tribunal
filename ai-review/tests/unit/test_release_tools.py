@@ -58,6 +58,7 @@ try:
         ReleaseValidationError,
         any_tags_resolvable,
         canonical_json_bytes,
+        compare_release_versions,
         disallowed_release_paths,
         git_is_ancestor,
         image_ref,
@@ -829,6 +830,9 @@ class ReleaseToolTests(unittest.TestCase):
                 ({"evidence_waivers": {"missing.md": "unchanged"}}, "cannot read evidence"),
                 ({"evidence_record_ids": ["../escape.md"]}, "bare filenames"),
                 ({"evidence_waivers": {"../escape.md": "unchanged"}}, "bare filenames"),
+                ({"evidence_waivers": {".": "unchanged"}}, "bare filenames"),
+                ({"evidence_waivers": {"..": "unchanged"}}, "bare filenames"),
+                ({"evidence_waivers": {"": "unchanged"}}, "bare filenames"),
             ):
                 data = deepcopy(original)
                 data["verification"].update(changed)
@@ -855,13 +859,96 @@ class ReleaseToolTests(unittest.TestCase):
             path = root / "docs/evidence" / data["verification"]["evidence_record_ids"][0]
             original = path.read_text()
             for invalid in (
-                original + "\nStatus: passed\n",
-                original + "\nRelease-runtime-source: " + "f" * 40,
-                original + "\nRelease-base-digest: " + data["images"]["base"]["digest"],
+                original.replace("## Identity", "Status: passed\n\n## Identity"),
+                original.replace(
+                    "## Identity", "Release-runtime-source: " + "f" * 40 + "\n\n## Identity"
+                ),
+                original.replace(
+                    "## Identity",
+                    "Release-base-digest: " + data["images"]["base"]["digest"] + "\n\n## Identity",
+                ),
             ):
                 path.write_text(invalid)
                 with self.assertRaises(ReleaseValidationError):
                     validate_release_inputs(data, root)
+
+    def test_waiver_prose_is_not_a_machine_placeholder_and_contents_are_not_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record_id = data["verification"]["evidence_record_ids"].pop()
+            path = root / "docs/evidence" / record_id
+            original_read = Path.read_bytes
+
+            def read(selected):
+                self.assertNotEqual(selected, path, "waived contents must not be read")
+                return original_read(selected)
+
+            for reason in (
+                "unchanged since it was replaced in 2.0", "TODO in the historical log was resolved",
+            ):
+                data["verification"]["evidence_waivers"] = {record_id: reason}
+                with mock.patch.object(Path, "read_bytes", autospec=True, side_effect=read):
+                    self.assertEqual(validate_release_inputs(data, root), [(record_id, reason)])
+            for reason in ("TODO", "tbd", " REPLACE-ME ", "sha256:replace-me"):
+                data["verification"]["evidence_waivers"] = {record_id: reason}
+                with self.assertRaisesRegex(ReleaseValidationError, "placeholder"):
+                    validate_release_inputs(data, root)
+            data["verification"]["evidence_waivers"] = {record_id: "historical record"}
+            path.unlink()
+            path.mkdir()
+            with self.assertRaisesRegex(ReleaseValidationError, "not a regular file"):
+                validate_release_inputs(data, root)
+            path.rmdir()
+            path.symlink_to(root / "docs/evidence" / data["verification"]["evidence_record_ids"][0])
+            with self.assertRaisesRegex(ReleaseValidationError, "symlink"):
+                validate_release_inputs(data, root)
+            path.unlink()
+            path.write_bytes(b"historical bytes")
+            directory = path.parent
+            directory.rename(root / "historical")
+            directory.symlink_to(root / "historical", target_is_directory=True)
+            with self.assertRaisesRegex(ReleaseValidationError, "symlink"):
+                validate_release_inputs(data, root)
+
+    def test_metadata_header_ignores_comments_fences_and_section_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            path = root / "docs/evidence" / data["verification"]["evidence_record_ids"][0]
+            original = path.read_text()
+            log = "Status: failed\nRelease-runtime-source: " + "f" * 40 + "\n"
+            for fence in ("```", "~~~~"):
+                text = f"<!-- {log} -->\n{fence}\n## Fake header\n{log}{fence}\n" + original
+                path.write_text(text + "\n## Operator notes\n\n" + log)
+                validate_release_inputs(data, root)
+            for invalid in (
+                original.replace("Status: passed", "Status:\npassed"),
+                original.replace("Release-runtime-source: `", "Release-runtime-source:\n`"),
+                original.replace("## Identity", "Release-base-digest: malformed\n\n## Identity"),
+            ):
+                path.write_text(invalid)
+                with self.assertRaises(ReleaseValidationError):
+                    validate_release_inputs(data, root)
+
+    def test_version_comparison_uses_numeric_core_and_semver_prerelease_precedence(self) -> None:
+        ordered = (
+            "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+            "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0-rc.2",
+            "1.0.0-rc.10", "1.0.0", "1.0.2", "1.0.10", "2.0.0", "10.0.0",
+        )
+        for left_index, left in enumerate(ordered):
+            for right_index, right in enumerate(ordered):
+                with self.subTest(left=left, right=right):
+                    self.assertEqual(
+                        compare_release_versions(left, right),
+                        (left_index > right_index) - (left_index < right_index),
+                    )
+        for invalid in ("1.0.0+build", "1.0.0-rc.01"):
+            with self.assertRaises(ReleaseValidationError):
+                compare_release_versions(invalid, "1.0.0")
 
     def test_current_tooling_does_not_silently_skip_after_manifest_deletion(self) -> None:
         for name in REQUIRED_RELEASE_SCRIPTS:
