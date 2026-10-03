@@ -4,7 +4,6 @@ import re
 import tomllib
 import unittest
 from pathlib import Path
-from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
@@ -162,63 +161,6 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertNotIn("unittest discover", workflow)
         self.assertNotIn("/opt/ai-review/tests:ro", workflow)
 
-    def test_a_vacuous_preflight_pass_cannot_publish_an_image(self) -> None:
-        """The same property the executed-test floor held, held structurally.
-
-        A test *count* was only ever a proxy, and a bad one: it could not tell a
-        suite that ran everything from one that had quietly lost a case, and it made
-        the number itself a maintenance burden. Three structural facts replace it,
-        and this asserts all three because any one alone leaves a vacuous pass open:
-
-        1. `COPY` fails at build time on a missing path, so renaming or deleting the
-           suite fails the build rather than reaching the preflight at all;
-        2. the preflight invokes the suite by module name, so an absent package exits
-           non-zero (asserted in the case above);
-        3. the suite refuses to run unless the test IDs it loaded equal the manifest
-           it declares -- exercised here against the real loader, since a workflow
-           string cannot show that the guard actually fires.
-
-        The count and its `ran - skipped` arithmetic must be gone, not merely
-        unused: leaving them would keep a number in the tree that no longer gates
-        anything while reading as though it did.
-        """
-        workflow = self._publish_workflow()
-        dockerfile = (
-            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn(
-            "COPY ai-review/src/ai_review_smoke /opt/ai-review/src/ai_review_smoke",
-            dockerfile,
-        )
-        self.assertNotIn("MIN_EXECUTED_TESTS", workflow)
-        self.assertNotIn("executed=$((ran - skipped))", workflow)
-
-        from ai_review_smoke import manifest as smoke_manifest
-        from ai_review_smoke.loader import SmokeManifestError, build_suite
-
-        for scope in smoke_manifest.SCOPES:
-            with self.subTest(scope=scope):
-                # The honest arrangement loads.
-                self.assertTrue(build_suite(scope).countTestCases())
-
-                # A case that stopped matching collection -- renamed, or on a class
-                # that no longer subclasses TestCase -- must name itself, not pass.
-                declared = smoke_manifest.MANIFEST[scope]
-                dropped = sorted(declared)[0]
-                with mock.patch.dict(
-                    smoke_manifest.MANIFEST, {scope: declared - {dropped}}
-                ), self.assertRaisesRegex(SmokeManifestError, "do not match its manifest"):
-                    build_suite(scope)
-
-                # And a case added without editing the manifest must fail too, so the
-                # manifest cannot silently fall behind the suite.
-                missing = f"{next(iter(declared)).rsplit('.', 1)[0]}.test_not_defined_anywhere"
-                with mock.patch.dict(
-                    smoke_manifest.MANIFEST, {scope: declared | {missing}}
-                ), self.assertRaises(SmokeManifestError):
-                    build_suite(scope)
-
     # Two cases lived here covering the release hash groups: that fixture
     # enumeration used `git ls-files` rather than an unfiltered walk, and that the
     # fixture list was resolved against the root under validation instead of frozen
@@ -233,7 +175,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         `--repo` from `/opt/ai-review/tests/fixtures` with no mount, so a fixture
         missing from the image breaks image publication and nothing in the checkout
         suite can see it. The assertion moved from inline `test -f` / `test -d` shell
-        into the packaged suite's manifest, so this pins it there instead.
+        into the packaged suite, which reads this fixture inventory.
         """
         from ai_review_smoke import manifest as smoke_manifest
 
@@ -243,11 +185,6 @@ class RepositoryDistributionContractTests(unittest.TestCase):
                 ("tests/fixtures/diffs/simple.diff", "file"),
                 ("tests/fixtures/repos/simple", "directory"),
             ),
-        )
-        self.assertIn(
-            "ai_review_smoke.base_cases.PackagedBaseImageTests"
-            ".test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them",
-            smoke_manifest.MANIFEST["base"],
         )
         for relative, kind in smoke_manifest.PACKAGED_FIXTURES:
             target = _AI_REVIEW_ROOT / relative

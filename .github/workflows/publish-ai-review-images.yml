@@ -67,13 +67,9 @@ jobs:
           # in its own job; rerunning it here against a bind mount coupled image
           # publication to checkout test layout and proved nothing that job did not.
           #
-          # Invoking by name is what makes a vacuous pass impossible, structurally
-          # rather than by counting tests. `COPY` fails at build time on a missing
-          # path, so a renamed or deleted suite fails the build; an absent module
-          # raises ModuleNotFoundError and exits non-zero here; and the suite refuses
-          # to run unless the test IDs it loaded equal the manifest it declares, so a
-          # renamed method or a class that stopped subclassing TestCase fails naming
-          # the missing case instead of silently reducing coverage.
+          # A missing package fails invocation by module name. Each scope loads its
+          # unittest module and rejects failed loading or zero collected tests.
+          # Resource checks also verify the non-Python files the runtime needs.
           #
           # This scope also asserts the image's own packaged fixtures at the exact
           # paths the reviewer preflight resolves --diff/--repo from, which used to be

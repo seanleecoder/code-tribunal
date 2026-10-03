@@ -1,28 +1,21 @@
-"""Checkout-side contract for the packaged-runtime smoke suite.
-
-The suite in ``ai-review/src/ai_review_smoke`` runs inside the published images,
-where a mistake in it costs an image publication rather than a test run. These
-cases are what makes that failure land in ``make quality`` instead: they assert
-the suite's manifests describe the real package, that its scopes are wired up,
-and that it holds to the constraints that let it ship at all.
-
-The suite's own cases are deliberately not run here. Most of them assert
-properties of the *image* -- files at ``/opt/ai-review`` paths, a read-only root,
-pinned CLIs -- so running them against a clone would either pass for the wrong
-reason or fail for one. ``make packaged-smoke`` is the command for running them.
-"""
+"""Checkout checks for smoke loading, image probes, and shipping constraints."""
 
 from __future__ import annotations
 
 import ast
 import functools
+import io
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from ai_review_smoke import __main__ as smoke_cli
+from ai_review_smoke import base_cases, reviewer_cases
 from ai_review_smoke import manifest as smoke_manifest
-from ai_review_smoke.loader import SmokeManifestError, build_suite, present_case_ids
+from ai_review_smoke.loader import SCOPE_MODULES, SmokeLoadError, build_suite
 
 _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 _SMOKE_ROOT = _AI_REVIEW_ROOT / "src" / "ai_review_smoke"
@@ -35,42 +28,99 @@ _SMOKE_ROOT = _AI_REVIEW_ROOT / "src" / "ai_review_smoke"
 _FORBIDDEN_IMPORT_ROOTS = frozenset({"pytest", "tests", "support", "_pytest"})
 
 
-class PackagedSmokeManifestTests(unittest.TestCase):
-    def test_every_scope_loads_and_equals_its_manifest(self) -> None:
-        for scope in smoke_manifest.SCOPES:
+class PackagedSmokeLoaderTests(unittest.TestCase):
+    def test_each_scope_collects_tests(self) -> None:
+        for scope in SCOPE_MODULES:
             with self.subTest(scope=scope):
-                suite = build_suite(scope)
-                self.assertEqual(
-                    {case.id() for case in suite}, set(smoke_manifest.MANIFEST[scope])
-                )
-                self.assertEqual(present_case_ids(scope), smoke_manifest.MANIFEST[scope])
-
-    def test_every_case_module_belongs_to_exactly_one_scope(self) -> None:
-        """A case module nobody declared would never run, and nothing would say so."""
-        per_scope = [smoke_manifest.scope_case_modules(scope) for scope in smoke_manifest.SCOPES]
-        declared = {module for modules in per_scope for module in modules}
-        on_disk = {f"ai_review_smoke.{path.stem}" for path in _SMOKE_ROOT.glob("*_cases.py")}
-
-        self.assertEqual(declared, on_disk)
-        self.assertEqual(sum(len(modules) for modules in per_scope), len(declared))
+                self.assertGreater(build_suite(scope).countTestCases(), 0)
 
     def test_unknown_scope_is_refused(self) -> None:
-        with self.assertRaises(SmokeManifestError):
+        with self.assertRaisesRegex(SmokeLoadError, "unknown packaged smoke scope"):
             build_suite("no-such-scope")
+        with (self.assertRaises(SystemExit) as error,
+              mock.patch.object(sys, "stderr", new=io.StringIO())):
+            smoke_cli.main(["no-such-scope"])
+        self.assertNotEqual(error.exception.code, 0)
 
-    def test_a_renamed_declared_case_fails_naming_the_missing_method(self) -> None:
-        declared = smoke_manifest.MANIFEST["base"]
-        original = next(iter(declared))
-        renamed = original.rsplit(".", 1)[0] + ".test_renamed_without_manifest_update"
-        drifted = (declared - {original}) | {renamed}
+    def test_zero_collection_returns_nonzero(self) -> None:
+        module = types.ModuleType("empty_smoke")
+        with (mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
+              mock.patch.object(sys, "stderr", new=io.StringIO()) as errors):
+            self.assertEqual(smoke_cli.main(["base"]), 1)
+        self.assertIn("collected zero tests", errors.getvalue())
 
-        with (
-            mock.patch.dict(smoke_manifest.MANIFEST, {"base": drifted}),
-            self.assertRaisesRegex(
-                SmokeManifestError, "has no test method test_renamed_without_manifest_update"
-            ),
+    def test_import_and_unittest_loading_failures_return_nonzero(self) -> None:
+        module = types.ModuleType("broken_smoke")
+
+        def load_tests(loader, suite, pattern):
+            return loader.loadTestsFromName("missing_case", module)
+
+        module.load_tests = load_tests
+        for patch in (
+            mock.patch("ai_review_smoke.loader.importlib.import_module",
+                       side_effect=ImportError("missing module")),
+            mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
         ):
-            build_suite("base")
+            with patch, mock.patch.object(sys, "stderr", new=io.StringIO()):
+                self.assertEqual(smoke_cli.main(["base"]), 1)
+
+    def test_added_and_renamed_tests_run_without_inventory_changes(self) -> None:
+        module = types.ModuleType("collected_smoke")
+        ran = []
+        case = type("CollectedTests", (unittest.TestCase,), {
+            "test_first": lambda self: ran.append("first"),
+        })
+        module.CollectedTests = case
+        with mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module):
+            self.assertEqual(build_suite("base").countTestCases(), 1)
+            case.test_renamed = case.test_first
+            del case.test_first
+            case.test_added = lambda self: ran.append("added")
+            suite = build_suite("base")
+            self.assertEqual(suite.countTestCases(), 2)
+            result = unittest.TestResult()
+            suite.run(result)
+        self.assertTrue(result.wasSuccessful())
+        self.assertCountEqual(ran, ["first", "added"])
+
+    def test_failed_smoke_case_returns_nonzero(self) -> None:
+        module = types.ModuleType("failing_smoke")
+        module.FailingTests = type("FailingTests", (unittest.TestCase,), {
+            "test_failure": lambda self: self.fail("probe failed"),
+        })
+        with (mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
+              mock.patch.object(sys, "stderr", new=io.StringIO()),
+              mock.patch.object(sys, "stdout", new=io.StringIO())):
+            self.assertEqual(smoke_cli.main(["base"]), 1)
+
+    def test_base_resource_probe_rejects_missing_packaged_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in smoke_manifest.RUNTIME_FILES:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            with mock.patch.object(base_cases, "trusted_runtime_root", return_value=root):
+                for missing in (None, "prompts/review.md"):
+                    if missing:
+                        (root / missing).unlink()
+                    result = unittest.TestResult()
+                    base_cases.PackagedBaseImageTests(
+                        "test_packaged_runtime_resources_exist"
+                    ).run(result)
+                    self.assertEqual(result.wasSuccessful(), missing is None)
+                    if missing:
+                        self.assertIn(missing, result.failures[0][1])
+
+    def test_reviewer_binary_probe_rejects_missing_cli(self) -> None:
+        case = reviewer_cases.PackagedReviewerImageTests("test_pinned_clis_report_a_version")
+        result = unittest.TestResult()
+        with mock.patch.object(reviewer_cases.shutil, "which", return_value=None):
+            case.run(result)
+        self.assertFalse(result.wasSuccessful())
+        for cli in smoke_manifest.PINNED_CLIS:
+            self.assertTrue(any(f"{cli} does not resolve" in detail
+                                for _, detail in result.failures))
 
     def test_runtime_file_manifest_names_files_that_exist(self) -> None:
         for relative in smoke_manifest.RUNTIME_FILES:

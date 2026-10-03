@@ -27,6 +27,7 @@ from ai_review.reviewers import trusted_runtime_root
 from .manifest import (
     CLI_MODULES,
     PACKAGED_FIXTURES,
+    RUNTIME_FILES,
 )
 
 # Set by ai-review/images/base.Dockerfile and by nothing else; documented in
@@ -38,6 +39,12 @@ _PACKAGED_RUNTIME_MARKER = "AI_REVIEW_PACKAGED_RUNTIME"
 
 
 class PackagedBaseImageTests(unittest.TestCase):
+    def test_packaged_runtime_resources_exist(self) -> None:
+        root = trusted_runtime_root()
+        for relative in RUNTIME_FILES:
+            with self.subTest(path=relative):
+                self.assertTrue((root / relative).is_file(), f"{relative} must ship as a file")
+
     def test_packaged_fixtures_exist_where_the_reviewer_preflight_reads_them(self) -> None:
         """The reviewer preflight resolves ``--diff``/``--repo`` from these paths.
 
@@ -117,7 +124,7 @@ class PackagedBaseImageTests(unittest.TestCase):
         ``--read-only``, changes what the published image is. Guarded on the
         packaging marker ``base.Dockerfile`` sets, which is always present in the
         image and never in a clone -- so this skips only where there is no packaged
-        root to assert, and the manifest still requires the case to exist.
+        root to assert.
         """
         if os.environ.get(_PACKAGED_RUNTIME_MARKER) != "1":
             self.skipTest(f"{_PACKAGED_RUNTIME_MARKER} is unset; not a packaged runtime")
