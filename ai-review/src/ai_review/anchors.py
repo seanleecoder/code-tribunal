@@ -6,7 +6,14 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
+from .canonical import (
+    canonical_json,
+    canonical_json_text,
+    normalize_path,
+    normalize_text,
+    sha256_hex,
+)
+from .constants import SEVERITY_RANK
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 HUNK_RE = re.compile(
@@ -319,10 +326,11 @@ def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
 
 
 def context_hash_from_unified_diff(
-    diff_text: str, anchor: dict[str, Any], *, window: int = 6
+    diff_text: str | Iterable[DiffFile], anchor: dict[str, Any], *, window: int = 6
 ) -> str:
     side = str(anchor["side"])
-    for diff_file in parse_unified_diff(diff_text):
+    files = parse_unified_diff(diff_text) if isinstance(diff_text, str) else diff_text
+    for diff_file in files:
         if not _path_matches(anchor, diff_file.old_path, diff_file.new_path):
             continue
         side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
@@ -410,3 +418,57 @@ def first_evidence_or_body(finding: dict[str, Any]) -> str:
 
 def is_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_RE.fullmatch(value))
+
+
+def resolve_location(files: tuple[DiffFile, ...], location: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one model-authored range using only prepared diff coordinates."""
+    path = normalize_path(location["path"])
+    side = location["side"]
+    start, end = location["start_line"], location["end_line"]
+    if end < start:
+        raise ValueError("location end precedes start")
+    number = "old_line" if side == "old" else "new_line"
+    matches = []
+    for file in files:
+        side_path = file.old_path if side == "old" else file.new_path
+        if side_path is None or normalize_path(side_path) != path:
+            continue
+        lines = [line for line in file.lines if _line_belongs_to_side(side, line)]
+        for index, line in enumerate(lines):
+            if getattr(line, number) == start:
+                matches.append((file, lines, index))
+    if len(matches) != 1:
+        raise ValueError("location is ambiguous or does not map to the prepared diff")
+    file, lines, index = matches[0]
+    count = end - start + 1
+    selected = lines[index : index + count]
+    if len(selected) != count or any(
+        getattr(line, number) != start + offset or line.hunk_header != selected[0].hunk_header
+        for offset, line in enumerate(selected)
+    ):
+        raise ValueError("location range must be contiguous within one diff hunk")
+    old_path, new_path = resolve_side_paths(file.old_path, file.new_path)
+    anchor = {
+        "old_path": normalize_path(old_path),
+        "new_path": normalize_path(new_path),
+        "side": side,
+        "start": {"old_line": selected[0].old_line, "new_line": selected[0].new_line},
+        "end": {"old_line": selected[-1].old_line, "new_line": selected[-1].new_line},
+        "hunk_header": selected[0].hunk_header,
+        "symbol": location["symbol"],
+    }
+    anchor["context_hash"] = context_hash_from_unified_diff((file,), anchor)
+    return add_line_codes(anchor)
+
+
+def finding_sort_key(finding: dict[str, Any]) -> tuple[int, str, str]:
+    """Stable impact ordering, independent of arrival order and run bookkeeping."""
+    content = {
+        key: finding[key]
+        for key in ("anchor", "severity", "category", "title", "body", "evidence", "suggestion")
+    }
+    return (
+        -SEVERITY_RANK[finding["severity"]],
+        finding["source_finding_id"],
+        canonical_json_text(content),
+    )

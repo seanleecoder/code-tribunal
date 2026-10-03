@@ -31,7 +31,7 @@ from .config import (
     ConfigError,
     load_config,
 )
-from .prompt_render import render_critique_prompt, render_review_prompt
+from .prompt_render import render_prompt
 from .redact import redact_text
 from .reviewers import (
     ReviewerRegistryError,
@@ -43,13 +43,13 @@ from .schema import (
     SchemaValidationError,
     finalize_critique_batch,
     finalize_finding_batch,
-    load_json_file,
     now_iso,
     validate_instance,
     write_canonical_json,
 )
 
 _EXIT_ERROR = 1
+
 
 # Upper bound for the full-stdout parse-failure artifact. Large enough to hold a
 # complete reviewer stream, small enough that a runaway adapter cannot fill the
@@ -155,27 +155,18 @@ def run_adapter(reviewer: str, stage: str) -> int:
             adapter_path = resolve_adapter_path(reviewer_definition)
         except ReviewerRegistryError as exc:
             raise ConfigError(str(exc)) from exc
-        prompt_tmp: Path | None = None
-
-        if stage == "review":
-            rendered = render_review_prompt(input_dir, config_path, reviewer)
-            tmp_dir = output_dir / ".tmp"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
-            prompt_tmp.write_text(rendered, encoding="utf-8")
-        elif stage == "critique":
-            tmp_dir = output_dir / ".tmp"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            pooled_out = output_dir / "pooled_findings" / f"{reviewer}.json"
-            rendered = render_critique_prompt(
-                input_dir,
-                config_path,
-                reviewer,
-                output_dir / "findings",
-                pooled_findings_out=pooled_out,
-            )
-            prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
-            prompt_tmp.write_text(rendered, encoding="utf-8")
+        tmp_dir = output_dir / ".tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        rendered, pooled = render_prompt(
+            input_dir,
+            config_path,
+            reviewer,
+            stage,
+            findings_dir=output_dir / "findings",
+            pooled_findings_out=output_dir / "pooled_findings" / f"{reviewer}.json",
+        )
+        prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
+        prompt_tmp.write_text(rendered, encoding="utf-8")
 
         env = _build_adapter_env(
             reviewer=reviewer,
@@ -198,8 +189,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         # pre-streaming behavior. When mirroring, it was already echoed live.
         if not mirror_logs and result.stderr:
             sys.stderr.write(redact_text(result.stderr))
-        if prompt_tmp is not None:
-            prompt_tmp.unlink(missing_ok=True)
+        prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
             stderr_text = result.stderr or f"adapter exited {result.returncode}"
             # Shell adapters refuse mock fallback without the allow flag; that is
@@ -236,15 +226,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
-                pooled = load_json_file(pooled_out)
+                assert pooled is not None
                 finalized = finalize_critique_batch(
                     raw,
                     critic=reviewer,
                     run_id=run_id,
                     effective_config_sha256=config_digest,
-                    pooled_finding_ids={
-                        str(finding["source_finding_id"]) for finding in pooled["findings"]
-                    },
+                    pooled_findings=pooled,
                 )
                 validate_instance(finalized, "critique_batch.schema.json")
             else:
@@ -326,8 +314,10 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
     except Exception as exc:
         try:
-            digest = config_digest if config_digest is not None else _resolve_config_digest(
-                input_dir, None
+            digest = (
+                config_digest
+                if config_digest is not None
+                else _resolve_config_digest(input_dir, None)
             )
         except ConfigError:
             # Last resort: cannot stamp a digest; still emit a config_error status

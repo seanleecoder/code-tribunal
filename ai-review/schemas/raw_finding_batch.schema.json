@@ -7,83 +7,37 @@
   "properties": {
     "findings": {
       "type": "array",
-      "items": { "$ref": "#/$defs/finding" }
+      "items": {"$ref": "#/$defs/finding"}
     }
   },
   "$defs": {
-    "sha256": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "line": {
+    "location": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["old_line", "new_line", "line_code"],
+      "required": ["path", "side", "start_line", "end_line", "symbol"],
       "properties": {
-        "old_line": { "type": ["integer", "null"], "minimum": 1 },
-        "new_line": { "type": ["integer", "null"], "minimum": 1 },
-        "line_code": { "type": "null" }
-      }
-    },
-    "anchor": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "new_path",
-        "old_path",
-        "side",
-        "start",
-        "end",
-        "hunk_header",
-        "context_hash",
-        "symbol"
-      ],
-      "properties": {
-        "new_path": { "type": "string", "minLength": 1 },
-        "old_path": { "type": "string", "minLength": 1 },
-        "side": { "enum": ["new", "old", "unchanged"] },
-        "start": { "$ref": "#/$defs/line" },
-        "end": { "$ref": "#/$defs/line" },
-        "hunk_header": { "type": "string" },
-        "context_hash": { "$ref": "#/$defs/sha256" },
-        "symbol": { "type": ["string", "null"] }
+        "path": {"type": "string", "minLength": 1},
+        "side": {"enum": ["new", "old", "unchanged"]},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "symbol": {"type": ["string", "null"]}
       }
     },
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "anchor",
-        "severity",
-        "category",
-        "title",
-        "body",
-        "evidence",
-        "suggestion",
-        "confidence"
-      ],
+      "required": ["location", "severity", "category", "title", "body", "evidence", "suggestion"],
       "properties": {
-        "anchor": { "$ref": "#/$defs/anchor" },
-        "severity": { "enum": ["info", "minor", "major", "blocker"] },
-        "category": {
-          "enum": [
-            "security",
-            "correctness",
-            "performance",
-            "maintainability",
-            "style",
-            "test",
-            "other"
-          ]
-        },
-        "title": { "type": "string", "minLength": 1 },
-        "body": { "type": "string", "minLength": 1 },
+        "location": {"$ref": "#/$defs/location"},
+        "severity": {"enum": ["info", "minor", "major", "blocker"]},
+        "category": {"enum": ["security", "correctness", "performance", "maintainability", "style", "test", "other"]},
+        "title": {"type": "string", "minLength": 1},
+        "body": {"type": "string", "minLength": 1},
         "evidence": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {"type": "string"}
         },
-        "suggestion": { "type": ["string", "null"] },
-        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+        "suggestion": {"type": ["string", "null"]}
       }
     }
   }
