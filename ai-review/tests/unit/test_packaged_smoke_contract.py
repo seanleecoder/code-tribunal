@@ -29,6 +29,11 @@ _FORBIDDEN_IMPORT_ROOTS = frozenset({"pytest", "tests", "support", "_pytest"})
 
 
 class PackagedSmokeLoaderTests(unittest.TestCase):
+    def test_every_case_module_belongs_to_exactly_one_scope(self) -> None:
+        on_disk = {f"ai_review_smoke.{path.stem}" for path in _SMOKE_ROOT.glob("*_cases.py")}
+        self.assertEqual(set(SCOPE_MODULES.values()), on_disk)
+        self.assertEqual(len(SCOPE_MODULES.values()), len(set(SCOPE_MODULES.values())))
+
     def test_each_scope_collects_tests(self) -> None:
         for scope in SCOPE_MODULES:
             with self.subTest(scope=scope):
@@ -43,35 +48,39 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
         self.assertNotEqual(error.exception.code, 0)
 
     def test_zero_collection_returns_nonzero(self) -> None:
-        module = types.ModuleType("empty_smoke")
-        with (mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
+        module = types.ModuleType(SCOPE_MODULES["base"])
+        with (mock.patch.dict(sys.modules, {module.__name__: module}),
               mock.patch.object(sys, "stderr", new=io.StringIO()) as errors):
             self.assertEqual(smoke_cli.main(["base"]), 1)
         self.assertIn("collected zero tests", errors.getvalue())
 
     def test_import_and_unittest_loading_failures_return_nonzero(self) -> None:
-        module = types.ModuleType("broken_smoke")
+        with (self.assertRaises(ImportError),
+              mock.patch.dict(sys.modules, {SCOPE_MODULES["base"]: None})):
+            smoke_cli.main(["base"])
+
+        module = types.ModuleType(SCOPE_MODULES["base"])
 
         def load_tests(loader, suite, pattern):
             return loader.loadTestsFromName("missing_case", module)
 
         module.load_tests = load_tests
-        for patch in (
-            mock.patch("ai_review_smoke.loader.importlib.import_module",
-                       side_effect=ImportError("missing module")),
-            mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
-        ):
-            with patch, mock.patch.object(sys, "stderr", new=io.StringIO()):
-                self.assertEqual(smoke_cli.main(["base"]), 1)
+        with (mock.patch.dict(sys.modules, {module.__name__: module}),
+              mock.patch.object(sys, "stderr", new=io.StringIO()) as errors,
+              mock.patch.object(sys, "stdout", new=io.StringIO()) as output):
+            self.assertEqual(smoke_cli.main(["base"]), 1)
+        self.assertIn("ERROR:", errors.getvalue())
+        self.assertIn("has no attribute 'missing_case'", errors.getvalue())
+        self.assertNotIn("collected cases", output.getvalue())
 
     def test_added_and_renamed_tests_run_without_inventory_changes(self) -> None:
-        module = types.ModuleType("collected_smoke")
+        module = types.ModuleType(SCOPE_MODULES["base"])
         ran = []
         case = type("CollectedTests", (unittest.TestCase,), {
             "test_first": lambda self: ran.append("first"),
         })
         module.CollectedTests = case
-        with mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module):
+        with mock.patch.dict(sys.modules, {module.__name__: module}):
             self.assertEqual(build_suite("base").countTestCases(), 1)
             case.test_renamed = case.test_first
             del case.test_first
@@ -84,11 +93,11 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
         self.assertCountEqual(ran, ["first", "added"])
 
     def test_failed_smoke_case_returns_nonzero(self) -> None:
-        module = types.ModuleType("failing_smoke")
+        module = types.ModuleType(SCOPE_MODULES["base"])
         module.FailingTests = type("FailingTests", (unittest.TestCase,), {
             "test_failure": lambda self: self.fail("probe failed"),
         })
-        with (mock.patch("ai_review_smoke.loader.importlib.import_module", return_value=module),
+        with (mock.patch.dict(sys.modules, {module.__name__: module}),
               mock.patch.object(sys, "stderr", new=io.StringIO()),
               mock.patch.object(sys, "stdout", new=io.StringIO())):
             self.assertEqual(smoke_cli.main(["base"]), 1)

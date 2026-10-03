@@ -26,9 +26,11 @@ completed spec is a description of work already visible in the code, tests, and
 ## Simplification work
 
 The [audit handoff](simplification-audit/AGENT_HANDOFF.md) records the completed
-local peripheral slice: S02 and S17, plus partial S18/S19. Its two branches still
-need review and merge. S01's future-only 2.1.0 migration remains pending; plan S10
-as an equivalent grouping refactor, then prioritize S05 among behavior changes.
+peripheral slice: S02 and S17, plus partial S18/S19. Documentation and developer
+checks merged in [#168](https://github.com/seanleecoder/code-tribunal/pull/168);
+[#169](https://github.com/seanleecoder/code-tribunal/pull/169) completes the slice
+with packaged smoke loading. S01's future-only 2.1.0 migration remains pending;
+plan S10 as an equivalent grouping refactor, then prioritize S05 among behavior changes.
 Existing proposals above remain open. Broader audit recommendations and X01
 require separate decisions before implementation.
 
