@@ -4,7 +4,7 @@ The static [review](SIMPLIFICATION_REVIEW.md) describes `main` at
 `ec7e82754db062797a9c4d0646ced79ac2d8e7ff`. Its recommendations are evidence for
 future decisions. The dispositions below govern the completed peripheral slice.
 
-## Completed locally
+## Implemented branches
 
 Two independent branches start from the refreshed `ec7e827` main baseline:
 
@@ -13,9 +13,9 @@ Two independent branches start from the refreshed `ec7e827` main baseline:
 | Documentation and developer checks | `simplify/docs-developer-checks` | Implemented and full quality passed: 1,084 tests passed, one skipped |
 | Packaged smoke loading | `simplify/packaged-smoke-loading` | Implemented and full quality passed: 1,113 tests passed, one skipped |
 
-These are local changes, independently reviewable against main. Neither branch
-has been pushed or merged. The original checkout and its staged audit files are
-preserved. Merge both changes before treating the entire slice as landed.
+These changes are independently reviewable against main. The original checkout
+and its staged audit files are preserved. Both changes still need review and
+merge before the entire slice is landed.
 
 | Item | Disposition and completed scope |
 |---|---|

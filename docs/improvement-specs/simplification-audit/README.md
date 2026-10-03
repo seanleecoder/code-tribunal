@@ -7,7 +7,7 @@ recommendations. The [handoff](AGENT_HANDOFF.md) records current dispositions,
 completed local changes, validation, and remaining work. The static review is
 historical audit evidence, not current implementation instructions.
 
-The first peripheral slice is implemented on two independent local branches:
+The first peripheral slice is implemented on two independent branches:
 `simplify/docs-developer-checks` and `simplify/packaged-smoke-loading`. Both passed
 full quality; both image smoke scopes passed without mounting checkout tests.
 The changes still need review and merge. S01 and all other runtime/policy cuts
