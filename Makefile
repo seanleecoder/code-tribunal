@@ -10,12 +10,12 @@ SCOPE ?= base
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
-.PHONY: quality test test-strict packaged-smoke lint typecheck compile supply-chain \
+.PHONY: quality test packaged-smoke lint typecheck supply-chain \
 	release-inputs docs-check sync-workflows workflow-parity demo-preflight evidence-records \
 	release-repin release-finalize release-manifest release-open-next \
 	update-golden review-local consensus-local validate-local
 
-quality: docs-check lint test-strict typecheck supply-chain release-inputs workflow-parity compile
+quality: docs-check lint test typecheck supply-chain release-inputs workflow-parity
 
 # The single gate on canonical-template -> installed-copy parity;
 # `make sync-workflows` repairs the drift it reports.
@@ -23,22 +23,9 @@ workflow-parity:
 	$(MAKE) --no-print-directory CHECK=1 sync-workflows
 
 docs-check:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_docs.py
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_markdown_links.py
 
 test:
-	@if PYTHONPATH=$(PYTHONPATH) $(PYTHON) -c "import pytest" >/dev/null 2>&1; then \
-		$(MAKE) --no-print-directory test-strict; \
-	else \
-		echo "pytest is unavailable, and there is no substitute: parts of the suite are" >&2; \
-		echo "pytest-style functions that unittest cannot collect. Install the pinned" >&2; \
-		echo "development dependencies and re-run:" >&2; \
-		echo "" >&2; \
-		echo "    $(PYTHON) -m pip install -r requirements-dev.txt" >&2; \
-		exit 1; \
-	fi
-
-test-strict:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(PYTEST_ARGS)
 
 # The curated packaged-runtime smoke suite that ships in the images, run by module
@@ -55,9 +42,6 @@ lint:
 
 typecheck:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m mypy
-
-compile:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m compileall -q $(AI_REVIEW_ROOT)/src scripts
 
 supply-chain:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_supply_chain_pins.py

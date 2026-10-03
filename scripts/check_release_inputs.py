@@ -421,7 +421,7 @@ def validate_release_inputs(
     )
     if data["schema_version"] != RELEASE_INPUTS_SCHEMA_VERSION:
         raise ReleaseValidationError("unsupported release-input schema_version")
-    validate_release_version(data["release_version"])
+    release_version = validate_release_version(data["release_version"])
     if data["status"] not in {"draft", "active"}:
         raise ReleaseValidationError("status must be draft or active")
     if PLACEHOLDER_RE.search(canonical_json_bytes(data).decode()):
@@ -491,6 +491,13 @@ def validate_release_inputs(
         )
     if data["status"] == "active" and not verification["evidence_record_ids"]:
         raise ReleaseValidationError("active release inputs require evidence record identifiers")
+    if data["status"] == "active":
+        notes = root / "release" / f"{release_version}.md"
+        if not notes.is_file():
+            raise ReleaseValidationError(
+                f"release/{release_version}.md: active release inputs require the "
+                "corresponding release notes file"
+            )
     waivers = validate_evidence_records(data, root)
 
     # Canonical-template -> installed-copy parity is not checked here. In the
