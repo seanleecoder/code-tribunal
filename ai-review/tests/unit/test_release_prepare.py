@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -216,6 +217,12 @@ class ReleaseFixture(unittest.TestCase):
             contextlib.redirect_stderr(stderr),
         ):
             return checker.main(), stderr.getvalue()
+
+    def _assert_open_next_refuses(self, message: str) -> None:
+        before = _snapshot(self.root)
+        with self.assertRaisesRegex(tool.ReleaseValidationError, message):
+            tool.open_next(self.root, "10.0.0")
+        self.assertEqual(_snapshot(self.root), before)
 
 
 class ReleasePreparationTests(ReleaseFixture):
@@ -620,6 +627,93 @@ class ReleasePreparationTests(ReleaseFixture):
         )
         checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
 
+    def test_pin_preparation_preserves_template_bytes_under_normal_and_optimized_python(
+        self,
+    ) -> None:
+        paths = ("ai-review/ci/review.github-actions.yml", "ai-review/ci/review.gitlab-ci.yml")
+        originals = {relative: (self.root / relative).read_bytes() for relative in paths}
+        code = """
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[1]).parent / "ai-review/src"))
+import release_prepare
+edits = release_prepare._template_edits(Path(sys.argv[2]), json.loads(sys.argv[3]))
+print(json.dumps({name: content.hex() for name, content in edits.items()}))
+"""
+        for newline in (b"\n", b"\r\n"):
+            expected = {}
+            for relative in paths:
+                original = originals[relative].decode()
+                if relative.endswith("github-actions.yml"):
+                    original = original.replace("    container: ", "    container:    ")
+                    pins = tool.github_job_containers(original)
+                    replacements = {
+                        index: (value, self.candidate[f"{tool.GITHUB_CONTAINER_ROLES[job]}_image"])
+                        for job, (index, value) in pins.items()
+                    }
+                else:
+                    pins = tool.gitlab_template_pins(original)
+                    replacements = {
+                        index: (value, self.candidate[tool.GITLAB_PIN_FIELDS[key]])
+                        for key, (index, value) in pins.items()
+                    }
+                lines = original.splitlines(keepends=True)
+                wanted = lines.copy()
+                for index, (old, new) in replacements.items():
+                    # Repeated old values in comments must remain byte-identical.
+                    if relative.endswith("gitlab-ci.yml"):
+                        lines[index] = lines[index].rstrip("\n") + f" # previous {old}\n"
+                    wanted[index] = lines[index].replace(old, new, 1)
+                prefix = "# 日本語; untouched template content\n"
+                content = (prefix + "".join(lines)).encode().replace(b"\n", newline)
+                (self.root / relative).write_bytes(content)
+                expected[relative] = (prefix + "".join(wanted)).encode().replace(b"\n", newline)
+            expected[".github/workflows/ai-review.yml"] = expected[paths[0]]
+            before = _snapshot(self.root)
+            for flags in ([], ["-O"]):
+                command = [sys.executable, *flags, "-c", code, str(REPO / "scripts"),
+                           str(self.root), json.dumps(self.candidate)]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual({name: bytes.fromhex(value)
+                                  for name, value in json.loads(result.stdout).items()}, expected)
+                self.assertEqual(_snapshot(self.root), before)
+                gitlab = self.root / paths[1]
+                valid = gitlab.read_bytes()
+                gitlab.write_bytes(valid.replace(b'AI_REVIEW_BASE_IMAGE: "',
+                                                b'AI_REVIEW_BASE_IMAGE: ', 1))
+                malformed = _snapshot(self.root)
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ReleaseValidationError: malformed GitLab AI_REVIEW_BASE_IMAGE pin",
+                              result.stderr)
+                self.assertEqual(_snapshot(self.root), malformed)
+                gitlab.write_bytes(valid)
+
+    def test_missing_replacement_span_is_a_labelled_error_under_optimized_python(self) -> None:
+        code = """
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[1]).parent / "ai-review/src"))
+import release_prepare as tool
+tool.gitlab_template_pins = lambda text: {
+    key: (0, "absent quoted value") for key in tool.GITLAB_PIN_FIELDS
+}
+tool._template_edits(Path(sys.argv[2]), json.loads(sys.argv[3]))
+"""
+        before = _snapshot(self.root)
+        for flags in ([], ["-O"]):
+            result = subprocess.run(
+                [sys.executable, *flags, "-c", code, str(REPO / "scripts"),
+                 str(self.root), json.dumps(self.candidate)], capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("ReleaseValidationError: cannot replace GitLab AI_REVIEW_BASE_IMAGE pin",
+                          result.stderr)
+            self.assertEqual(_snapshot(self.root), before)
+
     def test_one_captured_canary_load_produces_the_complete_valid_edit_set(self) -> None:
         waived_path = self.root / "docs/evidence" / WAIVED
         waived_bytes = waived_path.read_bytes()
@@ -745,6 +839,7 @@ class ReleasePreparationTests(ReleaseFixture):
         self.assertEqual(self._quality()[0], 0)
 
     def test_open_next_orders_numeric_prerelease_identifiers(self) -> None:
+        self._register_signer()
         self._prepare()
         current = VERSION + "-rc.2"
         path = self.root / "release/release-inputs.json"
@@ -754,8 +849,9 @@ class ReleasePreparationTests(ReleaseFixture):
         (self.root / f"release/{current}.md").write_text(
             (self.root / f"release/{VERSION}.md").read_text().replace(VERSION, current)
         )
-        self._commit_release()
-        _git(self.root, "tag", f"v{current}")
+        P = self._commit_release()
+        _git(self.root, "update-ref", "refs/remotes/origin/main", P)
+        _git(self.root, "tag", "-s", f"v{current}", "-m", "prerelease fixture")
         for version in (VERSION + "-rc.1", current):
             with self.assertRaisesRegex(tool.ReleaseValidationError, "strictly higher"):
                 tool.open_next(self.root, version)
@@ -929,11 +1025,11 @@ class ReleasePreparationTests(ReleaseFixture):
             checker.validate_release_commit(P, self.runtime_source, self.root)
 
     def test_open_next_creates_version_correct_notes_and_never_overwrites(self) -> None:
+        self._register_signer()
         self._prepare()
-        self._commit_release()
         with self.assertRaisesRegex(tool.ReleaseValidationError, "tag the active release"):
             tool.open_next(self.root, "9.9.10")
-        _git(self.root, "tag", f"v{VERSION}")
+        self._tag_release()
         _git(self.root, "tag", "v10.0.1")
         for version in ("9.9.8", VERSION, "9.9.9-rc.1", "10.0.1"):
             before = _snapshot(self.root)
@@ -1009,6 +1105,36 @@ class ReleasePreparationTests(ReleaseFixture):
         _git(self.root, "add", "runtime.py")
         _git(self.root, "commit", "-qm", "ordinary fix after tagging")
         self.assertEqual(self._quality()[0], 0)
+        with mock.patch.object(common, "gh", side_effect=AssertionError("unexpected API lookup")):
+            tool.open_next(self.root, "10.0.0")
+
+    def test_missing_local_tag_retains_boundary_error_and_explains_recovery(self) -> None:
+        self._prepare()
+        self._commit_release()
+        (self.root / "runtime.py").write_text("ordinary update after a tag absent locally\n")
+        status, error = self._quality()
+        self.assertEqual(status, 1)
+        self.assertIn("release contains disallowed paths: runtime.py", error)
+        self.assertIn(f"release tag v{VERSION} was not found locally", error)
+        self.assertIn("If the release has already been tagged", error)
+        self.assertIn("git fetch origin --tags", error)
+        self.assertFalse(common.tag_exists(f"v{VERSION}", self.root))
+
+    def test_open_next_rejects_runtime_source_outside_the_release_ancestry(self) -> None:
+        self._register_signer()
+        self._prepare()
+        base = self._commit_release()
+        (self.root / "runtime.py").write_text("sibling candidate\n")
+        sibling = self._commit_release()
+        _git(self.root, "checkout", "--detach", base)
+        for relative, content in _snapshot(self.root).items():
+            if self.runtime_source.encode() in content:
+                (self.root / relative).write_bytes(
+                    content.replace(self.runtime_source.encode(), sibling.encode())
+                )
+        self._tag_release()
+        self._assert_open_next_refuses("release commit P must descend from runtime source R")
+        self.assertIn("must descend from runtime source R", self._quality()[1])
 
     def test_tagged_quality_requires_matching_inputs_and_checkout_ancestry(self) -> None:
         self._register_signer()
@@ -1022,12 +1148,14 @@ class ReleasePreparationTests(ReleaseFixture):
         status, error = self._quality()
         self.assertEqual(status, 1)
         self.assertIn("must match their tagged inputs", error)
+        self._assert_open_next_refuses("must match their tagged inputs")
         inputs.write_bytes(original)
         _git(self.root, "checkout", "--detach", self.runtime_source)
         _git(self.root, "checkout", P, "--", ".")
         status, error = self._quality()
         self.assertEqual(status, 1)
         self.assertIn("checkout must descend", error)
+        self._assert_open_next_refuses("checkout must descend")
 
     def test_tagged_quality_still_rejects_disallowed_paths_in_the_release_commit(self) -> None:
         self._register_signer()
@@ -1037,6 +1165,7 @@ class ReleasePreparationTests(ReleaseFixture):
         status, error = self._quality()
         self.assertEqual(status, 1)
         self.assertIn("release contains disallowed paths: runtime.py", error)
+        self._assert_open_next_refuses("release contains disallowed paths: runtime.py")
 
     def test_tagged_quality_still_checks_current_evidence_pins_and_workflow_parity(self) -> None:
         self._register_signer()

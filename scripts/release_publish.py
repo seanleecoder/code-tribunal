@@ -44,10 +44,10 @@ def publication_flags(version: str, releases: list[dict[str, Any]]) -> tuple[boo
         if release.get("draft") or release.get("prerelease"):
             continue
         tag = release.get("tag_name", "")
-        if not isinstance(tag, str) or not tag.startswith("v"):
+        if not isinstance(tag, str):
             continue
         try:
-            published = validate_release_version(tag[1:])
+            published = release_tag_version(tag)
         except ReleaseValidationError:
             continue
         if "-" not in published and compare_release_versions(version, published) < 0:

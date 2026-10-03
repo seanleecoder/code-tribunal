@@ -26,12 +26,12 @@ from release_common import (
     image_ref,
     load_json,
     markdown_headings,
+    mask_markdown,
     sync_workflows,
     tag_exists,
     tagged_release,
     validate_release_paths,
     validate_release_version,
-    without_fenced_code,
     working_tree_paths,
 )
 
@@ -49,7 +49,6 @@ GITLAB_PIN_FIELDS = {
 }
 
 EVIDENCE_DIR = Path("docs/evidence")
-_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _STATUS_RE = re.compile(r"(?im)^Status:[ \t]*([^\r\n]*?)[ \t]*\r?$")
 _BINDING_RE = re.compile(
     r"(?im)^(?:- )?Release-(runtime-source|base-digest|reviewer-digest):"
@@ -185,11 +184,6 @@ def gitlab_template_pins(text: str) -> dict[str, tuple[int, str]]:
     return pins
 
 
-def _strip_html_comments(text: str) -> str:
-    """Remove HTML comments so template examples cannot become live bindings."""
-    return _HTML_COMMENT_RE.sub("", text)
-
-
 def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Path = ROOT) -> None:
     """Validate candidate pins independently of release activation."""
     expected_refs = {role: image_ref(image, runtime_source) for role, image in images.items()}
@@ -215,20 +209,17 @@ def validate_template_pins(images: dict[str, Any], runtime_source: str, root: Pa
         raise ReleaseValidationError("GitLab template pins do not match release inputs")
 
 
-def release_bindings(text: str) -> dict[str, list[str]]:
-    """Return certification bindings from the record's live metadata header."""
+def certification_header(text: str) -> tuple[list[str], dict[str, list[str]]]:
+    """Parse status and release bindings once from the live certification header."""
+    text = mask_markdown(text)
+    headings = markdown_headings(text)
+    header = text[:headings[0][1]] if headings else text
     bindings: dict[str, list[str]] = {
         "runtime-source": [], "base-digest": [], "reviewer-digest": [],
     }
-    for field, value in _BINDING_RE.findall(_record_header(text)):
+    for field, value in _BINDING_RE.findall(header):
         bindings[field.lower()].append(value.removeprefix("`").removesuffix("`"))
-    return bindings
-
-
-def _record_header(text: str) -> str:
-    text = without_fenced_code(_strip_html_comments(text))
-    headings = markdown_headings(text)
-    return text[:headings[0][1]] if headings else text
+    return _STATUS_RE.findall(header), bindings
 
 
 def validate_evidence_selection(data: dict[str, Any]) -> list[str]:
@@ -286,12 +277,12 @@ def validate_evidence_records(
             if record_id in waivers:
                 continue  # Historical contents are not a current-candidate certificate.
             content = read_file(relative) if read_file else path.read_bytes()
-            text = _record_header(content.decode("utf-8"))
+            statuses, bindings = certification_header(content.decode("utf-8"))
         except (OSError, UnicodeError) as exc:
             raise ReleaseValidationError(f"cannot read evidence record {record_id}: {exc}") from exc
         if data["status"] == "draft":
             continue
-        if _STATUS_RE.findall(text) != ["passed"]:
+        if statuses != ["passed"]:
             raise ReleaseValidationError(
                 f"evidence record {record_id} status must be exact 'passed'"
             )
@@ -300,7 +291,7 @@ def validate_evidence_records(
             "base-digest": data["images"]["base"]["digest"],
             "reviewer-digest": data["images"]["reviewer"]["digest"],
         }
-        for field, values in release_bindings(text).items():
+        for field, values in bindings.items():
             if not values:
                 raise ReleaseValidationError(
                     f"evidence record {record_id} must declare Release-{field}"
@@ -451,6 +442,16 @@ def validate_release_inputs(
     return waivers
 
 
+def validate_tagged_checkout(data: dict[str, Any], root: Path = ROOT) -> None:
+    """Apply the trusted post-tag boundary shared by quality and open-next."""
+    release = tagged_release(root, f"v{data['release_version']}")
+    if release.inputs != data:
+        raise ReleaseValidationError("active release inputs must match their tagged inputs")
+    if not git_is_ancestor(release.release_commit, git(root, "rev-parse", "HEAD"), root):
+        raise ReleaseValidationError("checkout must descend from tagged release commit P")
+    validate_release_commit(data["runtime_source"], release.release_commit, root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", nargs="?", type=Path, default=RELEASE_INPUTS)
@@ -459,24 +460,19 @@ def main() -> int:
         data = load_json(args.path)
         waivers = validate_release_inputs(data, ROOT)
         if data["status"] == "active":
-            head = git(ROOT, "rev-parse", "HEAD")
             tag = f"v{data['release_version']}"
             tagged = tag_exists(tag, ROOT)
-            release_commit = head
             if tagged:
-                release = tagged_release(ROOT, tag)
-                release_commit = release.release_commit
-                if release.inputs != data:
+                validate_tagged_checkout(data, ROOT)
+            else:
+                head = git(ROOT, "rev-parse", "HEAD")
+                try:
+                    validate_release_commit(data["runtime_source"], head, ROOT, pending=True)
+                except ReleaseValidationError as exc:
                     raise ReleaseValidationError(
-                        "active release inputs must match their tagged inputs"
-                    )
-                if not git_is_ancestor(release_commit, head, ROOT):
-                    raise ReleaseValidationError(
-                        "checkout must descend from tagged release commit P"
-                    )
-            validate_release_commit(
-                data["runtime_source"], release_commit, ROOT, pending=not tagged
-            )
+                        f"{exc}; release tag {tag} was not found locally. If the release "
+                        "has already been tagged, run git fetch origin --tags and retry."
+                    ) from exc
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

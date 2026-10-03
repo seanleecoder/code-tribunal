@@ -891,7 +891,7 @@ class ReleaseToolTests(unittest.TestCase):
                 data["verification"]["evidence_waivers"] = {record_id: reason}
                 with mock.patch.object(Path, "read_bytes", autospec=True, side_effect=read):
                     self.assertEqual(validate_release_inputs(data, root), [(record_id, reason)])
-            for reason in ("TODO", "tbd", " REPLACE-ME ", "sha256:replace-me"):
+            for reason in ("TODO", "tbd", " REPLACE-ME ", "replace_me", "sha256:replace-me"):
                 data["verification"]["evidence_waivers"] = {record_id: reason}
                 with self.assertRaisesRegex(ReleaseValidationError, "placeholder"):
                     validate_release_inputs(data, root)
@@ -912,6 +912,31 @@ class ReleaseToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseValidationError, "symlink"):
                 validate_release_inputs(data, root)
 
+    def test_machine_placeholders_have_ascii_letter_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            original = self._active(root)
+            for field in ("ci_run_id", "publication_run_id", "evidence_record_ids",
+                          "evidence_waivers"):
+                for placeholder in ("replace_me", "TODO_fill", "ci_run_TBD", "tbd1"):
+                    data = deepcopy(original)
+                    value = placeholder
+                    if field == "evidence_record_ids":
+                        value = [placeholder + ".md"]
+                    elif field == "evidence_waivers":
+                        value = {placeholder + ".md": "historical record"}
+                    data["verification"][field] = value
+                    with (
+                        self.subTest(field=field, placeholder=placeholder),
+                        self.assertRaisesRegex(ReleaseValidationError, "placeholder"),
+                    ):
+                        validate_release_inputs(data, root)
+            data = deepcopy(original)
+            data["verification"]["ci_run_id"] = "replaced_tomorrow"
+            data["verification"]["publication_run_id"] = "methodology"
+            validate_release_inputs(data, root)
+
     def test_metadata_header_ignores_comments_fences_and_section_observations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -924,6 +949,19 @@ class ReleaseToolTests(unittest.TestCase):
                 text = f"<!-- {log} -->\n{fence}\n## Fake header\n{log}{fence}\n" + original
                 path.write_text(text + "\n## Operator notes\n\n" + log)
                 validate_release_inputs(data, root)
+                # A literal opener in code cannot consume a subsequent real comment.
+                text = f"{fence}\n<!--\n{fence}\n<!--\n{log}## Fake header\n-->\n" + original
+                path.write_bytes(text.replace("\n", "\r\n").encode())
+                validate_release_inputs(data, root)
+                masked = release_input_checker.mask_markdown(text)
+                self.assertEqual(len(masked), len(text))
+                headings = release_input_checker.markdown_headings(masked)
+                self.assertEqual(headings[0][0], "Identity")
+                self.assertEqual(headings[0][1], text.index("## Identity"))
+                # Conversely, commented certification cannot make a record pass.
+                path.write_text(f"{fence}\n<!--\n{fence}\n<!--\n{original}-->\n")
+                with self.assertRaisesRegex(ReleaseValidationError, "exact 'passed'"):
+                    validate_release_inputs(data, root)
             for invalid in (
                 original.replace("Status: passed", "Status:\npassed"),
                 original.replace("Release-runtime-source: `", "Release-runtime-source:\n`"),

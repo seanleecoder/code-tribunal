@@ -29,6 +29,7 @@ from check_release_inputs import (
     validate_evidence_selection,
     validate_release_commit,
     validate_release_inputs,
+    validate_tagged_checkout,
 )
 from release_common import (
     DIGEST_RE,
@@ -42,6 +43,7 @@ from release_common import (
     image_ref,
     load_json,
     markdown_headings,
+    mask_markdown,
     successful_run,
     tag_exists,
     validate_release_paths,
@@ -136,29 +138,33 @@ def _write_edits(root: Path, edits: dict[str, bytes]) -> tuple[str, ...]:
 
 def _template_edits(root: Path, candidate: dict[str, str]) -> dict[str, bytes]:
     canonical_path = WORKFLOW_PAIRS[0][0]
-    text = (root / canonical_path).read_text(encoding="utf-8")
+    text = (root / canonical_path).read_bytes().decode("utf-8")
     lines = text.splitlines(keepends=True)
-    for job, (index, _) in github_job_containers(text).items():
+    for job, (index, previous) in github_job_containers(text).items():
         role = GITHUB_CONTAINER_ROLES[job]
-        lines[index] = f"    container: {candidate[f'{role}_image']}\n"
+        prefix, separator, suffix = lines[index].partition(previous)
+        if not separator:
+            raise ReleaseValidationError(f"cannot replace GitHub {job} container pin")
+        lines[index] = prefix + candidate[f"{role}_image"] + suffix
     canonical = "".join(lines).encode()
     edits = {canonical_path: canonical, WORKFLOW_PAIRS[0][1]: canonical}
     gitlab_path = "ai-review/ci/review.gitlab-ci.yml"
-    gitlab = (root / gitlab_path).read_text(encoding="utf-8")
+    gitlab = (root / gitlab_path).read_bytes().decode("utf-8")
     pins = gitlab_template_pins(gitlab)
     lines = gitlab.splitlines(keepends=True)
     for key, field in GITLAB_PIN_FIELDS.items():
         value = candidate[field]
         index, previous = pins[key]
         prefix, separator, suffix = lines[index].partition(f'"{previous}"')
-        assert separator
+        if not separator:
+            raise ReleaseValidationError(f"cannot replace GitLab {key} pin")
         lines[index] = f'{prefix}"{value}"{suffix}'
     edits[gitlab_path] = "".join(lines).encode()
     return edits
 
 
 def _replace_generated_blocks(text: str, bodies: dict[str, str]) -> str:
-    headings = [heading for heading, _, _ in markdown_headings(text)]
+    headings = [heading for heading, _, _ in markdown_headings(mask_markdown(text))]
     for heading in ("Release identity", "Live campaign"):
         if headings.count(heading) != 1:
             raise ReleaseValidationError(f"release notes require exactly one {heading} section")
@@ -292,6 +298,7 @@ def open_next(root: Path, version: str) -> tuple[str, ...]:
     validate_release_inputs(data, root)
     if data["status"] != "active" or not tag_exists(f"v{data['release_version']}", root):
         raise ReleaseValidationError("tag the active release before opening the next draft")
+    validate_tagged_checkout(data, root)
     if compare_release_versions(version, data["release_version"]) <= 0:
         raise ReleaseValidationError(
             "next draft version must be strictly higher than the active release"

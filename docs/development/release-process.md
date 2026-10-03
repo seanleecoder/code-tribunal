@@ -114,6 +114,12 @@ with `git fetch origin --tags` before release commands.
    never edited. Prereleases remain prereleases and older stable versions do not
    replace a newer latest release. Opening the next draft
    resets identity and verification selections and creates version-correct notes.
+   Before writing, it verifies the annotated SSH-signed tag and its exact signed
+   header name against the requested release tag, using protected `origin/main`'s
+   signer registry. Current active inputs must match the tagged inputs; `R → P → main`,
+   allowed release paths in `R → P`, and checkout ancestry from `P` must hold.
+   It uses the same trusted post-tag boundary as quality. Operators still verify
+   publication separately; open-next does not query publication status or CI APIs.
    It requires a higher, untagged version and refuses an existing notes destination.
    Review and commit the draft reset in a follow-up PR.
 
@@ -124,6 +130,11 @@ or untrusted tags fail closed. Release-path
 restrictions then apply to `R → P`, allowing ordinary PRs while publication or
 open-next is pending. Current evidence bindings, pins/parity, and tag-identical
 notes remain checked. CI fetches full history and tags for this boundary.
+If the active version's tag is absent locally, quality applies the pre-tag boundary
+and fails closed on disallowed changes. Its error retains the boundary failure and
+identifies the missing local tag. If the release has already been tagged, run
+`git fetch origin --tags` and retry; validation never fetches or relaxes the boundary
+automatically.
 
 Do not describe a release as stable before its required evidence is complete.
 Current tooling accepts v3 only. The removed commands are `evidence-records`,
@@ -199,7 +210,7 @@ Verification resolves signers from [`.github/allowed_signers`](../../.github/all
 Add an entry when a new releaser joins, and remove one when they leave — an
 unlisted key verifies as `No principal matched`, not as a bad signature.
 
-Publication and post-tag quality use only the signer registry fetched from
+Publication, post-tag quality, and open-next use only the signer registry fetched from
 protected `origin/main`, copied to a temporary trust file. A key retained in a historical tag's tree no
 longer authorizes publication after it is removed from main; a key registered
 only on main can authorize a historical tag. Missing or empty main trust data

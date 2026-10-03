@@ -461,6 +461,7 @@ class RecordRegenerationTests(unittest.TestCase):
             "\n```markdown\n## Operator notes\n## Verdict\n```\n\n",
             "\n````markdown\n```\n## Verdict\n````\n\n",
             "\n   ~~~markdown\n## Operator notes\n## Verdict\n   ~~~~\n\n",
+            "\n```html\n<!--\n```\n<!--\n## Operator notes\n## Verdict\n-->\n\n",
             "\n- Candidate Canary run: [`100`](https://other.example/runs/100), 2026-09-30\n"
             f"Release-runtime-source: {'f' * 40}\n\n",
         )

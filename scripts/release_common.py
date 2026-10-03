@@ -90,7 +90,9 @@ RELEASE_VERSION_RE = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
 IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)")
-PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)\b", re.I)
+PLACEHOLDER_RE = re.compile(
+    r"(?<![A-Za-z])(?:TODO|TBD|REPLACE(?:[-_]ME)?|sha256:replace-me)(?![A-Za-z])", re.I | re.A
+)
 
 
 def without_fenced_code(text: str) -> str:
@@ -112,14 +114,18 @@ def without_fenced_code(text: str) -> str:
     return "".join(output)
 
 
-def markdown_headings(text: str) -> list[tuple[str, int, int]]:
-    """Return real H2 headings with their original start/end offsets."""
+def mask_markdown(text: str) -> str:
+    """Mask fences before comments, preserving every offset and line ending."""
     text = without_fenced_code(text)
-    text = re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text, flags=re.S)
+    return re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text, flags=re.S)
+
+
+def markdown_headings(masked: str) -> list[tuple[str, int, int]]:
+    """Return H2 headings and original offsets from already-masked Markdown."""
     return [
         (match[1], match.start(), match.end())
         for match in re.finditer(
-            r"(?m)^ {0,3}##[ \t]+([^\r\n]+?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)", text
+            r"(?m)^ {0,3}##[ \t]+([^\r\n]+?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)", masked
         )
     ]
 
@@ -388,6 +394,12 @@ def tagged_release(root: Path, tag: str) -> TaggedRelease:
     if not FULL_SHA_RE.fullmatch(tag_object) or git(root, "cat-file", "-t", tag_object) != "tag":
         raise ReleaseValidationError("release requires an annotated signed tag")
     annotation = git(root, "cat-file", "tag", tag_object, text=False)
+    names = [line[4:] for line in annotation.partition(b"\n\n")[0].splitlines()
+             if line.startswith(b"tag ")]
+    if names != [tag.encode("utf-8")]:
+        raise ReleaseValidationError(
+            f"signed tag header must name requested release tag exactly once: {tag}"
+        )
     if not re.search(
         rb"\n-----BEGIN SSH SIGNATURE-----\n[A-Za-z0-9+/=\n]+-----END SSH SIGNATURE-----\n?\Z",
         annotation,
@@ -395,7 +407,10 @@ def tagged_release(root: Path, tag: str) -> TaggedRelease:
         raise ReleaseValidationError("release requires an SSH-signed annotated tag")
     release_commit = git(root, "rev-parse", f"{tag_object}^{{commit}}")
     main = git(root, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
-    git(root, "merge-base", "--is-ancestor", release_commit, main)
+    if not git_is_ancestor(release_commit, main, root):
+        raise ReleaseValidationError(
+            "release commit P is not reachable from protected origin/main"
+        )
     signers = git(root, "show", f"{main}:.github/allowed_signers", text=False)
     if not any(
         line.strip() and not line.lstrip().startswith(b"#") for line in signers.splitlines()
@@ -408,7 +423,10 @@ def tagged_release(root: Path, tag: str) -> TaggedRelease:
             root, "-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={trust}",
             "verify-tag", tag_object,
         )
-    tree = git(root, "ls-tree", "-r", "-z", "--full-tree", release_commit, text=False)
+    tree = git(
+        root, "ls-tree", "-r", "-z", "--full-tree", release_commit, "--",
+        "release/release-inputs.json", f"release/{version}.md", "docs/evidence/", text=False,
+    )
     files = frozenset(
         entry.split(b"\t", 1)[1] for entry in tree.split(b"\0")
         if entry.startswith((b"100644 blob ", b"100755 blob "))

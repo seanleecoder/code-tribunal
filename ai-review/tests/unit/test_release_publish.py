@@ -104,12 +104,14 @@ class ReleasePublicationTests(ReleaseFixture):
             with self.assertRaises(publisher.ReleaseValidationError):
                 self.publish()
             self.assertEqual(self._quality()[0], 1)
+            self._assert_open_next_refuses("annotated.*tag")
         _git(self.root, "tag", "-d", self.tag)
         _git(self.root, "tag", "-s", self.tag, "-m", "signed")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
-        with self.assertRaises(publisher.ReleaseValidationError):
+        with self.assertRaisesRegex(publisher.ReleaseValidationError, "P is not reachable"):
             self.publish()
-        self.assertEqual(self._quality()[0], 1)
+        self.assertIn("P is not reachable from protected origin/main", self._quality()[1])
+        self._assert_open_next_refuses("P is not reachable from protected origin/main")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
         allowed = self.root / ".github/allowed_signers"
         allowed.write_text("# revoked signer\n")
@@ -120,6 +122,51 @@ class ReleasePublicationTests(ReleaseFixture):
         with self.assertRaisesRegex(publisher.ReleaseValidationError, "no allowed release signers"):
             self.publish()
         self.assertEqual(self._quality()[0], 1)
+        self._assert_open_next_refuses("no allowed release signers")
+        self.assertFalse(self.created)
+
+    def test_signed_tag_header_rejects_aliased_missing_and_duplicate_names(self) -> None:
+        alias = f"v{VERSION}-alias"
+        _git(self.root, "tag", "-s", alias, "-m", "valid signature under a different name")
+        aliased_object = _git(self.root, "rev-parse", alias)
+        common.git(
+            self.root, "-c", f"gpg.ssh.allowedSignersFile={self.root / '.github/allowed_signers'}",
+            "verify-tag", aliased_object,
+        )
+        annotation = common.git(self.root, "cat-file", "tag", self.tag_object, text=False)
+        name = f"tag {self.tag}\n".encode()
+        objects = [aliased_object]
+        for malformed in (annotation.replace(name, b"", 1),
+                          annotation.replace(name, name + name, 1)):
+            objects.append(subprocess.check_output(
+                ["git", "-C", str(self.root), "hash-object", "--literally", "-t", "tag",
+                 "-w", "--stdin"], input=malformed,
+            ).decode().strip())
+        for obj in objects:
+            with self.subTest(tag_object=obj):
+                # Git refuses to write malformed tag refs; install the hostile fixture directly.
+                (self.root / ".git/refs/tags" / self.tag).write_text(obj + "\n")
+                with self.assertRaisesRegex(publisher.ReleaseValidationError,
+                                            "signed tag header must name requested release tag"):
+                    self.publish()
+                self.assertIn("signed tag header must name requested release tag",
+                              self._quality()[1])
+                self._assert_open_next_refuses("signed tag header must name requested release tag")
+        self.assertFalse(self.created)
+
+    def test_tagged_release_preserves_genuine_ancestry_git_errors(self) -> None:
+        actual = subprocess.run
+
+        def fail_ancestry(command, **kwargs):
+            if command[:3] == ["git", "merge-base", "--is-ancestor"]:
+                return subprocess.CompletedProcess(command, 128, "", "broken Git database")
+            return actual(command, **kwargs)
+
+        with (
+            mock.patch.object(common.subprocess, "run", side_effect=fail_ancestry),
+            self.assertRaisesRegex(publisher.ReleaseValidationError, "^broken Git database$"),
+        ):
+            self.publish()
         self.assertFalse(self.created)
 
     def test_current_main_signer_registry_overrides_the_tag_tree(self) -> None:
@@ -136,6 +183,7 @@ class ReleasePublicationTests(ReleaseFixture):
         with self.assertRaises(publisher.ReleaseValidationError):
             self.publish()
         self.assertEqual(self._quality()[0], 1)
+        self._assert_open_next_refuses("No principal matched")
         _git(self.root, "config", "user.signingkey", str(replacement))
         _git(self.root, "tag", "-d", self.tag)
         _git(self.root, "tag", "-s", self.tag, "-m", "new main signer")
@@ -161,6 +209,10 @@ class ReleasePublicationTests(ReleaseFixture):
             self.assertTrue(self.publish())
         commands = [call.args[1:] for call in git.call_args_list]
         self.assertEqual(sum(command[0] == "ls-tree" for command in commands), 1)
+        inventory = next(command for command in commands if command[0] == "ls-tree")
+        self.assertEqual(inventory[inventory.index("--") + 1:], (
+            "release/release-inputs.json", f"release/{VERSION}.md", "docs/evidence/",
+        ))
         self.assertNotIn(("show", f"{self.P}:docs/evidence/{WAIVED}"), commands)
 
     def test_waivers_require_regular_blobs_in_the_captured_tree(self) -> None:
@@ -351,7 +403,9 @@ class PublicationContractTests(unittest.TestCase):
     def test_flags_preserve_semver_prerelease_latest_and_all_pages(self) -> None:
         releases = [
             [{"tag_name": "v9.0.0", "draft": True}, {"tag_name": "v8.0.0", "prerelease": True}],
-            [{"tag_name": "v2.10.0"}, {"tag_name": "v2.9.0"}, {"tag_name": "invalid"}],
+            [{"tag_name": tag} for tag in (
+                "v2.10.0", "v2.9.0", "invalid", None, 123, "v02.0.0", "v99.0.0-01",
+            )],
         ]
         with mock.patch.object(common, "gh", return_value=json.dumps(releases)) as gh:
             published = publisher.published_releases()
