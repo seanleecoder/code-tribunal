@@ -24,7 +24,8 @@ pinned native Lychee binary to check local Markdown links and anchors, including
 remapped draft-release links. Historical release notes retain their separate
 link handling and tagged-note byte checks. GitLab installation examples are
 validated by the pipeline-trust tests; active release notes must exist under
-release-input validation.
+release-input validation. IDs in the temporary-compatibility register are checked
+against their code markers by `test_temporary_compatibility.py`.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review

@@ -33,8 +33,9 @@ make packaged-smoke SCOPE=base
 `make test` runs pytest, which is the only supported test command: parts of the
 suite are pytest-style functions that `unittest` cannot collect, so there is no
 fallback runner. Install the pinned development dependencies from
-`requirements-dev.txt` before running it. Ruff parses the Python sources during
-linting; image builds retain their compilation pass.
+`requirements-dev.txt` before running it. The pinned Lychee binary must also be
+on `PATH`, installed as shown in the first code block. Ruff parses the Python
+sources during linting; image builds retain their compilation pass.
 
 `make packaged-smoke` runs the curated packaged-runtime smoke suite that ships in
 the published images, by the same module name the image preflight uses.
