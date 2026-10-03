@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from dataclasses import replace
 from datetime import date
@@ -107,6 +108,7 @@ class ReleaseFixture(unittest.TestCase):
         (self.root / "release/spare.txt").write_text("allowed release file\n")
         for args in (
             ("init", "-q", "-b", "main"),
+            ("remote", "add", "origin", f"git@github.com:{common.REPOSITORY}.git"),
             ("config", "user.name", "Release fixture"),
             ("config", "user.email", "fixture@example.test"),
             ("config", "commit.gpgsign", "false"),
@@ -128,7 +130,7 @@ class ReleaseFixture(unittest.TestCase):
         for summary in summaries.values():
             summary["candidate"] = copy.deepcopy(self.candidate)
         self.run = replace(captured, summaries=summaries)
-        self.generated = records.render_records(self.run)
+        self.generated = records.render_records(self.run)[1]
         evidence_dir = self.root / "docs/evidence"
         evidence_dir.mkdir(parents=True)
         for name, body in self.generated.items():
@@ -226,6 +228,214 @@ class ReleaseFixture(unittest.TestCase):
 
 
 class ReleasePreparationTests(ReleaseFixture):
+    def _exercise_write_failures(self, action) -> None:
+        captured = {}
+        with mock.patch.object(tool, "_write_edits", side_effect=lambda root, edits:
+                               captured.update(edits) or tuple(edits)):
+            action()
+        for relative, mode in (("release/release-inputs.json", 0o640),
+                               ("CHANGELOG.md", 0o755)):
+            (self.root / relative).chmod(mode)
+        before = _snapshot(self.root)
+        modes = {name: (self.root / name).stat().st_mode for name in before}
+        stages = len(captured) + sum((self.root / name).exists() for name in captured)
+        for owner, name, count in ((tool.tempfile, "NamedTemporaryFile", stages),
+                                   (tool.os, "fsync", stages),
+                                   (tool.os, "replace", len(captured))):
+            original = getattr(owner, name)
+            for fail_at in range(1, count + 1):
+                calls = 0
+
+                def fail_once(*args, fail_at=fail_at, name=name, original=original, **kwargs):
+                    nonlocal calls
+                    calls += 1
+                    if calls == fail_at:
+                        raise OSError(f"injected {name} failure {fail_at}")
+                    return original(*args, **kwargs)
+
+                with (self.subTest(operation=name, fail_at=fail_at),
+                      mock.patch.object(owner, name, side_effect=fail_once),
+                      self.assertRaisesRegex(OSError, "injected")):
+                    action()
+                self.assertEqual(_snapshot(self.root), before)
+                self.assertEqual({name: (self.root / name).stat().st_mode for name in before},
+                                 modes)
+        replaced = []
+        original = tool.os.replace
+
+        def observe(source, destination):
+            replaced.append(Path(destination).relative_to(self.root).as_posix())
+            return original(source, destination)
+
+        with mock.patch.object(tool.os, "replace", side_effect=observe):
+            action()  # A retry after all injected failures succeeds.
+        self.assertEqual(replaced[-1], "release/release-inputs.json")
+        self.assertEqual((self.root / "release/release-inputs.json").stat().st_mode,
+                         modes["release/release-inputs.json"])
+        self.assertEqual((self.root / "CHANGELOG.md").stat().st_mode, modes["CHANGELOG.md"])
+        self.assertFalse(list(self.root.rglob("*.backup")))
+        self.assertFalse(list(self.root.rglob("*.staged")))
+
+    def test_first_preparation_rolls_back_every_staging_and_replacement_failure(self) -> None:
+        for name in self.generated:
+            (self.root / "docs/evidence" / name).unlink()
+        self._exercise_write_failures(self._prepare)
+
+    def test_repeated_preparation_rolls_back_every_staging_and_replacement_failure(self) -> None:
+        self._prepare()
+        record = self.root / "docs/evidence" / next(iter(self.generated))
+        record.write_text(record.read_text().replace("None recorded.", "Saved operator notes."))
+        self._exercise_write_failures(self._prepare)
+        self.assertIn("Saved operator notes.", record.read_text())
+
+    def test_open_next_rolls_back_every_staging_and_replacement_failure(self) -> None:
+        self._register_signer()
+        self._prepare()
+        self._tag_release()
+        self._exercise_write_failures(lambda: tool.open_next(self.root, "10.0.0"))
+        self.assertEqual(tool.load_json(self.root / "release/release-inputs.json")["status"],
+                         "draft")
+
+    def test_rollback_failure_retains_backups_and_reports_recovery_paths(self) -> None:
+        path = self.root / "release/spare.txt"
+        before = path.read_bytes()
+        replace = tool.os.replace
+
+        def deny(source, destination):
+            if Path(source).suffix == ".backup" or Path(destination).name == "new.md":
+                raise PermissionError("injected replacement/rollback denial")
+            return replace(source, destination)
+
+        with (mock.patch.object(tool.os, "replace", side_effect=deny),
+              self.assertRaisesRegex(tool.ReleaseValidationError,
+                                     "recovery files retained") as exc):
+            tool._write_edits(self.root, {"release/spare.txt": b"new bytes",
+                                         "release/new.md": b"new output"})
+        backups = list(self.root.rglob("*.backup"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), before)
+        self.assertIn(str(backups[0]), str(exc.exception))
+        self.assertEqual(path.read_bytes(), b"new bytes")
+
+    def test_null_image_names_refuse_before_canary_access(self) -> None:
+        for role in ("base", "reviewer"):
+            data = copy.deepcopy(self.draft)
+            data["images"][role]["name"] = None
+            (self.root / "release/release-inputs.json").write_bytes(
+                common.canonical_json_bytes(data)
+            )
+            checker.validate_release_inputs(data, self.root)  # Still a valid draft.
+            before = _snapshot(self.root)
+            with (mock.patch.object(tool, "load_run") as loader,
+                  self.assertRaisesRegex(tool.ReleaseValidationError, f"images.{role}.name")):
+                tool.prepare(self.root, self.run.run_id)
+            loader.assert_not_called()
+            self.assertEqual(_snapshot(self.root), before)
+
+    def test_ci_lookups_overlap_and_report_errors_in_workflow_order(self) -> None:
+        self.lookup.stop()
+        barrier = threading.Barrier(2, timeout=5)
+
+        def lookup(runtime, workflow, **kwargs):
+            barrier.wait()
+            raise tool.ReleaseValidationError(f"{workflow} injected failure")
+
+        before = _snapshot(self.root)
+        with (mock.patch.object(tool, "successful_run", side_effect=lookup) as lookups,
+              self.assertRaisesRegex(tool.ReleaseValidationError, "^ci.yml injected failure")):
+            self._prepare()
+        self.assertEqual(lookups.call_count, 2)
+        self.assertEqual(_snapshot(self.root), before)
+
+    def test_malformed_candidate_data_has_labelled_diagnostics_without_writes(self) -> None:
+        for field in ("runtime_source", "base_image", "reviewer_image"):
+            for invalid in (None, False, 123, [], {}):
+                summaries = copy.deepcopy(self.run.summaries)
+                for summary in summaries.values():
+                    summary["candidate"][field] = invalid
+                before = _snapshot(self.root)
+                with (self.subTest(field=field, invalid=invalid),
+                      mock.patch.object(tool, "load_run",
+                                        return_value=replace(self.run, summaries=summaries)),
+                      self.assertRaisesRegex(records.RecordError, f"candidate {field}")):
+                    tool.prepare(self.root, self.run.run_id)
+                self.assertEqual(_snapshot(self.root), before)
+            summaries = copy.deepcopy(self.run.summaries)
+            for summary in summaries.values():
+                del summary["candidate"][field]
+            with (mock.patch.object(tool, "load_run",
+                                    return_value=replace(self.run, summaries=summaries)),
+                  self.assertRaisesRegex(records.RecordError, "invalid canary summary data")):
+                tool.prepare(self.root, self.run.run_id)
+
+    def test_preparation_preserves_crlf_and_mixed_changelog_bytes_on_repeat(self) -> None:
+        for original in (self.changelog.replace("\n", "\r\n"),
+                         self.changelog.replace("## [Unreleased]\n", "## [Unreleased]\r\n")):
+            (self.root / "release/release-inputs.json").write_bytes(
+                common.canonical_json_bytes(self.draft)
+            )
+            (self.root / "CHANGELOG.md").write_bytes(original.encode())
+            self._prepare()
+            promoted = original.replace("## [Unreleased]",
+                                        f"## [Unreleased]\r\n\r\n## [{VERSION}] - 2026-10-01")
+            self.assertEqual((self.root / "CHANGELOG.md").read_bytes(), promoted.encode())
+            self._prepare()
+            self.assertEqual((self.root / "CHANGELOG.md").read_bytes(), promoted.encode())
+
+    def test_campaign_links_encode_filenames_and_escape_table_labels(self) -> None:
+        names = ("space name.md", "日本語[proof]|50%.md", "a(b)#c?d&e<g>.md", "a`b*_.md")
+        for name in names:
+            (self.root / "docs/evidence" / name).write_bytes(
+                (self.root / "docs/evidence" / MANUAL[0]).read_bytes()
+            )
+        self.draft["verification"]["evidence_record_ids"] = list(names)
+        (self.root / "release/release-inputs.json").write_bytes(
+            common.canonical_json_bytes(self.draft)
+        )
+        self._prepare()
+        notes = (self.root / f"release/{VERSION}.md").read_text()
+        for name in names:
+            self.assertIn(f"/docs/evidence/{tool.quote(name, safe='')})", notes)
+        self.assertIn(r"日本語\[proof\]\|50%\.md", notes)
+        self.assertIn("&amp;e&lt;g\\>", notes)
+        self.assertEqual(common.release_note_destination_issues(
+            self.root / f"release/{VERSION}.md", notes, root=self.root,
+        ), [])
+
+    def test_generated_markers_in_comments_and_fences_preserve_authored_content(self) -> None:
+        hidden = ("<!-- Example\n```\n## Release identity\n"
+                  "<!-- release-generated:header:start -->\n"
+                  "<!-- Example\n<!-- release-generated:header:end -->\n")
+        examples = (hidden, "```\n<!--\n```\n" + hidden)
+        for newline in ("\n", "\r\n"):
+            for example in examples:
+                original = (example + self.notes).replace("\n", newline)
+                (self.root / f"release/{VERSION}.md").write_bytes(original.encode())
+                self._prepare()
+                final = (self.root / f"release/{VERSION}.md").read_bytes().decode()
+                self.assertTrue(final.startswith(example.replace("\n", newline)))
+
+    def test_final_commit_has_no_pending_or_preparation_exception(self) -> None:
+        self._prepare()
+        with self.assertRaisesRegex(common.ReleaseValidationError, "must differ"):
+            checker.validate_release_commit(self.runtime_source, self.runtime_source, self.root)
+        checker.validate_pending_release(self.runtime_source, self.runtime_source, self.root)
+        with self.assertRaisesRegex(common.ReleaseValidationError, "disallowed paths"):
+            checker.validate_pending_release(self.runtime_source, self.runtime_source, self.root,
+                                             proposed_paths=("runtime.py",))
+
+    def test_preparation_import_does_not_load_documentation_or_pipeline_trust(self) -> None:
+        code = """
+import sys
+sys.path[:0] = sys.argv[1:]
+import release_prepare
+assert 'check_docs' not in sys.modules
+assert 'pipeline_trust' not in sys.modules
+"""
+        result = subprocess.run([sys.executable, "-c", code, str(REPO / "scripts"),
+                                 str(REPO / "ai-review/src")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_preparation_bounds_both_sides_of_renames_regardless_of_git_config(self) -> None:
         self._prepare()
         enumerations = []
@@ -354,8 +564,8 @@ class ReleasePreparationTests(ReleaseFixture):
         self,
     ) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
@@ -387,8 +597,8 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_gitlab_scope_refusals_match_validation_and_repin_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
@@ -454,8 +664,8 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_yaml_variable_overrides_and_interpreted_values_refuse_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
@@ -491,8 +701,8 @@ class ReleasePreparationTests(ReleaseFixture):
 
     def test_job_pin_inheritance_refusals_match_validation_and_repin_without_writes(self) -> None:
         self._prepare()
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         path = self.root / "ai-review/ci/review.gitlab-ci.yml"
         original = path.read_text()
@@ -552,8 +762,8 @@ class ReleasePreparationTests(ReleaseFixture):
                         job["inherit"] = inheritance
                 path.write_text(original + yaml.safe_dump(jobs))
                 self._prepare()
-                data, _ = tool._candidate_inputs(
-                    tool.load_json(self.root / "release/release-inputs.json"), self.run
+                data = tool._candidate_inputs(
+                    tool.load_json(self.root / "release/release-inputs.json"), self.candidate
                 )
                 checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
 
@@ -573,8 +783,8 @@ class ReleasePreparationTests(ReleaseFixture):
         path.write_text(text)
         self.assertEqual(tool.gitlab_template_pins(text)[key][1], "old, image")
         self._prepare()
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
         self.assertIn(f"image: ${key}", path.read_text())
@@ -622,8 +832,8 @@ class ReleasePreparationTests(ReleaseFixture):
             github.read_bytes(), (self.root / ".github/workflows/ai-review.yml").read_bytes()
         )
         self.assertIn("# A harmless column-zero comment", github.read_text())
-        data, _ = tool._candidate_inputs(
-            tool.load_json(self.root / "release/release-inputs.json"), self.run
+        data = tool._candidate_inputs(
+            tool.load_json(self.root / "release/release-inputs.json"), self.candidate
         )
         checker.validate_template_pins(data["images"], data["runtime_source"], self.root)
 
@@ -1005,7 +1215,7 @@ tool._template_edits(Path(sys.argv[2]), json.loads(sys.argv[3]))
             paths = common.git_changed_paths(self.runtime_source, P, self.root)
             self.assertIn("release/überblick.md", paths)
             self.assertIn("release/spare.txt", paths)
-            checker.validate_release_commit(self.runtime_source, P, self.root, pending=True)
+            checker.validate_pending_release(self.runtime_source, P, self.root)
             enumerations.append(paths)
         self.assertEqual(*enumerations)
         installed = self.root / ".github/workflows/ai-review.yml"
@@ -1117,7 +1327,7 @@ tool._template_edits(Path(sys.argv[2]), json.loads(sys.argv[3]))
         self.assertIn("release contains disallowed paths: runtime.py", error)
         self.assertIn(f"release tag v{VERSION} was not found locally", error)
         self.assertIn("If the release has already been tagged", error)
-        self.assertIn("git fetch origin --tags", error)
+        self.assertIn("fetch main and tags from the canonical remote", error)
         self.assertFalse(common.tag_exists(f"v{VERSION}", self.root))
 
     def test_open_next_rejects_runtime_source_outside_the_release_ancestry(self) -> None:

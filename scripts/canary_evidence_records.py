@@ -21,9 +21,9 @@ import release_common
 from ai_review.canonical import json_loads_no_duplicates
 from candidate_canary_common import LIFECYCLE_FIXTURE_PATH
 from check_release_inputs import certification_header
-from release_common import DIGEST_RE, markdown_headings, mask_markdown
+from release_common import DIGEST_RE, FULL_SHA_RE, REPOSITORY, markdown_headings, mask_markdown
 from scan_evidence_leaks import scan
-from validate_candidate_identity import REPOSITORY, SOURCE_REF
+from validate_candidate_identity import SOURCE_REF
 
 
 @dataclass(frozen=True)
@@ -270,11 +270,18 @@ RECORDS: dict[str, tuple[tuple[str, ...], Callable[[CanaryRun, dict[str, str]], 
 }
 
 
-def render_records(run: CanaryRun) -> dict[str, str]:
+def render_records(run: CanaryRun) -> tuple[dict[str, str], dict[str, str]]:
     """Render complete evidence for the campaigns the run's summaries cover."""
     try:
         candidate = _require_consistent(run)
-        return {
+        for field in ("runtime_source", "base_image", "reviewer_image"):
+            if not isinstance(candidate[field], str):
+                raise RecordError(f"invalid canary candidate {field}: expected a string")
+        if not FULL_SHA_RE.fullmatch(candidate["runtime_source"]):
+            raise RecordError("invalid canary candidate runtime_source: expected a full SHA")
+        _digest(candidate["base_image"])
+        _digest(candidate["reviewer_image"])
+        return candidate, {
             filename: render(run, candidate)
             for filename, (needs, render) in RECORDS.items()
             if run.summaries.keys() >= set(needs)

@@ -62,6 +62,71 @@ class ReleasePublicationTests(ReleaseFixture):
         with mock.patch.object(common, "gh", side_effect=self.gh):
             return publisher.publish(self.root, self.tag)
 
+    def test_canonical_upstream_supplies_ancestry_and_signers_in_a_fork_checkout(self) -> None:
+        _git(self.root, "remote", "set-url", "origin", "git@github.com:fork/code-tribunal.git")
+        _git(self.root, "remote", "add", "upstream",
+             f"https://github.com/{common.REPOSITORY}.git")
+        _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
+        _git(self.root, "update-ref", "refs/remotes/upstream/main", self.P)
+        self.assertEqual(self._quality()[0], 0)
+        active = (self.root / "release/release-inputs.json").read_bytes()
+        tool = load_repository_script("release_prepare", REPO / "scripts/release_prepare.py")
+        tool.open_next(self.root, "10.0.0")
+        (self.root / "release/10.0.0.md").unlink()
+        (self.root / "release/release-inputs.json").write_bytes(active)
+        self.assertTrue(self.publish())
+
+    def test_canonical_upstream_signer_revocation_overrides_fork_trust(self) -> None:
+        _git(self.root, "remote", "set-url", "origin", "git@github.com:fork/code-tribunal.git")
+        _git(self.root, "remote", "add", "upstream",
+             f"ssh://git@github.com/{common.REPOSITORY}.git")
+        (self.root / ".github/allowed_signers").write_text("# revoked on canonical main\n")
+        _git(self.root, "add", ".github/allowed_signers")
+        _git(self.root, "commit", "-qm", "revoke only on canonical main")
+        _git(self.root, "update-ref", "refs/remotes/upstream/main", "HEAD")
+        _git(self.root, "checkout", "--detach", self.P)
+        with self.assertRaisesRegex(common.ReleaseValidationError, "no allowed release signers"):
+            self.publish()
+        self.assertIn("no allowed release signers", self._quality()[1])
+        self._assert_open_next_refuses("no allowed release signers")
+        self.assertFalse(self.created)
+
+    def test_missing_ambiguous_or_unfetched_canonical_remote_fails_closed(self) -> None:
+        _git(self.root, "remote", "set-url", "origin", "https://github.com/fork/code-tribunal")
+        for remote_state, expected in (("absent", "found 0"),
+                                       ("unfetched", "upstream has no fetched main"),
+                                       ("ambiguous", "found 2")):
+            if remote_state == "unfetched":
+                _git(self.root, "remote", "add", "upstream",
+                     f"git@github.com:{common.REPOSITORY}.git")
+            elif remote_state == "ambiguous":
+                _git(self.root, "update-ref", "refs/remotes/upstream/main", self.P)
+                _git(self.root, "remote", "set-url", "origin",
+                     f"https://github.com/{common.REPOSITORY}.git")
+            with (self.subTest(remote_state=remote_state),
+                  self.assertRaisesRegex(common.ReleaseValidationError, expected)):
+                self.publish()
+            self.assertIn(expected, self._quality()[1])
+            self._assert_open_next_refuses(expected)
+        self.assertFalse(self.created)
+
+    def test_canonical_remote_matches_standard_fetch_urls_and_ignores_push_urls(self) -> None:
+        for url in (f"https://github.com/{common.REPOSITORY}",
+                    f"https://github.com/{common.REPOSITORY}.git",
+                    f"git@github.com:{common.REPOSITORY}.git",
+                    f"ssh://git@github.com/{common.REPOSITORY}",
+                    f"ssh://git@github.com:22/{common.REPOSITORY}.git"):
+            _git(self.root, "remote", "set-url", "origin", url)
+            self.assertEqual(common.canonical_main(self.root), self.P)
+        for url in (f"https://github.com/{common.REPOSITORY}-fork",
+                    f"https://github.com.evil.test/{common.REPOSITORY}",
+                    f"https://example.test/{common.REPOSITORY}"):
+            _git(self.root, "remote", "set-url", "origin", url)
+            _git(self.root, "remote", "set-url", "--push", "origin",
+                 f"git@github.com:{common.REPOSITORY}.git")
+            with self.assertRaisesRegex(common.ReleaseValidationError, "found 0"):
+                common.canonical_main(self.root)
+
     def test_notes_preserve_bytes_captured_commit_and_no_tag_code_executes(self) -> None:
         path = self.root / f"release/{VERSION}.md"
         content = (
@@ -110,8 +175,8 @@ class ReleasePublicationTests(ReleaseFixture):
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.runtime_source)
         with self.assertRaisesRegex(publisher.ReleaseValidationError, "P is not reachable"):
             self.publish()
-        self.assertIn("P is not reachable from protected origin/main", self._quality()[1])
-        self._assert_open_next_refuses("P is not reachable from protected origin/main")
+        self.assertIn("P is not reachable from protected canonical main", self._quality()[1])
+        self._assert_open_next_refuses("P is not reachable from protected canonical main")
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.P)
         allowed = self.root / ".github/allowed_signers"
         allowed.write_text("# revoked signer\n")

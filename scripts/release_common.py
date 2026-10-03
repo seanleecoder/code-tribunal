@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal, overload
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_INPUTS = ROOT / "release/release-inputs.json"
+REPOSITORY = "seanleecoder/code-tribunal"
 
 
 class ReleaseValidationError(ValueError):
@@ -95,29 +99,47 @@ PLACEHOLDER_RE = re.compile(
 )
 
 
-def without_fenced_code(text: str) -> str:
-    """Mask CommonMark fences, retaining offsets and line endings for callers."""
-    output: list[str] = []
-    fence: str | None = None
-    for line in text.splitlines(keepends=True):
-        if fence is None:
-            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-            if opening is None:
-                output.append(line)
-                continue
-            fence = opening.group(1)
-        elif re.fullmatch(
-            rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*", line.rstrip("\r\n")
-        ):
-            fence = None
-        output.append(re.sub(r"[^\r\n]", " ", line))
+def markdown_constructs(text: str) -> list[tuple[str, int, int]]:
+    """Scan top-level fences/comments; the first opener owns contents to closure/EOF."""
+    opening = re.compile(
+        r"(?m)^ {0,3}(?:(?P<backticks>`{3,})(?!`)[^`\r\n]*"
+        r"|(?P<tildes>~{3,})[^\r\n]*)(?:\r?\n|$)|<!--"
+    )
+    spans: list[tuple[str, int, int]] = []
+    offset = 0
+    while match := opening.search(text, offset):
+        fence = match["backticks"] or match["tildes"]
+        if fence:
+            closing = re.compile(
+                rf"(?m)^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*(?:\r?\n|$)",
+            ).search(text, match.end())
+            end = closing.end() if closing else len(text)
+            kind = "fence"
+        else:
+            closing_offset = text.find("-->", match.end())
+            end = closing_offset + 3 if closing_offset >= 0 else len(text)
+            kind = "comment"
+        spans.append((kind, match.start(), end))
+        offset = end
+    return spans
+
+
+def _mask_constructs(text: str, *, comments: bool) -> str:
+    output = list(text)
+    for kind, start, end in markdown_constructs(text):
+        if comments or kind == "fence":
+            output[start:end] = re.sub(r"[^\r\n]", " ", text[start:end])
     return "".join(output)
 
 
+def without_fenced_code(text: str) -> str:
+    """Mask fences outside comments, retaining offsets and line endings."""
+    return _mask_constructs(text, comments=False)
+
+
 def mask_markdown(text: str) -> str:
-    """Mask fences before comments, preserving every offset and line ending."""
-    text = without_fenced_code(text)
-    return re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text, flags=re.S)
+    """Mask top-level fences and comments, preserving offsets and line endings."""
+    return _mask_constructs(text, comments=True)
 
 
 def markdown_headings(masked: str) -> list[tuple[str, int, int]]:
@@ -128,6 +150,57 @@ def markdown_headings(masked: str) -> list[tuple[str, int, int]]:
             r"(?m)^ {0,3}##[ \t]+([^\r\n]+?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)", masked
         )
     ]
+
+
+def release_note_destination_issues(
+    path: Path, text: str, *, root: Path = ROOT,
+) -> list[str]:
+    """Check draft authoring conventions; Lychee verifies paths and anchors."""
+    prefix = f"https://github.com/{REPOSITORY}/blob/v{path.stem}/"
+    label = path.relative_to(root)
+    text = without_fenced_code(text)
+    issues: list[str] = []
+    destinations = re.compile(
+        r"\]\([ \t]*(?:<([^<>\r\n]+)>|([^\s()]+))"
+        r"|^ {0,3}\[[^\]\r\n]+\]:[ \t]*(?:\r?\n[ \t]*)?"
+        r"(?:<([^<>\r\n]+)>|([^\s]+))",
+        re.MULTILINE,
+    )
+    for match in destinations.finditer(text):
+        target = next(value for value in match.groups() if value is not None)
+        parts = urlsplit(target)
+        if not parts.scheme and not parts.netloc and parts.path:
+            relative = posixpath.normpath(
+                parts.path.lstrip("/") if parts.path.startswith("/")
+                else posixpath.join("release", parts.path)
+            )
+            suggestion = urlunsplit((
+                "https", "github.com", f"/{REPOSITORY}/blob/v{path.stem}/{relative}",
+                parts.query, parts.fragment,
+            ))
+            issues.append(f"{label}: relative release-note link {target!r}; use {suggestion}")
+        repository_blob = f"/{REPOSITORY}/blob/"
+        if (parts.hostname == "github.com"
+                and parts.path.lower().startswith(repository_blob.lower())):
+            version, _, destination = parts.path[len(repository_blob):].partition("/")
+            decoded = unquote(destination)
+            bounded = posixpath.normpath(decoded)
+            if (not target.startswith(prefix) or version != f"v{path.stem}"
+                    or not destination or decoded.startswith("/")
+                    or bounded == ".." or bounded.startswith("../")):
+                issues.append(
+                    f"{label}: repository blob link must use {prefix} "
+                    "and stay within the repository"
+                )
+    class NoteHTMLParser(HTMLParser):
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if any(name in {"href", "src"} for name, _ in attrs):
+                issues.append(
+                    f"{label}: raw HTML href/src links are unsupported; use pinned Markdown links"
+                )
+
+    NoteHTMLParser().feed(text)
+    return issues
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -385,6 +458,30 @@ class TaggedRelease:
         return git(self.root, "show", f"{self.release_commit}:{relative}", text=False)
 
 
+def canonical_main(root: Path) -> str:
+    """Resolve one already-fetched canonical remote; fork refs never supply trust."""
+    canonical_url = re.compile(
+        rf"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com(?::22)?/)"
+        rf"{re.escape(REPOSITORY)}(?:\.git)?/?", re.I,
+    )
+    remotes = [
+        name for name in git(root, "remote").splitlines()
+        if canonical_url.fullmatch(git(root, "remote", "get-url", name))
+    ]
+    if len(remotes) != 1:
+        raise ReleaseValidationError(
+            f"require exactly one canonical fetch remote for {REPOSITORY}; "
+            f"found {len(remotes)}" + (": " + ", ".join(remotes) if remotes else "")
+        )
+    remote = remotes[0]
+    try:
+        return git(root, "rev-parse", "--verify", f"refs/remotes/{remote}/main^{{commit}}")
+    except ReleaseValidationError as exc:
+        raise ReleaseValidationError(
+            f"canonical remote {remote} has no fetched main; run git fetch {remote} --tags"
+        ) from exc
+
+
 def tagged_release(root: Path, tag: str) -> TaggedRelease:
     """Capture a release tree authorized by current protected-main SSH signers."""
     from ai_review.canonical import json_loads_no_duplicates
@@ -406,10 +503,10 @@ def tagged_release(root: Path, tag: str) -> TaggedRelease:
     ):
         raise ReleaseValidationError("release requires an SSH-signed annotated tag")
     release_commit = git(root, "rev-parse", f"{tag_object}^{{commit}}")
-    main = git(root, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+    main = canonical_main(root)
     if not git_is_ancestor(release_commit, main, root):
         raise ReleaseValidationError(
-            "release commit P is not reachable from protected origin/main"
+            "release commit P is not reachable from protected canonical main"
         )
     signers = git(root, "show", f"{main}:.github/allowed_signers", text=False)
     if not any(

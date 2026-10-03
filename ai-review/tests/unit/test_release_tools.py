@@ -500,7 +500,7 @@ class ReleaseToolTests(unittest.TestCase):
                 "validate_release_inputs",
                 return_value=waivers,
             ),
-            mock.patch.object(release_input_checker, "validate_release_commit"),
+            mock.patch.object(release_input_checker, "validate_pending_release"),
             mock.patch.object(release_input_checker, "tag_exists", return_value=False),
             contextlib.redirect_stderr(stderr),
         ):
@@ -970,6 +970,57 @@ class ReleaseToolTests(unittest.TestCase):
                 path.write_text(invalid)
                 with self.assertRaises(ReleaseValidationError):
                     validate_release_inputs(data, root)
+
+    def test_markdown_scanner_uses_opening_order_and_preserves_all_offsets(self) -> None:
+        from release_common import markdown_constructs, mask_markdown, without_fenced_code
+
+        examples = (
+            ("<!--\n```\nStatus: failed\n-->\nStatus: passed\n", ["comment"]),
+            ("```\n<!--\n```\nStatus: passed\n", ["fence"]),
+            ("<!--\n~~~~\n-->\n```\n<!--\n```\nStatus: passed\n", ["comment", "fence"]),
+            ("<!--\n```\nStatus: failed\n", ["comment"]),
+            ("~~~~\n<!--\nStatus: failed\n", ["fence"]),
+            ("<!-- ``` --> Status: passed\n", ["comment"]),
+        )
+        for original, kinds in examples:
+            for newline in ("\n", "\r\n"):
+                text = original.replace("\n", newline)
+                with self.subTest(text=text):
+                    spans = markdown_constructs(text)
+                    self.assertEqual([kind for kind, _, _ in spans], kinds)
+                    for mask in (mask_markdown(text), without_fenced_code(text)):
+                        self.assertEqual(len(mask), len(text))
+                        self.assertEqual([(i, char) for i, char in enumerate(mask)
+                                          if char in "\r\n"],
+                                         [(i, char) for i, char in enumerate(text)
+                                          if char in "\r\n"])
+                    masked = mask_markdown(text)
+                    self.assertNotIn("Status: failed", masked)
+                    if "Status: passed" in text:
+                        self.assertEqual(masked.index("Status: passed"),
+                                         text.index("Status: passed"))
+        # A comment containing a fence cannot hide a real certification header.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._tree(root)
+            data = self._active(root)
+            record = root / "docs/evidence" / data["verification"]["evidence_record_ids"][0]
+            record.write_bytes(("<!--\n```\n-->\n" + record.read_text()).encode())
+            validate_release_inputs(data, root)
+
+    def test_evidence_ids_reject_control_characters_and_line_separators(self) -> None:
+        for separator in ("\0", "\n", "\r", "\t", "\x1f", "\x7f", "\x85", "\u2028", "\u2029"):
+            for field in ("evidence_record_ids", "evidence_waivers"):
+                verification = {"evidence_record_ids": [], "evidence_waivers": {}}
+                record_id = f"proof{separator}.md"
+                verification[field] = [record_id] if field == "evidence_record_ids" else {
+                    record_id: "unchanged modules"
+                }
+                with (self.subTest(separator=separator, field=field),
+                      self.assertRaisesRegex(ReleaseValidationError, "bare filenames")):
+                    release_input_checker.validate_evidence_selection(
+                        {"verification": verification}
+                    )
 
     def test_version_comparison_uses_numeric_core_and_semver_prerelease_precedence(self) -> None:
         ordered = (

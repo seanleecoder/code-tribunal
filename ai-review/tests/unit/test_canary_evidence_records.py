@@ -160,7 +160,7 @@ def _summaries(campaigns: tuple[str, ...]) -> dict[str, dict]:
 
 
 def _write_saved_records(output: Path) -> None:
-    for filename, text in records.render_records(_run()).items():
+    for filename, text in records.render_records(_run())[1].items():
         (output / filename).write_text(
             text.replace("None recorded.", "Saved context.").replace(
                 "Status: passed", "Status: stale"
@@ -316,7 +316,7 @@ def _gh_response(
 
 class RecordRenderingTests(unittest.TestCase):
     def test_every_record_binds_the_candidate_for_the_release_validator(self) -> None:
-        rendered = records.render_records(_run())
+        rendered = records.render_records(_run())[1]
         self.assertEqual(set(rendered), set(records.RECORDS))
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp) / "docs/evidence"
@@ -335,12 +335,12 @@ class RecordRenderingTests(unittest.TestCase):
         lifecycle["steps"][1]["observed"]["state"]["discussion_id"] = "a|b"
         rendered = records.render_records(
             _run(**{"hostile-gitlab": hostile, "lifecycle-github": lifecycle})
-        )
+        )[1]
         self.assertIn('"note": "a\\|b"', rendered["record-gitlab-hostile-mr.md"])
         self.assertIn('"discussion_id": "a\\|b"', rendered["record-github-current-image.md"])
 
     def test_lifecycle_retains_consumer_runs_threads_and_persistence_evidence(self) -> None:
-        rendered = records.render_records(_run())
+        rendered = records.render_records(_run())[1]
         for platform, run_key, persist_key in (
             ("github", "run_id", "persist_run_id"),
             ("gitlab", "pipeline", "persist_pipeline"),
@@ -382,7 +382,7 @@ class RecordRenderingTests(unittest.TestCase):
             ):
                 self.assertEqual(hostile_canary.run_probe(args), 0)
             produced = json.loads(summary.read_text(encoding="utf-8"))
-        text = records.render_records(_run(**{"hostile-gitlab": produced}))[
+        text = records.render_records(_run(**{"hostile-gitlab": produced}))[1][
             "record-gitlab-hostile-mr.md"
         ]
         self.assertIn('| `credentials_withheld` | passed | {"GITLAB_TOKEN": "absent"} |', text)
@@ -395,7 +395,7 @@ class RecordRenderingTests(unittest.TestCase):
             **{key: None for key in records.DEMO_ARTIFACTS} | {"lifecycle-github": lifecycle}
         )
         with self.assertRaisesRegex(records.RecordError, "not a digest-pinned"):
-            records.render_records(run)
+            records.render_records(run)[1]
 
 
 class RecordRegenerationTests(unittest.TestCase):
@@ -418,7 +418,7 @@ class RecordRegenerationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temporary:
                 try:
                     edits = records.preserve_record_notes(
-                        records.render_records(records.load_run("99", Path(temporary))), output
+                        records.render_records(records.load_run("99", Path(temporary)))[1], output
                     )
                 except records.RecordError as exc:
                     print(f"ERROR: {exc}")
@@ -429,7 +429,7 @@ class RecordRegenerationTests(unittest.TestCase):
         return result, stdout.getvalue()
 
     def test_same_run_preserves_each_records_notes_and_refreshes_generated_content(self) -> None:
-        rendered = records.render_records(_run())
+        rendered = records.render_records(_run())[1]
         expected = {
             name: text.replace("\nNone recorded.\n\n", f"\nOperator context for {name}.\n\n")
             for name, text in rendered.items()
@@ -452,7 +452,7 @@ class RecordRegenerationTests(unittest.TestCase):
 
     def test_notes_preserve_empty_bodies_whitespace_unicode_and_markdown_examples(self) -> None:
         name = "record-candidate-canary.md"
-        template = records.render_records(_run())[name]
+        template = records.render_records(_run())[1][name]
         bodies = (
             "",
             "\nNone recorded.\n\n",
@@ -490,11 +490,11 @@ class RecordRegenerationTests(unittest.TestCase):
             },
             "another run with the same candidate": {
                 name: text.replace("None recorded.", "Notes for run 98.")
-                for name, text in records.render_records(old_run).items()
+                for name, text in records.render_records(old_run)[1].items()
             },
         }
         expected = {
-            name: text.encode("utf-8") for name, text in records.render_records(_run()).items()
+            name: text.encode("utf-8") for name, text in records.render_records(_run())[1].items()
         }
         for label, files in existing.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
@@ -506,7 +506,7 @@ class RecordRegenerationTests(unittest.TestCase):
 
     def test_another_run_replaces_waived_records_and_leaves_skipped_records_unchanged(self) -> None:
         old_run = replace(_run(), run_id="98", url="https://github.example/runs/98")
-        old_records = records.render_records(old_run)
+        old_records = records.render_records(old_run)[1]
         for campaigns in (("panel", "lifecycle", "hostile"), ("lifecycle",)):
             with self.subTest(campaigns=campaigns), tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp) / "docs/evidence"
@@ -519,7 +519,7 @@ class RecordRegenerationTests(unittest.TestCase):
                 summaries = _summaries(campaigns)
                 expected = records.render_records(
                     replace(_run(), summaries=summaries, scanned_files=len(summaries))
-                )
+                )[1]
                 result, stdout = self._regenerate(output, campaigns)
                 self.assertEqual(result, 0, stdout)
                 self.assertNotIn("PRIVATE CONTEXT", stdout)
@@ -531,10 +531,10 @@ class RecordRegenerationTests(unittest.TestCase):
                 _assert_release_valid(self, Path(tmp), expected)
 
     def test_partial_run_preserves_selected_notes_and_does_not_read_skipped_records(self) -> None:
-        rendered = records.render_records(_run())
+        rendered = records.render_records(_run())[1]
         partial = records.render_records(
             _run(**{"panel-github": None, "panel-gitlab": None, "hostile-gitlab": None})
-        )
+        )[1]
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
             selected = {}
@@ -557,7 +557,7 @@ class RecordRegenerationTests(unittest.TestCase):
 
     def test_ambiguous_notes_or_identity_refuse_before_any_record_changes(self) -> None:
         name = "record-gitlab-hostile-mr.md"
-        template = records.render_records(_run())[name]
+        template = records.render_records(_run())[1][name]
         identity = "- Candidate Canary run: [`99`](https://github.example/runs/99), 2026-09-30"
         old_identity = identity.replace("99", "98")
         old_waived = _waive_record(template.replace(identity, old_identity))
@@ -702,7 +702,7 @@ class RecordLoadingTests(unittest.TestCase):
             ):
                 with self.assertRaises(records.RecordError) as error_result:
                     records.preserve_record_notes(
-                        records.render_records(records.load_run("99", Path(temporary))), output
+                        records.render_records(records.load_run("99", Path(temporary)))[1], output
                     )
                 print(f"ERROR: {error_result.exception}")
             self.assertEqual(_snapshot(output), before)
@@ -740,7 +740,7 @@ class RecordLoadingTests(unittest.TestCase):
                 ):
                     directory = Path(tmp)
                     loaded = records.load_run("99", directory)
-                    self.assertEqual(set(records.render_records(loaded)), filenames)
+                    self.assertEqual(set(records.render_records(loaded)[1]), filenames)
                     self.assertEqual(loaded.summaries, summaries)
                     self.assertEqual(loaded.scanned_files, len(summaries))
                     self.assertEqual(
@@ -863,7 +863,8 @@ class RecordLoadingTests(unittest.TestCase):
             ),
         ):
             self.assertEqual(
-                set(records.render_records(records.load_run("99", Path(tmp)))), set(records.RECORDS)
+                set(records.render_records(records.load_run("99", Path(tmp)))[1]),
+                set(records.RECORDS),
             )
 
     def test_missing_summary_for_any_successful_job_never_overwrites_evidence(self) -> None:

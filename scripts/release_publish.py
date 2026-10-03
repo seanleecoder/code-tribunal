@@ -13,13 +13,13 @@ import release_common
 from ai_review.canonical import json_loads_no_duplicates
 from check_release_inputs import validate_release_commit, validate_release_inputs
 from release_common import (
+    REPOSITORY,
     ROOT,
     ReleaseValidationError,
     compare_release_versions,
     release_tag_version,
     validate_release_version,
 )
-from validate_candidate_identity import REPOSITORY
 
 
 def published_releases() -> list[dict[str, Any]]:

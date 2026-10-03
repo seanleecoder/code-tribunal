@@ -20,8 +20,7 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 from check_docs import markdown_inventories  # noqa: E402
-from release_common import RELEASE_VERSION_RE  # noqa: E402
-from validate_candidate_identity import REPOSITORY  # noqa: E402
+from release_common import RELEASE_VERSION_RE, REPOSITORY  # noqa: E402
 
 ROOT = SCRIPTS.parent
 PIN_PATH = ROOT / "ai-review/images/lychee.pin"

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -240,6 +241,7 @@ def validate_evidence_selection(data: dict[str, Any]) -> list[str]:
             or Path(record_id).name != record_id
             or "/" in record_id
             or "\\" in record_id
+            or any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in record_id)
         ):
             raise ReleaseValidationError("evidence IDs must be bare filenames under docs/evidence")
     for record_id, reason in waivers.items():
@@ -303,25 +305,38 @@ def validate_evidence_records(
     return [(record_id, reason.strip()) for record_id, reason in waivers.items()]
 
 
-def validate_release_commit(
+def _release_commit_paths(
     runtime_source: str,
     release_commit: str,
-    root: Path = ROOT,
-    *,
-    pending: bool = False,
-    preparing: bool = False,
-) -> None:
-    """Bound the final commit and, for local validation, every pending change."""
+    root: Path,
+) -> set[str]:
     if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
         raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
     if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
         raise ReleaseValidationError("release commit must be a lowercase full 40-character SHA")
     if not git_is_ancestor(runtime_source, release_commit, root):
         raise ReleaseValidationError("release commit P must descend from runtime source R")
-    paths = set(git_changed_paths(runtime_source, release_commit, root))
-    if pending:
-        paths.update(working_tree_paths(root, runtime_source))
-    if runtime_source == release_commit and not preparing and not (pending and paths):
+    return set(git_changed_paths(runtime_source, release_commit, root))
+
+
+def validate_release_commit(
+    runtime_source: str, release_commit: str, root: Path = ROOT,
+) -> None:
+    """Validate a final commit P, which must always differ from R."""
+    paths = _release_commit_paths(runtime_source, release_commit, root)
+    if runtime_source == release_commit:
+        raise ReleaseValidationError("release commit P must differ from runtime source R")
+    validate_release_paths(sorted(paths))
+
+
+def validate_pending_release(
+    runtime_source: str, head: str, root: Path = ROOT, *, proposed_paths: tuple[str, ...] = (),
+) -> None:
+    """Validate existing and proposed release paths before P has been committed."""
+    paths = _release_commit_paths(runtime_source, head, root)
+    paths.update(working_tree_paths(root, runtime_source))
+    paths.update(proposed_paths)
+    if runtime_source == head and not paths:
         raise ReleaseValidationError("release commit P must differ from runtime source R")
     validate_release_paths(sorted(paths))
 
@@ -467,11 +482,12 @@ def main() -> int:
             else:
                 head = git(ROOT, "rev-parse", "HEAD")
                 try:
-                    validate_release_commit(data["runtime_source"], head, ROOT, pending=True)
+                    validate_pending_release(data["runtime_source"], head, ROOT)
                 except ReleaseValidationError as exc:
                     raise ReleaseValidationError(
                         f"{exc}; release tag {tag} was not found locally. If the release "
-                        "has already been tagged, run git fetch origin --tags and retry."
+                        "has already been tagged, fetch main and tags from the canonical "
+                        "remote and retry."
                     ) from exc
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

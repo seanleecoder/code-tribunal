@@ -5,21 +5,23 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import re
+import stat
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from canary_evidence_records import (
-    CanaryRun,
     RecordError,
     load_run,
     preserve_record_notes,
     render_records,
 )
-from check_docs import _release_note_destination_issues
 from check_release_inputs import (
     EVIDENCE_DIR,
     GITHUB_CONTAINER_ROLES,
@@ -27,13 +29,12 @@ from check_release_inputs import (
     github_job_containers,
     gitlab_template_pins,
     validate_evidence_selection,
-    validate_release_commit,
+    validate_pending_release,
     validate_release_inputs,
     validate_tagged_checkout,
 )
 from release_common import (
-    DIGEST_RE,
-    FULL_SHA_RE,
+    REPOSITORY,
     ROOT,
     WORKFLOW_PAIRS,
     ReleaseValidationError,
@@ -42,32 +43,27 @@ from release_common import (
     git,
     image_ref,
     load_json,
+    markdown_constructs,
     markdown_headings,
     mask_markdown,
+    release_note_destination_issues,
     successful_run,
     tag_exists,
     validate_release_paths,
     validate_release_version,
-    without_fenced_code,
 )
-from validate_candidate_identity import REPOSITORY
 
 
 def _candidate_inputs(
     data: dict[str, Any],
-    run: CanaryRun,
-) -> tuple[dict[str, Any], dict[str, str]]:
-    candidate = next(iter(run.summaries.values()))["candidate"]
+    candidate: dict[str, str],
+) -> dict[str, Any]:
     previous = copy.deepcopy(data)
     runtime_source = candidate["runtime_source"]
-    if not isinstance(runtime_source, str) or FULL_SHA_RE.fullmatch(runtime_source) is None:
-        raise ReleaseValidationError("candidate runtime source must be a full SHA")
     data["runtime_source"] = runtime_source
     for role in ("base", "reviewer"):
         reference = candidate[f"{role}_image"]
         digest = reference.rpartition("@")[2]
-        if DIGEST_RE.fullmatch(digest) is None:
-            raise ReleaseValidationError(f"candidate {role} image must be digest pinned")
         data["images"][role]["digest"] = digest
         if reference != image_ref(data["images"][role], runtime_source):
             raise ReleaseValidationError(
@@ -77,7 +73,7 @@ def _candidate_inputs(
         previous["runtime_source"] != data["runtime_source"] or previous["images"] != data["images"]
     ):
         raise ReleaseValidationError("cannot change candidates after release activation")
-    return data, candidate
+    return data
 
 
 def _check_destinations(root: Path, edits: dict[str, bytes]) -> None:
@@ -121,18 +117,78 @@ def _validate_edits(
             target.write_bytes(edits[relative] if relative in edits else source.read_bytes())
         validate_release_inputs(data, scratch)
         notes_path = scratch / f"release/{data['release_version']}.md"
-        if issues := _release_note_destination_issues(
+        if issues := release_note_destination_issues(
             notes_path, notes_path.read_text(encoding="utf-8"), root=scratch
         ):
             raise ReleaseValidationError("; ".join(issues))
 
 
 def _write_edits(root: Path, edits: dict[str, bytes]) -> tuple[str, ...]:
+    """Stage replacements/backups together and undo completed writes on I/O failure."""
     _check_destinations(root, edits)
-    for relative, content in edits.items():
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+    temporary_paths: list[Path] = []
+    staged: list[tuple[Path, Path, Path | None]] = []
+    completed: list[tuple[Path, Path | None]] = []
+    created_directories: list[Path] = []
+    recovery_failed = False
+
+    def stage(path: Path, content: bytes, mode: int, suffix: str) -> Path:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=f".{path.name}.release-", suffix=suffix, delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            temporary_paths.append(temporary)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        return temporary
+
+    try:
+        # Inputs activate the edit set only after every other replacement succeeds.
+        for relative in sorted(edits, key=lambda name: name == "release/release-inputs.json"):
+            path = root / relative
+            missing = []
+            parent = path.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for directory in reversed(missing):
+                directory.mkdir()
+                created_directories.append(directory)
+            mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+            backup = stage(path, path.read_bytes(), mode, ".backup") if path.exists() else None
+            replacement = stage(path, edits[relative], mode, ".staged")
+            staged.append((path, replacement, backup))
+        _check_destinations(root, edits)
+        for path, replacement, backup in staged:
+            os.replace(replacement, path)
+            completed.append((path, backup))
+    except OSError as failure:
+        errors = []
+        for path, backup in reversed(completed):
+            try:
+                if backup is None:
+                    path.unlink()
+                else:
+                    os.replace(backup, path)
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+        if errors:
+            recovery_failed = True
+            recovery = ", ".join(str(path) for path in temporary_paths if path.exists())
+            raise ReleaseValidationError(
+                f"release write failed: {failure}; rollback failed: {'; '.join(errors)}; "
+                f"recovery files retained: {recovery}"
+            ) from failure
+        raise
+    finally:
+        if not recovery_failed:
+            for path in temporary_paths:
+                path.unlink(missing_ok=True)
+            for directory in reversed(created_directories):
+                if not any(directory.iterdir()):
+                    directory.rmdir()
     return tuple(edits)
 
 
@@ -168,18 +224,20 @@ def _replace_generated_blocks(text: str, bodies: dict[str, str]) -> str:
     for heading in ("Release identity", "Live campaign"):
         if headings.count(heading) != 1:
             raise ReleaseValidationError(f"release notes require exactly one {heading} section")
-    matches = list(re.finditer(
-        r"(?m)^<!-- release-generated:([a-z-]+):(start|end) -->[ \t]*(?:\r?\n|$)",
-        without_fenced_code(text),
-    ))
+    comments = {(start, end) for kind, start, end in markdown_constructs(text)
+                if kind == "comment"}
+    matches = [match for match in re.finditer(
+        r"(?m)^(<!-- release-generated:([a-z-]+):(start|end) -->)[ \t]*(?:\r?\n|$)",
+        text,
+    ) if match.span(1) in comments]
     expected = [(name, edge) for name in bodies for edge in ("start", "end")]
-    if [(match[1], match[2]) for match in matches] != expected:
+    if [(match[2], match[3]) for match in matches] != expected:
         raise ReleaseValidationError(
             "release notes require ordered, unique generated-block markers"
         )
     for start, end in reversed(list(zip(matches[::2], matches[1::2], strict=True))):
         newline = "\r\n" if start[0].endswith("\r\n") else "\n"
-        body = bodies[start[1]].rstrip("\n").replace("\n", newline) + newline
+        body = bodies[start[2]].rstrip("\n").replace("\n", newline) + newline
         text = text[:start.end()] + body + text[end.start():]
     return text
 
@@ -208,8 +266,11 @@ def _final_notes(text: str, data: dict[str, Any]) -> str:
             if record_id in data["verification"]["evidence_waivers"]
             else "Passed"
         )
-        url = f"https://github.com/{REPOSITORY}/blob/v{version}/docs/evidence/{record_id}"
-        campaign.append(f"| [{record_id}]({url}) | {result} |")
+        url = (f"https://github.com/{REPOSITORY}/blob/v{version}/docs/evidence/"
+               f"{quote(record_id, safe='')}")
+        label = re.sub(r"([\\`*_{\[\]()#+.!|}>~-])", r"\\\1", record_id)
+        label = label.replace("&", "&amp;").replace("<", "&lt;")
+        campaign.append(f"| [{label}]({url}) | {result} |")
     return _replace_generated_blocks(text, {
         "header": f"# Code Tribunal {version}",
         "identity": "\n".join(identity),
@@ -230,12 +291,15 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
     validate_release_inputs(data, root, check_templates=False)
     version = data["release_version"]
     _require_untagged(root, version)
+    for role in ("base", "reviewer"):
+        if data["images"][role]["name"] is None:
+            raise ReleaseValidationError(f"release preparation requires images.{role}.name")
     with tempfile.TemporaryDirectory() as temporary:
         run = load_run(run_id, Path(temporary))
-    records = render_records(run)
+    candidate, records = render_records(run)
     if not records:
         raise ReleaseValidationError("canary produced no passing records")
-    data, candidate = _candidate_inputs(data, run)
+    data = _candidate_inputs(data, candidate)
     verification = data["verification"]
     if conflict := set(records) & verification["evidence_waivers"].keys():
         raise ReleaseValidationError(
@@ -244,23 +308,26 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
     records = preserve_record_notes(records, root / EVIDENCE_DIR)
     was_active = data["status"] == "active"
     data["status"] = "active"
-    verification.update(
-        ci_run_id=successful_run(data["runtime_source"], "ci.yml", repository=REPOSITORY),
-        publication_run_id=successful_run(
-            data["runtime_source"], "publish-ai-review-images.yml", repository=REPOSITORY
-        ),
-        evidence_record_ids=list(dict.fromkeys([*verification["evidence_record_ids"], *records])),
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        runs = [executor.submit(successful_run, data["runtime_source"], workflow,
+                                repository=REPOSITORY)
+                for workflow in ("ci.yml", "publish-ai-review-images.yml")]
+        # Both run concurrently; result order makes error reporting deterministic.
+        verification.update(ci_run_id=runs[0].result(), publication_run_id=runs[1].result())
+    verification["evidence_record_ids"] = list(
+        dict.fromkeys([*verification["evidence_record_ids"], *records])
     )
     edits = _template_edits(root, candidate)
     edits.update(
         {f"{EVIDENCE_DIR.as_posix()}/{name}": text.encode() for name, text in records.items()}
     )
     notes_path = f"release/{version}.md"
-    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    changelog = (root / "CHANGELOG.md").read_bytes().decode("utf-8")
     headings = re.findall(
-        rf"(?m)^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$", changelog
+        rf"(?m)^## \[{re.escape(version)}\] - (\d{{4}}-\d{{2}}-\d{{2}})\r?$", changelog
     )
-    if changelog.count("## [Unreleased]") != 1:
+    unreleased = list(re.finditer(r"(?m)^## \[Unreleased\](\r?\n|$)", changelog))
+    if len(unreleased) != 1:
         raise ReleaseValidationError("CHANGELOG requires one Unreleased heading")
     if was_active:
         if changelog.count(f"## [{version}]") != 1 or len(headings) != 1:
@@ -270,9 +337,10 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
             "CHANGELOG draft must not already contain this release version"
         )
     if not was_active:
+        newline = unreleased[0][1] or "\n"
         changelog = changelog.replace(
             "## [Unreleased]",
-            f"## [Unreleased]\n\n## [{version}] - {release_date or date.today()}",
+            f"## [Unreleased]{newline}{newline}## [{version}] - {release_date or date.today()}",
             1,
         )
     edits.update(
@@ -284,8 +352,9 @@ def prepare(root: Path, run_id: str, *, release_date: date | None = None) -> tup
             ).encode(),
         }
     )
-    validate_release_commit(
-        data["runtime_source"], git(root, "rev-parse", "HEAD"), root, pending=True, preparing=True
+    validate_pending_release(
+        data["runtime_source"], git(root, "rev-parse", "HEAD"), root,
+        proposed_paths=tuple(edits),
     )
     _validate_edits(root, edits, data)
     _require_untagged(root, version)

@@ -14,6 +14,7 @@ from tests.support.repository_script import load_repository_script
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS_CHECK = _REPO_ROOT / "scripts" / "check_docs.py"
+common = load_repository_script("release_common", _REPO_ROOT / "scripts/release_common.py")
 _CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
@@ -29,7 +30,7 @@ class DocumentationContractTests(unittest.TestCase):
     def test_draft_destinations_check_inline_links_and_reference_definitions(self) -> None:
         checker = _load_docs_checker()
         note = checker.ROOT / "release/9.9.9.md"
-        prefix = f"https://github.com/{checker.REPOSITORY}/blob/v9.9.9/"
+        prefix = f"https://github.com/{common.REPOSITORY}/blob/v9.9.9/"
         for syntax in ('[guide](<{target}> "Guide")', '[guide][ref]\n[ref]: <{target}> "Guide"',
                        '[ref]:\n  {target}'):
             for target, expected in (
@@ -38,7 +39,7 @@ class DocumentationContractTests(unittest.TestCase):
                 ("other.md", prefix + "release/other.md"),
             ):
                 with self.subTest(syntax=syntax, target=target):
-                    issues = checker._release_note_destination_issues(note, syntax.format(
+                    issues = common.release_note_destination_issues(note, syntax.format(
                         target=target,
                     ))
                     self.assertEqual(len(issues), 1)
@@ -51,12 +52,12 @@ class DocumentationContractTests(unittest.TestCase):
                 prefix.replace("github.com", "GitHub.Com").replace("v9.9.9", "main") + "a.md",
             ):
                 with self.subTest(syntax=syntax, target=target):
-                    issues = checker._release_note_destination_issues(note, syntax.format(
+                    issues = common.release_note_destination_issues(note, syntax.format(
                         target=target,
                     ))
                     self.assertEqual(len(issues), 1)
                     self.assertIn("repository blob link", issues[0])
-            self.assertEqual(checker._release_note_destination_issues(note, syntax.format(
+            self.assertEqual(common.release_note_destination_issues(note, syntax.format(
                 target=prefix + "docs/guide.md#intro",
             )), [])
 
@@ -66,7 +67,7 @@ class DocumentationContractTests(unittest.TestCase):
         for html in ('<a href="../docs/guide.md">Guide</a>', '<img src="image.png">',
                      "<A HREF='https://example.test'>Guide</A>", '<img\n src = "image.png" />'):
             with self.subTest(html=html):
-                issues = checker._release_note_destination_issues(note, html)
+                issues = common.release_note_destination_issues(note, html)
                 self.assertEqual(len(issues), 1)
                 self.assertIn("raw HTML href/src", issues[0])
         text = (
@@ -77,7 +78,7 @@ class DocumentationContractTests(unittest.TestCase):
             '<img src="example.png">\n```\n'
             '~~~~\n[wrong](https://github.com/example/repo/blob/main/a.md)\n~~~~\n'
         )
-        self.assertEqual(checker._release_note_destination_issues(note, text), [])
+        self.assertEqual(common.release_note_destination_issues(note, text), [])
 
     def test_find_issues_checks_current_draft_conventions_and_excludes_frozen_notes(self) -> None:
         checker = _load_docs_checker()

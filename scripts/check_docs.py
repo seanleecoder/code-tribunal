@@ -6,15 +6,12 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import posixpath
 import re
 import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote, urlsplit, urlunsplit
 
 import yaml
 
@@ -27,11 +24,11 @@ from release_common import (  # noqa: E402
     RELEASE_VERSION_RE,
     ReleaseValidationError,
     any_tags_resolvable,
+    release_note_destination_issues,
     tag_exists,
     validate_release_version,
     without_fenced_code,
 )
-from validate_candidate_identity import REPOSITORY  # noqa: E402
 
 ROOT = SCRIPTS.parent
 CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
@@ -148,57 +145,6 @@ REJECTED_ENV_NAMES = {
     "GITLAB_READ_TOKEN",
     "GITLAB_WRITE_TOKEN",
 }
-
-
-def _release_note_destination_issues(
-    path: Path, text: str, *, root: Path | None = None,
-) -> list[str]:
-    """Check draft authoring conventions; Lychee verifies paths and anchors."""
-    prefix = f"https://github.com/{REPOSITORY}/blob/v{path.stem}/"
-    label = path.relative_to(ROOT if root is None else root)
-    text = without_fenced_code(text)
-    issues: list[str] = []
-    destinations = re.compile(
-        r"\]\([ \t]*(?:<([^<>\r\n]+)>|([^\s()]+))"
-        r"|^ {0,3}\[[^\]\r\n]+\]:[ \t]*(?:\r?\n[ \t]*)?"
-        r"(?:<([^<>\r\n]+)>|([^\s]+))",
-        re.MULTILINE,
-    )
-    for match in destinations.finditer(text):
-        target = next(value for value in match.groups() if value is not None)
-        parts = urlsplit(target)
-        if not parts.scheme and not parts.netloc and parts.path:
-            relative = posixpath.normpath(
-                parts.path.lstrip("/") if parts.path.startswith("/")
-                else posixpath.join("release", parts.path)
-            )
-            suggestion = urlunsplit((
-                "https", "github.com", f"/{REPOSITORY}/blob/v{path.stem}/{relative}",
-                parts.query, parts.fragment,
-            ))
-            issues.append(f"{label}: relative release-note link {target!r}; use {suggestion}")
-        repository_blob = f"/{REPOSITORY}/blob/"
-        if (parts.hostname == "github.com"
-                and parts.path.lower().startswith(repository_blob.lower())):
-            version, _, destination = parts.path[len(repository_blob):].partition("/")
-            decoded = unquote(destination)
-            bounded = posixpath.normpath(decoded)
-            if (not target.startswith(prefix) or version != f"v{path.stem}"
-                    or not destination or decoded.startswith("/")
-                    or bounded == ".." or bounded.startswith("../")):
-                issues.append(
-                    f"{label}: repository blob link must use {prefix} "
-                    "and stay within the repository"
-                )
-    class NoteHTMLParser(HTMLParser):
-        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-            if any(name in {"href", "src"} for name, _ in attrs):
-                issues.append(
-                    f"{label}: raw HTML href/src links are unsupported; use pinned Markdown links"
-                )
-
-    NoteHTMLParser().feed(text)
-    return issues
 
 
 def _inline_code_values(text: str) -> set[str]:
@@ -526,7 +472,7 @@ def find_issues() -> list[str]:
     for path in markdown_inventory("current"):
         text = path.read_text(encoding="utf-8")
         if path.parent == ROOT / "release" and RELEASE_VERSION_RE.fullmatch(path.stem):
-            issues.extend(_release_note_destination_issues(path, text))
+            issues.extend(release_note_destination_issues(path, text, root=ROOT))
         issues.extend(_reference_issues(path, text, tests))
         if "ai_review_base_1_1_" in text or "ai_review_reviewer_1_1_" in text:
             issues.append(f"{path.relative_to(ROOT)}: retired private image version 1_1")
