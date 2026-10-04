@@ -67,6 +67,8 @@ Two rules are worth stating because breaking either is silent:
 
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
+  The finalizers apply `_prune_undeclared`, driven by the raw schemas, as the only
+  key-level normalization; do not duplicate this pruning elsewhere.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

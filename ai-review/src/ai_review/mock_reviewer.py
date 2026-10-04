@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import parse_unified_diff, resolve_side_paths
+from .anchors import parse_unified_diff
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting and state behavior with
@@ -57,13 +57,7 @@ def _mock_scenario() -> str:
 
 
 def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
-    old_path, new_path = resolve_side_paths(diff_file.old_path, diff_file.new_path)
-    return {
-        "old_path": old_path,
-        "new_path": new_path,
-        "new_line": line.new_line,
-        "hunk_header": line.hunk_header,
-    }
+    return {"new_path": diff_file.new_path, "new_line": line.new_line}
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
@@ -181,20 +175,13 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
     return {"findings": [_advisory_finding(candidate)]}
 
 
-def critique_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
-    return {"critiques": []}
-
-
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reviewer")
     parser.add_argument("stage", choices=["review", "critique"])
     args = parser.parse_args(argv)
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
-    if args.stage == "review":
-        batch = review_batch(args.reviewer, input_dir)
-    else:
-        batch = critique_batch(args.reviewer, input_dir)
+    batch = review_batch(args.reviewer, input_dir) if args.stage == "review" else {"critiques": []}
     json.dump(batch, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0

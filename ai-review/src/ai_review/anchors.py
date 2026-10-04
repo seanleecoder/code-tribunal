@@ -431,12 +431,10 @@ def resolve_location(files: tuple[DiffFile, ...], location: dict[str, Any]) -> d
     matches = []
     for file in files:
         side_path = file.old_path if side == "old" else file.new_path
-        if side_path is None or path not in {
-            normalize_path(side_path),
-            normalize_path(file.new_path)
-            if side == "old" and file.new_path is not None
-            else normalize_path(side_path),
-        }:
+        if side_path is None:
+            continue
+        aliases = {file.old_path, file.new_path} if side == "old" else {file.new_path}
+        if path not in {normalize_path(p) for p in aliases if p is not None}:
             continue
         lines = [line for line in file.lines if _line_belongs_to_side(side, line)]
         for index, line in enumerate(lines):
