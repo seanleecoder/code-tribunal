@@ -48,6 +48,21 @@ classified by whether a live run proves something the regression suite cannot:
   and is **not** a release gate. This is deliberate — two of these race windows
   were never reproducible live.
 
+### Current 2.0.2 candidate
+
+Against runtime `3db908f06d141d23de99e7578ae5b5482ebaa498` and its final published
+image pair, [Candidate Canary 37234182540](record-candidate-canary.md) passed image
+identity/provenance, real four-seat review and critique on both platforms,
+[GitHub](record-github-current-image.md) and [GitLab](record-gitlab-current-image.md)
+lifecycles, [hostile-MR containment](record-gitlab-hostile-mr.md), and cleanup.
+The separate [GitHub three-seat smoke](record-github-default-model-smoke.md) passed
+on the shipped defaults and restored v1/v2 artifact contract; its
+[effort-route record](record-model-effort-routes.md) binds Claude `medium`, Codex
+`low`, and absent MiMo effort to the same source and pair. GitHub preparation
+revision-race evidence is the sole registered waiver for 2.0.2. SPEC-41 remains
+open; the compatible contract still requires confidence and has no posted loss
+notice. Earlier 2026-10-04 model runs below remain supplemental.
+
 > **Gate removal.** The merge gate was deleted in `review_config.v3`. The
 > **Status** cells below are historical records of what a released image did on
 > the date given and are left exactly as recorded, including their references to
@@ -95,8 +110,8 @@ retains them.
   any other through `AI_REVIEW_REVIEWERS`, but it carries a separate credential
   and egress path and is off in the shipped default roster. Through 1.0.2 no
   release campaign exercised it; from 2.0.0 the four-seat Candidate Canary runs
-  it with `auto` on both platforms, which proves wiring, not model-specific
-  behavior. The supplemental [real-run record](record-cursor-real-runs.md) covers
+  it on both platforms; the 2.0.2 final-pair canary uses `composer-2.5`,
+  establishing that model route while leaving deny-policy behavior unproven. The supplemental [real-run record](record-cursor-real-runs.md) covers
   historical coordinates.
   A release that ships Cursor on the default roster would need its own gating row.
   Note the distinction: `auto` is a valid Cursor selector for production use, but
