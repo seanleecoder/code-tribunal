@@ -6,9 +6,9 @@ PyYAML==6.0.3
 requests==2.34.2
 
 # Contributor quality tooling
-mypy==2.3.1
+mypy==2.4.0
 pytest==9.1.1
 pytest-cov==7.1.0
-ruff==0.16.9
+ruff==0.16.10
 types-PyYAML==6.0.12.20260906
 types-requests==2.33.0.20260906
