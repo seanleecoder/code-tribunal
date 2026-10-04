@@ -137,10 +137,12 @@ for stronger review quality.
 | Cursor | `composer-2.5` | named-model default | no |
 
 The three enabled defaults passed real-provider review and critique in
-[GitHub smoke run 37210076322](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37210076322)
+[GitHub smoke run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
 on 2026-10-04. MiMo Flash completed read, glob, grep, multiple tool calls, and
 structured output through OpenCode → OpenRouter. Consensus was full and posting
-succeeded. This validates the candidate config on the recorded image pair;
+succeeded on current CLI pins. Composer 2.5 also passed real review and critique
+in [the separate four-seat run](evidence/record-current-cli-model-smoke-2026-10-04.md).
+This validates the candidate config on the recorded image pair;
 release validation still requires the final published images. Follow the
 [default-model smoke procedure](evidence/RUNBOOK.md#runs-1--2--current-image-lifecycle-two-independent-chains-per-platform).
 
@@ -150,7 +152,10 @@ Model recommendations last reviewed: 2026-10-04.
 
 Choose one complete profile at project/repository scope so all pipeline stages
 see the same effective configuration. Set the model override for each enabled
-seat. Set an effort override only when the selected profile specifies one.
+seat. Set its effort override to the profile's level or to `unset` when the
+profile requires absent effort. Model-only overrides inherit YAML effort;
+missing, empty, and whitespace-only effort variables also inherit YAML. For
+example, changing only `AI_REVIEW_CODEX_MODEL` retains the shipped `low`.
 Each cell is `model` / `effort`; Cursor is optional.
 
 | Profile | Claude | Codex | OpenCode | Cursor optional |
@@ -160,14 +165,18 @@ Each cell is `model` / `effort`; Cursor is optional.
 
 Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and supported
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
-below. For both MiMo models, **unset** means `AI_REVIEW_OPENCODE_EFFORT` must
-not exist; omit the YAML `effort` key too. MiMo uses the existing
+below. For both MiMo models, **unset** means the resolved configuration has no
+`effort` key. With the shipped YAML, which omits that key, a missing or blank
+`AI_REVIEW_OPENCODE_EFFORT` inherits the required absence. On upgrade, remove or
+blank any persisted OpenCode effort override such as `low`, or explicitly clear
+it with `AI_REVIEW_OPENCODE_EFFORT=unset`. If custom YAML sets effort, remove its
+key or use the explicit clearing override. MiMo uses the existing
 OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
 retain the generic effort support described below.
 
 For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
 `xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, confirmed by
-`cursor-agent --list-models` in the canary's pinned CLI `2026.09.26-dd393fe`. That CLI exposes
+`cursor-agent --list-models` on pinned CLI `2026.10.01-e373342`. That CLI exposes
 `grok-4.7-{low,medium,high,xhigh}` and corresponding `-fast` variants; it does
 not list a bare `grok-4.7` selector. Recheck the list when refreshing the CLI.
 Cursor has no separate Code Tribunal effort variable;
@@ -180,9 +189,13 @@ validated, confirm its exact selector with the pinned CLI and run a real Cursor
 review and critique with no silent fallback. MiMo Pro / unset and
 `grok-4.7-medium` passed that candidate route canary on 2026-10-04; Pro's review
 job took 12m47s. These canaries predate the subsequent CLI dependency upgrade;
-they do not validate the newer pins. The `xhigh` and `-fast` Cursor variants were
+they do not validate Pro/Grok on newer pins. The current-pin default/Composer
+smokes are [recorded separately](evidence/record-current-cli-model-smoke-2026-10-04.md)
+and prove availability for the recorded account, not every customer plan.
+The `xhigh` and `-fast` Cursor variants were
 not canaried. See the
-[model-refresh evidence](evidence/record-model-refresh-2026-10-04.md) and the
+[model-refresh evidence](evidence/record-model-refresh-2026-10-04.md), the separate
+[Pro/Grok evidence](evidence/record-mimo-pro-grok-2026-10-04.md), and the
 [model-specific evidence procedure](evidence/RUNBOOK.md#run-6--cursor-model-specific-evidence-optional).
 
 GitLab expands the shared `AI review` and `AI critique` matrix jobs into one job
@@ -307,13 +320,28 @@ artifacts.
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
 | `AI_REVIEW_CURSOR_MODEL` | `composer-2.5` (YAML) | Cursor model selector; effort is encoded in the model variant. `auto` remains a supported operator override that delegates model choice to Cursor. Use an exact slug for reproducible CI and model-specific evidence. |
-| `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum. |
-| `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
-| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
+| `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum, or `unset` to remove YAML effort. Missing or blank values inherit YAML. |
+| `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. `unset` removes YAML effort and omits that flag; missing or blank values inherit YAML. The selected model route must accept the level; forwarding does not probe provider compatibility. |
+| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. `unset` removes YAML effort and omits that setting; missing or blank values inherit YAML. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
+
+Effort clearing uses the trimmed, lowercase environment value `unset` for Claude,
+Codex, and OpenCode only. It is an instruction to remove a key before validation,
+never a provider effort value: YAML `effort: unset` is invalid. Cursor rejects
+`AI_REVIEW_CURSOR_EFFORT`, including `unset`; choose its model variant instead.
+
+For example, to change Codex's model while using its provider default effort:
+
+```sh
+export AI_REVIEW_CODEX_MODEL=openai/your-model
+export AI_REVIEW_CODEX_EFFORT=unset
+```
+
+Set these controls at repository/project scope so prepare, review, critique,
+consensus, and post resolve the same configuration.
 
 ### Credentials
 

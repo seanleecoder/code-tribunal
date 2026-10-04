@@ -340,9 +340,10 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
     - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` for
       Claude, Codex, and OpenCode (one of ``low|medium|high|xhigh|max``,
-      validated in ``validate_config``; each adapter forwards only the levels
-      its provider supports). Cursor encodes reasoning depth in its model
-      variant and rejects a separate effort setting.
+      validated in ``validate_config``), or ``unset`` to remove the YAML key.
+      Missing or blank values inherit YAML, including after a model override.
+      Adapters forward effort without probing provider support. Cursor encodes
+      reasoning depth in its model variant and rejects a separate effort setting.
     - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
       this to ``"true"`` by default and gates the critique jobs on the exact same
       variable, so config behavior and CI job-creation stay in lock-step.
@@ -370,7 +371,11 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
                 reviewer["model"] = model_env.strip()
             effort_env = os.environ.get(f"{prefix}EFFORT")
             if effort_env is not None and effort_env.strip():
-                reviewer["effort"] = effort_env.strip()
+                effort = effort_env.strip()
+                if effort == "unset" and name in REVIEWERS and REVIEWERS[name].supports_effort:
+                    reviewer.pop("effort", None)
+                else:
+                    reviewer["effort"] = effort
         apply_reviewer_roster(config, os.environ.get("AI_REVIEW_REVIEWERS"))
 
     critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")

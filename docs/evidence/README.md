@@ -71,6 +71,9 @@ classified by whether a live run proves something the regression suite cannot:
 | Suite | Status | Evidence |
 |---|---|---|
 | Cursor reviewer real-run adapter and critique | **Observed; SPEC-21 partial; historical supporting evidence only** | [Supplemental record](record-cursor-real-runs.md): private GitLab pipeline `185695` and public GitHub workflow `30080420563` both produced successful, resolution-eligible Cursor artifacts and full panels. Both recorded `model: auto`; neither exercised the hostile permission-denial prompt or the 1.0.1 image pair. |
+| Three-seat model refresh / MiMo Flash | **Passed, scoped to older CLI pins** | [Flash record](record-model-refresh-2026-10-04.md): run `37210076322`, three-seat candidate config on runtime `e1313b5`; real review/critique, sequential tools, structured output, full consensus and posting. Unselected supplemental evidence, not final-image release validation. |
+| MiMo Pro / Cursor Grok Medium | **Passed, scoped to older CLI pins** | [Pro/Grok record](record-mimo-pro-grok-2026-10-04.md): run `37210473861` on runtime `e1313b5`; four-seat review/critique, Pro tool-error recovery, full consensus and posting. Unselected supplemental evidence, not validation of newer CLIs or final release images. |
+| Current-CLI default roster / Composer 2.5 | **Passed, current CLI pins; candidate config** | [Current-CLI record](record-current-cli-model-smoke-2026-10-04.md): default run `37229611088` and Composer run `37229616128` on runtime `46c8c46`; authenticated selectors, real review/critique, MiMo tools/structured output, full consensus and posting. Unselected supplemental evidence, not final PR #174 image or release validation. |
 
 Previous GitHub dogfood runs proved workflow execution, authenticated state, and
 some inline posting, but not all current-image lifecycle paths. Previous GitLab

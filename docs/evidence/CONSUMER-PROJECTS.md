@@ -40,7 +40,9 @@ repo's canonical template.
   `pull_request` runs, which manual mode skips),
   `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`. The roster variable must
   include `cursor`: the canonical workflow reads it before exposing
-  `CURSOR_API_KEY`. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
+  `CURSOR_API_KEY`. Keep this four-seat resting roster for `make demo-preflight`;
+  scope an exact three-seat default smoke to its temporary workflow, then rerun
+  preflight after cleanup. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
   `AI_REVIEW_MERGE_GATE_ENABLED` were deleted; a current image fails at config
   load while the merge-gate override is set. The pre-#126 workflow copy still on
   `main` hard-maps that override to `'true'`, so the next adoption from a

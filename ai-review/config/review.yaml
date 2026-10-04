@@ -32,7 +32,8 @@ reviewers:
     model: openai/gpt-6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
     effort: low
     # Optional reasoning effort: low|medium|high|xhigh|max reaches Codex
-    # unchanged as model_reasoning_effort. Override: AI_REVIEW_CODEX_EFFORT
+    # unchanged as model_reasoning_effort. Model-only overrides inherit low;
+    # AI_REVIEW_CODEX_EFFORT=unset clears it. Blank values inherit YAML.
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
@@ -42,7 +43,7 @@ reviewers:
     # Optional effort/reasoning depth: low|medium|high|xhigh|max reaches
     # OpenCode unchanged as reasoningEffort. Leave effort unset for the provider
     # default. MiMo Flash and Pro also require unset effort. Override:
-    # AI_REVIEW_OPENCODE_EFFORT
+    # AI_REVIEW_OPENCODE_EFFORT (unset clears YAML; missing/blank inherit it).
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering

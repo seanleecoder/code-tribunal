@@ -70,6 +70,14 @@ Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
 unset for shipped defaults. Never set `AI_REVIEW_LOCAL_MOCK` in production.
 
+When upgrading to the MiMo default, remove or blank any persisted
+`AI_REVIEW_OPENCODE_EFFORT` override, or set it to `unset` to clear YAML effort.
+MiMo needs absent resolved effort; the shipped YAML omits it. Changing only a
+model inherits YAML effort, including Codex's `low`; use
+`AI_REVIEW_CODEX_EFFORT=unset` for provider default effort. Missing or blank
+effort variables inherit YAML. Apply model and effort controls at repository
+scope so all stages agree.
+
 ## Branch protection
 
 **Code Tribunal is informational and requires no status check.** It publishes

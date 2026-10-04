@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+import yaml
 from ai_review.config import (
     CONFIG_SCHEMA_VERSION,
     RETIRED_CONFIG_SCHEMA_VERSIONS,
@@ -113,6 +114,61 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                 "cursor": (1800, 900),
             },
         )
+
+    def test_model_only_override_inherits_effort(self) -> None:
+        for value in (None, "", "  "):
+            env = {"AI_REVIEW_CODEX_MODEL": "openai/other-model"}
+            if value is not None:
+                env["AI_REVIEW_CODEX_EFFORT"] = value
+            with self.subTest(value=value), mock.patch.dict("os.environ", env, clear=True):
+                config = load_config(_REPO_CONFIG)
+            self.assertEqual(config["reviewers"]["codex"]["model"], "openai/other-model")
+            self.assertEqual(config["reviewers"]["codex"]["effort"], "low")
+
+    def test_unset_effort_matches_yaml_omission(self) -> None:
+        for name in ("claude", "codex", "opencode"):
+            for present in (False, True):
+                for value in ("unset", "  unset\t"):
+                    with self.subTest(name=name, present=present, value=value):
+                        with mock.patch.dict("os.environ", {}, clear=True):
+                            config = load_config(_REPO_CONFIG)
+                        if present:
+                            config["reviewers"][name]["effort"] = "low"
+                        else:
+                            config["reviewers"][name].pop("effort", None)
+                        expected = deepcopy(config)
+                        expected["reviewers"][name].pop("effort", None)
+                        with mock.patch.dict(
+                            "os.environ", {f"AI_REVIEW_{name.upper()}_EFFORT": value}, clear=True
+                        ):
+                            apply_env_overrides(config)
+                        validate_config(config)
+                        self.assertNotIn("effort", config["reviewers"][name])
+                        self.assertEqual(config, expected)
+                        self.assertEqual(
+                            effective_config_digest(config), effective_config_digest(expected)
+                        )
+
+    def test_unset_effort_is_applied_before_load_validation(self) -> None:
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_EFFORT": "unset"}, clear=True):
+            config = load_config(_REPO_CONFIG)
+        self.assertNotIn("effort", config["reviewers"]["codex"])
+
+    def test_yaml_unset_is_not_a_provider_effort(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            config = load_config(_REPO_CONFIG)
+        for name in ("claude", "codex", "opencode"):
+            with self.subTest(name=name):
+                invalid = deepcopy(config)
+                invalid["reviewers"][name]["effort"] = "unset"
+                with TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "review.yaml"
+                    path.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+                    with (
+                        mock.patch.dict("os.environ", {}, clear=True),
+                        self.assertRaisesRegex(ConfigError, "effort must be one of"),
+                    ):
+                        load_config(path)
 
     def test_effort_override_per_reviewer(self) -> None:
         config = _base_config()
@@ -496,14 +552,16 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertEqual(config["reviewers"]["claude"]["effort"], "xhigh")
 
     def test_cursor_effort_override_fails_loudly(self) -> None:
-        with (
-            mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_EFFORT": "high"}),
-            self.assertRaisesRegex(
-                ConfigError,
-                r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
-            ),
-        ):
-            load_config(_REPO_CONFIG)
+        for value in ("high", "unset", "  unset  "):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_EFFORT": value}, clear=True),
+                self.assertRaisesRegex(
+                    ConfigError,
+                    r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
+                ),
+            ):
+                load_config(_REPO_CONFIG)
 
     def test_cursor_effort_config_key_fails_loudly(self) -> None:
         config = load_config(_REPO_CONFIG)
@@ -518,7 +576,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
     def test_invalid_effort_fails_loudly(self) -> None:
         # Closed set, case-sensitive (whitespace is stripped like model
         # overrides): anything else must raise, never reach argv.
-        for value in ("turbo", "Low", "LOW"):
+        for value in ("turbo", "Low", "LOW", "Unset", "UNSET"):
             with (
                 self.subTest(value=value),
                 mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}),
