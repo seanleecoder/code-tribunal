@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .anchors import (
+    add_line_codes,
     candidate_issue_signature,
     compute_source_finding_id,
+    context_hash_from_unified_diff,
     evidence_fingerprint,
-    finding_sort_key,
     first_evidence_or_body,
-    parse_unified_diff,
-    resolve_location,
+    is_sha256,
+    resolve_side_paths,
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
+from .constants import SEVERITY_RANK
 from .redact import redact_text
 
 
@@ -65,9 +69,12 @@ def batch_quality_fields(
     ``accepted_finding_count == len(findings)`` and
     ``accepted_finding_count + dropped_finding_count <= raw_finding_count``.
     Equality holds when no ``max_findings`` cap eviction occurred; under a cap,
-    raw exceeds accepted+dropped by the number of valid candidates omitted by the cap.
+    raw may exceed accepted+dropped because unprocessed candidates are neither
+    accepted nor counted as malformed drops.
     """
-    usable = adapter_status == "success" and (raw_finding_count == 0 or accepted_finding_count > 0)
+    usable = adapter_status == "success" and (
+        raw_finding_count == 0 or accepted_finding_count > 0
+    )
     return {
         "raw_finding_count": raw_finding_count,
         "accepted_finding_count": accepted_finding_count,
@@ -102,31 +109,14 @@ def load_schema(schema_name: str) -> dict[str, Any]:
     return loaded
 
 
-def validate_instance(instance: Any, schema: str | dict[str, Any]) -> None:
+def validate_instance(instance: Any, schema_name: str) -> None:
     import jsonschema  # type: ignore[import-untyped]
 
-    if isinstance(schema, str):
-        schema = load_schema(schema)
+    schema = load_schema(schema_name)
     try:
         jsonschema.Draft202012Validator(schema).validate(instance)
     except jsonschema.ValidationError as exc:
         raise SchemaValidationError(exc.message) from exc
-
-
-def _prune_undeclared(value: Any, node: dict[str, Any], root: dict[str, Any]) -> Any:
-    """Prune raw authoring keys using only properties, items, and local $defs refs."""
-    if "$ref" in node:
-        return _prune_undeclared(value, root["$defs"][node["$ref"].removeprefix("#/$defs/")], root)
-    if isinstance(value, dict) and "properties" in node:
-        properties = node["properties"]
-        return {
-            key: _prune_undeclared(item, properties[key], root)
-            for key, item in value.items()
-            if key in properties
-        }
-    if isinstance(value, list) and isinstance(node.get("items"), dict):
-        return [_prune_undeclared(item, node["items"], root) for item in value]
-    return value
 
 
 def empty_finding_batch(
@@ -151,7 +141,7 @@ def empty_finding_batch(
         dropped_finding_count=dropped_finding_count,
     )
     return {
-        "schema_version": "finding_batch.v2",
+        "schema_version": "finding_batch.v1",
         "run_id": run_id,
         "reviewer": reviewer,
         "adapter_status": adapter_status,
@@ -173,7 +163,7 @@ def empty_critique_batch(
     effective_config_sha256: str,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "critique_batch.v2",
+        "schema_version": "critique_batch.v1",
         "run_id": run_id,
         "critic": critic,
         "adapter_status": adapter_status,
@@ -188,45 +178,84 @@ def finalize_critique_batch(
     critic: str,
     run_id: str,
     effective_config_sha256: str,
-    pooled_findings: dict[str, Any],
+    pooled_finding_ids: Collection[str],
 ) -> dict[str, Any]:
-    """Resolve short references against the exact pool held in trusted runner memory."""
-    if any(
-        pooled_findings.get(key) != value
-        for key, value in {
-            "schema_version": "pooled_findings.v2",
-            "run_id": run_id,
-            "critic": critic,
-            "effective_config_sha256": effective_config_sha256,
-        }.items()
-    ):
-        raise SchemaValidationError("critique pool run/config/critic binding mismatch")
-    raw_schema = load_schema("raw_critique_batch.schema.json")
-    batch = _prune_undeclared(batch, raw_schema, raw_schema)
-    validate_instance(batch, raw_schema)
-    mapping = pooled_findings["source_finding_ids"]
-    critiques = []
-    for item in batch["critiques"]:
-        target, duplicate = item["target_id"], item["duplicate_of_id"]
-        if target not in mapping or (duplicate is not None and duplicate not in mapping):
-            raise SchemaValidationError("critique references an unknown pool id")
-        critiques.append(
-            {
-                "target_source_finding_id": mapping[target],
-                "duplicate_of_source_finding_id": mapping[duplicate] if duplicate else None,
-                "critic": critic,
-                **{key: item[key] for key in ("verdict", "rationale", "adjusted_severity")},
-            }
+    """Bind a critic's raw batch to this run, keeping only critiques of pooled findings.
+
+    ``pooled_finding_ids`` is the exact pool the critic was shown. A model that
+    miscopies a 64-hex id produces a critique consensus cannot place; consensus
+    treats an unknown target as forged evidence and fails the run, so a single
+    transcription slip is dropped here before it reaches consensus. The critique
+    must still be schema-valid before its references are checked.
+    """
+    status = str(batch.get("adapter_status", "success"))
+    if status != "success":
+        finalized = empty_critique_batch(
+            critic,
+            status if status in ADAPTER_STATUSES else "schema_error",
+            run_id=run_id,
+            started_at=now_iso(),
+            effective_config_sha256=effective_config_sha256,
         )
+        validate_instance(finalized, "critique_batch.schema.json")
+        return finalized
+
+    raw_critiques = batch.get("critiques")
+    if not isinstance(raw_critiques, list):
+        raise SchemaValidationError("adapter output critiques must be an array")
+
+    normalized_critiques = []
+    for critique in raw_critiques:
+        if not isinstance(critique, dict):
+            raise SchemaValidationError("critique entries must be objects")
+        normalized = dict(critique)
+        normalized["critic"] = critic
+        if "duplicate_of_source_finding_id" not in normalized:
+            normalized["duplicate_of_source_finding_id"] = None
+        if "confidence" not in normalized:
+            normalized["confidence"] = 1.0
+        normalized_critiques.append(normalized)
+
     finalized = {
-        "schema_version": "critique_batch.v2",
+        "schema_version": "critique_batch.v1",
         "run_id": run_id,
         "critic": critic,
         "adapter_status": "success",
         "effective_config_sha256": effective_config_sha256,
-        "critiques": critiques,
+        "critiques": normalized_critiques,
     }
+    # Validate every item before filtering: an unknown reference must not hide
+    # a malformed id or any other schema error in the same critique.
     validate_instance(finalized, "critique_batch.schema.json")
+
+    pooled = frozenset(pooled_finding_ids)
+    critiques = []
+    for index, normalized in enumerate(normalized_critiques, start=1):
+        target = normalized["target_source_finding_id"]
+        duplicate_of = normalized["duplicate_of_source_finding_id"]
+        # The schema pattern's `$` admits a trailing newline; only a fully
+        # well-formed id can be a transcription slip rather than malformed output.
+        if not is_sha256(target) or (duplicate_of is not None and not is_sha256(duplicate_of)):
+            raise SchemaValidationError("critique finding ids must be 64 lowercase hex characters")
+        if target not in pooled or (duplicate_of is not None and duplicate_of not in pooled):
+            sys.stderr.write(
+                redact_text(
+                    f"ai-review: dropped {critic} critique {index}: it references a "
+                    "finding id that is not in the pooled findings\n"
+                )
+            )
+            continue
+        critiques.append(normalized)
+    dropped = len(normalized_critiques) - len(critiques)
+    if dropped:
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {critic} kept {len(critiques)} critique(s), dropped "
+                f"{dropped} referencing unknown finding ids\n"
+            )
+        )
+    # Dropping items from a validated batch cannot make it invalid.
+    finalized["critiques"] = critiques
     return finalized
 
 
@@ -275,6 +304,88 @@ def adapter_status_artifact(
     return artifact
 
 
+def _load_diff(input_dir: str | Path | None) -> str | None:
+    if input_dir is None:
+        return None
+    diff_path = Path(input_dir) / "mr.diff"
+    if not diff_path.exists():
+        return None
+    return diff_path.read_text(encoding="utf-8")
+
+
+def _confidence_rank(finding: Any) -> float:
+    if not isinstance(finding, dict):
+        return float("-inf")
+    confidence = finding.get("confidence")
+    if (
+        isinstance(confidence, int | float)
+        and not isinstance(confidence, bool)
+        and math.isfinite(float(confidence))
+        and 0.0 <= float(confidence) <= 1.0
+    ):
+        return float(confidence)
+    return float("-inf")
+
+
+def _severity_rank(finding: Any) -> int:
+    if not isinstance(finding, dict):
+        return -1
+    return SEVERITY_RANK.get(str(finding.get("severity")), -1)
+
+
+def _rank_findings_for_cap(
+    raw_findings: list[Any], max_findings: int | None
+) -> list[tuple[int, Any]]:
+    """Rank candidates for capped processing without trusting adapter payload shape.
+
+    A verbose or prompt-injected model can emit thousands of findings; the per-reviewer
+    ``max_findings`` cap bounds how many are finalized while ensuring blockers survive.
+    """
+    indexed = list(enumerate(raw_findings, start=1))
+    if max_findings is None or max_findings < 0:
+        return indexed
+    return sorted(
+        indexed,
+        key=lambda item: (-_severity_rank(item[1]), -_confidence_rank(item[1]), item[0]),
+    )
+
+
+def _validate_finalized_finding(
+    finding: dict[str, Any],
+    *,
+    batch: dict[str, Any],
+    reviewer: str,
+    model: str,
+    run_id: str,
+    started_at: str,
+    effective_config_sha256: str,
+) -> None:
+    confidence = finding.get("confidence")
+    if isinstance(confidence, float) and not math.isfinite(confidence):
+        raise SchemaValidationError("confidence must be finite")
+    quality = batch_quality_fields(
+        adapter_status="success",
+        raw_finding_count=1,
+        accepted_finding_count=1,
+        dropped_finding_count=0,
+    )
+    validate_instance(
+        {
+            "schema_version": "finding_batch.v1",
+            "run_id": str(batch.get("run_id") or run_id),
+            "reviewer": reviewer,
+            "adapter_status": "success",
+            "model": model,
+            "started_at": str(batch.get("started_at") or started_at),
+            "completed_at": str(batch.get("completed_at") or now_iso()),
+            **quality,
+            "effective_config_sha256": effective_config_sha256,
+            "findings": [finding],
+        },
+        "finding_batch.schema.json",
+    )
+
+
 def finalize_finding_batch(
     batch: dict[str, Any],
     *,
@@ -283,68 +394,121 @@ def finalize_finding_batch(
     run_id: str,
     started_at: str,
     effective_config_sha256: str,
-    input_dir: str | Path,
+    input_dir: str | Path | None = None,
     max_findings: int | None = None,
 ) -> dict[str, Any]:
-    import jsonschema
+    status = batch.get("adapter_status", "success")
+    if status != "success":
+        finalized = empty_finding_batch(
+            reviewer,
+            str(status) if str(status) in ADAPTER_STATUSES else "schema_error",
+            run_id=run_id,
+            model=model,
+            started_at=started_at,
+            completed_at=str(batch.get("completed_at") or now_iso()),
+            effective_config_sha256=effective_config_sha256,
+        )
+        validate_instance(finalized, "finding_batch.schema.json")
+        return finalized
 
-    files = tuple(parse_unified_diff((Path(input_dir) / "mr.diff").read_text(encoding="utf-8")))
-    raw_schema = load_schema("raw_finding_batch.schema.json")
-    batch = _prune_undeclared(batch, raw_schema, raw_schema)
-    raw_findings = batch.get("findings")
+    diff_text = _load_diff(input_dir)
+    raw_findings = batch.get("findings", [])
     if not isinstance(raw_findings, list):
         raise SchemaValidationError("adapter output findings must be an array")
-    # Build the per-finding validator once per batch and validate every candidate
-    # before applying the cap.
-    validator = jsonschema.Draft202012Validator(
-        {**raw_schema["$defs"]["finding"], "$defs": raw_schema["$defs"]}
-    )
-    findings = []
+    raw_count = len(raw_findings)
+    ranked_findings = _rank_findings_for_cap(raw_findings, max_findings)
+    findings: list[dict[str, Any]] = []
+    finding_keys = {
+        "anchor",
+        "severity",
+        "category",
+        "title",
+        "body",
+        "evidence",
+        "suggestion",
+        "confidence",
+    }
     dropped = 0
-    for index, finding in enumerate(raw_findings, start=1):
+    for index, finding in ranked_findings:
+        if max_findings is not None and max_findings >= 0 and len(findings) >= max_findings:
+            break
         try:
-            validator.validate(finding)
-            normalized = {key: value for key, value in finding.items() if key != "location"}
-            anchor = resolve_location(files, finding["location"])
+            normalized = {key: finding[key] for key in finding_keys if key in finding}
+            normalized["run_local_id"] = f"{reviewer}-{index:04d}"
+            normalized.setdefault("evidence", [])
+            normalized.setdefault("suggestion", None)
+            anchor = dict(normalized["anchor"])
+            # Reviewers that read the raw diff can echo git's `/dev/null`
+            # sentinel for an added/deleted file's absent side; that is not a
+            # repo path and would drop the finding as absolute.
+            anchor["old_path"], anchor["new_path"] = resolve_side_paths(
+                str(anchor["old_path"]), str(anchor["new_path"])
+            )
+            anchor = add_line_codes(anchor)
+            if diff_text is not None:
+                anchor["context_hash"] = context_hash_from_unified_diff(diff_text, anchor)
+            elif not is_sha256(anchor.get("context_hash")):
+                anchor["context_hash"] = context_hash_from_unified_diff(
+                    str(anchor.get("hunk_header", "")), anchor
+                )
             normalized["anchor"] = anchor
-            title_fp = title_fingerprint(normalized["title"])
+            title_fp = title_fingerprint(str(normalized["title"]))
+            evidence_fp = evidence_fingerprint(first_evidence_or_body(normalized))
             normalized["fingerprints"] = {
                 "title_fingerprint": title_fp,
-                "evidence_fingerprint": evidence_fingerprint(first_evidence_or_body(normalized)),
+                "evidence_fingerprint": evidence_fp,
             }
             normalized["source_finding_id"] = compute_source_finding_id(
-                reviewer, anchor, normalized["category"], title_fp
+                reviewer,
+                anchor,
+                str(normalized["category"]),
+                title_fp,
             )
             normalized["candidate_issue_signature"] = candidate_issue_signature(
-                anchor, normalized["category"], title_fp
+                anchor,
+                str(normalized["category"]),
+                title_fp,
             )
-        except (jsonschema.ValidationError, ValueError, KeyError, TypeError) as exc:
+            _validate_finalized_finding(
+                normalized,
+                batch=batch,
+                reviewer=reviewer,
+                model=model,
+                run_id=run_id,
+                started_at=started_at,
+                effective_config_sha256=effective_config_sha256,
+            )
+        except (SchemaValidationError, ValueError, KeyError, TypeError) as exc:
+            # A single finding with an unresolvable/malformed anchor must not discard the
+            # whole batch — drop just that finding and keep the valid ones.
             dropped += 1
-            detail = exc.message if isinstance(exc, jsonschema.ValidationError) else str(exc)
-            sys.stderr.write(
-                redact_text(f"ai-review: dropped {reviewer} finding {index}: {detail}\n")
-            )
+            sys.stderr.write(redact_text(f"ai-review: dropped {reviewer} finding {index}: {exc}\n"))
             continue
         findings.append(normalized)
-    findings.sort(key=finding_sort_key)
-    if max_findings is not None and max_findings >= 0:
-        findings = findings[:max_findings]
-    for index, finding in enumerate(findings, start=1):
-        finding["run_local_id"] = f"{reviewer}-{index:04d}"
+    quality = batch_quality_fields(
+        adapter_status="success",
+        raw_finding_count=raw_count,
+        accepted_finding_count=len(findings),
+        dropped_finding_count=dropped,
+    )
+    if dropped:
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {reviewer} kept {len(findings)} finding(s), "
+                f"dropped {dropped} malformed/unresolvable finding(s); "
+                f"usable_for_resolution={quality['usable_for_resolution']}\n"
+            )
+        )
+
     finalized = {
-        "schema_version": "finding_batch.v2",
+        "schema_version": "finding_batch.v1",
         "run_id": run_id,
         "reviewer": reviewer,
         "adapter_status": "success",
         "model": model,
-        "started_at": started_at,
-        "completed_at": now_iso(),
-        **batch_quality_fields(
-            adapter_status="success",
-            raw_finding_count=len(raw_findings),
-            accepted_finding_count=len(findings),
-            dropped_finding_count=dropped,
-        ),
+        "started_at": str(batch.get("started_at") or started_at),
+        "completed_at": str(batch.get("completed_at") or now_iso()),
+        **quality,
         "effective_config_sha256": effective_config_sha256,
         "findings": findings,
     }

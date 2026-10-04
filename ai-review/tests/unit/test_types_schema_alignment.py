@@ -16,8 +16,6 @@ from ai_review.schema import load_schema
 
 ARTIFACT_TYPES = {
     "raw_finding_batch.schema.json": domain_types.RawFindingBatch,
-    "raw_critique_batch.schema.json": domain_types.RawCritiqueBatch,
-    "pooled_findings.schema.json": domain_types.PooledFindings,
     "finding_batch.schema.json": domain_types.FindingBatch,
     "critique_batch.schema.json": domain_types.CritiqueBatch,
     "adapter_status.schema.json": domain_types.AdapterStatusArtifact,

@@ -327,7 +327,7 @@ class OpenCodeClientTests(unittest.TestCase):
     def test_critique_transport_uses_critique_schema(self) -> None:
         schema = opencode_client._load_transport_schema("critique")
         expected = load_json_file(
-            Path(__file__).resolve().parents[2] / "schemas" / "raw_critique_batch.schema.json"
+            Path(__file__).resolve().parents[2] / "schemas" / "critique_batch.schema.json"
         )
         assert isinstance(expected, dict)
         expected.pop("$schema")

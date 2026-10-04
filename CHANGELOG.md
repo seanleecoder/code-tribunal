@@ -20,15 +20,17 @@ versioning.
   1.18.34, and Cursor Agent 2026.10.01-e373342; refreshed Python to 3.14.8,
   charset-normalizer to 3.5.2, mypy to 2.4.0, and Ruff to 0.16.10. OpenCode
   remains paired with its expected ripgrep 15.1.0.
-- S05 removes model-authored confidence and runtime metadata. Reviewers author
-  compact diff locations; trusted normalization derives anchors and identities.
-  Critiques use deterministic short IDs resolved from a runner-held pool.
-  Finding, critique, and pool artifacts become v2; consensus becomes v3. Old
-  artifacts are rejected. Deploy in the next breaking release with matched
-  images and fresh artifacts; config and persisted state versions stay unchanged.
-- Consensus and both posted summaries show dropped and cap-omitted findings and
-  unavailable seats, including health-only output and recovery updates. SPEC-41
-  is closed: valid findings no longer need confidence or hash placeholders.
+- Simplified finding grouping while preserving the existing deterministic
+  consensus contract and golden output; simplified documentation checks and
+  packaged smoke loading.
+- Retained the 2.0 artifact contracts (`finding_batch.v1`, `critique_batch.v1`,
+  `consensus.v2`, and the previous pool and model-authoring formats). The
+  unreleased S05 cutover and its follow-up are reverted for this compatible patch;
+  config and persisted-state versions remain unchanged. S05 is deferred to
+  separately planned major-release work, and SPEC-41 remains open: findings that
+  omit required confidence can still be discarded without a posted loss notice.
+- Hardened release validation, source-bound evidence, signed-tag publication,
+  release-note preservation, and GitLab template pin validation.
 
 ## [2.0.1] - 2026-10-02
 

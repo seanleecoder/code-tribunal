@@ -18,7 +18,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/status/<stage>-<reviewer>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
 | `out/status/<stage>-<reviewer>-parse-raw-stdout.txt` | adapter runner on parse/validation failure | operator | complete redacted adapter stdout, bounded at 2 MiB with an explicit truncation marker; diagnostic text, no schema |
 | `out/findings/<reviewer>.json` | reviewer adapter | consensus/critique | [`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json) |
-| `out/pooled_findings/<reviewer>.json` | critique preparation | operator audit | [`pooled_findings.schema.json`](../../ai-review/schemas/pooled_findings.schema.json), `pooled_findings.v2`; the runner retains its authoritative map in memory |
+| `out/pooled_findings/<reviewer>.json` | critique preparation | critic | anonymized finding pool contract |
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
 | `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json) |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
@@ -30,28 +30,7 @@ the job's exit status, not an input to another stage.
 
 Raw model output is normalized through
 [`raw_finding_batch.schema.json`](../../ai-review/schemas/raw_finding_batch.schema.json)
-before it can become `finding_batch.v2`. Models author severity, category,
-title, body, evidence, nullable suggestion, and a compact `location` with path,
-side, start/end line, and nullable symbol. A prepared diff is required even for
-offline fixtures: normalization derives paths, coordinates, context hash, hunk,
-line codes, fingerprints, and identities. `unchanged` uses new-side numbering
-and context lines. Ranges must be unambiguous and contiguous within one hunk.
-There is no numeric confidence.
-
-Critics author only `target_id`, verdict, rationale, nullable `duplicate_of_id`,
-and nullable adjusted severity under
-[`raw_critique_batch.schema.json`](../../ai-review/schemas/raw_critique_batch.schema.json).
-Deterministic `F001`, `F002`, etc. identify the exact compact, optionally blinded
-pool. The runner resolves IDs from its in-memory run/config/critic-bound map into
-`critique_batch.v2`; malformed or unknown references invalidate the entire batch
-as `schema_error`. The pool file is an audit copy and is never read back as
-authority. Prompts expose project/revision context, rules, diff, prior decisions,
-and finding text, excluding runtime hashes and reconciliation identities.
-
-The reducer emits `consensus.v3`. Old finding/critique/pool/consensus versions
-are rejected with no compatibility decoder. Configuration, persisted state, and
-adapter-status versions are unchanged; use matched images and fresh artifacts
-when cutting over in the next breaking release. Schema validity alone does not make a
+before it can become a finding batch. Schema validity alone does not make a
 reviewer resolution-eligible: the batch-quality and effective-config fields are
 also evaluated by consensus.
 

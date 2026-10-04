@@ -26,11 +26,14 @@ _DIFF = "\n".join(
 
 def _raw_valid() -> dict[str, Any]:
     return {
-        "location": {
-            "path": "src/foo.py",
+        "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
             "side": "new",
-            "start_line": 2,
-            "end_line": 2,
+            "start": {"old_line": None, "new_line": 2, "line_code": None},
+            "end": {"old_line": None, "new_line": 2, "line_code": None},
+            "hunk_header": "@@ -1,1 +1,2 @@",
+            "context_hash": "0" * 64,
             "symbol": None,
         },
         "severity": "major",
@@ -39,6 +42,7 @@ def _raw_valid() -> dict[str, Any]:
         "body": "The new config access can raise a KeyError.",
         "evidence": ["config['required']"],
         "suggestion": None,
+        "confidence": 0.8,
     }
 
 
@@ -48,6 +52,7 @@ def _raw_malformed() -> dict[str, Any]:
         "category": "security",
         "title": "broken",
         "body": "broken",
+        "confidence": 0.9,
     }
 
 
@@ -57,7 +62,10 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             input_dir = Path(tmp)
             (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             finalized = finalize_finding_batch(
-                {"findings": []},
+                {
+                    "adapter_status": "success",
+                    "findings": [],
+                },
                 reviewer="claude",
                 model="model",
                 run_id="run",
@@ -86,7 +94,10 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             input_dir = Path(tmp)
             (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             finalized = finalize_finding_batch(
-                {"findings": [_raw_valid(), _raw_malformed()]},
+                {
+                    "adapter_status": "success",
+                    "findings": [_raw_valid(), _raw_malformed()],
+                },
                 reviewer="claude",
                 model="model",
                 run_id="run",
@@ -104,7 +115,10 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             input_dir = Path(tmp)
             (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             finalized = finalize_finding_batch(
-                {"findings": [_raw_malformed(), _raw_malformed()]},
+                {
+                    "adapter_status": "success",
+                    "findings": [_raw_malformed(), _raw_malformed()],
+                },
                 reviewer="claude",
                 model="model",
                 run_id="run",
@@ -116,17 +130,14 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         self.assertEqual(finalized["dropped_finding_count"], 2)
         self.assertFalse(finalized["usable_for_resolution"])
 
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "mr.diff").write_text(_DIFF)
-            empty_usable = finalize_finding_batch(
-                {"findings": []},
-                reviewer="codex",
-                model="model",
-                run_id="run",
-                started_at="2026-06-29T00:00:00Z",
-                effective_config_sha256="0" * 64,
-                input_dir=tmp,
-            )
+        empty_usable = finalize_finding_batch(
+            {"adapter_status": "success", "findings": []},
+            reviewer="codex",
+            model="model",
+            run_id="run",
+            started_at="2026-06-29T00:00:00Z",
+            effective_config_sha256="0" * 64,
+        )
         consensus = build_consensus(_manifest(), [finalized, empty_usable], _config())
         self.assertEqual(consensus["successful_reviewers"], ["codex"])
         self.assertEqual(consensus["resolution_eligible_reviewers"], ["codex"])
@@ -139,7 +150,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
 
     def test_resolution_quorum_ignores_legacy_successful_reviewers_field(self) -> None:
         legacy: Consensus = {
-            "schema_version": "consensus.v3",
+            "schema_version": "consensus.v2",
             "run_id": "run",
             "project_id": "1",
             "merge_request_iid": "2",
@@ -150,15 +161,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             "failed_reviewers": [],
             "panel_status": "full",
             "groups": [],
-            "summary": {
-                "surface_count": 0,
-                "fyi_count": 0,
-                "drop_count": 0,
-                "raw_finding_count": 0,
-                "accepted_finding_count": 0,
-                "dropped_finding_count": 0,
-                "cap_omitted_finding_count": 0,
-            },
+            "summary": {"surface_count": 0, "fyi_count": 0, "drop_count": 0},
         }
         # Explicit empty eligibility must not resolve via successful_reviewers.
         self.assertFalse(

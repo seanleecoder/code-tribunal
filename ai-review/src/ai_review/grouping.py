@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .anchors import anchor_path_key, finding_sort_key
+from .anchors import anchor_path_key
 from .canonical import canonical_json, sha256_hex
+from .constants import SEVERITY_RANK
 
 
 def _changed_start_line(finding: dict[str, Any]) -> int:
@@ -93,14 +94,17 @@ def same_issue(
 
 
 def choose_primary_signature_finding(findings: list[dict[str, Any]]) -> dict[str, Any]:
-    return min(
+    return sorted(
         findings,
         key=lambda item: (
             0 if item["anchor"]["side"] == "new" else 1,
             _changed_start_line(item),
-            *finding_sort_key(item),
+            -SEVERITY_RANK[str(item["severity"])],
+            -float(item.get("confidence", 0.0)),
+            str(item.get("reviewer", "")),
+            str(item["source_finding_id"]),
         ),
-    )
+    )[0]
 
 
 def issue_id_for_group(findings: list[dict[str, Any]]) -> str:
@@ -142,9 +146,9 @@ def group_findings(
 ) -> list[list[dict[str, Any]]]:
     buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for finding in sorted(findings, key=lambda item: item["source_finding_id"]):
-        buckets.setdefault((finding["category"], anchor_path_key(finding["anchor"])), []).append(
-            finding
-        )
+        buckets.setdefault(
+            (finding["category"], anchor_path_key(finding["anchor"])), []
+        ).append(finding)
     result: list[list[dict[str, Any]]] = []
     for bucket in buckets.values():
         groups: list[list[dict[str, Any]]] = []

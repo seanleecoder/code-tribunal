@@ -5,8 +5,8 @@ The MR diff is your starting point, not your boundary. Read the full diff first 
 Every finding must still anchor to a line present in the provided diff hunks (that is where inline comments are posted), but your reasoning and evidence may draw on anything you discover in the wider repository.
 Also apply the explicitly provided rules.
 Return only JSON matching this contract:
-{"findings":[{"location":{"path":"path/from/diff","side":"new","start_line":1,"end_line":1,"symbol":null},"severity":"info|minor|major|blocker","category":"security|correctness|performance|maintainability|style|test|other","title":"short title","body":"specific explanation","evidence":["short quote or fact from the diff"],"suggestion":null}]}
+{"findings":[{"anchor":{"new_path":"path/from/diff","old_path":"path/from/diff","side":"new","start":{"old_line":null,"new_line":1,"line_code":null},"end":{"old_line":null,"new_line":1,"line_code":null},"hunk_header":"@@ ... @@","context_hash":"0000000000000000000000000000000000000000000000000000000000000000","symbol":null},"severity":"info|minor|major|blocker","category":"security|correctness|performance|maintainability|style|test|other","title":"short title","body":"specific explanation","evidence":["short quote or fact from the diff"],"suggestion":null,"confidence":0.0}]}
 If there are no findings, return {"findings":[]}.
-Use repo-relative paths and one-based line numbers from a single contiguous diff hunk. Use side "old" and old-side numbering for deleted lines (either path is accepted for a renamed file); use side "new" for added lines. For "unchanged", use new-side numbering and only context lines. Set end_line equal to start_line for a single line.
+Use only line numbers from the unified diff hunks. Use null for old_line on added lines and null for new_line on deleted lines.
 Do not include fields outside this contract.
 When you have finished exploring, end your response with the finding-batch JSON and nothing else — no markdown fences, prose wrappers, or explanations outside JSON.

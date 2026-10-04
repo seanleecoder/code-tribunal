@@ -13,27 +13,7 @@ from .render import (
     platform_comment_limit,
     prose_block,
 )
-from .types import Consensus, FindingGroup
-
-REVIEW_RECOVERY_NOTICE = "**Review health: full.** No finding loss reported in the current run."
-
-
-def review_health_notice(consensus: Consensus) -> str | None:
-    summary = consensus["summary"]
-    dropped = summary["dropped_finding_count"]
-    omitted = summary["cap_omitted_finding_count"]
-    if consensus["panel_status"] == "full" and not dropped and not omitted:
-        return None
-    unavailable = ", ".join(
-        literal_span(seat, max_length=80, required=True) for seat in consensus["failed_reviewers"]
-    )
-    return (
-        f"**Review health: {consensus['panel_status']}.** "
-        f"Findings: {summary['raw_finding_count']} raw, "
-        f"{summary['accepted_finding_count']} accepted, {dropped} dropped, "
-        f"{omitted} omitted by the per-seat cap."
-        + (f" Unavailable seats: {unavailable}." if unavailable else "")
-    )
+from .types import FindingGroup
 
 
 def _anchor_location(anchor: dict[str, Any]) -> str:
@@ -97,12 +77,8 @@ class SummarySectionDescriptor:
             )
 
 
-def _compose_summary_sections(
-    sections: list[SummarySectionDescriptor], health_notice: str | None = None
-) -> str:
+def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
     rendered_sections = ["**AI review summary**"]
-    if health_notice:
-        rendered_sections.append(health_notice)
     for section in sections:
         total = len(section.entries)
         section_lines = [
@@ -118,7 +94,9 @@ def _drop_lowest_priority_trailing_entry(
     sections: list[SummarySectionDescriptor],
 ) -> bool:
     candidates = [
-        (index, section) for index, section in enumerate(sections) if section.retained_count > 0
+        (index, section)
+        for index, section in enumerate(sections)
+        if section.retained_count > 0
     ]
     if not candidates:
         return False
@@ -134,7 +112,6 @@ def render_summary_body(
     max_fyi: int,
     *,
     posting_mode: str,
-    health_notice: str | None = None,
 ) -> tuple[str, str]:
     fallback_sorted = _sort_groups(fallback_groups)
     fyi_sorted = _sort_groups(fyi_groups)
@@ -143,7 +120,8 @@ def render_summary_body(
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
     placeholder_marker = (
-        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={'0' * 64} -->"
+        "<!-- ai-review-summary:v1 run_id="
+        f"{encode_marker_token(run_id)} body_hash={'0' * 64} -->"
     )
     configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
 
@@ -191,15 +169,16 @@ def render_summary_body(
             )
         )
 
-    body_without_marker = _compose_summary_sections(sections, health_notice)
+    body_without_marker = _compose_summary_sections(sections)
     while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
         if not _drop_lowest_priority_trailing_entry(sections):
             raise ValueError("platform comment limit is too small for summary marker")
-        body_without_marker = _compose_summary_sections(sections, health_notice)
+        body_without_marker = _compose_summary_sections(sections)
 
     body_hash = sha256_hex(body_without_marker)
     marker = (
-        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={body_hash} -->"
+        "<!-- ai-review-summary:v1 run_id="
+        f"{encode_marker_token(run_id)} body_hash={body_hash} -->"
     )
     if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")

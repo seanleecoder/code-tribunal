@@ -14,7 +14,7 @@ from ai_review.consensus import build_consensus
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
 from ai_review.posting import post_consensus
-from ai_review.schema import empty_finding_batch, load_json_file, validate_instance
+from ai_review.schema import load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
@@ -35,15 +35,17 @@ class PublishEndToEndTests(unittest.TestCase):
     """
 
     def test_supported_blocker_posts_inline_without_blocking(self) -> None:
-        client, consensus, post_result, exit_code = self._run_e2e(self._blocking_batches())
+        client, consensus, post_result, exit_code = self._run_e2e(
+            self._blocking_batches()
+        )
 
         self.assertEqual(consensus["summary"]["surface_count"], 1)
         self.assertEqual(consensus["groups"][0]["final_severity"], "blocker")
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 1)
-        self.assertEqual(post_result["summary_comment"]["action"], "created")
+        self.assertEqual(post_result["summary_comment"]["action"], "none")
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes), 1)
+        self.assertEqual(len(client.summary_notes), 0)
         # A blocker is an impact label. Publication succeeded, so the job passes.
         self.assertEqual(exit_code, 0)
 
@@ -138,9 +140,13 @@ class PublishEndToEndTests(unittest.TestCase):
                         project_id="octo-org/octo-repo",
                         merge_request_iid="17",
                     )
-                    client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+                    client = FakeGitHubClient(
+                        head_sha=manifest["head_sha"], diff_text=diff_text
+                    )
                 else:
-                    client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+                    client = FakeGitLabClient(
+                        head_sha=manifest["head_sha"], diff_text=diff_text
+                    )
 
                 consensus = build_consensus(manifest, batches, config)
                 first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
@@ -175,103 +181,9 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(second_post["updated_discussions"], 0)
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes), 1)
+        self.assertEqual(len(client.summary_notes), 0)
         self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(second_post["status"]), 0)
-
-    def test_finding_loss_health_notice_and_recovery_on_both_platforms(self) -> None:
-        for mode, client_type in [
-            ("gitlab_discussions", FakeGitLabClient),
-            ("github_reviews", FakeGitHubClient),
-        ]:
-            for kind in ("all_lost", "partial_loss", "cap", "timeout"):
-                with self.subTest(mode=mode, kind=kind), tempfile.TemporaryDirectory() as tmp:
-                    config, manifest, diff = self._prepare_bundle(Path(tmp))
-                    config["posting"].update(mode=mode, fyi_mode="off", max_fyi_findings=0)
-                    client = client_type(head_sha=manifest["head_sha"], diff_text=diff)
-                    batches = [
-                        empty_finding_batch(
-                            seat,
-                            "success",
-                            run_id=manifest["run_id"],
-                            model="model",
-                            started_at="start",
-                            effective_config_sha256="0" * 64,
-                        )
-                        for seat in ("claude", "codex", "opencode")
-                    ]
-                    if kind == "all_lost":
-                        for batch in batches:
-                            batch.update(
-                                raw_finding_count=2,
-                                dropped_finding_count=2,
-                                usable_for_resolution=False,
-                            )
-                    elif kind == "partial_loss":
-                        batches[0].update(
-                            raw_finding_count=1,
-                            dropped_finding_count=1,
-                            usable_for_resolution=False,
-                        )
-                    elif kind == "cap":
-                        batches[0].update(raw_finding_count=2, usable_for_resolution=False)
-                    else:
-                        batches[0].update(adapter_status="timeout", usable_for_resolution=False)
-                    consensus = build_consensus(manifest, batches, config)
-                    validate_instance(consensus, "consensus.schema.json")
-                    result = post_consensus(client, config, manifest, consensus, diff_text=diff)
-                    self.assertEqual(result["summary_comment"]["action"], "created")
-                    self.assertEqual(result["summary_comment"]["surface_findings"], 0)
-                    body = client.summary_notes[0]["body"]
-                    self.assertIn("Review health:", body)
-                    self.assertIn("Unavailable seats:", body)
-                    if kind == "all_lost":
-                        self.assertIn("6 raw, 0 accepted, 6 dropped", body)
-                        self.assertEqual(consensus["panel_status"], "failed")
-                    if kind == "cap":
-                        self.assertIn("2 omitted by the per-seat cap", body)
-                    rerun = post_consensus(client, config, manifest, consensus, diff_text=diff)
-                    self.assertEqual(rerun["summary_comment"]["action"], "unchanged")
-                    healthy = [
-                        empty_finding_batch(
-                            seat,
-                            "success",
-                            run_id=manifest["run_id"],
-                            model="model",
-                            started_at="start",
-                            effective_config_sha256="0" * 64,
-                        )
-                        for seat in ("claude", "codex", "opencode")
-                    ]
-                    recovery = build_consensus(manifest, healthy, config)
-                    recovered = post_consensus(client, config, manifest, recovery, diff_text=diff)
-                    self.assertEqual(recovered["summary_comment"]["action"], "updated")
-                    self.assertEqual(len(client.summary_notes), 1)
-                    self.assertIn("Review health: full", client.summary_notes[0]["body"])
-                    self.assertNotIn("Unavailable seats:", client.summary_notes[0]["body"])
-                    client.head_sha = "newer"
-                    stale = post_consensus(client, config, manifest, consensus, diff_text=diff)
-                    self.assertEqual(stale["status"], "stale_head")
-                    self.assertIn("Review health: full", client.summary_notes[0]["body"])
-
-    def test_partial_loss_and_cap_notice_with_full_usable_panel(self) -> None:
-        batches = self._blocking_batches()
-        batches[0].update(raw_finding_count=4, dropped_finding_count=1)
-        batches.append(
-            empty_finding_batch(
-                "opencode",
-                "success",
-                run_id="run",
-                model="model",
-                started_at="start",
-                effective_config_sha256="0" * 64,
-            )
-        )
-        client, consensus, _result, _exit = self._run_e2e(batches)
-        self.assertEqual(consensus["panel_status"], "full")
-        self.assertEqual(consensus["summary"]["dropped_finding_count"], 1)
-        self.assertEqual(consensus["summary"]["cap_omitted_finding_count"], 2)
-        self.assertIn("1 dropped, 2 omitted", client.summary_notes[0]["body"])
 
     def _run_e2e(
         self, batches: list[dict[str, Any]]
@@ -329,7 +241,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def _batch(self, reviewer: str, finding: dict[str, Any]) -> dict[str, Any]:
         findings = [copy.deepcopy(finding)]
         return {
-            "schema_version": "finding_batch.v2",
+            "schema_version": "finding_batch.v1",
             "run_id": "integration-run",
             "reviewer": reviewer,
             "adapter_status": "success",
@@ -377,6 +289,7 @@ class PublishEndToEndTests(unittest.TestCase):
             "body": body,
             "evidence": ['value = records[0]["name"]'],
             "suggestion": "Move the empty-records guard before indexing records[0].",
+            "confidence": 0.9,
             "fingerprints": {
                 "title_fingerprint": "d" * 64,
                 "evidence_fingerprint": evidence_fingerprint,

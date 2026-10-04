@@ -77,7 +77,7 @@ resolve_tmp_dir() {
 # Set OUTPUT_SCHEMA to the schema the current stage must conform to.
 resolve_output_schema() {
   if [ "${AI_REVIEW_STAGE:-}" = "critique" ]; then
-    OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_critique_batch.schema.json"
+    OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/critique_batch.schema.json"
   else
     OUTPUT_SCHEMA="$AI_REVIEW_ROOT_DIR/schemas/raw_finding_batch.schema.json"
   fi

@@ -15,6 +15,7 @@ completed spec is a description of work already visible in the code, tests, and
 
 | Spec | Status | Summary |
 |---|---|---|
+| [SPEC-41](spec-41-reviewer-confidence-default.md) | Proposed (post-1.0) | A reviewer that omits the required `confidence` loses every finding and silently degrades the panel. Observed live; still unfixed. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Proposed (post-1.0) | A consumer config can substitute the pinned images; nothing in-pipeline verifies what is running. |
 | [SPEC-45](spec-45-critique-provenance.md) | Proposed (post-1.0) | Retain duplicate/noise/dispute reasoning behind a disclosure and record the suppression reason. Should land inside a release that changes the body format for another reason. |
 | [SPEC-46](spec-46-unanchored-advisories.md) | Proposed (post-1.0; after SPEC-45) | Carry non-line-anchored concerns as summary-only, reviewer-attributed advisories with no consensus or lifecycle authority. |
@@ -31,8 +32,9 @@ checks merged in [#168](https://github.com/seanleecoder/code-tribunal/pull/168);
 with packaged smoke loading. S10's grouping refactor is implemented in
 [#170](https://github.com/seanleecoder/code-tribunal/pull/170). S01's future-only
 2.1.0 migration remains pending;
-S05 is implemented: compact model contracts and visible finding loss close SPEC-41.
-Its release evidence remains pending in the audit handoff.
+S05 is deferred to separately planned major-release work. Its unreleased
+artifact cutover and follow-up are reverted for compatible 2.0.2; SPEC-41 remains
+open.
 Existing proposals above remain open. Broader audit recommendations and X01
 require separate decisions before implementation.
 
@@ -48,5 +50,6 @@ require separate decisions before implementation.
    four-seat panel and lifecycle records now bind to the released 2.0.1 image pair.
 3. For release work, follow the [release process](../development/release-process.md)
    and the [evidence runbook](../evidence/RUNBOOK.md).
-4. Collect the S05 image, real-model panel, and both-platform lifecycle evidence
-   before shipping the breaking artifact cutover; see the audit handoff.
+4. Plan S05 and SPEC-41 separately for a major release. The restored confidence
+   requirement can still discard findings; the compatible 2.0.2 release does not
+   close that defect.

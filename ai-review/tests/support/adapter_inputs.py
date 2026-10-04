@@ -85,22 +85,3 @@ def write_adapter_input_bundle(input_dir: Path) -> None:
         input_dir / "prior_decisions.json",
         {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
     )
-
-
-def bind_adapter_config(input_dir: Path, config_path: Path, output_dir: Path | None = None) -> None:
-    """Stamp synthetic prepare and review fixtures with the effective runtime config."""
-    from ai_review.config import ConfigError, effective_config_digest, load_config
-    from ai_review.schema import load_json_file
-
-    try:
-        digest = effective_config_digest(load_config(config_path))
-    except (ConfigError, FileNotFoundError):
-        return  # Failure-path tests deliberately pass an invalid config.
-    manifest = load_json_file(input_dir / "manifest.json")
-    manifest.setdefault("effective_config_sha256", digest)
-    write_canonical_json(input_dir / "manifest.json", manifest)
-    if output_dir:
-        for path in (output_dir / "findings").glob("*.json"):
-            batch = load_json_file(path)
-            batch["effective_config_sha256"] = digest
-            write_canonical_json(path, batch)
