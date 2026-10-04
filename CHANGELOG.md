@@ -9,6 +9,10 @@ versioning.
 
 ### Changed
 
+- Upgraded reviewer CLIs to Claude Code 2.1.289, Codex 0.160.0, OpenCode
+  1.18.34, and Cursor Agent 2026.10.01-e373342; refreshed Python to 3.14.8,
+  charset-normalizer to 3.5.2, mypy to 2.4.0, and Ruff to 0.16.10. OpenCode
+  remains paired with its expected ripgrep 15.1.0.
 - S05 removes model-authored confidence and runtime metadata. Reviewers author
   compact diff locations; trusted normalization derives anchors and identities.
   Critiques use deterministic short IDs resolved from a runner-held pool.
