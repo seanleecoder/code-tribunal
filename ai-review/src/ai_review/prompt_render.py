@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .anchors import anchor_location, finding_sort_key
+from .anchors import anchor_path_key, finding_sort_key
 from .canonical import canonical_json_text
 from .config import load_config
 from .consensus import validate_consensus_inputs
@@ -111,11 +111,19 @@ def build_pooled_findings(
     for index, finding in enumerate(ordered, start=1):
         short_id = f"F{index:03d}"
         mapping[short_id] = finding["source_finding_id"]
+        anchor = finding["anchor"]
+        number = "old_line" if anchor["side"] == "old" else "new_line"
         findings.append(
             {
                 "id": short_id,
                 "reviewer": aliases[finding["reviewer"]] if blind else finding["reviewer"],
-                "location": anchor_location(finding["anchor"]),
+                "location": {
+                    "path": anchor_path_key(anchor),
+                    "side": anchor["side"],
+                    "start_line": anchor["start"][number],
+                    "end_line": anchor["end"][number],
+                    "symbol": anchor["symbol"],
+                },
                 **{
                     key: finding[key]
                     for key in ("severity", "category", "title", "body", "evidence", "suggestion")

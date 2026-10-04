@@ -361,14 +361,18 @@ class SchemaValidationTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(SchemaValidationError):
                 validate_instance(batch, name + ".schema.json")
 
-    def test_raw_finding_extras_are_stripped_but_required_fields_stay_strict(self) -> None:
+    def test_raw_finding_extras_are_stripped_but_required_fields_and_types_are_strict(self) -> None:
         from .test_finding_cap import DIFF, _finding
 
         finding = {**_finding(2, "major", "Compact"), "confidence": 0.9, "reviewer": "spoof"}
         finding["location"]["context_hash"] = "untrusted"
         missing = _finding(2, "major", "Missing suggestion")
         del missing["suggestion"]
-        raw = {"findings": [finding, missing], "summary": "extra", "schema_version": "ignored"}
+        raw = {
+            "findings": [finding, missing, "not a finding"],
+            "summary": "extra",
+            "schema_version": "ignored",
+        }
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
             Path(tmp, "mr.diff").write_text(DIFF)
             batch = finalize_finding_batch(
@@ -386,7 +390,7 @@ class SchemaValidationTests(unittest.TestCase):
                 batch["accepted_finding_count"],
                 batch["dropped_finding_count"],
             ),
-            (2, 1, 1),
+            (3, 1, 2),
         )
         self.assertNotIn("summary", batch)
         self.assertEqual(batch["reviewer"], "claude")
@@ -483,8 +487,10 @@ class SchemaValidationTests(unittest.TestCase):
             pooled_findings=_pool(),
         )
         self.assertNotIn("summary", batch)
+        self.assertEqual(len(batch["critiques"]), 1)
         self.assertNotIn("confidence", batch["critiques"][0])
         self.assertEqual(batch["critiques"][0]["critic"], "codex")
+        self.assertEqual(raw["critiques"][0]["confidence"], 0.9)
         with self.assertRaises(SchemaValidationError):
             validate_instance(raw, "raw_critique_batch.schema.json")
 

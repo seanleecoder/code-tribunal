@@ -1205,6 +1205,28 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "schema_error")
             self.assertTrue((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
+    def test_review_requires_findings_array_in_status_and_debug_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            raw = '{"findings":{}}'
+            _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            status_dir = paths["output_dir"] / "status"
+            status = load_json_file(status_dir / "codex.json")
+            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["error_class"], "SchemaValidationError")
+            self.assertEqual(
+                status["error_message_redacted"], "adapter output findings must be an array"
+            )
+            self.assertIn(raw, (status_dir / "codex-parse-debug.txt").read_text())
+            self.assertEqual((status_dir / "codex-parse-raw-stdout.txt").read_text(), raw)
+
     def test_parse_failure_persists_full_stdout_with_newlines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))

@@ -142,6 +142,17 @@ class FindingCapTests(unittest.TestCase):
             2,
         )
 
+    def test_finalization_requires_input_dir_keyword(self) -> None:
+        with self.assertRaisesRegex(TypeError, "required keyword-only argument: 'input_dir'"):
+            finalize_finding_batch(
+                {"findings": []},
+                reviewer="claude",
+                model="model",
+                run_id="run",
+                started_at="start",
+                effective_config_sha256="0" * 64,
+            )
+
     def test_finalization_rejects_missing_prepared_diff_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(FileNotFoundError):
             finalize_finding_batch(

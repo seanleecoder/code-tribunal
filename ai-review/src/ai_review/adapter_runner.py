@@ -40,11 +40,9 @@ from .reviewers import (
 )
 from .schema import (
     AdapterModelError,
-    SchemaValidationError,
     finalize_critique_batch,
     finalize_finding_batch,
     now_iso,
-    validate_instance,
     write_canonical_json,
 )
 
@@ -211,8 +209,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
         try:
             raw = _load_adapter_json(result.stdout, stage=stage)
             if stage == "review":
-                if not isinstance(raw.get("findings"), list):
-                    raise SchemaValidationError("adapter output findings must be an array")
                 max_findings = reviewer_config.get("max_findings")
                 finalized = finalize_finding_batch(
                     raw,
@@ -224,7 +220,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     input_dir=input_dir,
                     max_findings=int(max_findings) if max_findings is not None else None,
                 )
-                validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
                 assert pooled is not None
                 finalized = finalize_critique_batch(
@@ -234,7 +229,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     effective_config_sha256=config_digest,
                     pooled_findings=pooled,
                 )
-                validate_instance(finalized, "critique_batch.schema.json")
             else:
                 finalized = raw
         except Exception as exc:

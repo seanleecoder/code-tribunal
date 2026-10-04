@@ -113,9 +113,19 @@ def validate_instance(instance: Any, schema: str | dict[str, Any]) -> None:
         raise SchemaValidationError(exc.message) from exc
 
 
-def _declared(value: Any, schema_node: dict[str, Any]) -> Any:
-    if isinstance(value, dict):
-        return {key: item for key, item in value.items() if key in schema_node["properties"]}
+def _prune_undeclared(value: Any, node: dict[str, Any], root: dict[str, Any]) -> Any:
+    """Prune raw authoring keys using only properties, items, and local $defs refs."""
+    if "$ref" in node:
+        return _prune_undeclared(value, root["$defs"][node["$ref"].removeprefix("#/$defs/")], root)
+    if isinstance(value, dict) and "properties" in node:
+        properties = node["properties"]
+        return {
+            key: _prune_undeclared(item, properties[key], root)
+            for key, item in value.items()
+            if key in properties
+        }
+    if isinstance(value, list) and isinstance(node.get("items"), dict):
+        return [_prune_undeclared(item, node["items"], root) for item in value]
     return value
 
 
@@ -192,12 +202,7 @@ def finalize_critique_batch(
     ):
         raise SchemaValidationError("critique pool run/config/critic binding mismatch")
     raw_schema = load_schema("raw_critique_batch.schema.json")
-    batch = _declared(batch, raw_schema)
-    if isinstance(batch.get("critiques"), list):
-        batch["critiques"] = [
-            _declared(item, raw_schema["properties"]["critiques"]["items"])
-            for item in batch["critiques"]
-        ]
+    batch = _prune_undeclared(batch, raw_schema, raw_schema)
     validate_instance(batch, raw_schema)
     mapping = pooled_findings["source_finding_ids"]
     critiques = []
@@ -285,12 +290,12 @@ def finalize_finding_batch(
 
     files = tuple(parse_unified_diff((Path(input_dir) / "mr.diff").read_text(encoding="utf-8")))
     raw_schema = load_schema("raw_finding_batch.schema.json")
-    batch = _declared(batch, raw_schema)
+    batch = _prune_undeclared(batch, raw_schema, raw_schema)
     raw_findings = batch.get("findings")
     if not isinstance(raw_findings, list):
         raise SchemaValidationError("adapter output findings must be an array")
-    # Instantiate once: validate all candidates before capping, including malformed
-    # siblings after the retained cap. No second parser or schema authority.
+    # Build the per-finding validator once per batch and validate every candidate
+    # before applying the cap.
     validator = jsonschema.Draft202012Validator(
         {**raw_schema["$defs"]["finding"], "$defs": raw_schema["$defs"]}
     )
@@ -298,11 +303,6 @@ def finalize_finding_batch(
     dropped = 0
     for index, finding in enumerate(raw_findings, start=1):
         try:
-            finding = _declared(finding, raw_schema["$defs"]["finding"])
-            if isinstance(finding, dict) and "location" in finding:
-                finding["location"] = _declared(
-                    finding["location"], raw_schema["$defs"]["location"]
-                )
             validator.validate(finding)
             normalized = {key: value for key, value in finding.items() if key != "location"}
             anchor = resolve_location(files, finding["location"])

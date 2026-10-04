@@ -29,8 +29,7 @@ class MockReviewerTests(unittest.TestCase):
         candidate = _find_indexing_candidate(_diff("+    return records[0]"))
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        self.assertEqual(candidate["new_line"], 2)
-        self.assertEqual(candidate["new_path"], "src/foo.py")
+        self.assertEqual(candidate, {"new_path": "src/foo.py", "new_line": 2})
 
     def test_returns_none_without_marker(self) -> None:
         self.assertIsNone(_find_indexing_candidate(_diff("+    return safe()")))

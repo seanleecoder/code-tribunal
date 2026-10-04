@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import parse_unified_diff, resolve_side_paths
+from .anchors import parse_unified_diff
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting and state behavior with
@@ -57,11 +57,7 @@ def _mock_scenario() -> str:
 
 
 def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
-    _, new_path = resolve_side_paths(diff_file.old_path, diff_file.new_path)
-    return {
-        "new_path": new_path,
-        "new_line": line.new_line,
-    }
+    return {"new_path": diff_file.new_path, "new_line": line.new_line}
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
