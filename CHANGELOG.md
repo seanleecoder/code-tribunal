@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-10-04
+
 ### Changed
 
 - Refreshed reviewer defaults to GPT-6 Luna / `low`, MiMo-V2.6-Flash with

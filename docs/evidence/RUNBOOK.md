@@ -446,6 +446,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
 | Cursor deny policy | an ordinary Candidate Canary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
+| Non-default effort routes | final-pair evidence covers only Claude medium, Codex low, and absent MiMo effort | scope a separate route campaign if a release changes or claims non-default efforts |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
