@@ -126,7 +126,8 @@ Critiques author short IDs and assessment text only. The exact, blinded compact
 pool is deterministic and bound to run/config/critic. The runner holds the map
 in memory; an overwrite of the pool audit file cannot redirect a critique.
 Unknown or malformed references reject the entire batch as `schema_error`.
-Prompts retain project/revision context, rules, diff, decisions, and finding text.
+Prompts retain project/revision context, rules, prior finding status, and finding
+text. Only the review stage receives the diff and diff statistics.
 One renderer replaces duplicated context and size handling across both stages.
 
 The cutover versions finding, critique, and pooled artifacts to v2 and consensus
@@ -135,9 +136,11 @@ stay unchanged. This deliberately crosses authoring, normalization, consensus,
 and publication together: strict producers/consumers must land in the same PR,
 and both templates must deliver the new health-only output for failed panels.
 The GitHub consensus artifact uploads before failure is reported; post publishes
-its notice before preserving the upstream failure. GitLab post runs after failed
-consensus while consensus continues to fail the pipeline. Missing or invalid
-artifacts still fail before mutation.
+its notice before preserving the upstream failure. GitLab allows consensus exit
+3 through to post, which publishes a valid failed-panel notice before restoring
+exit 3. Default post scheduling preserves the manual prepare dependency. Missing
+or invalid artifacts still fail before mutation, including integrity failures
+that also return 3.
 
 Consensus aggregates raw/accepted/dropped/cap-omitted counts from enabled-seat
 batches. Both platforms publish loss/panel notices even with no findings or FYI
@@ -146,7 +149,7 @@ summary on recovery. Stale-head and publication-failure behavior is retained.
 SPEC-41 is complete and its active spec/index entry is deleted.
 
 Socket-capable `PATH="$PWD/.venv/bin:$PATH" make PYTHON=.venv/bin/python quality`
-passed: 1,099 tests passed, one skipped, 91% aggregate runtime coverage, with all
+passed: 1,103 tests passed, one skipped, 91% aggregate runtime coverage, with all
 non-test gates green. Added coverage includes compact nonempty output through
 all four CLI transports, missing confidence/hashes, diff-side/range edge cases,
 1,220-candidate accounting with one diff parse/schema load, permutation ties,
@@ -158,25 +161,64 @@ Both packaged smoke scopes passed **from the checkout** (base: 8 cases with one
 image-only skip; reviewer: 5 cases, including all-seat mock review/critique and
 consensus). This is local evidence, not rebuilt-image or live-provider evidence.
 
+PR #171 review follow-up: unknown model keys are projected out using the existing
+authoring schemas before validation (#1/#2); required fields remain strict, and
+missing suggestion/evidence still count as drops. The provider schemas remain
+closed. Critique excludes diff/statistics even when the diff exceeds its prompt
+limit (#5). Old-side renamed locations accept either path and reject collisions
+(#6). Recovery wording lives in summary rendering (#9); prior context includes
+only produced title/category/status/path fields, and root-shape detection uses
+v2 critique keys (#10). Unknown critique IDs (#4), deterministic cap ties (#8),
+and health-only replacement on panel failure (#7) remain intentional; the latter
+is now documented for consumers. Focused schema/anchor/prompt/posting/template/
+pipeline-trust suites passed: 255 tests and 172 subtests.
+
+Live GitLab scheduler/publication validation on 2026-10-04 used
+[MR !37](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/37).
+CI Lint accepted both the original `extends`/`rules` plus job-level `when` and the
+corrected template, with no warnings. The original `when: always` post started
+without inputs while prepare was unplayed (#3); it failed with a missing manifest.
+The fix retains default post scheduling, allows only consensus exit 3 through,
+and restores that failure after successful publication. Other exit codes stop
+post; missing/invalid exit-3 artifacts fail before mutation.
+
+| Live child / parent pipelines | Prepare | Review x4 | Critique x4 | Consensus | Post | Child / parent status |
+|---|---|---|---|---|---|---|
+| [Original](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910705435) / [parent](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910705419), unplayed | manual | skipped | skipped | skipped | failed | failed / failed |
+| [Corrected manual](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910708094) / [parent](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910708078), unplayed | manual | skipped | skipped | skipped | skipped | skipped / skipped |
+| Same corrected manual run, after play | success | success | success | success | success | success / success |
+| [Automatic failed panel](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910713450) / [parent](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/2910713414) | success | success (failed batches) | success | failed (allowed exit 3) | failed (restored exit 3) | failed / failed |
+
+Manual post created [inline note 3951086132](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/37#note_3951086132).
+Automatic post wrote `post_result.v1` with `status: success`, created
+[health note 3951091231](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/37#note_3951091231),
+and exited 3; the earlier inline note's ID/body hash remained unchanged.
+This bounded probe used deterministic mocks and the checkout runtime at
+`5fef7ebf27f42f76c892648ccdbc045e71da754e` on existing released image dependencies.
+Rebuilt-image, real-provider, and full release-lifecycle evidence remain
+outstanding. The MR is closed and only its temporary branches/protection were removed; project
+variables, default-branch pins, posted notes, and pipelines are retained.
+
 | Whole-tree measurement | Before | After | Delta |
 |---|---:|---:|---:|
-| Implementation files / physical lines | 72 / 19,556 | 72 / 19,460 | 0 / -96 |
-| Configuration, schemas, CI files / lines | 17 / 2,688 | 19 / 2,729 | +2 / +41 |
-| Test files / physical lines | 88 / 30,965 | 88 / 31,163 | 0 / +198 |
-| Contributor/reference/spec docs files / lines | 52 / 9,027 | 51 / 9,058 | -1 / +31 |
-| Implementation function/class definitions | 836 | 836 | 0 |
-| Test function/class definitions | 1,696 | 1,708 | +12 |
+| Implementation files / physical lines | 72 / 19,556 | 72 / 19,498 | 0 / -58 |
+| Configuration, schemas, CI files / lines | 17 / 2,688 | 19 / 2,734 | +2 / +46 |
+| Test files / physical lines | 88 / 30,965 | 88 / 31,279 | 0 / +314 |
+| Contributor/reference/spec docs files / lines | 52 / 9,027 | 51 / 9,105 | -1 / +78 |
+| Implementation function/class definitions | 836 | 837 | +1 |
+| Test function/class definitions | 1,696 | 1,712 | +16 |
 
 Counts include the entire source/adapters/scripts tree, schemas/config/canonical
 and installed CI workflows, and tests. Documentation excludes frozen release
 notes and historical/live evidence records, and includes this handoff. Runtime
-plus configuration has a net reduction of **55 lines**. One shared prompt context,
+plus configuration has a net reduction of **12 lines**. One shared prompt context,
 one candidate ordering, and removal of confidence ranking/per-item batch
 validation replace redundant runtime machinery. Two schemas describe the smaller
-critic-authoring contract and the existing pool audit artifact. There are no new
-operator commands or release steps; GitHub adds one automated failure-reporting
-step so warning publication cannot hide a failed panel. Tests grow while retaining
-meaningful coverage.
+critic-authoring contract and the existing pool audit artifact. One recovery
+renderer function centralizes health wording; no normalization seam was added.
+There are no new operator commands or release steps; GitHub adds one automated
+failure-reporting step; GitLab restores exit 3 after publication. Warning
+publication cannot hide a failed panel. Tests grow while retaining meaningful coverage.
 
 Release evidence remains separate and outstanding: rebuild **both** images from
 the final runtime source; run read-only packaged smoke against those images;

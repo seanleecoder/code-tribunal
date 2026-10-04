@@ -8,7 +8,7 @@ and GitHub pull requests. Independent reviewers propose structured findings;
 deterministic code groups them, surfaces the ones two reviewers support
 independently, maintains finding identity across revisions, and posts review
 threads. Findings are informational: severity is an impact label, and the
-pipeline reports whether review publication succeeded.
+pipeline reports publication and operational panel health.
 
 > **LLMs propose. Deterministic code decides.**
 
@@ -108,8 +108,8 @@ One logical DAG performs five operations:
 4. `consensus` validates cross-stage integrity, groups findings, and surfaces
    each group two reviewer identities support independently.
 5. `post` reconciles prior state and upserts GitLab discussions or GitHub review
-   comments. It is the terminal stage: its exit status reports whether
-   publication succeeded, never what the review found.
+   comments. It is the terminal stage: CI reports publication and operational
+   panel health, never a finding's severity.
 
 See [architecture](docs/development/architecture.md),
 [consensus](docs/reference/consensus.md), and

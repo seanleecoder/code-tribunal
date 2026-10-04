@@ -17,14 +17,15 @@ importable Python functions are not a public API.
 | `python scripts/check_markdown_links.py` | Check offline Markdown links, anchors, and draft-release links with pinned Lychee | 0 | 1 for link or tool failures |
 | `scripts/check_supply_chain_pins.py` | Audit shipped dependency and image pins | 0 | 1 when any pin contract fails |
 
-`post` is the terminal product stage and its exit status is the pipeline's whole
-report on the review. It reports **publication**, not findings: a finding of any
+`post` is the terminal publishing CLI. Its exit reports **publication**: a finding of any
 severity, `blocker` included, exits zero, and `stale_head` — a newer revision
 superseded the run, so no mutation occurred — is a successful no-op. Only
 operational failure exits nonzero. `--dry-run` uses the same mapping, so a local
 lifecycle run that degrades does not report success. The five statuses above are
 the complete `post_result.status` enum today; a status this table does not name
 exits nonzero rather than being assumed benign.
+The canonical CI wrappers also preserve upstream operational failures after
+publishing a validated failed-panel health notice.
 
 Signals and interpreter-level failures may use the host shell's conventional
 codes. Consumers should branch only on the documented codes above and should
