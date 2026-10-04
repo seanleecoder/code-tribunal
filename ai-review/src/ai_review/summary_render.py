@@ -15,9 +15,7 @@ from .render import (
 )
 from .types import Consensus, FindingGroup
 
-
-def review_recovery_notice() -> str:
-    return "**Review health: full.** No finding loss reported in the current run."
+REVIEW_RECOVERY_NOTICE = "**Review health: full.** No finding loss reported in the current run."
 
 
 def review_health_notice(consensus: Consensus) -> str | None:

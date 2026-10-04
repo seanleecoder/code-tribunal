@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .anchors import finding_sort_key
+from .anchors import anchor_location, finding_sort_key
 from .canonical import canonical_json_text
 from .config import load_config
 from .consensus import validate_consensus_inputs
@@ -111,19 +111,11 @@ def build_pooled_findings(
     for index, finding in enumerate(ordered, start=1):
         short_id = f"F{index:03d}"
         mapping[short_id] = finding["source_finding_id"]
-        anchor = finding["anchor"]
-        number = "old_line" if anchor["side"] == "old" else "new_line"
         findings.append(
             {
                 "id": short_id,
                 "reviewer": aliases[finding["reviewer"]] if blind else finding["reviewer"],
-                "location": {
-                    "path": anchor["old_path"] if anchor["side"] == "old" else anchor["new_path"],
-                    "side": anchor["side"],
-                    "start_line": anchor["start"][number],
-                    "end_line": anchor["end"][number],
-                    "symbol": anchor["symbol"],
-                },
+                "location": anchor_location(finding["anchor"]),
                 **{
                     key: finding[key]
                     for key in ("severity", "category", "title", "body", "evidence", "suggestion")
@@ -169,6 +161,7 @@ def render_prompt(
         ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
         ("RULES", _read_rules(input_dir / "rules")),
     ]
+    pool = None
     if stage == "review":
         diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
         sections.extend(
@@ -177,8 +170,7 @@ def render_prompt(
                 ("MR_DIFF_UNTRUSTED_DATA", diff_text),
             ]
         )
-    pool = None
-    if stage == "critique":
+    else:
         if findings_dir is None:
             raise PromptRenderError("critique requires the finding batches")
         pool = build_pooled_findings(

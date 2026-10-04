@@ -420,6 +420,17 @@ def is_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_RE.fullmatch(value))
 
 
+def anchor_location(anchor: dict[str, Any]) -> dict[str, Any]:
+    number = "old_line" if anchor["side"] == "old" else "new_line"
+    return {
+        "path": anchor["old_path"] if anchor["side"] == "old" else anchor["new_path"],
+        "side": anchor["side"],
+        "start_line": anchor["start"][number],
+        "end_line": anchor["end"][number],
+        "symbol": anchor["symbol"],
+    }
+
+
 def resolve_location(files: tuple[DiffFile, ...], location: dict[str, Any]) -> dict[str, Any]:
     """Resolve one model-authored range using only prepared diff coordinates."""
     path = normalize_path(location["path"])
@@ -431,11 +442,9 @@ def resolve_location(files: tuple[DiffFile, ...], location: dict[str, Any]) -> d
     matches = []
     for file in files:
         side_path = file.old_path if side == "old" else file.new_path
+        candidates = {side_path, file.new_path} if side == "old" else {side_path}
         if side_path is None or path not in {
-            normalize_path(side_path),
-            normalize_path(file.new_path)
-            if side == "old" and file.new_path is not None
-            else normalize_path(side_path),
+            normalize_path(p) for p in candidates if p is not None
         }:
             continue
         lines = [line for line in file.lines if _line_belongs_to_side(side, line)]

@@ -93,14 +93,14 @@ def same_issue(
 
 
 def choose_primary_signature_finding(findings: list[dict[str, Any]]) -> dict[str, Any]:
-    return sorted(
+    return min(
         findings,
         key=lambda item: (
             0 if item["anchor"]["side"] == "new" else 1,
             _changed_start_line(item),
             *finding_sort_key(item),
         ),
-    )[0]
+    )
 
 
 def issue_id_for_group(findings: list[dict[str, Any]]) -> str:

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from ai_review.schema import SchemaValidationError, finalize_finding_batch, validate_instance
+from ai_review.schema import finalize_finding_batch, validate_instance
 
 DIFF = "\n".join(
     [
@@ -142,16 +142,7 @@ class FindingCapTests(unittest.TestCase):
             2,
         )
 
-    def test_offline_finalization_requires_prepared_diff(self) -> None:
-        with self.assertRaises(SchemaValidationError):
-            finalize_finding_batch(
-                {"findings": [_finding(2, "major", "Offline")]},
-                reviewer="claude",
-                model="model",
-                run_id="run",
-                started_at="start",
-                effective_config_sha256="0" * 64,
-            )
+    def test_finalization_rejects_missing_prepared_diff_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(FileNotFoundError):
             finalize_finding_batch(
                 {"findings": []},
