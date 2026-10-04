@@ -28,9 +28,9 @@ def _base_config() -> dict:
     return {
         "reviewers": {
             "claude": {"model": "anthropic/claude-haiku-4.5", "enabled": True},
-            "codex": {"model": "openai/gpt-5.6-luna", "enabled": True},
-            "opencode": {"model": "google/gemini-3.5-flash-lite", "enabled": True},
-            "cursor": {"model": "auto", "enabled": False},
+            "codex": {"model": "openai/gpt-6-luna", "enabled": True},
+            "opencode": {"model": "xiaomi/mimo-v2.6-flash", "enabled": True},
+            "cursor": {"model": "composer-2.5", "enabled": False},
         },
         "critique": {"enabled": True},
     }
@@ -66,30 +66,36 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         config = _base_config()
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "   "}, clear=True):
             apply_env_overrides(config)
-        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-5.6-luna")
+        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-6-luna")
 
-    def test_shipped_openrouter_defaults_survive_blank_workflow_values(self) -> None:
+    def test_shipped_defaults_survive_blank_workflow_values(self) -> None:
         blank_overrides = {
             "AI_REVIEW_CLAUDE_MODEL": "",
             "AI_REVIEW_CODEX_MODEL": "",
             "AI_REVIEW_OPENCODE_MODEL": "",
+            "AI_REVIEW_CURSOR_MODEL": "",
+            "AI_REVIEW_CLAUDE_EFFORT": "",
+            "AI_REVIEW_CODEX_EFFORT": "",
+            "AI_REVIEW_OPENCODE_EFFORT": "",
         }
         with mock.patch.dict("os.environ", blank_overrides, clear=True):
             config = load_config(_REPO_CONFIG)
 
         self.assertEqual(
             {
-                name: (reviewer["enabled"], reviewer["model"])
+                name: (reviewer["enabled"], reviewer["model"], reviewer.get("effort"))
                 for name, reviewer in config["reviewers"].items()
-                if name != "cursor"
             },
             {
-                "claude": (True, "anthropic/claude-haiku-4.5"),
-                "codex": (True, "openai/gpt-5.6-luna"),
-                "opencode": (True, "google/gemini-3.5-flash-lite"),
+                "claude": (True, "anthropic/claude-haiku-4.5", "medium"),
+                "codex": (True, "openai/gpt-6-luna", "low"),
+                "opencode": (True, "xiaomi/mimo-v2.6-flash", None),
+                "cursor": (False, "composer-2.5", None),
             },
         )
         self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 2)
+        self.assertNotIn("effort", config["reviewers"]["opencode"])
+        self.assertNotIn("effort", config["reviewers"]["cursor"])
 
     def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):

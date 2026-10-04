@@ -434,7 +434,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor deny policy | the Candidate Canary exercises Cursor with `auto` on both platforms, but an ordinary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
+| Cursor deny policy | an ordinary Candidate Canary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -466,14 +466,46 @@ control, so continuing it with the mock would open a new discussion rather than
 update the same one. Capture run/job IDs and platform object IDs at every step.
 
 **Chain A — real default-model smoke.** The Candidate Canary record (Step 0b)
-satisfies this chain on both platforms; run it manually only when the canary
-cannot. On its own change request, leave all model overrides unset, keep all three OpenRouter seats enabled,
-Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
-panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.6-luna`,
-OpenCode `google/gemini-3.5-flash-lite`, Cursor `auto` skipped, `panel_status:
-full`, and that a finding was posted. **This doubles as the default-model smoke —
-do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
-(see [operations cost controls](../operations.md)). This chain ends here.
+satisfies this chain only when its resolved models and efforts match the shipped
+defaults; a green four-seat canary with operator overrides alone does not prove
+the three-seat defaults. Run this manually when the canary does not cover them.
+On its own change request, leave all model and effort overrides unset, keep all
+three OpenRouter seats enabled, Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, and
+`AI_REVIEW_REQUIRE_REAL_*=1`. Run one panel with the shipped defaults below:
+
+| Seat | Model | Effort | Expected participation |
+|---|---|---|---|
+| Claude | `anthropic/claude-haiku-4.5` | `medium` | enabled |
+| Codex | `openai/gpt-6-luna` | `low` | enabled |
+| OpenCode | `xiaomi/mimo-v2.6-flash` | unset | enabled |
+| Cursor | `composer-2.5` | named-model default | disabled / skipped |
+
+The 2026-10-04 candidate-config smoke passed in
+[GitHub run 37210076322](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37210076322).
+Record whether a run exercises a candidate config over an existing image pair
+or the final shipped config and images; historical Gemini evidence does not
+validate MiMo. The [model-refresh record](record-model-refresh-2026-10-04.md)
+also scopes the separate passing MiMo Pro / Grok Medium canary.
+
+For MiMo, omit the YAML `effort` key and ensure `AI_REVIEW_OPENCODE_EFFORT`
+does not exist. Use the existing OpenCode → OpenRouter route with
+`OPENROUTER_API_KEY`. Require successful review and critique for each enabled
+seat, schema-valid structured output, artifacts usable by consensus,
+`panel_status: full`, and a posted finding. Check the resolved config, CLI/model
+selection, and available provider metadata for agreement; a silently substituted
+model does not pass. Record the config digest, run/job IDs, model/effort values,
+and immutable runtime/image coordinates without secrets or model content.
+
+The MiMo Flash fixture must exercise read, glob, grep, multiple sequential tool
+calls, structured output, and critique. If reasoning/tool-state compatibility
+fails, retain `google/gemini-3.5-flash-lite` as the shipped OpenCode default
+temporarily and record the blocker; do not add a provider-specific workaround.
+A Flash pass does not validate MiMo Pro; record a Pro canary separately if run.
+
+**This doubles as the default-model smoke — do not repeat a passing campaign.**
+Record the OpenRouter-billed token/cost (see
+[operations cost controls](../operations.md)). This chain ends here. Historical
+records retain the models and efforts actually used in those runs.
 
 > **Chain B is automated on both platforms.** The Candidate Canary's `lifecycle`
 > campaign (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary))
@@ -600,7 +632,14 @@ reviewer image and reported `model: auto`.
    `cursor-agent.pin`, and record immutable digests/provenance.
 2. Resolve the exact model with `cursor-agent --list-models`, set the controlled
    `AI_REVIEW_CURSOR_MODEL`/YAML value, and record the exact slug without secrets
-   or model content.
+   or model content. Keep `composer-2.5` for smoke/compatibility and Budget;
+   Value / Balance recommends `grok-4.7-medium`. Before claiming Grok 4.7 validated,
+   confirm that exact selector in the pinned CLI and complete a real review and
+   critique with no silent fallback. For Grok / `xhigh`, use only the exact
+   variant selector reported by that CLI (`grok-4.7-xhigh` in
+   `2026.09.26-dd393fe`); Cursor has no separate Code Tribunal
+   effort variable. `auto` is supported for ordinary operation but does not
+   establish reproducible model-specific evidence.
 3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that
    explicitly; otherwise change the invocation and repeat the read/permission
    validation.

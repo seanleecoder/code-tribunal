@@ -123,26 +123,67 @@ ripgrep shipped on the image `PATH`, so no reviewer run downloads a search binar
 at review time. Neither is a configuration key — there is no supported way for
 project configuration to widen the reviewer's filesystem reach.
 
+### Shipped defaults
+
+These cheap, reproducible models provide a safe starting configuration for
+compatibility checks and real-provider smoke. Choose a production profile below
+for stronger review quality.
+
+| Seat | Model | Effort | Enabled |
+|---|---|---|---|
+| Claude | `anthropic/claude-haiku-4.5` | `medium` | yes |
+| Codex | `openai/gpt-6-luna` | `low` | yes |
+| OpenCode | `xiaomi/mimo-v2.6-flash` | unset | yes |
+| Cursor | `composer-2.5` | named-model default | no |
+
+The three enabled defaults passed real-provider review and critique in
+[GitHub smoke run 37210076322](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37210076322)
+on 2026-10-04. MiMo Flash completed read, glob, grep, multiple tool calls, and
+structured output through OpenCode → OpenRouter. Consensus was full and posting
+succeeded. This validates the candidate config on the recorded image pair;
+release validation still requires the final published images. Follow the
+[default-model smoke procedure](evidence/RUNBOOK.md#runs-1--2--current-image-lifecycle-two-independent-chains-per-platform).
+
 ### Production model/effort recommendations
 
-The shipped model defaults are intended to be safe starting points. For
-production, choose one complete profile and set both the model and effort
-override for every enabled seat at project/repository scope so all pipeline
-stages see the same effective configuration. Each cell is `model` / `effort`.
+Model recommendations last reviewed: 2026-10-04.
 
-| Profile | Claude | Codex | OpenCode |
-|---|---|---|---|
-| Value | `anthropic/claude-opus-5` / `low` | `openai/gpt-5.6-luna` / `max` | `meta/muse-spark-1.1` / `xhigh` |
-| Balance | `anthropic/claude-opus-5` / `medium` | `openai/gpt-5.6-terra` / `max` | `x-ai/grok-4.5` / `high` |
+Choose one complete profile at project/repository scope so all pipeline stages
+see the same effective configuration. Set the model override for each enabled
+seat. Set an effort override only when the selected profile specifies one.
+Each cell is `model` / `effort`; Cursor is optional.
 
-Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and
+| Profile | Claude | Codex | OpenCode | Cursor optional |
+|---|---|---|---|---|
+| **Budget** | `anthropic/claude-sonnet-5.5` / `medium` | `openai/gpt-6-luna` / `max` | `xiaomi/mimo-v2.6-flash` / unset | `composer-2.5` |
+| **Value / Balance** | `anthropic/claude-sonnet-5.5` / `xhigh` | `openai/gpt-6.1-sol` / `medium` | `xiaomi/mimo-v2.6-pro` / unset | `grok-4.7-medium` |
+
+Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and supported
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
-below. `max` reaches Codex as `model_reasoning_effort=max`; OpenCode forwards `max` in
-its generated config as `reasoningEffort=max` when selected. These profiles cover
-Claude, Codex, and OpenCode; Cursor takes no `effort` key because its reasoning
-depth is encoded in the model variant. The shipped OpenCode guidance favors low or unset effort
-for flash-class models, while these profiles intentionally use higher effort on
-their listed non-flash routes.
+below. For both MiMo models, **unset** means `AI_REVIEW_OPENCODE_EFFORT` must
+not exist; omit the YAML `effort` key too. MiMo uses the existing
+OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
+retain the generic effort support described below.
+
+For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
+`xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, confirmed by
+`cursor-agent --list-models` in the canary's pinned CLI `2026.09.26-dd393fe`. That CLI exposes
+`grok-4.7-{low,medium,high,xhigh}` and corresponding `-fast` variants; it does
+not list a bare `grok-4.7` selector. Recheck the list when refreshing the CLI.
+Cursor has no separate Code Tribunal effort variable;
+reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
+and compatibility. `auto` remains a supported operator override, but should not
+be used for reproducible CI or evidence.
+
+Recommendations do not establish release validation. Before claiming Grok 4.7
+validated, confirm its exact selector with the pinned CLI and run a real Cursor
+review and critique with no silent fallback. MiMo Pro / unset and
+`grok-4.7-medium` passed that candidate route canary on 2026-10-04; Pro's review
+job took 12m47s. These canaries predate the subsequent CLI dependency upgrade;
+they do not validate the newer pins. The `xhigh` and `-fast` Cursor variants were
+not canaried. See the
+[model-refresh evidence](evidence/record-model-refresh-2026-10-04.md) and the
+[model-specific evidence procedure](evidence/RUNBOOK.md#run-6--cursor-model-specific-evidence-optional).
 
 GitLab expands the shared `AI review` and `AI critique` matrix jobs into one job
 instance per trusted reviewer, whatever the roster says. A seat that is not on
@@ -265,9 +306,9 @@ artifacts.
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
-| `AI_REVIEW_CURSOR_MODEL` | `auto` | Cursor model selector; effort is encoded in the model variant. `auto` is a valid Cursor CLI value and is fine in production — it delegates model choice to Cursor. Pin an exact slug when you need model-stable reproducibility, which is also what an evidence campaign proving behavior for one model requires. |
+| `AI_REVIEW_CURSOR_MODEL` | `composer-2.5` (YAML) | Cursor model selector; effort is encoded in the model variant. `auto` remains a supported operator override that delegates model choice to Cursor. Use an exact slug for reproducible CI and model-specific evidence. |
 | `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum. |
-| `AI_REVIEW_CODEX_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
+| `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. The selected model route must accept the level; forwarding does not probe provider compatibility. |
 | `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |

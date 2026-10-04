@@ -73,9 +73,10 @@ Cursor is a supported peer reviewer seat, off in the shipped default roster.
 Enabling it is a deliberate second egress destination: the Cursor CLI cannot route
 through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
 Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS` and supply
-`CURSOR_API_KEY`. The shipped `auto` model is a valid Cursor selector; set
-`AI_REVIEW_CURSOR_MODEL` to an exact slug when you want model-stable
-reproducibility.
+`CURSOR_API_KEY`. The shipped selector is `composer-2.5` for reproducible smoke
+and compatibility. Set `AI_REVIEW_CURSOR_MODEL` to override it; `auto` remains
+supported for ordinary operation, while reproducible CI and evidence require
+an exact model slug.
 
 ## Merge-request settings
 
