@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from .anchors import anchor_path_key, candidate_issue_signature_hash, is_sha256
+from .anchors import anchor_path_key, candidate_issue_signature_hash, finding_sort_key, is_sha256
 from .canonical import CanonicalError, canonical_json, sha256_hex
 from .config import (
     effective_config_digest,
@@ -50,18 +50,6 @@ def panel_status(successful: list[str], enabled: list[str]) -> str:
     if len(successful) < len(enabled):
         return "degraded"
     return "full"
-
-
-def _representative(findings: list[dict[str, Any]]) -> dict[str, Any]:
-    return sorted(
-        findings,
-        key=lambda item: (
-            -float(item.get("confidence", 0.0)),
-            -SEVERITY_RANK[str(item["severity"])],
-            str(item.get("reviewer", "")),
-            str(item["source_finding_id"]),
-        ),
-    )[0]
 
 
 def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
@@ -155,6 +143,7 @@ def build_consensus(
     platform_comment_limit(posting_mode)
     enabled = sorted(enabled_reviewers(config))
     # successful_reviewers / resolution_eligible_reviewers share one predicate.
+    finding_batches = [batch for batch in finding_batches if batch["reviewer"] in enabled]
     successful = sorted(
         str(batch["reviewer"]) for batch in finding_batches if batch_usable_for_panel(batch)
     )
@@ -179,7 +168,7 @@ def build_consensus(
         )
         for findings in group_findings(all_findings, valid_duplicate_links):
             issue_id = issue_id_for_group(findings)
-            representative = _representative(findings)
+            representative = min(findings, key=finding_sort_key)
             contributing = sorted({finding["reviewer"] for finding in findings})
             source_ids = sorted({finding["source_finding_id"] for finding in findings})
             candidate_signature_hashes = sorted(
@@ -266,7 +255,7 @@ def build_consensus(
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
     return {
-        "schema_version": "consensus.v2",
+        "schema_version": "consensus.v3",
         "run_id": manifest["run_id"],
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
@@ -278,6 +267,19 @@ def build_consensus(
         "panel_status": cast(PanelStatus, status),
         "groups": cast(list[FindingGroup], groups),
         "summary": {
+            "raw_finding_count": sum(batch["raw_finding_count"] for batch in finding_batches),
+            "accepted_finding_count": sum(
+                batch["accepted_finding_count"] for batch in finding_batches
+            ),
+            "dropped_finding_count": sum(
+                batch["dropped_finding_count"] for batch in finding_batches
+            ),
+            "cap_omitted_finding_count": sum(
+                batch["raw_finding_count"]
+                - batch["accepted_finding_count"]
+                - batch["dropped_finding_count"]
+                for batch in finding_batches
+            ),
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             "drop_count": sum(1 for group in groups if group["decision"] == "drop"),

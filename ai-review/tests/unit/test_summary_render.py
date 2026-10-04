@@ -20,6 +20,35 @@ from support.post_case import PostCase  # noqa: E402
 class SummaryRenderTests(PostCase):
     """Composing the summary comment and fitting it to platform size limits."""
 
+    def test_health_notice_survives_truncation_and_hostile_seat_text(self) -> None:
+        for mode in ("github_reviews", "gitlab_discussions"):
+            with self.subTest(mode):
+                consensus = self._consensus()
+                consensus.update(
+                    panel_status="degraded", failed_reviewers=["<!-- @all -->\n# injected"]
+                )
+                consensus["summary"].update(
+                    raw_finding_count=4,
+                    accepted_finding_count=1,
+                    dropped_finding_count=1,
+                    cap_omitted_finding_count=2,
+                )
+                notice = summary_render_module.review_health_notice(consensus)
+                group = consensus["groups"][0]
+                group["body"] = "巨" * 1_100_000
+                body, _hash = summary_render_module.render_summary_body(
+                    "run",
+                    [group],
+                    [group],
+                    50,
+                    posting_mode=mode,
+                    health_notice=notice,
+                )
+                self.assertIn("1 dropped, 2 omitted", body)
+                self.assertIn("size limit", body)
+                self.assertEqual(body.count("<!--"), 1)
+                self.assertLessEqual(len(body), summary_render_module.platform_comment_limit(mode))
+
     def test_summary_renders_full_multiline_body_as_literal_block(self) -> None:
         group = self._consensus()["groups"][0]
         group["decision"] = "fyi"

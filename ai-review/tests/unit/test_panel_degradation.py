@@ -57,14 +57,11 @@ def _reviewer_model(reviewer: str) -> str:
 
 def _raw_security_blocker() -> dict[str, Any]:
     return {
-        "anchor": {
-            "new_path": "src/foo.py",
-            "old_path": "src/foo.py",
+        "location": {
+            "path": "src/foo.py",
             "side": "new",
-            "start": {"old_line": None, "new_line": 2, "line_code": None},
-            "end": {"old_line": None, "new_line": 2, "line_code": None},
-            "hunk_header": "@@ -1,1 +1,2 @@",
-            "context_hash": "0" * 64,
+            "start_line": 2,
+            "end_line": 2,
             "symbol": None,
         },
         "severity": "blocker",
@@ -73,22 +70,12 @@ def _raw_security_blocker() -> dict[str, Any]:
         "body": "user_input flows into run() without validation.",
         "evidence": ["run(user_input) is called directly."],
         "suggestion": None,
-        "confidence": 0.9,
     }
 
 
 def _success_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
     model = _reviewer_model(reviewer)
-    raw = {
-        "schema_version": "finding_batch.v1",
-        "run_id": "local-test",
-        "reviewer": reviewer,
-        "adapter_status": "success",
-        "model": model,
-        "started_at": "2026-06-29T00:00:00Z",
-        "completed_at": "2026-06-29T00:00:01Z",
-        "findings": [_raw_security_blocker()],
-    }
+    raw = {"findings": [_raw_security_blocker()]}
     return finalize_finding_batch(
         raw,
         reviewer=reviewer,
@@ -191,16 +178,7 @@ class PanelDegradationTests(unittest.TestCase):
                 findings_dir = root / "findings"
                 for reviewer in seats:
                     model = str(config["reviewers"][reviewer]["model"])
-                    raw = {
-                        "schema_version": "finding_batch.v1",
-                        "run_id": "local-test",
-                        "reviewer": reviewer,
-                        "adapter_status": "success",
-                        "model": model,
-                        "started_at": "2026-06-29T00:00:00Z",
-                        "completed_at": "2026-06-29T00:00:01Z",
-                        "findings": [_raw_security_blocker()],
-                    }
+                    raw = {"findings": [_raw_security_blocker()]}
                     write_canonical_json(
                         findings_dir / f"{reviewer}.json",
                         finalize_finding_batch(
@@ -323,13 +301,6 @@ class PanelDegradationTests(unittest.TestCase):
             input_dir.mkdir(parents=True, exist_ok=True)
             (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
             raw = {
-                "schema_version": "finding_batch.v1",
-                "run_id": "local-test",
-                "reviewer": "claude",
-                "adapter_status": "success",
-                "model": _reviewer_model("claude"),
-                "started_at": "2026-06-29T00:00:00Z",
-                "completed_at": "2026-06-29T00:00:01Z",
                 "findings": [
                     {
                         "severity": "blocker",
@@ -338,7 +309,7 @@ class PanelDegradationTests(unittest.TestCase):
                         "body": "bad",
                         # missing anchor -> dropped
                     }
-                ],
+                ]
             }
             all_dropped = finalize_finding_batch(
                 raw,
@@ -354,7 +325,7 @@ class PanelDegradationTests(unittest.TestCase):
             batches = {
                 "claude": all_dropped,
                 "codex": finalize_finding_batch(
-                    {**raw, "reviewer": "codex", "model": _reviewer_model("codex")},
+                    raw,
                     reviewer="codex",
                     model=_reviewer_model("codex"),
                     run_id="local-test",

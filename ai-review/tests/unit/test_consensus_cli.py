@@ -147,7 +147,7 @@ class ConsensusCliTests(unittest.TestCase):
             write_canonical_json(
                 critiques_dir / "codex.json",
                 {
-                    "schema_version": "critique_batch.v1",
+                    "schema_version": "critique_batch.v2",
                     "run_id": "run",
                     "critic": "codex",
                     "adapter_status": "success",
@@ -160,7 +160,6 @@ class ConsensusCliTests(unittest.TestCase):
                             "duplicate_of_source_finding_id": None,
                             "rationale": "valid",
                             "adjusted_severity": None,
-                            "confidence": 0.8,
                         }
                     ],
                 },

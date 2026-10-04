@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.prompt_render import _diff_stats_text, render_review_prompt
+from ai_review.prompt_render import _diff_stats_text, render_prompt
 from ai_review.schema import write_canonical_json
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
@@ -51,7 +51,20 @@ def _write_inputs(input_dir: Path, diff_text: str) -> None:
     )
     write_canonical_json(
         input_dir / "prior_decisions.json",
-        {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
+        {
+            "schema_version": "prior_decisions.v1",
+            "settled": [
+                {
+                    "title": "Prior finding",
+                    "category": "correctness",
+                    "status": "resolved",
+                    "path": "src/app.py",
+                    "context_hash": "hidden-state-hash",
+                    "body": "not-produced",
+                }
+            ],
+            "open": [],
+        },
     )
 
 
@@ -75,7 +88,7 @@ class ReviewPromptRenderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp) / "inputs"
             _write_inputs(input_dir, _FIXTURE_DIFF)
-            rendered = render_review_prompt(input_dir, _REPO_CONFIG, "claude")
+            rendered, _pool = render_prompt(input_dir, _REPO_CONFIG, "claude", "review")
 
         self.assertIn("<DIFF_STATS>", rendered)
         self.assertIn("files_changed: 2\ninsertions: 3\ndeletions: 1", rendered)
@@ -86,6 +99,10 @@ class ReviewPromptRenderTests(unittest.TestCase):
             rendered.index("<MR_DIFF_UNTRUSTED_DATA>"),
         )
         self.assertIn("bundle prompt", rendered)
+        for prior_field in ("Prior finding", "correctness", "resolved", "src/app.py"):
+            self.assertIn(prior_field, rendered)
+        self.assertNotIn("hidden-state-hash", rendered)
+        self.assertNotIn("not-produced", rendered)
 
 
 if __name__ == "__main__":

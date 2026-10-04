@@ -86,8 +86,9 @@ had one, remove any custom `needs`, dashboard, or script that names it.
 
 **Pipelines must succeed** remains worth enabling, but understand what it covers
 here: a failed `post_ai_review` job means publication or state persistence
-failed, not that the review found something. Findings of any severity leave the
-job green. If you would rather a publication failure not block, the consuming
+failed, or no reviewer produced a usable batch. A failed-panel notice is posted
+before that operational failure is reported. Findings of any severity leave the
+job green. If you would rather an operational failure not block, the consuming
 project can mark the job `allow_failure: true`.
 
 Setting `AI_REVIEW_MANUAL` to exact `true` makes the entry job non-blocking

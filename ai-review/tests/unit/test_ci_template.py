@@ -4,8 +4,10 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -837,6 +839,62 @@ class GitLabCiTemplateTests(unittest.TestCase):
         )
         for need in (*critique_needs, *consensus_needs):
             self.assertNotIn("parallel", need)
+
+    def test_failed_panel_artifact_can_publish_health_without_hiding_failure(self) -> None:
+        github = yaml.safe_load(_GITHUB_TEMPLATE.read_text())["jobs"]
+        consensus_steps = github["consensus"]["steps"]
+        build = next(step for step in consensus_steps if step.get("name") == "Build consensus")
+        self.assertTrue(build["continue-on-error"])
+        upload = next(
+            step
+            for step in consensus_steps
+            if step.get("with", {}).get("name") == "ai-review-consensus"
+        )
+        self.assertEqual(upload["with"]["if-no-files-found"], "error")
+        failure = next(
+            step for step in consensus_steps if step.get("name") == "Preserve consensus failure"
+        )
+        self.assertEqual(failure["if"], "steps.consensus.outcome != 'success'")
+        self.assertEqual(failure["run"], "exit 1")
+        self.assertLess(consensus_steps.index(upload), consensus_steps.index(failure))
+        post_steps = github["post"]["steps"]
+        publish = next(step for step in post_steps if step.get("name") == "Post GitHub review")
+        failure = next(
+            step
+            for step in post_steps
+            if step.get("name") == "Preserve upstream operational failure"
+        )
+        self.assertEqual(failure["if"], "needs.consensus.result != 'success'")
+        self.assertEqual(failure["run"], "exit 1")
+        self.assertLess(post_steps.index(publish), post_steps.index(failure))
+        gitlab = yaml.safe_load(_CI_TEMPLATE.read_text())
+        post = gitlab["post_ai_review"]
+        self.assertNotIn("when", post)
+        self.assertEqual(post["extends"], ".ai_review_rules")
+        self.assertEqual(
+            [need["job"] for need in post["needs"]],
+            ["prepare_ai_review", "consensus_ai_review"],
+        )
+        self.assertEqual(gitlab["consensus_ai_review"]["artifacts"]["when"], "always")
+        self.assertEqual(gitlab["consensus_ai_review"]["allow_failure"], {"exit_codes": 3})
+        self.assertNotIn("allow_failure", post)
+        self.assertIn("python -m ai_review.post", post["script"][0])
+        self.assertIn('"panel_status"] == "failed"', post["script"][1])
+        self.assertIn("sys.exit(3", post["script"][1])
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "out/consensus/consensus.json"
+            artifact.parent.mkdir(parents=True)
+            for status, expected in (("full", 0), ("degraded", 0), ("failed", 3)):
+                with self.subTest(panel_status=status):
+                    artifact.write_text(json.dumps({"panel_status": status}))
+                    result = subprocess.run(
+                        [sys.executable, *shlex.split(post["script"][1])[1:]],
+                        cwd=tmp,
+                        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT / "ai-review/src")},
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_critique_artifacts_and_consensus_cli_are_wired(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")

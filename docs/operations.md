@@ -41,8 +41,10 @@ configuration together, in this order.
    `AI review: [claude]` remain, but a custom job that needed one of them must
    now use `needs:parallel:matrix` against the matrix job.
 8. **Update artifact consumers.** Tools that read `consensus.json` must accept
-   `consensus.v2`: independent support and informational decisions replace the
-   removed blocking and vote-count fields. There is no `out/gate/` artifact.
+   `consensus.v3`: independent support and informational decisions replace the
+   removed blocking and vote-count fields; aggregate finding-loss counts report
+   dropped and capped candidates. Review/critique batches use v2. There is no
+   `out/gate/` artifact. Restart at prepare with matched images and fresh artifacts.
 9. **Expect one cosmetic thread update.** Existing threads keep their hidden
    marker and are refreshed once from `render-body.v3` to `render-body.v4`,
    which uses a `Support:` footer. Identities are updated, not duplicated.
@@ -114,7 +116,7 @@ There is no supported installable Python distribution.
 | One reviewer/provider fails | Panel degrades; other trustworthy evidence may proceed | Inspect `out/status/`; retry or fix credential/model |
 | All findings from a seat are malformed | Seat is not resolution-eligible or operationally successful | Fix model/schema compatibility; do not lower thresholds reflexively |
 | Critique disabled or optional evidence absent | Consensus uses valid reviewer evidence without critique | Confirm this matches rollout policy |
-| No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
+| No usable reviewer succeeds | Consensus exits 3; post publishes a health-only notice, then CI preserves the failure | Restore provider/adapter availability |
 | Run/config/artifact identity mismatch | Consensus exits 3 before combining evidence | Rerun from prepare with identical project-scoped overrides |
 | State load fails and `fail_closed_on_load_error=false` | Prepare warns and begins from empty recoverable state | Investigate ownership/API/checksum; expect conservative repost risk |
 | State load fails and option is true | Prepare fails | Restore state/API access or make a deliberate policy change |

@@ -95,36 +95,41 @@ class CandidateIssueSignature(TypedDict):
     symbol: str | None
 
 
-class RawLineRef(TypedDict):
-    old_line: int | None
-    new_line: int | None
-    line_code: None
-
-
-class RawAnchor(TypedDict):
-    old_path: str
-    new_path: str
+class Location(TypedDict):
+    path: str
     side: AnchorSide
-    start: RawLineRef
-    end: RawLineRef
-    hunk_header: str
-    context_hash: str
+    start_line: int
+    end_line: int
     symbol: str | None
 
 
 class RawFinding(TypedDict):
-    anchor: RawAnchor
+    location: Location
     severity: Severity
     category: Category
     title: str
     body: str
     evidence: list[str]
     suggestion: str | None
-    confidence: float
 
 
 class RawFindingBatch(TypedDict):
     findings: list[RawFinding]
+
+
+class PooledFinding(RawFinding):
+    id: str
+    reviewer: ReviewerId
+
+
+class PooledFindings(TypedDict):
+    schema_version: Literal["pooled_findings.v2"]
+    run_id: RunId
+    critic: ReviewerId
+    effective_config_sha256: str
+    blind_reviewer_identity: bool
+    source_finding_ids: dict[str, str]
+    findings: list[PooledFinding]
 
 
 class Finding(TypedDict):
@@ -137,13 +142,12 @@ class Finding(TypedDict):
     body: str
     evidence: list[str]
     suggestion: str | None
-    confidence: float
     fingerprints: Fingerprints
     candidate_issue_signature: CandidateIssueSignature
 
 
 class FindingBatch(TypedDict):
-    schema_version: Literal["finding_batch.v1"]
+    schema_version: Literal["finding_batch.v2"]
     run_id: RunId
     reviewer: ReviewerId
     adapter_status: AdapterStatus
@@ -158,6 +162,18 @@ class FindingBatch(TypedDict):
     findings: list[Finding]
 
 
+class RawCritique(TypedDict):
+    target_id: str
+    verdict: CritiqueVerdict
+    rationale: str
+    duplicate_of_id: str | None
+    adjusted_severity: Severity | None
+
+
+class RawCritiqueBatch(TypedDict):
+    critiques: list[RawCritique]
+
+
 class Critique(TypedDict):
     target_source_finding_id: str
     critic: ReviewerId
@@ -165,11 +181,10 @@ class Critique(TypedDict):
     duplicate_of_source_finding_id: str | None
     rationale: str
     adjusted_severity: Severity | None
-    confidence: float
 
 
 class CritiqueBatch(TypedDict):
-    schema_version: Literal["critique_batch.v1"]
+    schema_version: Literal["critique_batch.v2"]
     run_id: RunId
     critic: ReviewerId
     adapter_status: AdapterStatus
@@ -251,10 +266,14 @@ class ConsensusSummary(TypedDict):
     surface_count: int
     fyi_count: int
     drop_count: int
+    raw_finding_count: int
+    accepted_finding_count: int
+    dropped_finding_count: int
+    cap_omitted_finding_count: int
 
 
 class Consensus(TypedDict):
-    schema_version: Literal["consensus.v2"]
+    schema_version: Literal["consensus.v3"]
     run_id: RunId
     project_id: ProjectId
     merge_request_iid: MergeRequestIid

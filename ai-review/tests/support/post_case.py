@@ -27,6 +27,11 @@ class PostCase(unittest.TestCase):
     def _consensus(self) -> dict[str, Any]:
         return {
             "run_id": "run",
+            "panel_status": "full",
+            "failed_reviewers": [],
+            "summary": {"surface_count": 1, "fyi_count": 0, "drop_count": 0,
+                        "raw_finding_count": 1, "accepted_finding_count": 1,
+                        "dropped_finding_count": 0, "cap_omitted_finding_count": 0},
             "successful_reviewers": ["claude"],
             "resolution_eligible_reviewers": ["claude"],
             "groups": [

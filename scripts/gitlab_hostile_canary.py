@@ -57,7 +57,7 @@ SUMMARY_SCHEMA = "candidate_canary_hostile_summary.v1"
 HOSTILE_IMAGE = "docker.io/library/alpine:3.20"
 # Forged publication artifacts from another "run". Nothing in a failed-closed
 # chain may consume them; the consensus integrity binding rejects them anyway.
-FORGED_CONSENSUS = '{"schema_version":"consensus.v2","run_id":"forged","groups":[]}'
+FORGED_CONSENSUS = '{"schema_version":"consensus.v3","run_id":"forged","groups":[]}'
 FORGED_POST = '{"schema_version":"post_result.v1","run_id":"forged","status":"success"}'
 
 

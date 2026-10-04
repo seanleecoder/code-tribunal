@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "raw_critique_batch.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["critiques"],
+  "properties": {
+    "critiques": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_id", "verdict", "rationale", "duplicate_of_id", "adjusted_severity"],
+        "properties": {
+          "verdict": {"enum": ["agree", "dispute", "noise", "duplicate"], "type": "string"},
+          "rationale": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"},
+          "adjusted_severity": {"type": ["string", "null"], "enum": ["info", "minor", "major", "blocker", null]},
+          "target_id": {"type": "string", "pattern": "^F[0-9]{3,}$"},
+          "duplicate_of_id": {"type": ["string", "null"], "pattern": "^F[0-9]{3,}$"}
+        }
+      }
+    }
+  }
+}

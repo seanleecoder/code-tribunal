@@ -261,8 +261,8 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         """
         for reviewer in sorted(REVIEWER_IDS):
             for stage, schema_version in (
-                ("review", "finding_batch.v1"),
-                ("critique", "critique_batch.v1"),
+                ("review", "finding_batch.v2"),
+                ("critique", "critique_batch.v2"),
             ):
                 with self.subTest(reviewer=reviewer, stage=stage), mock.patch(
                     "ai_review.adapter_runner._run_adapter_process",

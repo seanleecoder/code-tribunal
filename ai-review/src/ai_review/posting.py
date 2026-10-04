@@ -37,7 +37,12 @@ from .state_plan import (
     plan_state,
     state_from_existing_discussions,
 )
-from .summary_render import _sort_groups, render_summary_body
+from .summary_render import (
+    _sort_groups,
+    render_summary_body,
+    review_health_notice,
+    review_recovery_notice,
+)
 from .types import (
     Anchor,
     Consensus,
@@ -180,6 +185,7 @@ def upsert_summary_comment(
     *,
     posting_mode: str,
     dry_run: bool = False,
+    health_notice: str | None = None,
 ) -> dict[str, Any]:
     summary = {
         "action": "none",
@@ -187,19 +193,22 @@ def upsert_summary_comment(
         "surface_findings": len(fallback_groups),
         "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
     }
-    if not fallback_groups and not fyi_groups:
-        return summary
+    existing = find_summary_note(raw_discussions)
+    if not fallback_groups and not fyi_groups and health_notice is None:
+        if existing is None:
+            return summary
+        health_notice = review_recovery_notice()
     body, body_hash = render_summary_body(
         run_id,
         fallback_groups,
         fyi_groups,
         max_fyi,
         posting_mode=posting_mode,
+        health_notice=health_notice,
     )
     if dry_run:
         summary["action"] = "created"
         return summary
-    existing = find_summary_note(raw_discussions)
     if existing is None:
         response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
@@ -625,6 +634,7 @@ def finalize_state(
             max_fyi,
             posting_mode=posting_mode,
             dry_run=dry_run,
+            health_notice=review_health_notice(consensus),
         ),
     )
     prior_records = {record["issue_id"]: record for record in state_plan.base_records}
