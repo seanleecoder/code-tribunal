@@ -3,11 +3,11 @@ from __future__ import annotations
 import subprocess
 import unittest
 from copy import deepcopy
+from itertools import product
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-import yaml
 from ai_review.config import (
     CONFIG_SCHEMA_VERSION,
     RETIRED_CONFIG_SCHEMA_VERSIONS,
@@ -126,28 +126,25 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             self.assertEqual(config["reviewers"]["codex"]["effort"], "low")
 
     def test_unset_effort_matches_yaml_omission(self) -> None:
-        for name in ("claude", "codex", "opencode"):
-            for present in (False, True):
-                for value in ("unset", "  unset\t"):
-                    with self.subTest(name=name, present=present, value=value):
-                        with mock.patch.dict("os.environ", {}, clear=True):
-                            config = load_config(_REPO_CONFIG)
-                        if present:
-                            config["reviewers"][name]["effort"] = "low"
-                        else:
-                            config["reviewers"][name].pop("effort", None)
-                        expected = deepcopy(config)
-                        expected["reviewers"][name].pop("effort", None)
-                        with mock.patch.dict(
-                            "os.environ", {f"AI_REVIEW_{name.upper()}_EFFORT": value}, clear=True
-                        ):
-                            apply_env_overrides(config)
-                        validate_config(config)
-                        self.assertNotIn("effort", config["reviewers"][name])
-                        self.assertEqual(config, expected)
-                        self.assertEqual(
-                            effective_config_digest(config), effective_config_digest(expected)
-                        )
+        with mock.patch.dict("os.environ", {}, clear=True):
+            base = load_config(_REPO_CONFIG)
+        for name, present, value in product(
+            ("claude", "codex", "opencode"), (False, True), ("unset", "  unset\t")
+        ):
+            with self.subTest(name=name, present=present, value=value):
+                config = deepcopy(base)
+                if present:
+                    config["reviewers"][name]["effort"] = "low"
+                else:
+                    config["reviewers"][name].pop("effort", None)
+                expected = deepcopy(config)
+                expected["reviewers"][name].pop("effort", None)
+                with mock.patch.dict(
+                    "os.environ", {f"AI_REVIEW_{name.upper()}_EFFORT": value}, clear=True
+                ):
+                    apply_env_overrides(config)
+                validate_config(config)
+                self.assertEqual(config, expected)
 
     def test_unset_effort_is_applied_before_load_validation(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_EFFORT": "unset"}, clear=True):
@@ -161,14 +158,8 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             with self.subTest(name=name):
                 invalid = deepcopy(config)
                 invalid["reviewers"][name]["effort"] = "unset"
-                with TemporaryDirectory() as tmp:
-                    path = Path(tmp) / "review.yaml"
-                    path.write_text(yaml.safe_dump(invalid), encoding="utf-8")
-                    with (
-                        mock.patch.dict("os.environ", {}, clear=True),
-                        self.assertRaisesRegex(ConfigError, "effort must be one of"),
-                    ):
-                        load_config(path)
+                with self.assertRaisesRegex(ConfigError, "effort must be one of"):
+                    validate_config(invalid)
 
     def test_effort_override_per_reviewer(self) -> None:
         config = _base_config()

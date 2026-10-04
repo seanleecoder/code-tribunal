@@ -484,14 +484,8 @@ or efforts differ; reuse a passing smoke on the same runtime and image pair.
 On that smoke's own change request, leave model and effort overrides missing or
 blank and select the three-seat roster only in its temporary workflow/template.
 Keep all three OpenRouter seats enabled, Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, and
-`AI_REVIEW_REQUIRE_REAL_*=1`. Run one panel with the shipped defaults below:
-
-| Seat | Model | Effort | Expected participation |
-|---|---|---|---|
-| Claude | `anthropic/claude-haiku-4.5` | `medium` | enabled |
-| Codex | `openai/gpt-6-luna` | `low` | enabled |
-| OpenCode | `xiaomi/mimo-v2.6-flash` | unset | enabled |
-| Cursor | `composer-2.5` | named-model default | disabled / skipped |
+`AI_REVIEW_REQUIRE_REAL_*=1`. Run one panel with the
+[shipped defaults](../configuration.md#shipped-defaults).
 
 The 2026-10-04 candidate-config smoke passed in
 [GitHub run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
@@ -503,10 +497,9 @@ validate MiMo. The [model-refresh record](record-model-refresh-2026-10-04.md)
 scopes Flash; the separate [Pro/Grok record](record-mimo-pro-grok-2026-10-04.md)
 scopes that supplemental canary.
 
-For MiMo, require absent resolved effort. When YAML omits `effort`, a missing or
-blank `AI_REVIEW_OPENCODE_EFFORT` inherits that absence. Remove or blank a stale
-persisted override, or use `AI_REVIEW_OPENCODE_EFFORT=unset` to clear YAML effort
-explicitly. Use the existing OpenCode → OpenRouter route with
+For MiMo, require absent resolved effort; see
+[effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
+Use the existing OpenCode → OpenRouter route with
 `OPENROUTER_API_KEY`. Require successful review and critique for each enabled
 seat, schema-valid structured output, artifacts usable by consensus,
 `panel_status: full`, and a posted finding. Check the resolved config, CLI/model
@@ -654,8 +647,7 @@ reviewer image and reported `model: auto`.
    Value / Balance recommends `grok-4.7-medium`. Before claiming Grok 4.7 validated,
    confirm that exact selector in the pinned CLI and complete a real review and
    critique with no silent fallback. For Grok / `xhigh`, use only the exact
-   variant selector reported by that CLI (`grok-4.7-xhigh` in
-   `2026.09.26-dd393fe`); Cursor has no separate Code Tribunal
+   variant selector reported by that CLI, such as `grok-4.7-xhigh`; Cursor has no separate Code Tribunal
    effort variable. `auto` is supported for ordinary operation but does not
    establish reproducible model-specific evidence.
 3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that

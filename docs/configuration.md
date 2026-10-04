@@ -152,10 +152,9 @@ Model recommendations last reviewed: 2026-10-04.
 
 Choose one complete profile at project/repository scope so all pipeline stages
 see the same effective configuration. Set the model override for each enabled
-seat. Set its effort override to the profile's level or to `unset` when the
-profile requires absent effort. Model-only overrides inherit YAML effort;
-missing, empty, and whitespace-only effort variables also inherit YAML. For
-example, changing only `AI_REVIEW_CODEX_MODEL` retains the shipped `low`.
+seat. Set its effort override to the profile's level, or to `unset` when the
+profile requires absent effort; model-only overrides inherit YAML effort (see
+[effort inheritance and clearing](#effort-inheritance-and-clearing)).
 Each cell is `model` / `effort`; Cursor is optional.
 
 | Profile | Claude | Codex | OpenCode | Cursor optional |
@@ -166,11 +165,9 @@ Each cell is `model` / `effort`; Cursor is optional.
 Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and supported
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
 below. For both MiMo models, **unset** means the resolved configuration has no
-`effort` key. With the shipped YAML, which omits that key, a missing or blank
-`AI_REVIEW_OPENCODE_EFFORT` inherits the required absence. On upgrade, remove or
-blank any persisted OpenCode effort override such as `low`, or explicitly clear
-it with `AI_REVIEW_OPENCODE_EFFORT=unset`. If custom YAML sets effort, remove its
-key or use the explicit clearing override. MiMo uses the existing
+`effort` key. The shipped YAML omits it; on upgrade, clear any persisted
+OpenCode effort override as described in
+[effort inheritance and clearing](#effort-inheritance-and-clearing). MiMo uses the existing
 OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
 retain the generic effort support described below.
 
@@ -320,18 +317,27 @@ artifacts.
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
 | `AI_REVIEW_CURSOR_MODEL` | `composer-2.5` (YAML) | Cursor model selector; effort is encoded in the model variant. `auto` remains a supported operator override that delegates model choice to Cursor. Use an exact slug for reproducible CI and model-specific evidence. |
-| `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum, or `unset` to remove YAML effort. Missing or blank values inherit YAML. |
-| `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`. `unset` removes YAML effort and omits that flag; missing or blank values inherit YAML. The selected model route must accept the level; forwarding does not probe provider compatibility. |
-| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`. `unset` removes YAML effort and omits that setting; missing or blank values inherit YAML. The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
+| `AI_REVIEW_CLAUDE_EFFORT` | YAML/provider default | Closed effort enum, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). |
+| `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). The selected model route must accept the level; forwarding does not probe provider compatibility. |
+| `AI_REVIEW_OPENCODE_EFFORT` | provider default | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
 
-Effort clearing uses the trimmed, lowercase environment value `unset` for Claude,
-Codex, and OpenCode only. It is an instruction to remove a key before validation,
-never a provider effort value: YAML `effort: unset` is invalid. Cursor rejects
-`AI_REVIEW_CURSOR_EFFORT`, including `unset`; choose its model variant instead.
+#### Effort inheritance and clearing
+
+Missing, empty, and whitespace-only effort variables inherit YAML effort, and so
+do model-only overrides: changing only `AI_REVIEW_CODEX_MODEL` retains the
+shipped `low`. The trimmed, lowercase value `unset` removes YAML effort for
+Claude, Codex, and OpenCode, so the adapter omits the provider setting. It is an
+instruction to remove a key before validation, never a provider effort value:
+YAML `effort: unset` is invalid. Cursor rejects `AI_REVIEW_CURSOR_EFFORT`,
+including `unset`; choose its model variant instead.
+
+When upgrading to the MiMo default, which requires absent effort, remove or blank
+any persisted `AI_REVIEW_OPENCODE_EFFORT` override, or set it to `unset`. If
+custom YAML sets OpenCode effort, remove its key or use the same override.
 
 For example, to change Codex's model while using its provider default effort:
 

@@ -54,13 +54,9 @@ Configure runtime overrides as protected project/group variables so every stage
 sees the same effective configuration. Child mode deliberately rejects general
 variable forwarding.
 
-When upgrading to the MiMo default, remove or blank any persisted
-`AI_REVIEW_OPENCODE_EFFORT` override, or set it to `unset` to clear YAML effort.
-MiMo needs absent resolved effort; the shipped YAML omits it. Changing only a
-model inherits YAML effort, including Codex's `low`; use
-`AI_REVIEW_CODEX_EFFORT=unset` for provider default effort. Missing or blank
-effort variables inherit YAML. Apply model and effort controls at project/group
-scope so all stages agree; see the [environment reference](../configuration.md#environment-variables).
+When upgrading to the MiMo default, clear any persisted
+`AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
+See [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
 
 Never set `AI_REVIEW_LOCAL_MOCK` (or `AI_REVIEW_ALLOW_LOCAL_MOCK`) as a
 project/pipeline variable in production. GitLab variable precedence can override

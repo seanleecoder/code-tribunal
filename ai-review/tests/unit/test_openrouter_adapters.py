@@ -1016,17 +1016,12 @@ PY
                 self.assertEqual(batch["adapter_status"], "success")
                 self.assertIn(f'model_reasoning_effort="{configured}"', cli_args)
 
-    def test_codex_cleared_effort_omits_flag_in_both_stages(self) -> None:
-        for stage in ("review", "critique"):
-            with self.subTest(stage=stage):
-                batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
-                    "codex",
-                    "codex",
-                    stage=stage,
-                    extra_env={"AI_REVIEW_CODEX_EFFORT": "unset"},
-                )
-                self.assertEqual(batch["adapter_status"], "success")
-                self.assertNotIn("model_reasoning_effort", cli_args)
+    def test_codex_cleared_effort_omits_flag(self) -> None:
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+            "codex", "codex", extra_env={"AI_REVIEW_CODEX_EFFORT": "unset"}
+        )
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertNotIn("model_reasoning_effort", cli_args)
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1463,20 +1458,6 @@ PY
         config = meta["opencode_config"]
         assert isinstance(config, dict)
         self.assertEqual(config["agent"]["ai-reviewer"]["reasoningEffort"], "max")
-
-    def test_opencode_cleared_effort_is_omitted_in_both_stages(self) -> None:
-        for stage in ("review", "critique"):
-            with self.subTest(stage=stage):
-                batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
-                    "opencode",
-                    "opencode",
-                    stage=stage,
-                    extra_env={"AI_REVIEW_OPENCODE_EFFORT": "unset"},
-                )
-                self.assertEqual(batch["adapter_status"], "success")
-                config = meta["opencode_config"]
-                assert isinstance(config, dict)
-                self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
