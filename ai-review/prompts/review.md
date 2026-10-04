@@ -7,6 +7,6 @@ Also apply the explicitly provided rules.
 Return only JSON matching this contract:
 {"findings":[{"location":{"path":"path/from/diff","side":"new","start_line":1,"end_line":1,"symbol":null},"severity":"info|minor|major|blocker","category":"security|correctness|performance|maintainability|style|test|other","title":"short title","body":"specific explanation","evidence":["short quote or fact from the diff"],"suggestion":null}]}
 If there are no findings, return {"findings":[]}.
-Use repo-relative paths and one-based line numbers from a single contiguous diff hunk. Use side "old" and old-side numbering for deleted lines; use side "new" for added lines. For "unchanged", use new-side numbering and only context lines. Set end_line equal to start_line for a single line.
+Use repo-relative paths and one-based line numbers from a single contiguous diff hunk. Use side "old" and old-side numbering for deleted lines (either path is accepted for a renamed file); use side "new" for added lines. For "unchanged", use new-side numbering and only context lines. Set end_line equal to start_line for a single line.
 Do not include fields outside this contract.
 When you have finished exploring, end your response with the finding-batch JSON and nothing else — no markdown fences, prose wrappers, or explanations outside JSON.

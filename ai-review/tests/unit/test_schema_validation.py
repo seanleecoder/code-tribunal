@@ -333,9 +333,7 @@ class SchemaValidationTests(unittest.TestCase):
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(invalid, "critique_batch.schema.json")
 
-    def test_old_artifact_versions_and_model_bookkeeping_are_rejected(self) -> None:
-        from .test_finding_cap import DIFF, _finding
-
+    def test_old_artifact_versions_are_rejected(self) -> None:
         for name, batch in [
             (
                 "finding_batch",
@@ -362,32 +360,42 @@ class SchemaValidationTests(unittest.TestCase):
             batch["schema_version"] = name + ".v1"
             with self.subTest(name), self.assertRaises(SchemaValidationError):
                 validate_instance(batch, name + ".schema.json")
-        with tempfile.TemporaryDirectory() as tmp:
+
+    def test_raw_finding_extras_are_stripped_but_required_fields_stay_strict(self) -> None:
+        from .test_finding_cap import DIFF, _finding
+
+        finding = {**_finding(2, "major", "Compact"), "confidence": 0.9, "reviewer": "spoof"}
+        finding["location"]["context_hash"] = "untrusted"
+        missing = _finding(2, "major", "Missing suggestion")
+        del missing["suggestion"]
+        raw = {"findings": [finding, missing], "summary": "extra", "schema_version": "ignored"}
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
             Path(tmp, "mr.diff").write_text(DIFF)
-            with self.assertRaises(SchemaValidationError):
-                finalize_finding_batch(
-                    {"findings": [], "schema_version": "finding_batch.v1"},
-                    reviewer="claude",
-                    model="model",
-                    run_id="local",
-                    started_at="start",
-                    effective_config_sha256="0" * 64,
-                    input_dir=tmp,
-                )
-            bad = {**_finding(2, "major", "Bookkeeping"), "confidence": 1.0}
-            with contextlib.redirect_stderr(io.StringIO()):
-                batch = finalize_finding_batch(
-                    {"findings": [bad, _finding(2, "major", "Compact")]},
-                    reviewer="claude",
-                    model="model",
-                    run_id="local",
-                    started_at="start",
-                    effective_config_sha256="0" * 64,
-                    input_dir=tmp,
-                )
-            self.assertEqual(
-                (batch["accepted_finding_count"], batch["dropped_finding_count"]), (1, 1)
+            batch = finalize_finding_batch(
+                raw,
+                reviewer="claude",
+                model="model",
+                run_id="local",
+                started_at="start",
+                effective_config_sha256="0" * 64,
+                input_dir=tmp,
             )
+        self.assertEqual(
+            (
+                batch["raw_finding_count"],
+                batch["accepted_finding_count"],
+                batch["dropped_finding_count"],
+            ),
+            (2, 1, 1),
+        )
+        self.assertNotIn("summary", batch)
+        self.assertEqual(batch["reviewer"], "claude")
+        self.assertNotIn("confidence", batch["findings"][0])
+        self.assertNotEqual(batch["findings"][0]["anchor"]["context_hash"], "untrusted")
+        # Projection does not mutate model output or relax the provider schema.
+        self.assertEqual(finding["location"]["context_hash"], "untrusted")
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(raw, "raw_finding_batch.schema.json")
 
     def test_empty_raw_finding_batch_validates_only_against_raw_schema(self) -> None:
         raw = {"findings": []}
@@ -461,6 +469,25 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertNotIn("confidence", finalized["critiques"][0])
         validate_instance(finalized, "critique_batch.schema.json")
 
+    def test_raw_critique_extras_are_stripped_and_identity_is_trusted(self) -> None:
+        raw = {
+            "critiques": [_critique(confidence=0.9, critic="spoof")],
+            "summary": "extra",
+            "critic": "spoof",
+        }
+        batch = finalize_critique_batch(
+            raw,
+            critic="codex",
+            run_id="local",
+            effective_config_sha256="0" * 64,
+            pooled_findings=_pool(),
+        )
+        self.assertNotIn("summary", batch)
+        self.assertNotIn("confidence", batch["critiques"][0])
+        self.assertEqual(batch["critiques"][0]["critic"], "codex")
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(raw, "raw_critique_batch.schema.json")
+
     def test_unknown_or_malformed_critique_invalidates_entire_batch(self) -> None:
         for item in [
             _critique("F003"),
@@ -469,7 +496,6 @@ class SchemaValidationTests(unittest.TestCase):
             _critique(duplicate_of_id="F999"),
             _critique(duplicate_of_id="F002\n"),
             _critique(verdict="maybe"),
-            _critique(critic="spoof"),
             _critique(rationale=" "),
             _critique(adjusted_severity="critical"),
             {"verdict": "agree"},
@@ -503,8 +529,6 @@ class SchemaValidationTests(unittest.TestCase):
             {},
             {"critiques": {}},
             {"critiques": ""},
-            {"critiques": [], "critic": "spoof"},
-            {"critiques": [], "adapter_status": "success"},
         ]:
             with self.subTest(batch), self.assertRaises(SchemaValidationError):
                 finalize_critique_batch(

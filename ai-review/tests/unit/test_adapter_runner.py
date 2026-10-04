@@ -142,8 +142,8 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                 "is_error": False,
                 "result": (
                     "```json\n"
-                    '[{"target_source_finding_id":"' + "1" * 64 + '", '
-                    '"critic":"claude","verdict":"agree",'
+                    '[{"target_id":"' + "F001" + '", '
+                    '"duplicate_of_id":null,"verdict":"agree",'
                     '"adjusted_severity":null,"rationale":"valid"}]\n'
                     "```"
                 ),
@@ -152,6 +152,13 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         loaded = _load_adapter_json(stdout)
         self.assertEqual(len(loaded["critiques"]), 1)
         self.assertEqual(loaded["critiques"][0]["verdict"], "agree")
+
+    def test_infers_raw_critique_array_from_v2_target_key(self) -> None:
+        self.assertEqual(
+            _load_adapter_json('[{"target_id":"F001"}]'), {"critiques": [{"target_id": "F001"}]}
+        )
+        with self.assertRaises(SchemaValidationError):
+            _load_adapter_json('[{"target_source_finding_id":"old"}]')
 
     def test_loads_empty_critique_array_for_critique_stage(self) -> None:
         loaded = _load_adapter_json("[]", stage="critique")
@@ -163,14 +170,14 @@ class AdapterRunnerOutputTests(unittest.TestCase):
 
     def test_loads_critique_array_before_unrelated_trailing_bracket(self) -> None:
         stdout = (
-            '[{"target_source_finding_id":"' + "3" * 64 + '", '
-            '"critic":"claude","verdict":"agree",'
+            '[{"target_id":"' + "F003" + '", '
+            '"duplicate_of_id":null,"verdict":"agree",'
             '"adjusted_severity":null,"rationale":"valid"}]'
             "\ntrailing note ]"
         )
         loaded = _load_adapter_json(stdout, stage="critique")
         self.assertEqual(len(loaded["critiques"]), 1)
-        self.assertEqual(loaded["critiques"][0]["target_source_finding_id"], "3" * 64)
+        self.assertEqual(loaded["critiques"][0]["target_id"], "F003")
 
     def test_loads_opencode_stream_critique_array(self) -> None:
         stdout = "\n".join(
@@ -180,8 +187,8 @@ class AdapterRunnerOutputTests(unittest.TestCase):
                     {
                         "type": "text",
                         "text": (
-                            '[{"target_source_finding_id":"' + "2" * 64 + '", '
-                            '"critic":"opencode","verdict":"noise",'
+                            '[{"target_id":"' + "F002" + '", '
+                            '"duplicate_of_id":null,"verdict":"noise",'
                             '"adjusted_severity":null,"rationale":"too vague"}]'
                         ),
                     }
@@ -190,7 +197,7 @@ class AdapterRunnerOutputTests(unittest.TestCase):
         )
         loaded = _load_adapter_json(stdout)
         self.assertEqual(len(loaded["critiques"]), 1)
-        self.assertEqual(loaded["critiques"][0]["critic"], "opencode")
+        self.assertEqual(loaded["critiques"][0]["target_id"], "F002")
 
     def test_empty_claude_code_result_fails(self) -> None:
         stdout = json.dumps(

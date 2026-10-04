@@ -37,7 +37,12 @@ from .state_plan import (
     plan_state,
     state_from_existing_discussions,
 )
-from .summary_render import _sort_groups, render_summary_body, review_health_notice
+from .summary_render import (
+    _sort_groups,
+    render_summary_body,
+    review_health_notice,
+    review_recovery_notice,
+)
 from .types import (
     Anchor,
     Consensus,
@@ -192,7 +197,7 @@ def upsert_summary_comment(
     if not fallback_groups and not fyi_groups and health_notice is None:
         if existing is None:
             return summary
-        health_notice = "**Review health: full.** No finding loss reported in the current run."
+        health_notice = review_recovery_notice()
     body, body_hash = render_summary_body(
         run_id,
         fallback_groups,

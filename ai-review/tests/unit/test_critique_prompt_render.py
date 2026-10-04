@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ai_review.config import effective_config_digest, load_config
 from ai_review.consensus_errors import ConsensusIntegrityError
-from ai_review.prompt_render import build_pooled_findings, render_prompt
+from ai_review.prompt_render import PromptRenderError, build_pooled_findings, render_prompt
 from ai_review.schema import load_json_file, write_canonical_json
 
 from .test_consensus_state_matching import _batch, _finding, _manifest
@@ -149,7 +149,10 @@ class CritiquePromptRenderTests(unittest.TestCase):
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
             batch["model"] = "claude-model"
             write_canonical_json(findings_dir / "claude.json", _pool_batches(config, [batch])[0])
-            (input_dir / "mr.diff").write_text("prepared diff\n")
+            # This diff alone exceeds the configured limit; critique must never read it.
+            (input_dir / "mr.diff").write_text(
+                "prepared diff\n" * config["limits"]["max_prompt_bytes"]
+            )
             rendered, memory_pool = render_prompt(
                 input_dir,
                 config_path,
@@ -167,7 +170,14 @@ class CritiquePromptRenderTests(unittest.TestCase):
             self.assertEqual(audit["findings"][0]["reviewer"], "reviewer_A")
             self.assertEqual(audit, memory_pool)
             self.assertIn("F001", rendered)
-            self.assertIn("prepared diff", rendered)
+            self.assertNotIn("prepared diff", rendered)
+            self.assertNotIn("<MR_DIFF_UNTRUSTED_DATA>", rendered)
+            self.assertNotIn("<DIFF_STATS>", rendered)
+            for tag in ("PROJECT_CONTEXT_JSON", "PRIOR_DECISIONS_JSON", "RULES"):
+                self.assertIn(f"<{tag}>", rendered)
+            (prompt_dir / "review.md").write_text("Review this diff.")
+            with self.assertRaisesRegex(PromptRenderError, "max_prompt_bytes"):
+                render_prompt(input_dir, config_path, "opencode", "review")
             for hidden in (
                 "source_finding_id",
                 "context_hash",

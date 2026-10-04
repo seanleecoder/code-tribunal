@@ -32,7 +32,7 @@ def _project_context(manifest: dict[str, Any]) -> dict[str, Any]:
 def _prior_decisions(input_dir: Path) -> dict[str, Any]:
     path = input_dir / "prior_decisions.json"
     prior = load_json_file(path) if path.exists() else {}
-    # Keep the human decisions and finding text, not reconciliation identities.
+    # Keep the prior finding's title, category, status and path, not state hashes.
     return {
         key: [
             {
@@ -42,10 +42,6 @@ def _prior_decisions(input_dir: Path) -> dict[str, Any]:
                     "category",
                     "status",
                     "path",
-                    "decision",
-                    "reason",
-                    "body",
-                    "human_disposition",
                 )
                 if field in item
             }
@@ -165,7 +161,6 @@ def render_prompt(
     if not prompt_path.exists():
         prompt_path = Path(config_path).resolve().parent.parent / "prompts" / f"{stage}.md"
     manifest = load_json_file(input_dir / "manifest.json")
-    diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
     identity_tag = "REVIEWER" if stage == "review" else "CRITIC"
     sections = [
         ("SYSTEM_RULES", prompt_path.read_text(encoding="utf-8")),
@@ -173,9 +168,15 @@ def render_prompt(
         ("PROJECT_CONTEXT_JSON", canonical_json_text(_project_context(manifest))),
         ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
         ("RULES", _read_rules(input_dir / "rules")),
-        ("DIFF_STATS", _diff_stats_text(diff_text)),
-        ("MR_DIFF_UNTRUSTED_DATA", diff_text),
     ]
+    if stage == "review":
+        diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
+        sections.extend(
+            [
+                ("DIFF_STATS", _diff_stats_text(diff_text)),
+                ("MR_DIFF_UNTRUSTED_DATA", diff_text),
+            ]
+        )
     pool = None
     if stage == "critique":
         if findings_dir is None:

@@ -51,7 +51,20 @@ def _write_inputs(input_dir: Path, diff_text: str) -> None:
     )
     write_canonical_json(
         input_dir / "prior_decisions.json",
-        {"schema_version": "prior_decisions.v1", "settled": [], "open": []},
+        {
+            "schema_version": "prior_decisions.v1",
+            "settled": [
+                {
+                    "title": "Prior finding",
+                    "category": "correctness",
+                    "status": "resolved",
+                    "path": "src/app.py",
+                    "context_hash": "hidden-state-hash",
+                    "body": "not-produced",
+                }
+            ],
+            "open": [],
+        },
     )
 
 
@@ -86,6 +99,10 @@ class ReviewPromptRenderTests(unittest.TestCase):
             rendered.index("<MR_DIFF_UNTRUSTED_DATA>"),
         )
         self.assertIn("bundle prompt", rendered)
+        for prior_field in ("Prior finding", "correctness", "resolved", "src/app.py"):
+            self.assertIn(prior_field, rendered)
+        self.assertNotIn("hidden-state-hash", rendered)
+        self.assertNotIn("not-produced", rendered)
 
 
 if __name__ == "__main__":

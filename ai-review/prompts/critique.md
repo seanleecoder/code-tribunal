@@ -13,7 +13,7 @@ Set verdict to one of:
 For duplicate verdicts, set duplicate_of_id to the id of the best canonical duplicate target.
 For non-duplicate verdicts, set duplicate_of_id to null.
 Set adjusted_severity only when the original severity should change; otherwise use null.
-Use a concise rationale grounded only in the finding data, rules, diff, and project context.
+Use a concise rationale grounded only in the finding data, rules, prior decisions, and project context.
 Return only JSON matching this contract:
 {"critiques":[{"target_id":"F001","verdict":"agree|dispute|noise|duplicate","rationale":"concise explanation","duplicate_of_id":null,"adjusted_severity":null}]}
 Do not include markdown fences, prose wrappers, or explanations outside JSON.

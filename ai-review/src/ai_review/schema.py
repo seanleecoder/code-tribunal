@@ -184,6 +184,16 @@ def finalize_critique_batch(
         }.items()
     ):
         raise SchemaValidationError("critique pool run/config/critic binding mismatch")
+    raw_schema = load_schema("raw_critique_batch.schema.json")
+    batch = {key: value for key, value in batch.items() if key in raw_schema["properties"]}
+    if isinstance(batch.get("critiques"), list):
+        properties = raw_schema["properties"]["critiques"]["items"]["properties"]
+        batch["critiques"] = [
+            {key: value for key, value in item.items() if key in properties}
+            if isinstance(item, dict)
+            else item
+            for item in batch["critiques"]
+        ]
     validate_instance(batch, "raw_critique_batch.schema.json")
     mapping = pooled_findings["source_finding_ids"]
     critiques = []
@@ -278,6 +288,7 @@ def finalize_finding_batch(
     # Instantiate once: validate all candidates before capping, including malformed
     # siblings after the retained cap. No second parser or schema authority.
     raw_schema = load_schema("raw_finding_batch.schema.json")
+    batch = {key: value for key, value in batch.items() if key in raw_schema["properties"]}
     root_validator = jsonschema.Draft202012Validator(
         {
             **raw_schema,
@@ -295,6 +306,18 @@ def finalize_finding_batch(
     dropped = 0
     for index, finding in enumerate(raw_findings, start=1):
         try:
+            if isinstance(finding, dict):
+                finding = {
+                    key: value
+                    for key, value in finding.items()
+                    if key in raw_schema["$defs"]["finding"]["properties"]
+                }
+                if isinstance(finding.get("location"), dict):
+                    finding["location"] = {
+                        key: value
+                        for key, value in finding["location"].items()
+                        if key in raw_schema["$defs"]["location"]["properties"]
+                    }
             validator.validate(finding)
             normalized = {key: value for key, value in finding.items() if key != "location"}
             anchor = resolve_location(files, finding["location"])
