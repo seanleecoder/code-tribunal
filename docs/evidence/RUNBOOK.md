@@ -141,8 +141,15 @@ green run with `make evidence-records RUN=<run id>`. It writes
 `record-candidate-canary.md` (image identity plus the real panel on **both**
 platforms), `record-github-current-image.md`, `record-gitlab-current-image.md`,
 and `record-gitlab-hostile-mr.md`, each with the `Release-*` binding and a leak
-scan. Add context only under each record's **Operator notes**. Chain A below is
-needed only when the canary cannot run.
+scan. Add context only under each record's **Operator notes**. A four-seat canary
+whose three OpenRouter models and efforts match the shipped defaults supplies
+their route evidence for Chain A. A separate three-seat smoke establishes the
+exact default roster, or supplies route evidence when the canary uses different
+models or efforts. Reuse a passing smoke on the same runtime and image pair.
+
+Keep the persisted demo roster at four seats and run `make demo-preflight` before
+and after the campaign. Scope any three-seat roster to its temporary workflow or
+template; do not change the resting roster to make that smoke pass.
 
 When the posted-body format changed, confirm before the repin that a bot thread
 in the **previous** format survives on the demo (see the preserved threads in
@@ -216,14 +223,17 @@ and post are deterministic. The historically expensive procedures ran a
 fresh full panel for *every* lifecycle step, and weak-model nondeterminism forced
 repeated re-runs. This runbook removes almost all of that spend:
 
-1. **One real 3-model panel per platform** (Chain A) proves the default models and
-   adapter wiring. Everything else uses the deterministic mock reviewer.
+1. **One real four-seat canary per platform** (Step 0b) proves adapter wiring and
+   the default model routes when their resolved models and efforts match. Reuse
+   it as Chain A route evidence. A separate three-seat smoke proves the exact
+   default roster or covers mismatched routes; reuse a passing smoke on the same
+   runtime and image pair. Everything else uses the deterministic mock reviewer.
 2. **Deterministic mock for the whole lifecycle chain** (Chain B) — zero
    tokens, no flakiness, and it still drives the *real* platform
    posting/resolve/reopen APIs, which is what those steps exist to prove.
    The two chains use separate change requests and separate finding identities.
-3. **Single reviewer, critique off, cheapest model, minimal diff** for any live
-   step that is not the one 3-model smoke.
+3. **Single reviewer, critique off, cheapest model, minimal diff** for a live
+   probe that does not require a complete panel or review-and-critique coverage.
 4. **No dual-digest re-runs of token-bearing rows** — validate the real panel once,
    against the single final rebuilt pair, rather than repeating it across candidate
    digests. (The mock code ships in the base image, so both images are rebuilt
@@ -434,7 +444,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
 | GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor deny policy | the Candidate Canary exercises Cursor with `auto` on both platforms, but an ordinary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
+| Cursor deny policy | an ordinary Candidate Canary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
@@ -445,8 +455,8 @@ Actual result / Audit / Verdict.
 | # | Run | Record | Tier | Real tokens |
 |---|---|---|---|---|
 | 0b | Candidate Canary real panel (both platforms) | `record-candidate-canary.md` | release-gating | one 4-seat panel per platform |
-| 1 | Current-image lifecycle (GitHub) | [lifecycle record](record-github-current-image.md); historical [default-model record](record-github-default-model-smoke.md) | release-gating | none when the canary ran (Chain B only) |
-| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | none when the canary ran (Chain B only) |
+| 1 | Current-image lifecycle (GitHub) | [lifecycle record](record-github-current-image.md); historical [default-model record](record-github-default-model-smoke.md) | release-gating | Chain B: none; three-seat smoke if exact roster or mismatched routes need coverage |
+| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | Chain B: none; three-seat smoke if exact roster or mismatched routes need coverage |
 | 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
 | 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / artifact forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
 | 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
@@ -466,14 +476,47 @@ control, so continuing it with the mock would open a new discussion rather than
 update the same one. Capture run/job IDs and platform object IDs at every step.
 
 **Chain A — real default-model smoke.** The Candidate Canary record (Step 0b)
-satisfies this chain on both platforms; run it manually only when the canary
-cannot. On its own change request, leave all model overrides unset, keep all three OpenRouter seats enabled,
-Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, `AI_REVIEW_REQUIRE_REAL_*=1`. Run one
-panel and record: Claude `anthropic/claude-haiku-4.5`, Codex `openai/gpt-5.6-luna`,
-OpenCode `google/gemini-3.5-flash-lite`, Cursor `auto` skipped, `panel_status:
-full`, and that a finding was posted. **This doubles as the default-model smoke —
-do not run a separate smoke campaign.** Record the OpenRouter-billed token/cost
-(see [operations cost controls](../operations.md)). This chain ends here.
+satisfies its route-evidence requirement when the three OpenRouter seats' resolved
+models and efforts match the shipped defaults, including when those values come
+from operator overrides. Its fourth seat does not invalidate those routes. Use
+a separate three-seat smoke to establish the exact default roster or when models
+or efforts differ; reuse a passing smoke on the same runtime and image pair.
+On that smoke's own change request, leave model and effort overrides missing or
+blank and select the three-seat roster only in its temporary workflow/template.
+Keep all three OpenRouter seats enabled, Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, and
+`AI_REVIEW_REQUIRE_REAL_*=1`. Run one panel with the
+[shipped defaults](../configuration.md#shipped-defaults).
+
+The 2026-10-04 candidate-config smoke passed in
+[GitHub run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
+on current CLI pins; the separate Composer review/critique also passed. See the
+[current-CLI record](record-current-cli-model-smoke-2026-10-04.md).
+Record whether a run exercises a candidate config over an existing image pair
+or the final shipped config and images; historical Gemini evidence does not
+validate MiMo. The [model-refresh record](record-model-refresh-2026-10-04.md)
+scopes Flash; the separate [Pro/Grok record](record-mimo-pro-grok-2026-10-04.md)
+scopes that supplemental canary.
+
+For MiMo, require absent resolved effort; see
+[effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
+Use the existing OpenCode → OpenRouter route with
+`OPENROUTER_API_KEY`. Require successful review and critique for each enabled
+seat, schema-valid structured output, artifacts usable by consensus,
+`panel_status: full`, and a posted finding. Check the resolved config, CLI/model
+selection, and available provider metadata for agreement; a silently substituted
+model does not pass. Record the config digest, run/job IDs, model/effort values,
+and immutable runtime/image coordinates without secrets or model content.
+
+The MiMo Flash fixture must exercise read, glob, grep, multiple sequential tool
+calls, structured output, and critique. Record failed validation as a blocker
+and stop repinning until the failure is addressed and a fresh run passes.
+A Flash pass does not validate MiMo Pro; record a Pro canary separately if run.
+
+**Reuse matching route evidence and a passing roster smoke — do not repeat a
+passing campaign on the same runtime and image pair.**
+Record the OpenRouter-billed token/cost (see
+[operations cost controls](../operations.md)). This chain ends here. Historical
+records retain the models and efforts actually used in those runs.
 
 > **Chain B is automated on both platforms.** The Candidate Canary's `lifecycle`
 > campaign (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary))
@@ -600,7 +643,13 @@ reviewer image and reported `model: auto`.
    `cursor-agent.pin`, and record immutable digests/provenance.
 2. Resolve the exact model with `cursor-agent --list-models`, set the controlled
    `AI_REVIEW_CURSOR_MODEL`/YAML value, and record the exact slug without secrets
-   or model content.
+   or model content. Keep `composer-2.5` for smoke/compatibility and Budget;
+   Value / Balance recommends `grok-4.7-medium`. Before claiming Grok 4.7 validated,
+   confirm that exact selector in the pinned CLI and complete a real review and
+   critique with no silent fallback. For Grok / `xhigh`, use only the exact
+   variant selector reported by that CLI, such as `grok-4.7-xhigh`; Cursor has no separate Code Tribunal
+   effort variable. `auto` is supported for ordinary operation but does not
+   establish reproducible model-specific evidence.
 3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that
    explicitly; otherwise change the invocation and repeat the read/permission
    validation.

@@ -54,6 +54,10 @@ Configure runtime overrides as protected project/group variables so every stage
 sees the same effective configuration. Child mode deliberately rejects general
 variable forwarding.
 
+When upgrading to the MiMo default, clear any persisted
+`AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
+See [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
+
 Never set `AI_REVIEW_LOCAL_MOCK` (or `AI_REVIEW_ALLOW_LOCAL_MOCK`) as a
 project/pipeline variable in production. GitLab variable precedence can override
 the template's `AI_REVIEW_LOCAL_MOCK: "0"`; mock mode additionally requires
@@ -73,9 +77,10 @@ Cursor is a supported peer reviewer seat, off in the shipped default roster.
 Enabling it is a deliberate second egress destination: the Cursor CLI cannot route
 through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
 Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS` and supply
-`CURSOR_API_KEY`. The shipped `auto` model is a valid Cursor selector; set
-`AI_REVIEW_CURSOR_MODEL` to an exact slug when you want model-stable
-reproducibility.
+`CURSOR_API_KEY`. The shipped selector is `composer-2.5` for reproducible smoke
+and compatibility. Set `AI_REVIEW_CURSOR_MODEL` to override it; `auto` remains
+supported for ordinary operation, while reproducible CI and evidence require
+an exact model slug.
 
 ## Merge-request settings
 

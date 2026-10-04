@@ -906,7 +906,7 @@ PY
         self.assertIn("--sandbox disabled", cli_args)
         self.assertIn("--mode ask", cli_args)
         self.assertNotIn("--sandbox enabled", cli_args)
-        self.assertIn("--model auto", cli_args)
+        self.assertIn("--model composer-2.5", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
         self.assertIn("src/reviewed.py", meta["workspace_entries"])
         for stripped in (
@@ -951,7 +951,7 @@ PY
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
         self.assertIn(" exec ", cli_args)
-        self.assertIn("--model openai/gpt-5.6-luna", cli_args)
+        self.assertIn("--model openai/gpt-6-luna", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--ignore-user-config", cli_args)
@@ -962,7 +962,7 @@ PY
         self.assertIn('model_providers.openrouter.name="OpenRouter"', cli_args)
         self.assertIn("schemas/raw_finding_batch.schema.json", cli_args)
         self.assertIn("--output-schema ", cli_args)
-        self.assertNotIn("model_reasoning_effort", cli_args)
+        self.assertIn('model_reasoning_effort="low"', cli_args)
         self.assertNotIn("schemas/finding_batch.schema.json", cli_args)
         # codex explores a clean copy of the pinned MR snapshot, not the ambient
         # CI checkout nor the input/snapshot dirs directly.
@@ -1015,6 +1015,13 @@ PY
 
                 self.assertEqual(batch["adapter_status"], "success")
                 self.assertIn(f'model_reasoning_effort="{configured}"', cli_args)
+
+    def test_codex_cleared_effort_omits_flag(self) -> None:
+        batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
+            "codex", "codex", extra_env={"AI_REVIEW_CODEX_EFFORT": "unset"}
+        )
+        self.assertEqual(batch["adapter_status"], "success")
+        self.assertNotIn("model_reasoning_effort", cli_args)
 
     def test_claude_real_path_passes_prompt_on_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1289,7 +1296,7 @@ PY
         self.assertEqual(message_body["agent"], "ai-reviewer")
         self.assertEqual(
             message_body["model"],
-            {"providerID": "openrouter", "modelID": "google/gemini-3.5-flash-lite"},
+            {"providerID": "openrouter", "modelID": "xiaomi/mimo-v2.6-flash"},
         )
         self.assertEqual(message_body["parts"][0]["type"], "text")
         self.assertEqual(message_body["format"]["type"], "json_schema")
@@ -1342,7 +1349,7 @@ PY
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
         self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
         self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn('"google/gemini-3.5-flash-lite"', cli_env)
+        self.assertIn('"xiaomi/mimo-v2.6-flash"', cli_env)
         self.assertIn('"*": "deny"', cli_env)
         self.assertIn('"read": "allow"', cli_env)
         self.assertIn('"glob": "allow"', cli_env)
@@ -1673,7 +1680,7 @@ PY
         # and the override flows through to the CLI's --model flag.
         self.assertEqual(batch["adapter_status"], "success")
         self.assertIn("--model openai/custom-model", cli_args)
-        self.assertNotIn("openai/gpt-5.6-luna", cli_args)
+        self.assertNotIn("openai/gpt-6-luna", cli_args)
 
     def test_opencode_model_override_reaches_cli_and_config(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli(
@@ -1693,7 +1700,7 @@ PY
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
-        self.assertNotIn("gemini-3.5-flash-lite", cli_env)
+        self.assertNotIn("mimo-v2.6-flash", cli_env)
         config = meta["opencode_config"]
         assert isinstance(config, dict)
         self.assertNotIn("small_model", config)

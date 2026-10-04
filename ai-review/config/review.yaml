@@ -29,20 +29,21 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
   codex:
     enabled: true
-    model: openai/gpt-5.6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
+    model: openai/gpt-6-luna # Model identifier passed to CLI adapter (override: AI_REVIEW_CODEX_MODEL)
+    effort: low
     # Optional reasoning effort: low|medium|high|xhigh|max reaches Codex
-    # unchanged as model_reasoning_effort. Override: AI_REVIEW_CODEX_EFFORT
+    # unchanged as model_reasoning_effort. Model-only overrides inherit low;
+    # AI_REVIEW_CODEX_EFFORT=unset clears it. Blank values inherit YAML.
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
   opencode:
     enabled: true
-    model: google/gemini-3.5-flash-lite # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
+    model: xiaomi/mimo-v2.6-flash # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
     # Optional effort/reasoning depth: low|medium|high|xhigh|max reaches
-    # OpenCode unchanged as reasoningEffort. Leave effort unset here for the
-    # provider default; low is the recommended starting point for flash-class
-    # models. Override:
-    # AI_REVIEW_OPENCODE_EFFORT
+    # OpenCode unchanged as reasoningEffort. Leave effort unset for the provider
+    # default. MiMo Flash and Pro also require unset effort. Override:
+    # AI_REVIEW_OPENCODE_EFFORT (unset clears YAML; missing/blank inherit it).
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
@@ -60,7 +61,7 @@ reviewers:
     # Cursor has no separate effort option: reasoning depth is part of the
     # model variant. Use an exact slug reported by `cursor-agent --list-models`;
     # AI_REVIEW_CURSOR_EFFORT is unsupported and rejected.
-    model: auto # Valid Cursor selector: delegates model choice to Cursor. Pin an exact slug for model-stable reproducibility or model-specific evidence. Override: AI_REVIEW_CURSOR_MODEL
+    model: composer-2.5 # Reproducible smoke selector. auto remains an operator override. Override: AI_REVIEW_CURSOR_MODEL
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     max_findings: 50

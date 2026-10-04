@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from copy import deepcopy
+from itertools import product
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -28,9 +29,9 @@ def _base_config() -> dict:
     return {
         "reviewers": {
             "claude": {"model": "anthropic/claude-haiku-4.5", "enabled": True},
-            "codex": {"model": "openai/gpt-5.6-luna", "enabled": True},
-            "opencode": {"model": "google/gemini-3.5-flash-lite", "enabled": True},
-            "cursor": {"model": "auto", "enabled": False},
+            "codex": {"model": "openai/gpt-6-luna", "enabled": True},
+            "opencode": {"model": "xiaomi/mimo-v2.6-flash", "enabled": True},
+            "cursor": {"model": "composer-2.5", "enabled": False},
         },
         "critique": {"enabled": True},
     }
@@ -66,30 +67,36 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         config = _base_config()
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "   "}, clear=True):
             apply_env_overrides(config)
-        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-5.6-luna")
+        self.assertEqual(config["reviewers"]["codex"]["model"], "openai/gpt-6-luna")
 
-    def test_shipped_openrouter_defaults_survive_blank_workflow_values(self) -> None:
+    def test_shipped_defaults_survive_blank_workflow_values(self) -> None:
         blank_overrides = {
             "AI_REVIEW_CLAUDE_MODEL": "",
             "AI_REVIEW_CODEX_MODEL": "",
             "AI_REVIEW_OPENCODE_MODEL": "",
+            "AI_REVIEW_CURSOR_MODEL": "",
+            "AI_REVIEW_CLAUDE_EFFORT": "",
+            "AI_REVIEW_CODEX_EFFORT": "",
+            "AI_REVIEW_OPENCODE_EFFORT": "",
         }
         with mock.patch.dict("os.environ", blank_overrides, clear=True):
             config = load_config(_REPO_CONFIG)
 
         self.assertEqual(
             {
-                name: (reviewer["enabled"], reviewer["model"])
+                name: (reviewer["enabled"], reviewer["model"], reviewer.get("effort"))
                 for name, reviewer in config["reviewers"].items()
-                if name != "cursor"
             },
             {
-                "claude": (True, "anthropic/claude-haiku-4.5"),
-                "codex": (True, "openai/gpt-5.6-luna"),
-                "opencode": (True, "google/gemini-3.5-flash-lite"),
+                "claude": (True, "anthropic/claude-haiku-4.5", "medium"),
+                "codex": (True, "openai/gpt-6-luna", "low"),
+                "opencode": (True, "xiaomi/mimo-v2.6-flash", None),
+                "cursor": (False, "composer-2.5", None),
             },
         )
         self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 2)
+        self.assertNotIn("effort", config["reviewers"]["opencode"])
+        self.assertNotIn("effort", config["reviewers"]["cursor"])
 
     def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
@@ -107,6 +114,52 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                 "cursor": (1800, 900),
             },
         )
+
+    def test_model_only_override_inherits_effort(self) -> None:
+        for value in (None, "", "  "):
+            env = {"AI_REVIEW_CODEX_MODEL": "openai/other-model"}
+            if value is not None:
+                env["AI_REVIEW_CODEX_EFFORT"] = value
+            with self.subTest(value=value), mock.patch.dict("os.environ", env, clear=True):
+                config = load_config(_REPO_CONFIG)
+            self.assertEqual(config["reviewers"]["codex"]["model"], "openai/other-model")
+            self.assertEqual(config["reviewers"]["codex"]["effort"], "low")
+
+    def test_unset_effort_matches_yaml_omission(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            base = load_config(_REPO_CONFIG)
+        for name, present, value in product(
+            ("claude", "codex", "opencode"), (False, True), ("unset", "  unset\t")
+        ):
+            with self.subTest(name=name, present=present, value=value):
+                config = deepcopy(base)
+                if present:
+                    config["reviewers"][name]["effort"] = "low"
+                else:
+                    config["reviewers"][name].pop("effort", None)
+                expected = deepcopy(config)
+                expected["reviewers"][name].pop("effort", None)
+                with mock.patch.dict(
+                    "os.environ", {f"AI_REVIEW_{name.upper()}_EFFORT": value}, clear=True
+                ):
+                    apply_env_overrides(config)
+                validate_config(config)
+                self.assertEqual(config, expected)
+
+    def test_unset_effort_is_applied_before_load_validation(self) -> None:
+        with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_EFFORT": "unset"}, clear=True):
+            config = load_config(_REPO_CONFIG)
+        self.assertNotIn("effort", config["reviewers"]["codex"])
+
+    def test_yaml_unset_is_not_a_provider_effort(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            config = load_config(_REPO_CONFIG)
+        for name in ("claude", "codex", "opencode"):
+            with self.subTest(name=name):
+                invalid = deepcopy(config)
+                invalid["reviewers"][name]["effort"] = "unset"
+                with self.assertRaisesRegex(ConfigError, "effort must be one of"):
+                    validate_config(invalid)
 
     def test_effort_override_per_reviewer(self) -> None:
         config = _base_config()
@@ -490,14 +543,16 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertEqual(config["reviewers"]["claude"]["effort"], "xhigh")
 
     def test_cursor_effort_override_fails_loudly(self) -> None:
-        with (
-            mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_EFFORT": "high"}),
-            self.assertRaisesRegex(
-                ConfigError,
-                r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
-            ),
-        ):
-            load_config(_REPO_CONFIG)
+        for value in ("high", "unset", "  unset  "):
+            with (
+                self.subTest(value=value),
+                mock.patch.dict("os.environ", {"AI_REVIEW_CURSOR_EFFORT": value}, clear=True),
+                self.assertRaisesRegex(
+                    ConfigError,
+                    r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
+                ),
+            ):
+                load_config(_REPO_CONFIG)
 
     def test_cursor_effort_config_key_fails_loudly(self) -> None:
         config = load_config(_REPO_CONFIG)
@@ -512,7 +567,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
     def test_invalid_effort_fails_loudly(self) -> None:
         # Closed set, case-sensitive (whitespace is stripped like model
         # overrides): anything else must raise, never reach argv.
-        for value in ("turbo", "Low", "LOW"):
+        for value in ("turbo", "Low", "LOW", "Unset", "UNSET"):
             with (
                 self.subTest(value=value),
                 mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}),

@@ -61,13 +61,18 @@ Cursor is a supported peer reviewer seat, off in the shipped default roster.
 Enabling it sends review prompts, diffs, and any snapshot content the Cursor CLI
 reads to Cursor's backend as a second egress destination, so leave it off unless
 you deliberately accept that path. Select it by naming it in
-`AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`. The shipped `auto` model is a
-valid Cursor selector; set `AI_REVIEW_CURSOR_MODEL` to an exact slug when you want
-model-stable reproducibility.
+`AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`. The shipped selector is
+`composer-2.5` for reproducible smoke and compatibility. Set
+`AI_REVIEW_CURSOR_MODEL` to override it; `auto` remains supported for ordinary
+operation, while reproducible CI and evidence require an exact model slug.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
 unset for shipped defaults. Never set `AI_REVIEW_LOCAL_MOCK` in production.
+
+When upgrading to the MiMo default, clear any persisted
+`AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
+See [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
 
 ## Branch protection
 

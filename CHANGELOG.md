@@ -9,6 +9,13 @@ versioning.
 
 ### Changed
 
+- Refreshed reviewer defaults to GPT-6 Luna / `low`, MiMo-V2.6-Flash with
+  absent effort, and Composer 2.5 for the disabled Cursor seat; Claude Haiku 4.5 /
+  `medium` is unchanged and Cursor `auto` remains supported. Model-only overrides
+  inherit YAML effort, including Codex's `low`. Claude, Codex, and OpenCode effort
+  environment overrides now accept `unset` to clear YAML effort. When upgrading
+  to MiMo, remove or blank stale OpenCode effort overrides, or explicitly clear
+  them with `AI_REVIEW_OPENCODE_EFFORT=unset`.
 - Upgraded reviewer CLIs to Claude Code 2.1.289, Codex 0.160.0, OpenCode
   1.18.34, and Cursor Agent 2026.10.01-e373342; refreshed Python to 3.14.8,
   charset-normalizer to 3.5.2, mypy to 2.4.0, and Ruff to 0.16.10. OpenCode
