@@ -10,7 +10,6 @@ from ai_review.anchors import (
     context_hash_from_unified_diff,
     parse_unified_diff,
     remap_anchor,
-    resolve_location,
 )
 
 
@@ -42,39 +41,6 @@ def _anchor(
 
 
 class AnchorRemapTests(unittest.TestCase):
-    def test_old_side_rename_accepts_both_paths_and_rejects_collisions(self) -> None:
-        diff = (
-            "diff --git a/src/a.py b/src/b.py\n"
-            "--- a/src/a.py\n+++ b/src/b.py\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n"
-        )
-        location = {
-            "path": "src/a.py",
-            "side": "old",
-            "start_line": 2,
-            "end_line": 2,
-            "symbol": None,
-        }
-        files = tuple(parse_unified_diff(diff))
-        old = resolve_location(files, location)
-        new = resolve_location(files, {**location, "path": "src/b.py"})
-        self.assertEqual(old, new)
-        self.assertEqual(old["old_path"], "src/a.py")
-        self.assertEqual(old["new_path"], "src/b.py")
-        self.assertEqual(old["start"]["old_line"], 2)
-        self.assertIsNone(old["start"]["new_line"])
-        collision = diff + (
-            "diff --git a/src/b.py b/src/c.py\n"
-            "--- a/src/b.py\n+++ b/src/c.py\n@@ -2,1 +2,1 @@\n-other\n+replacement\n"
-        )
-        with self.assertRaisesRegex(ValueError, "ambiguous"):
-            resolve_location(tuple(parse_unified_diff(collision)), {**location, "path": "src/b.py"})
-        added = (
-            "diff --git a/src/b.py b/src/b.py\n--- /dev/null\n+++ b/src/b.py\n"
-            "@@ -0,0 +2,1 @@\n+new\n"
-        )
-        with self.assertRaises(ValueError):
-            resolve_location(tuple(parse_unified_diff(added)), {**location, "path": "src/b.py"})
-
     def test_parse_unified_diff_covers_headers_hunks_and_line_kinds(self) -> None:
         diff_text = "\n".join(
             [
@@ -303,7 +269,9 @@ class AnchorRemapTests(unittest.TestCase):
                 self.assertEqual(missing["status"], "missing")
                 self.assertIsNone(missing["anchor"])
 
-                ambiguous = remap_anchor(one_sided(added=added, body=block, starts=[1, 40]), anchor)
+                ambiguous = remap_anchor(
+                    one_sided(added=added, body=block, starts=[1, 40]), anchor
+                )
                 self.assertEqual(ambiguous["status"], "ambiguous")
                 self.assertIsNone(ambiguous["anchor"])
 

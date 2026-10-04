@@ -18,7 +18,7 @@
     "summary"
   ],
   "properties": {
-    "schema_version": { "const": "consensus.v3" },
+    "schema_version": { "const": "consensus.v2" },
     "run_id": { "type": "string", "minLength": 1 },
     "project_id": { "type": "string" },
     "merge_request_iid": { "type": "string" },
@@ -52,20 +52,12 @@
       "required": [
         "surface_count",
         "fyi_count",
-        "drop_count",
-        "raw_finding_count",
-        "accepted_finding_count",
-        "dropped_finding_count",
-        "cap_omitted_finding_count"
+        "drop_count"
       ],
       "properties": {
         "surface_count": { "type": "integer", "minimum": 0 },
         "fyi_count": { "type": "integer", "minimum": 0 },
-        "drop_count": { "type": "integer", "minimum": 0 },
-        "raw_finding_count": { "type": "integer", "minimum": 0 },
-        "accepted_finding_count": { "type": "integer", "minimum": 0 },
-        "dropped_finding_count": { "type": "integer", "minimum": 0 },
-        "cap_omitted_finding_count": { "type": "integer", "minimum": 0 }
+        "drop_count": { "type": "integer", "minimum": 0 }
       }
     }
   },

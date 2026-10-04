@@ -59,6 +59,7 @@ def _finding(
         "body": body,
         "evidence": ["config['required']"],
         "suggestion": None,
+        "confidence": 0.8,
         "fingerprints": {
             "title_fingerprint": title_fingerprint,
             "evidence_fingerprint": evidence_fingerprint,
@@ -77,7 +78,7 @@ def _finding(
 def _batch(reviewer: str, finding: dict) -> dict:
     findings = [finding]
     return {
-        "schema_version": "finding_batch.v2",
+        "schema_version": "finding_batch.v1",
         "run_id": "run",
         "reviewer": reviewer,
         "adapter_status": "success",

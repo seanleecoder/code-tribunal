@@ -12,9 +12,7 @@ Documentation and developer checks merged in
 [#169](https://github.com/seanleecoder/code-tribunal/pull/169) completes the first
 peripheral slice with packaged smoke loading. Full quality and both image smoke
 scopes passed without mounting checkout tests. S01 and the other runtime/policy
-cuts remain pending; S18 and S19 are only partially addressed. S05 now implements
-the compact model contract and closes SPEC-41, with live release evidence still
-outstanding as recorded in the handoff.
+cuts remain pending; S18 and S19 are only partially addressed.
 
 S10's grouping refactor is implemented in
 [#170](https://github.com/seanleecoder/code-tribunal/pull/170), based on `72d326d`
@@ -25,3 +23,8 @@ ordering guarantee are recorded in the handoff.
 the historical S10 proposal. They model the inspected control flow independently
 and do not execute Code Tribunal or replace its tests. The implementation was
 checked separately against the actual pinned pre-change code.
+
+S05 is deferred to separately planned major-release work. The unreleased #171
+artifact cutover and #172 follow-up are reverted for compatible 2.0.2; SPEC-41
+remains open, including confidence-related finding loss and absent posted loss
+notices. See the handoff for the current disposition.

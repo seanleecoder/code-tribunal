@@ -248,22 +248,15 @@ jobs:
         if: steps.download-critiques.outcome == 'failure'
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
-        id: consensus
-        continue-on-error: true
         run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review-consensus
           path: out/consensus/
-          if-no-files-found: error
-      - name: Preserve consensus failure
-        if: steps.consensus.outcome != 'success'
-        run: exit 1
 
   # The terminal product job. Code Tribunal publishes review output and never
   # decides whether a change may merge, so this job's result reports one thing:
-  # whether publication completed with usable review evidence. Findings of any
-  # severity exit zero; an unusable panel remains an operational failure.
+  # whether publication completed. Findings of any severity exit zero.
   post:
     needs: [prepare, consensus]
     # `always()` so a failed `consensus` produces a *failed* `post` rather than a
@@ -274,9 +267,14 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-c525ccff5e90beab8f498410dd4e3fe36ce10031@sha256:6f2715a62bbdfe19a228848644ddef2fedcef17c4e769ac9b3c3775a16ecfe47
     steps:
-      # Failed-panel consensus still writes a validated artifact: download it and
-      # publish its health notice. Integrity failures have no artifact, so the
-      # download/validation fails before any platform mutation.
+      # Before the downloads: with `always()` this job runs after a failed
+      # consensus, and the consensus artifact it needs does not exist. Fail on the
+      # upstream reason rather than on a confusing missing-artifact error.
+      - name: Require successful consensus
+        if: needs.consensus.result != 'success'
+        run: |
+          echo "::error::consensus job result was '${{ needs.consensus.result }}'; no review to publish."
+          exit 1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ai-review-inputs
@@ -290,9 +288,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
         run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-      - name: Preserve upstream operational failure
-        if: needs.consensus.result != 'success'
-        run: exit 1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

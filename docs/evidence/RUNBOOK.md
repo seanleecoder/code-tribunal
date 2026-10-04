@@ -439,6 +439,7 @@ discovered, so the next release starts here instead of rediscovering it.
 
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
+| Confidence-related finding loss | compatible 2.0.2 restores required confidence and has no posted loss counters; newer-contract smokes do not certify that restored contract | keep SPEC-41 open; plan S05 for a separate major release |
 | Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-41 |
 | Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |

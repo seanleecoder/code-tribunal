@@ -291,7 +291,7 @@ def _load_transport_schema(stage: str) -> dict[str, Any]:
     if stage == "review":
         name = "raw_finding_batch.schema.json"
     elif stage == "critique":
-        name = "raw_critique_batch.schema.json"
+        name = "critique_batch.schema.json"
     else:
         raise OpenCodeClientError(f"unsupported OpenCode stage: {stage!r}")
     schema = load_json_file(schema_dir() / name)

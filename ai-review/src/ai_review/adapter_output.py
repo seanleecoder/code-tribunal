@@ -224,7 +224,7 @@ def _coerce_root_shape(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
         return {"critiques": raw}
     if stage is not None or not all(isinstance(item, dict) for item in raw):
         raise SchemaValidationError("adapter output root must be an object")
-    if raw and not any("target_id" in item or "verdict" in item for item in raw):
+    if raw and not any("target_source_finding_id" in item or "verdict" in item for item in raw):
         raise SchemaValidationError("adapter output root must be an object")
     return {"critiques": raw}
 

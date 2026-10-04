@@ -100,14 +100,18 @@ def fail(message: str) -> NoReturn:
 
 def probe_batch() -> dict[str, Any]:
     """A schema-shaped reviewer batch for the stub to return through the tool."""
+    line = {"old_line": None, "new_line": 1, "line_code": None}
     return {
         "findings": [
             {
-                "location": {
-                    "path": "example.py",
+                "anchor": {
+                    "new_path": "example.py",
+                    "old_path": "example.py",
                     "side": "new",
-                    "start_line": 1,
-                    "end_line": 1,
+                    "start": dict(line),
+                    "end": dict(line),
+                    "hunk_header": "@@ -0,0 +1,1 @@",
+                    "context_hash": "0" * 64,
                     "symbol": None,
                 },
                 "severity": "info",
@@ -116,6 +120,7 @@ def probe_batch() -> dict[str, Any]:
                 "body": "Returned by the preflight stub provider.",
                 "evidence": [GREP_MARKER],
                 "suggestion": None,
+                "confidence": 0.1,
             }
         ]
     }
@@ -126,7 +131,7 @@ def patch_provider_base_url(config: str, base_url: str) -> str:
     parsed = json.loads(config)
     try:
         options = parsed["provider"]["openrouter"]["options"]
-    except KeyError, TypeError:
+    except (KeyError, TypeError):
         fail(f"the adapter's config has no openrouter provider options: {config!r}")
     if not isinstance(options, dict) or "baseURL" not in options:
         fail("the adapter's openrouter options carry no baseURL to redirect")

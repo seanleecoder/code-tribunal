@@ -15,10 +15,10 @@ from pathlib import Path
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.reviewers import REVIEWERS
-from ai_review.schema import load_json_file, write_canonical_json
+from ai_review.schema import load_json_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.adapter_inputs import bind_adapter_config, write_adapter_input_bundle  # noqa: E402
+from support.adapter_inputs import write_adapter_input_bundle  # noqa: E402
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
@@ -165,7 +165,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
         # Resolution must precede the availability gate, or a PATH without
         # /usr/local/bin would reject a pinned binary that resolution would find.
         self.assertLess(
-            text.index('OPENCODE_BIN="$(resolve_trusted opencode '),
+            text.index("OPENCODE_BIN=\"$(resolve_trusted opencode "),
             text.index("opencode CLI is required for the"),
         )
         self.assertNotIn("if ! command -v opencode", text)
@@ -205,7 +205,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 target.chmod(0o755)
             path = f"{decoy}:/usr/bin:/bin"
 
-            resolved = self._resolve_with_adapter_helper("opencode", trusted=trusted, path=path)
+            resolved = self._resolve_with_adapter_helper(
+                "opencode", trusted=trusted, path=path
+            )
             self.assertEqual(resolved.returncode, 0, resolved.stderr)
             self.assertEqual(resolved.stdout.strip(), str(trusted / "opencode"))
 
@@ -213,7 +215,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
             # image's in-image suite depends on this: it ships no opencode and the
             # fake-CLI tests supply their own on the ambient PATH.
             (trusted / "opencode").unlink()
-            fallback = self._resolve_with_adapter_helper("opencode", trusted=trusted, path=path)
+            fallback = self._resolve_with_adapter_helper(
+                "opencode", trusted=trusted, path=path
+            )
             self.assertEqual(fallback.returncode, 0, fallback.stderr)
             self.assertEqual(fallback.stdout.strip(), str(decoy / "opencode"))
 
@@ -252,7 +256,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
 
                 # Without the evidence the same missing binary falls back, which is what
                 # keeps checkouts and the base image's in-image suite working.
-                fallback = self._resolve_with_adapter_helper(name, trusted=trusted, path=path)
+                fallback = self._resolve_with_adapter_helper(
+                    name, trusted=trusted, path=path
+                )
                 self.assertEqual(fallback.returncode, 0, fallback.stderr)
                 self.assertEqual(fallback.stdout.strip(), str(target))
 
@@ -349,7 +355,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                     stub.chmod(0o755)
                 decoy_ran = root / "decoy-python-ran"
                 decoy_python = decoy / "python3"
-                decoy_python.write_text(f'#!/bin/sh\n: > "{decoy_ran}"\nexit 0\n', encoding="utf-8")
+                decoy_python.write_text(
+                    f'#!/bin/sh\n: > "{decoy_ran}"\nexit 0\n', encoding="utf-8"
+                )
                 decoy_python.chmod(0o755)
                 pinned_ran = root / "pinned-python-ran"
                 if pin_interpreter:
@@ -396,7 +404,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
             decoy_python.write_text(f'#!/bin/sh\n: > "{decoy_ran}"\nexit 0\n', encoding="utf-8")
             decoy_python.chmod(0o755)
 
-            result = self._run_adapter_with_sandboxed_prefixes(root, trusted=trusted, evidence=None)
+            result = self._run_adapter_with_sandboxed_prefixes(
+                root, trusted=trusted, evidence=None
+            )
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(decoy_ran.exists(), result.stderr)
@@ -642,7 +652,6 @@ PY
         prepare_snapshot: Callable[[Path], None] | None = None,
         stage: str = "review",
         relative_dirs: bool = False,
-        payload: dict | None = None,
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -655,25 +664,6 @@ PY
             if prepare_snapshot is not None:
                 prepare_snapshot(input_dir / "repo_snapshot")
             self._write_fake_cli(bin_dir, cli_name)
-            if payload is not None:
-                fixture = root / "payload.json"
-                write_canonical_json(fixture, payload)
-                stage_field = "critiques" if stage == "critique" else "findings"
-                cli = bin_dir / cli_name
-                script = cli.read_text()
-                empty = f'{{"{stage_field}":[]}}'
-                script = script.replace(f"printf '{empty}'", f"cat '{fixture}'")
-                script = script.replace(f"payload='{empty}'", f"payload=$(cat '{fixture}')")
-                script = script.replace(f"result='{empty}'", f"result=$(cat '{fixture}')")
-                script = script.replace(
-                    f"structured = {{'{stage_field}': []}}",
-                    f"structured = json.loads(Path({str(fixture)!r}).read_text())",
-                )
-                cli.write_text(script)
-                (input_dir / "mr.diff").write_text(
-                    "diff --git a/src/reviewed.py b/src/reviewed.py\n--- /dev/null\n"
-                    "+++ b/src/reviewed.py\n@@ -0,0 +1,1 @@\n+unsafe()\n"
-                )
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
@@ -721,37 +711,6 @@ PY
                 os.environ["AI_REVIEW_INPUT_DIR"] = "inputs"
                 os.environ["AI_REVIEW_OUTPUT_DIR"] = "out"
             try:
-                if payload is not None and stage == "critique":
-                    from ai_review.config import effective_config_digest, load_config
-                    from ai_review.schema import finalize_finding_batch
-
-                    prepared_config = load_config(_REPO_CONFIG)
-                    raw_finding = {
-                        "location": {
-                            "path": "src/reviewed.py",
-                            "side": "new",
-                            "start_line": 1,
-                            "end_line": 1,
-                            "symbol": None,
-                        },
-                        "title": "Validate",
-                        "body": "Unsafe call",
-                        "category": "correctness",
-                        "severity": "major",
-                        "evidence": ["unsafe()"],
-                        "suggestion": None,
-                    }
-                    batch = finalize_finding_batch(
-                        {"findings": [raw_finding]},
-                        reviewer="codex",
-                        model=prepared_config["reviewers"]["codex"]["model"],
-                        run_id="local-test",
-                        started_at="start",
-                        input_dir=input_dir,
-                        effective_config_sha256=effective_config_digest(prepared_config),
-                    )
-                    write_canonical_json(output_dir / "findings" / "codex.json", batch)
-                bind_adapter_config(input_dir, _REPO_CONFIG)
                 self.assertEqual(run_adapter(reviewer, stage), 0)
                 stage_dir = {"review": "findings", "critique": "critiques"}[stage]
                 batch = load_json_file(output_dir / stage_dir / f"{reviewer}.json")
@@ -763,13 +722,6 @@ PY
                     cli_pwd_path = trace_dir / "cli.pwd"
                     cli_tree_path = trace_dir / "cli.tree"
                     expected_key = "cursor-test-key"
-                elif cli_name == "claude":
-                    cli_args_path = output_dir / "claude.args"
-                    cli_env_path = output_dir / "claude.env"
-                    cli_key_path = None
-                    cli_pwd_path = output_dir / "claude.pwd"
-                    cli_tree_path = output_dir / "claude.tree"
-                    expected_key = "sk-or-v1-test"
                 elif Path(f"{raw_out}.args").exists():
                     trace_prefix = Path(str(raw_out))
                     cli_args_path = Path(f"{trace_prefix}.args")
@@ -792,8 +744,8 @@ PY
                     expected_key = "sk-or-v1-test"
                 cli_args = cli_args_path.read_text(encoding="utf-8")
                 cli_env = cli_env_path.read_text(encoding="utf-8")
-                if cli_key_path is not None:
-                    self.assertEqual(cli_key_path.read_text(encoding="utf-8").strip(), expected_key)
+                key_seen = cli_key_path.read_text(encoding="utf-8").strip()
+                self.assertEqual(key_seen, expected_key)
                 opencode_config_path = cli_args_path.parent / "opencode_config.json"
                 meta: dict[str, object] = {
                     "input_dir": str(input_dir),
@@ -932,7 +884,7 @@ PY
         )
 
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["schema_version"], "critique_batch.v2")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
         invocations = cli_args.splitlines()
         self.assertEqual(len(invocations), 1)
@@ -1154,55 +1106,6 @@ PY
         self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
         self.assertNotIn("ANTHROPIC_API_KEY=anthropic-test-key", cli_env)
 
-    def test_all_four_transports_accept_compact_nonempty_review_and_critique(self) -> None:
-        for seat, cli in [
-            ("claude", "claude"),
-            ("codex", "codex"),
-            ("opencode", "opencode"),
-            ("cursor", "cursor-agent"),
-        ]:
-            with self.subTest(seat=seat):
-                finding = {
-                    "location": {
-                        "path": "src/reviewed.py",
-                        "side": "new",
-                        "start_line": 1,
-                        "end_line": 1,
-                        "symbol": None,
-                    },
-                    "title": "Validate",
-                    "body": "Unsafe call",
-                    "category": "correctness",
-                    "severity": "major",
-                    "evidence": ["unsafe()"],
-                    "suggestion": None,
-                }
-                batch, _args, _env, _meta = self._run_with_fake_cli(
-                    seat,
-                    cli,
-                    payload={"findings": [finding]},
-                )
-                self.assertEqual(batch["accepted_finding_count"], 1)
-                self.assertNotIn("confidence", batch["findings"][0])
-                critique, _args, _env, _meta = self._run_with_fake_cli(
-                    seat,
-                    cli,
-                    stage="critique",
-                    payload={
-                        "critiques": [
-                            {
-                                "target_id": "F001",
-                                "verdict": "agree",
-                                "rationale": "Verified",
-                                "duplicate_of_id": None,
-                                "adjusted_severity": None,
-                            }
-                        ]
-                    },
-                )
-                self.assertEqual(critique["critiques"][0]["critic"], seat)
-                self.assertEqual(len(critique["critiques"][0]["target_source_finding_id"]), 64)
-
     def test_claude_critique_runs_without_repo_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1222,7 +1125,6 @@ PY
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                bind_adapter_config(input_dir, _REPO_CONFIG)
                 self.assertEqual(run_adapter("claude", "critique"), 0)
                 batch = load_json_file(output_dir / "critiques" / "claude.json")
                 argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
@@ -1239,7 +1141,7 @@ PY
                         os.environ[key] = value
 
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["schema_version"], "critique_batch.v2")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
         # critique reasons over the prompt payload only: tools are disabled (empty
         # --tools value) so claude answers in one shot instead of agentically
@@ -1254,7 +1156,7 @@ PY
         # critique steers toward the critique schema, not the review one.
         self.assertIn("--json-schema", argv)
         argv_text = "\n".join(argv)
-        self.assertIn('"$id": "raw_critique_batch.schema.json"', argv_text)
+        self.assertIn('"$id": "critique_batch.schema.json"', argv_text)
         self.assertNotIn("raw_finding_batch.schema.json", argv_text)
         # $schema draft declaration stripped (CLI rejects the 2020-12 draft).
         self.assertNotIn('"$schema"', argv_text)
@@ -1464,7 +1366,7 @@ PY
             "codex", "codex", stage="critique"
         )
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["schema_version"], "critique_batch.v2")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
         # critique reasons only over the pooled findings in the prompt: codex
         # still runs read-only, but its working root is left empty so there is
@@ -1472,7 +1374,7 @@ PY
         self.assertIn("--cd ", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
         self.assertIn("--sandbox read-only", cli_args)
-        self.assertIn("schemas/raw_critique_batch.schema.json", cli_args)
+        self.assertIn("schemas/critique_batch.schema.json", cli_args)
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_opencode_critique_runs_without_repo_access(self) -> None:
@@ -1480,7 +1382,7 @@ PY
             "opencode", "opencode", stage="critique"
         )
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertEqual(batch["schema_version"], "critique_batch.v2")
+        self.assertEqual(batch["schema_version"], "critique_batch.v1")
         self.assertIn("critiques", batch)
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
@@ -1491,7 +1393,7 @@ PY
         assert isinstance(requests, list)
         self.assertEqual(requests[0]["body"]["title"], "code-tribunal-ai-review")
         self.assertEqual(
-            requests[1]["body"]["format"]["schema"]["$id"], "raw_critique_batch.schema.json"
+            requests[1]["body"]["format"]["schema"]["$id"], "critique_batch.schema.json"
         )
         self.assertNotIn("$schema", requests[1]["body"]["format"]["schema"])
         self.assertEqual(meta["workspace_entries"], set())

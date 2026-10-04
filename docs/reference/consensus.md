@@ -1,7 +1,7 @@
 # Deterministic consensus
 
 Consensus consumes schema-valid, run-bound reviewer evidence and produces one
-deterministic `consensus.v3` artifact. Its output is informational: nothing in
+deterministic `consensus.v2` artifact. Its output is informational: nothing in
 it decides whether a change may merge.
 
 ## Inputs and eligibility
@@ -12,16 +12,6 @@ batch is usable for absence-based resolution. Consensus rejects wrong-run,
 duplicate, disabled, malformed, or identity-spoofed evidence. A syntactically
 successful batch whose findings were all dropped is not an operational panel
 seat and cannot resolve an older finding.
-
-The summary aggregates raw, accepted, dropped, and cap-omitted finding counts
-from validated enabled-seat batches. Cap omissions equal raw minus accepted
-minus dropped; malformed candidates are validated and counted before the cap.
-A compact health notice is posted on either platform whenever a panel is
-degraded/failed or findings are dropped/capped, even with no groups or FYI output
-disabled. A later healthy run refreshes the same summary to clear its warning.
-A failed-panel run replaces the summary note with the health notice, hiding
-summary-fallback and FYI findings until a successful run restores them; existing
-inline threads remain unchanged by the panel failure.
 
 ## Grouping and independent support
 

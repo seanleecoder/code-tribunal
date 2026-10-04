@@ -14,7 +14,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "critique_batch.v2"
+      "const": "critique_batch.v1"
     },
     "run_id": {
       "type": "string",
@@ -52,7 +52,8 @@
           "verdict",
           "duplicate_of_source_finding_id",
           "rationale",
-          "adjusted_severity"
+          "adjusted_severity",
+          "confidence"
         ],
         "properties": {
           "target_source_finding_id": {
@@ -97,6 +98,11 @@
               "blocker",
               null
             ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
           }
         }
       }

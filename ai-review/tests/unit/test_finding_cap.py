@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import contextlib
-import copy
 import io
-import itertools
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 from ai_review.schema import finalize_finding_batch, validate_instance
 
@@ -30,11 +27,14 @@ DIFF = "\n".join(
 
 def _finding(new_line: int, severity: str, title: str) -> dict[str, Any]:
     return {
-        "location": {
-            "path": "src/foo.py",
+        "anchor": {
+            "new_path": "src/foo.py",
+            "old_path": "src/foo.py",
             "side": "new",
-            "start_line": new_line,
-            "end_line": new_line,
+            "start": {"old_line": None, "new_line": new_line, "line_code": None},
+            "end": {"old_line": None, "new_line": new_line, "line_code": None},
+            "hunk_header": "@@ -1,1 +1,6 @@",
+            "context_hash": "0" * 64,
             "symbol": None,
         },
         "severity": severity,
@@ -43,124 +43,172 @@ def _finding(new_line: int, severity: str, title: str) -> dict[str, Any]:
         "body": f"{title} body",
         "evidence": [title],
         "suggestion": None,
+        "confidence": 0.5,
     }
 
 
 class FindingCapTests(unittest.TestCase):
-    def _finalize(self, findings: list[Any], cap: int | None = None) -> dict:
+    def test_cap_keeps_highest_severity_findings(self) -> None:
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [
+                _finding(2, "info", "Info finding"),
+                _finding(3, "blocker", "Blocker one"),
+                _finding(4, "minor", "Minor finding"),
+                _finding(5, "blocker", "Blocker two"),
+                _finding(6, "major", "Major finding"),
+            ],
+        }
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "mr.diff").write_text(DIFF)
-            with contextlib.redirect_stderr(io.StringIO()):
-                batch = finalize_finding_batch(
-                    {"findings": findings},
+            input_dir = Path(tmp)
+            (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
+            finalized = finalize_finding_batch(
+                raw,
+                reviewer="claude",
+                model="model",
+                run_id="local",
+                started_at="2026-06-29T00:00:00Z",
+                input_dir=input_dir,
+                max_findings=2,
+                effective_config_sha256="0" * 64,
+            )
+        self.assertEqual(len(finalized["findings"]), 2)
+        self.assertEqual({finding["severity"] for finding in finalized["findings"]}, {"blocker"})
+        validate_instance(finalized, "finding_batch.schema.json")
+
+    def test_cap_drops_malformed_candidates_without_consuming_slots(self) -> None:
+        invalid_confidence = _finding(3, "blocker", "Invalid confidence")
+        invalid_confidence["confidence"] = float("nan")
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [
+                "not a finding",
+                invalid_confidence,
+                _finding(4, "minor", "Valid minor"),
+                _finding(5, "blocker", "Valid blocker"),
+                _finding(6, "major", "Valid major"),
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir = Path(tmp)
+            (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                finalized = finalize_finding_batch(
+                    raw,
                     reviewer="claude",
                     model="model",
-                    run_id="run",
-                    started_at="start",
-                    input_dir=tmp,
-                    max_findings=cap,
+                    run_id="local",
+                    started_at="2026-06-29T00:00:00Z",
+                    input_dir=input_dir,
+                    max_findings=2,
                     effective_config_sha256="0" * 64,
                 )
-        validate_instance(batch, "finding_batch.schema.json")
-        return batch
+        self.assertEqual(finalized["adapter_status"], "success")
+        self.assertEqual(
+            [finding["title"] for finding in finalized["findings"]],
+            ["Valid blocker", "Valid major"],
+        )
+        self.assertIn("dropped", err.getvalue())
+        validate_instance(finalized, "finding_batch.schema.json")
 
-    def test_severity_cap_and_malformed_siblings_after_cap(self) -> None:
-        batch = self._finalize(
-            [
-                _finding(2, "info", "Info"),
-                _finding(3, "blocker", "Blocker"),
-                _finding(4, "minor", "Minor"),
-                _finding(5, "major", "Major"),
-                "not a finding",
-                _finding(999, "minor", "Out of diff"),
+    def test_bad_anchor_drops_only_that_finding(self) -> None:
+        # Bug #3: one finding whose anchor does not map to a changed line must not
+        # discard the whole batch; the valid findings are kept.
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [
+                _finding(2, "blocker", "Valid one"),
+                _finding(999, "major", "Unresolvable anchor"),
+                _finding(3, "minor", "Valid two"),
             ],
-            2,
-        )
-        self.assertEqual([f["severity"] for f in batch["findings"]], ["blocker", "major"])
-        self.assertEqual(
-            (
-                batch["raw_finding_count"],
-                batch["accepted_finding_count"],
-                batch["dropped_finding_count"],
-            ),
-            (6, 2, 2),
-        )
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir = Path(tmp)
+            (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                finalized = finalize_finding_batch(
+                    raw,
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at="2026-06-29T00:00:00Z",
+                    input_dir=input_dir,
+                    effective_config_sha256="0" * 64,
+                )
+        titles = {finding["title"] for finding in finalized["findings"]}
+        self.assertEqual(titles, {"Valid one", "Valid two"})
+        self.assertIn("dropped", err.getvalue())
+        validate_instance(finalized, "finding_batch.schema.json")
 
-    def test_cap_and_run_ids_are_stable_across_permutations_and_content_ties(self) -> None:
-        first = _finding(2, "major", "Same identity")
-        second = {**copy.deepcopy(first), "body": "A different body"}
-        third = _finding(3, "major", "Other identity")
-        outputs = [
-            self._finalize(list(items), 2)["findings"]
-            for items in itertools.permutations([first, second, third])
-        ]
-        self.assertTrue(all(result == outputs[0] for result in outputs))
-        # Runtime arrival indexes cannot decide representatives, even when source IDs tie.
-        self.assertEqual(first["location"], second["location"])
-
-    def test_oversized_batch_parses_diff_and_loads_authoring_schema_once(self) -> None:
-        from ai_review import schema
-
-        with mock.patch.object(
-            schema, "parse_unified_diff", wraps=schema.parse_unified_diff
-        ) as parse, mock.patch.object(schema, "load_schema", wraps=schema.load_schema) as load:
-            batch = self._finalize(
-                [_finding(2 + index % 5, "major", f"Finding {index}") for index in range(1200)]
-                + [{"title": "bad"}] * 20,
-                50,
-            )
-        self.assertEqual(parse.call_count, 1)
-        self.assertEqual(
-            [call.args for call in load.call_args_list].count(("raw_finding_batch.schema.json",)), 1
+    def test_offline_validation_keeps_well_formed_finding(self) -> None:
+        # Bug #14: with no diff (input_dir=None), a well-formed finding whose context_hash
+        # is already a valid sha256 must pass through instead of tracebacking.
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            # _finding() supplies an anchor context_hash of "0"*64, a valid sha256 shape.
+            "findings": [_finding(2, "major", "Offline finding")],
+        }
+        finalized = finalize_finding_batch(
+            raw,
+            reviewer="claude",
+            model="model",
+            run_id="local",
+            started_at="2026-06-29T00:00:00Z",
+            effective_config_sha256="0" * 64,
         )
-        self.assertEqual(
-            (
-                batch["raw_finding_count"],
-                batch["accepted_finding_count"],
-                batch["dropped_finding_count"],
-            ),
-            (1220, 50, 20),
-        )
+        self.assertEqual(len(finalized["findings"]), 1)
+        validate_instance(finalized, "finding_batch.schema.json")
 
-    def test_empty_success_all_invalid_and_zero_cap_have_distinct_quality(self) -> None:
-        for findings, cap, usable, raw, dropped in [
-            ([], None, True, 0, 0),
-            ([{}], None, False, 1, 1),
-            ([_finding(2, "major", "Valid")], 0, False, 1, 0),
-        ]:
-            with self.subTest(raw=raw, cap=cap):
-                batch = self._finalize(findings, cap)
-                self.assertEqual(batch["usable_for_resolution"], usable)
-                self.assertEqual(batch["raw_finding_count"], raw)
-                self.assertEqual(batch["dropped_finding_count"], dropped)
-        self.assertEqual(
-            len(
-                self._finalize([_finding(2, "minor", "One"), _finding(3, "major", "Two")])[
-                    "findings"
-                ]
-            ),
-            2,
-        )
-
-    def test_finalization_requires_input_dir_keyword(self) -> None:
-        with self.assertRaisesRegex(TypeError, "required keyword-only argument: 'input_dir'"):
-            finalize_finding_batch(
-                {"findings": []},
+    def test_no_cap_when_max_findings_none(self) -> None:
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [_finding(2, "major", "One"), _finding(3, "minor", "Two")],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir = Path(tmp)
+            (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
+            finalized = finalize_finding_batch(
+                raw,
                 reviewer="claude",
                 model="model",
-                run_id="run",
-                started_at="start",
+                run_id="local",
+                started_at="2026-06-29T00:00:00Z",
+                input_dir=input_dir,
                 effective_config_sha256="0" * 64,
             )
+        self.assertEqual(len(finalized["findings"]), 2)
+        validate_instance(finalized, "finding_batch.schema.json")
 
-    def test_finalization_rejects_missing_prepared_diff_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(FileNotFoundError):
-            finalize_finding_batch(
-                {"findings": []},
-                reviewer="claude",
-                model="model",
-                run_id="run",
-                started_at="start",
-                effective_config_sha256="0" * 64,
-                input_dir=tmp,
-            )
+
+if __name__ == "__main__":
+    unittest.main()

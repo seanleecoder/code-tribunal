@@ -192,8 +192,8 @@ EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 # panel can reach two, but with zero fault tolerance: one failed or silently
 # degraded seat makes it unreachable for every finding, and the run then reports
 # an empty review indistinguishable from a clean one. Silent seat loss is not
-# hypothetical — a reviewer can lose every finding to invalid locations.
-# Three keeps a two-support path reachable
+# hypothetical — SPEC-41 records an open defect where a reviewer that omits
+# `confidence` loses every finding. Three keeps a two-support path reachable
 # after one seat is lost.
 #
 # The shipped configuration already enables exactly three seats, so this is not a
