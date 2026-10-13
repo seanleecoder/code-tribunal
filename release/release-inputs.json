@@ -1,32 +1,22 @@
 {
   "images": {
     "base": {
-      "digest": "sha256:2f3ffaba159e067825d72e889872ac6479bb31461943b6d86516a266e1faf3e9",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:7c59447733e5b6640f7ff759ab879c4682310054de130515841e91389a9b2447",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "2.0.2",
-  "runtime_source": "3db908f06d141d23de99e7578ae5b5482ebaa498",
+  "release_version": "2.0.3",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v2",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "37233827873",
-    "evidence_record_ids": [
-      "record-candidate-canary.md",
-      "record-github-current-image.md",
-      "record-gitlab-current-image.md",
-      "record-gitlab-hostile-mr.md",
-      "record-github-default-model-smoke.md",
-      "record-model-effort-routes.md",
-      "record-github-revision-failures.md"
-    ],
-    "evidence_waivers": {
-      "record-github-revision-failures.md": "GitHub preparation modules ai-review/src/ai_review/input_bundle.py and ai-review/src/ai_review/platform/github.py are unchanged from v2.0.1; SPEC-34 preparation races and HTTP 406 paths remain covered by test_input_bundle.py and test_github_platform.py in the full quality gate. The final-pair lifecycle also confirms stale-head posting is a no-op."
-    },
-    "publication_run_id": "37233827865"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "evidence_waivers": {},
+    "publication_run_id": null
   }
 }
