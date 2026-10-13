@@ -1,8 +1,10 @@
 # SPEC-66 — Run health in the summary comment
 
-- **Severity:** Medium (maintainers cannot tell from the merge request whether a review ran completely, what it ran with, or whether to re-run it) · **Effort:** M · **ROI rank:** post-2.0.1
-- **Depends on:** nothing. It ships in the next major release, alongside the deferred S05 and SPEC-41 work (see [Versioning](#versioning)).
-- **Related:** [SPEC-60](cleanup-consolidation/README.md) owns aggregate critique-quality metrics. This spec owns execution health. Both are observational, and SPEC-60 may add its fields to the record defined here rather than create a second one.
+- **Severity:** Medium (maintainers cannot tell from the merge request whether a review ran completely, what it ran with, or whether to re-run it) · **Effort:** L, in three stageable pull requests (see [Exact implementation surface](#exact-implementation-surface)) · **ROI rank:** post-2.0.2, first
+- **Depends on:** no other spec.
+- **Vehicle (decided 2026-10-13):** compatible minor releases, with optional fields on the existing artifact versions. The stages ship in order (a), (b), (c). See [Versioning](#versioning).
+- **Absorbs:** SPEC-60 (critique-quality observability). Its group-coverage and critique-effect counts are specified in [Critique coverage](#critique-coverage-absorbed-from-spec-60) so that critique observability does not take a second consensus version step.
+- **Related:** [S06](simplification-audit/SIMPLIFICATION_REVIEW.md) (one result envelope) proposes the opposite artifact direction for status files; see [Versioning](#versioning).
 
 ## Rationale
 
@@ -34,6 +36,9 @@ Most of that information already exists but never reaches the comment:
   and the cap-omitted count is derivable from them. `consensus.v2` aggregates
   none of them. Those dropped counts are exactly how the
   [SPEC-41](spec-41-reviewer-confidence-default.md) loss would become visible.
+- Every `finding_batch.v1` also carries `model`, `started_at` and
+  `completed_at`, so review model and wall-clock duration are available from
+  the batches alone, without status files.
 
 Several things are missing entirely:
 
@@ -98,9 +103,12 @@ Several things are missing entirely:
 - failed-panel publication;
 - schema, type, golden and test updates.
 
+- critique coverage and effect counts (absorbed from SPEC-60).
+
 **Out:**
 
-- critique-quality metrics (SPEC-60);
+- any critique-quality *policy*: a critique-required threshold, or a decision
+  that depends on coverage;
 - per-job retry automation;
 - any new retry, quorum or gate policy;
 - CI-API job inspection;
@@ -317,6 +325,66 @@ exit-code role; `grade` is a superset view that never feeds back into it.
 Consensus also prints a plain-text rendering of `run_health` to stdout so the
 job log carries it on both platforms.
 
+### Critique coverage (absorbed from SPEC-60)
+
+SPEC-60 was drafted on 2026-08-18 but never merged (branch `spec-60`). Its
+intent is kept here so critique observability shares this record and its
+single version step. Execution health above says whether critics *ran*; this
+subsection says whether critique *reached* the groups and what it *changed*.
+Both are deterministic projections of fields consensus already has.
+
+Add to `run_health`:
+
+```json
+"critique": {
+  "status": "full",
+  "groups_full_coverage": 7,
+  "groups_partial_coverage": 1,
+  "groups_no_coverage": 2,
+  "groups_not_applicable": 0,
+  "groups_surfaced_by_critique_support": 3,
+  "groups_demoted_by_noise_majority": 1,
+  "verdicts_by_critic": [
+    {"critic": "claude", "agree": 9, "dispute": 2, "noise": 1, "duplicate": 3}
+  ]
+}
+```
+
+- **`status`**: `disabled` when `critique.enabled` is false; otherwise `failed`,
+  `degraded` or `full` as zero, some or all enabled critique jobs have
+  `outcome == "success"`. A successful empty critique batch is a success.
+- **Group coverage**: for each group, the eligible critics are successful
+  critics that are not in `contributing_reviewers` (the existing
+  direct-contributor exclusion in `critique.py`). A critic is observed when its
+  collapsed effective verdict covers at least one source finding in the group.
+  A valid `duplicate` counts; an invalid one does not. `full` means every
+  eligible critic was observed and at least one exists. `partial` means some were
+  observed. `none` means eligible critics exist but none was observed.
+  `not_applicable` means no eligible critic exists. Only counts are recorded,
+  not per-group objects.
+- **`groups_surfaced_by_critique_support`**: groups with `decision == "surface"`
+  that would not have reached two identities from `contributing_reviewers`
+  alone.
+- **`groups_demoted_by_noise_majority`**: groups demoted to FYI by the
+  majority-noise rule ([SPEC-67](spec-67-majority-noise-to-fyi.md)). These are
+  `fyi` groups with `support_count >= 2` that are not ambiguous.
+- **`verdicts_by_critic`**: per successful critic, counts of collapsed effective
+  verdicts. It is sorted by critic ID.
+
+Rendering: one line in the collapsed run details, for example
+`Critique: full · 7 groups fully covered, 1 partial, 2 uncovered · 3 surfaced
+through critique support · 1 demoted as noise`. It never appears in a thread
+body.
+
+Grade effect: none beyond the `critique` job outcomes already counted above.
+Coverage never changes a decision, severity, routing or exit code. Any later
+policy built on this data needs its own ADR or spec. Before proposing one,
+review it by provider:
+
+- how often runs are full, degraded or failed;
+- how many surfaced groups have no independent critique coverage;
+- whether one provider systematically fails critique while succeeding at review.
+
 ## Rendering
 
 [`summary_render.py`](../../ai-review/src/ai_review/summary_render.py) gains
@@ -447,7 +515,7 @@ health-only summary and then preserve the failure:
   Existing threads are left untouched.
 
 This repeats the failed-panel path from the reverted S05 implementation
-(#172, reverted for 2.0.2). Its live GitLab scheduling lesson still applies:
+(#171, `5845db9`, reverted in `63ca67a` for 2.0.2). Its live GitLab scheduling lesson still applies:
 a plain `when: always` post started before prepare had run.
 
 ## Security
@@ -468,15 +536,38 @@ a plain `when: always` post started before prepare had run.
 ## Versioning
 
 2.0.2 ships `consensus.v2` and `adapter_status.v1`, and both schemas are
-closed. Adding `run_health` and the status fields is a breaking artifact change,
-so this spec targets the next major release. That release also carries the
-deferred S05 cutover, which plans its own consensus version bump:
+closed (`additionalProperties: false`). On 2026-10-13 the maintainer chose
+Option 1. Option 2 is kept below as the rejected alternative.
 
-- **Same release as S05:** both changes share a single consensus version step
-  (`consensus.v3`) and `adapter_status.v2`. Consumers see one cutover.
-- **Ahead of S05:** this spec takes `consensus.v3` and S05 moves to the next
-  number.
-- **Either way:**
+- **Option 1 — compatible minor release (chosen).**
+  - `run_health` is an *optional* property of `consensus.v2`.
+  - `usage` and `notes` are optional on `adapter_status.v1`.
+  - `artifacts-and-schemas.md` documents that same-identifier optional
+    widening is a minor change.
+  - This is sound because producer and consumer always run from one pinned
+    image pair, and mixing artifacts across runs is already unsupported. 1.0.1
+    set the precedent by tightening the `consensus.v2` category enum in place.
+  - It closes the 2.0.2 "no posted loss notice" gap (SPEC-41 part B) without
+    waiting for S05, which has no plan.
+  - The always-present summary and the failed-panel publication are additive
+    behaviour, so they belong in a minor release.
+- **Option 2 — next major release (rejected).** Adding the fields is treated as breaking.
+  The spec shares one version step with S05: `consensus.v3` and
+  `adapter_status.v2`.
+
+**Status files versus S06.** S06 proposes merging batches and status mirrors
+into one result envelope, while this spec makes status files a consensus input.
+Option 1 resolves this conflict:
+
+- *Option 1 (chosen):* keep status files as an input, as specified above. If
+  S06 lands in the next major release, it moves `duration_ms`, `usage` and
+  `notes` into the batch envelope and deletes the status-dir loader.
+- *Option 2 bundled with S05:* put `duration_ms`, `usage` and `notes` in the
+  batch envelopes instead. That deletes the `--status-dir` loader, its binding
+  rules and the `status_unreadable` and `status_disagrees_with_batch` cases.
+  Only `batch_missing` (derived from the enabled roster) and `missing` remain.
+
+**Either way:**
   - no old-version decoders and no dual paths, so no temporary-compatibility
     row;
   - the summary marker stays `ai-review-summary:v1`;
@@ -486,8 +577,18 @@ deferred S05 cutover, which plans its own consensus version bump:
 
 ## Exact implementation surface
 
-Split this into three pull requests, one per boundary. Ship all three in one
-release.
+Split this into three pull requests, one per boundary. They ship in successive
+minor releases, in this order, because each is useful alone:
+
+- **(a)** consensus `run_health` from batches, with critique coverage, rendering
+  and the always-present summary. This is effort M and delivers the SPEC-41 loss
+  notice.
+- **(b)** usage capture. This is effort M; the Codex `--json` sidecar is the
+  riskiest part.
+- **(c)** failed-panel publication. This is effort M and needs live evidence on
+  both platforms.
+
+The numbered list below is grouped by boundary.
 
 1. **Adapter execution.**
    - `adapter_status.schema.json` v2, plus types and `schema.py` builder
@@ -565,6 +666,11 @@ release.
   a config error, a config error combined with an otherwise unreachable panel,
   and drops-only `none`; an invariance test that strips status files and
   asserts identical non-health output.
+- `ai-review/tests/unit/test_panel_degradation.py`: grade derivation against the
+  existing degraded/failed panel scenarios; critique coverage status for
+  disabled, all-succeeded, one-failed, all-failed and successful-empty critics;
+  direct contributors excluded from eligibility; valid versus invalid duplicate
+  observation; and removing the `critique` object changes no decision.
 - `ai-review/tests/unit/test_schema_validation.py` and
   `ai-review/tests/unit/test_types_schema_alignment.py`: `adapter_status.v2`
   and `run_health` shapes and bounds.

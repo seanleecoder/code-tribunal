@@ -13,8 +13,9 @@ to the release tag. This index does not restate it. The cited records and any
 waivers, with their reasons, are listed in `release/release-inputs.json` at that
 release's tag.
 
-- Latest: [2.0.0](../../release/2.0.0.md)
-- Earlier: [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
+- Latest: [2.0.2](../../release/2.0.2.md)
+- Earlier: [2.0.1](../../release/2.0.1.md), [2.0.0](../../release/2.0.0.md),
+  [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
   [1.0.0](../../release/1.0.0.md)
 
 `scripts/check_release_inputs.py` rejects activation when a cited record is not a
@@ -48,7 +49,7 @@ classified by whether a live run proves something the regression suite cannot:
   and is **not** a release gate. This is deliberate — two of these race windows
   were never reproducible live.
 
-### Current 2.0.2 candidate
+### 2.0.2 (released 2026-10-04)
 
 Against runtime `3db908f06d141d23de99e7578ae5b5482ebaa498` and its final published
 image pair, [Candidate Canary 37234182540](record-candidate-canary.md) passed image

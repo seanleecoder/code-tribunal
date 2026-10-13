@@ -35,9 +35,10 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. Hostile-MR evidence was recorded for 1.0.0 in one scoped
-topology — a merge request from an **unprotected** ref in the hardened mirrored
-child, where GitLab withheld both protected credentials, prepare failed closed
+proved per deployment. The Candidate Canary records hostile-MR evidence for every
+release, most recently 2.0.2, in one scoped topology — a merge request from an
+**unprotected** ref in the hardened mirrored child, where GitLab withheld every
+protected credential, prepare failed closed
 with an empty input bundle, and no credential value appeared in any trace or
 artifact (see the
 [hostile-MR record](evidence/record-gitlab-hostile-mr.md)). So

@@ -1,9 +1,9 @@
 # Code Tribunal: aggressive simplification review
 
-> Historical audit at the reviewed snapshot. The current dispositions and local
-> completion status are in [AGENT_HANDOFF.md](AGENT_HANDOFF.md). Completed S02/S17
-> work and partial S18/S19 work are no longer implementation instructions; S01
-> follows the separately selected future-only 2.1.0 direction.
+> Historical audit at the reviewed snapshot. Current dispositions are in the
+> [audit README](README.md). Completed S02, S10 and S17 sections are evidence
+> only, not implementation instructions; each open item still needs its own
+> decision before implementation.
 
 **Repository:** [seanleecoder/code-tribunal](https://github.com/seanleecoder/code-tribunal)
 
