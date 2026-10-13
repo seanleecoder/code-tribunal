@@ -22,6 +22,7 @@ completed spec is a description of work already visible in the code, tests, and
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Proposed (post-1.0) | Read project policy only from the immutable target revision and bind the resolved policy through every stage. |
 | [SPEC-48](spec-48-auditable-review-scope-exclusions.md) | Proposed (post-1.0; after SPEC-47) | Apply generated/lockfile/vendored exclusions only after a complete diff is fetched, with coverage provenance and an explicit no-reviewable-changes outcome. |
 | [SPEC-60](cleanup-consolidation/README.md) | Pending; document not yet added | Critique-quality observability, the remaining cleanup/consolidation follow-up. |
+| [SPEC-66](spec-66-run-health-summary.md) | Proposed (next major release, with S05) | Show per-job model, effort, outcome, duration, CLI-reported usage, and a deterministic full/degraded/re-run grade with action in the existing summary comment. |
 
 ## Simplification work
 
