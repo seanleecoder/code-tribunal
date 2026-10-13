@@ -11,8 +11,12 @@ In 2.0.2 the merge request carries no health information at all:
 - The summary comment lists only fallback and FYI findings. It is not created
   when there are none.
 - A degraded panel looks the same as a full one.
-- A failed panel publishes nothing. Consensus writes its artifact and exits 3,
-  and the post job then stops with "no review to publish".
+- A failed panel publishes nothing.
+  - Consensus writes its artifact locally and exits 3.
+  - On GitHub, the failed step skips the upload, and post stops at its
+    "Require successful consensus" step.
+  - On GitLab, the artifact is kept (`when: always`), but post is never
+    scheduled after a failed consensus job.
 
 A maintainer who sees no findings cannot tell any of these apart: a clean
 change, a panel that lost two seats, or a run that never published. The
@@ -36,10 +40,12 @@ Several things are missing entirely:
 - **Critique-stage health.** `panel_status` only looks at review seats. If every
   critic times out, the panel still reports `full`, even though no finding could
   gain critique support.
-- **The "unable to surface anything" case.** Three or four seats must be
-  enabled, and a finding surfaces only when two reviewer identities support it.
-  A panel with one usable review seat is reported as `degraded`, yet it cannot
-  surface anything at all.
+- **The "unable to surface anything" case.** A finding surfaces only when two
+  reviewer identities support it across review and critique. A critic whose own
+  review failed still counts (see
+  `test_critique_batch_counts_even_when_its_review_batch_failed`). With one
+  usable review seat and no successful critic from another identity, nothing
+  can surface, yet the panel reports only `degraded`.
 - **Jobs killed by the CI ceiling.** These jobs write no status file, so the seat
   appears in `failed_reviewers` with no reason.
 - **"Ran, but not fully".** A terminal CLI error after findings were emitted
@@ -192,8 +198,15 @@ match wins:
 |---|---|---|
 | A batch exists and is usable (`batch_usable_for_panel`, or a successful critique batch) | `success` | `success` |
 | A batch exists, its status is `success`, and it is not usable | `unusable` (every finding rejected) | n/a |
-| A non-success batch or usable status file exists | its `adapter_status` (`timeout`, `model_error`, `schema_error`, `config_error`, `internal_error`) | same |
+| A non-success batch exists | its `adapter_status` (`timeout`, `model_error`, `schema_error`, `config_error`, `internal_error`) | same |
+| No batch exists; a usable status file reports a non-success status | that status | same |
+| No batch exists; a usable status file reports `success` | `batch_missing` | `batch_missing` |
 | Neither a batch nor a usable status file exists | `missing` | `missing` |
+
+Only a usable batch yields `success`. A status file never promotes a job; it
+adds telemetry (`duration_ms`, `usage`, `error_class`) to whatever outcome the
+batches determine. This keeps `run_health` consistent with `failed_reviewers`:
+every review job that isn't `success` is a seat the reducer counts as failed.
 
 The batch's `adapter_status` wins over the status file's `status` if they
 disagree. Record `status_disagrees_with_batch` in notes when that happens.
@@ -260,11 +273,17 @@ exit-code role; `grade` is a superset view that never feeds back into it.
 
 1. `rerun_recommended` if any of these hold:
    - `panel_status == "failed"`;
-   - fewer than two review seats succeeded (nothing can reach two-identity
-     support);
-   - critique is enabled and no critique job succeeded.
+   - **two-identity support is unreachable:** at least one review seat
+     succeeded, but the union of reviewers with a usable review batch and
+     critics with a successful critique batch has fewer than two identities;
+   - critique is enabled and no critique job succeeded. This is coverage
+     policy, not reachability: with two or more usable review seats, support
+     is still reachable through review overlap, but the critique half of the
+     pipeline is lost.
 2. Otherwise `degraded` if any of these hold:
-   - a review or critique job is not `success`;
+   - a review or critique job is not `success`, including the case where
+     fewer than two review seats succeeded but critique keeps support
+     reachable (reason `review_coverage_below_two`);
    - any dropped or cap-omitted count is non-zero;
    - any job carries `terminal_error_after_output` or `status_unreadable`.
 3. Otherwise `full`.
@@ -284,7 +303,8 @@ exit-code role; `grade` is a superset view that never feeds back into it.
 **`reasons`** is the sorted set of closed-enum codes that fired:
 
 - `panel_failed`
-- `fewer_than_two_review_seats`
+- `support_unreachable`
+- `review_coverage_below_two`
 - `all_critics_unavailable`
 - `review_seat_unavailable`
 - `critic_unavailable`
@@ -338,13 +358,16 @@ Action: none required; findings from the remaining seats were evaluated. Re-run 
 
 Fixed wording:
 
-**Headline grade labels:**
+**Headline**, selected by `recommended_action` first and grade second, so it
+never contradicts the action line:
 
-| Grade | Headline |
-|---|---|
-| `full` | `Review health: full.` |
-| `degraded` | `Review health: degraded — re-run optional.` or `Review health: degraded.` |
-| `rerun_recommended` | `Review health: re-run recommended.` |
+| Action | Grade | Headline |
+|---|---|---|
+| `fix_configuration` | any | `Review health: configuration error — fix before re-running.` |
+| `rerun_from_prepare` | `rerun_recommended` | `Review health: re-run recommended.` |
+| `optional_rerun` | `degraded` | `Review health: degraded — re-run optional.` |
+| `none` | `degraded` | `Review health: degraded.` |
+| `none` | `full` | `Review health: full.` |
 
 **Action lines:**
 
@@ -363,6 +386,7 @@ Fixed wording:
 | `model_error` | provider or model error |
 | `schema_error` | output could not be parsed |
 | `unusable` | every reported finding was rejected during normalization |
+| `batch_missing` | the job reported success but its batch was not delivered to consensus |
 | `config_error` | configuration error |
 | `internal_error` | internal error |
 | `missing` | no status recorded; the job was likely cancelled or killed by the CI job ceiling |
@@ -395,16 +419,29 @@ Fixed wording:
 Today a failed panel publishes nothing. This spec makes post publish a
 health-only summary and then preserve the failure:
 
-- **Consensus:** unchanged. It writes the artifact before returning 3. The
-  GitHub upload step already runs after the `continue-on-error` consensus step.
-- **GitHub post job:** if `needs.consensus.result != 'success'` and the
-  consensus artifact downloads and validates with `panel_status == "failed"`,
-  run post. Then fail the job, as the existing "Preserve consensus failure"
-  step does. A missing or invalid artifact still fails before any mutation.
+- **Consensus CLI:** unchanged. It writes the artifact before returning 3.
+- **GitHub consensus job.** Today the "Build consensus" step has no
+  `continue-on-error`, so exit 3 skips the upload step that follows it. Change
+  the canonical template and its synchronized copy so that:
+  - "Build consensus" gets an `id` and `continue-on-error: true`;
+  - the upload step runs when `steps.consensus.outcome` is `success` or
+    `failure`, and keeps `if-no-files-found: error`;
+  - a new final step, "Preserve consensus failure", fails the job when
+    `steps.consensus.outcome != 'success'`, so `needs.consensus.result` is
+    still `failure`.
+- **GitHub post job.** Replace "Require successful consensus" with a gate that:
+  - passes when `needs.consensus.result == 'success'`;
+  - when consensus failed, downloads the artifact and continues only if it
+    validates with `panel_status == "failed"`. A missing or invalid artifact
+    (including consensus integrity exit 3, which writes none) fails before any
+    mutation;
+  - after post publishes a failed-panel summary, fails the job in a final step.
 - **GitLab:** let only consensus exit code 3 through to post, using
   `allow_failure: exit_codes: 3` plus post scheduling that tolerates it. Post
   restores exit 3 after a successful publication. Other exit codes still stop
-  post, and the manual-prepare dependency keeps default scheduling.
+  post, and the manual-prepare dependency keeps default scheduling. Consensus
+  integrity errors also exit 3 but write no artifact, so post fails on the
+  missing artifact before any mutation.
 - **What gets published:** only the summary comment, with no groups. No thread
   is created, resolved or reconciled, and persisted state is not rewritten.
   Existing threads are left untouched.
@@ -483,13 +520,22 @@ release.
   outcome, duration and reported usage, and no field is invented.
 - A job killed without writing artifacts appears as `missing`, with the
   CI-ceiling wording.
-- A panel where every critic failed grades `rerun_recommended`. A panel with
-  one usable review seat out of three grades `rerun_recommended` while
-  `panel_status` stays `degraded`.
+- A panel where every critic failed grades `rerun_recommended`.
+- With one usable review seat out of three:
+  - and no successful critic from another identity, the panel grades
+    `rerun_recommended` (`support_unreachable`) while `panel_status` stays
+    `degraded`;
+  - and a successful critique from another identity, it grades `degraded`
+    (`review_coverage_below_two`), matching the reducer's ability to surface
+    through critique agreement.
+- A missing batch whose status file reports `success` grades the job
+  `batch_missing`, never `success`.
 - Removing or corrupting every status file leaves group decisions,
   `panel_status`, `failed_reviewers` and exit codes byte-identical. Only
   `run_health` changes.
-- A `config_error` seat yields `fix_configuration`, never a re-run suggestion.
+- A `config_error` seat yields `fix_configuration`, and neither the headline
+  nor the action line suggests a re-run, even when the grade is
+  `rerun_recommended`.
 - A full run with no findings creates a summary comment whose only content is
   the health headline and the collapsed details.
 - A failed panel publishes a health-only summary on both platforms. It leaves
@@ -514,22 +560,25 @@ release.
   debug files; filename/run-ID mismatch becomes `status_unreadable`; a missing
   status directory still produces consensus.
 - `ai-review/tests/unit/test_consensus_reducer.py`: one test per grade, action
-  and reason rule, including all critics failed, one usable seat, a config
-  error, and drops-only `none`; an invariance test that strips status files and
+  and reason rule, including all critics failed, one usable seat with and
+  without a successful other-identity critic, a success status with no batch,
+  a config error, a config error combined with an otherwise unreachable panel,
+  and drops-only `none`; an invariance test that strips status files and
   asserts identical non-health output.
 - `ai-review/tests/unit/test_schema_validation.py` and
   `ai-review/tests/unit/test_types_schema_alignment.py`: `adapter_status.v2`
   and `run_health` shapes and bounds.
-- `ai-review/tests/unit/test_summary_render.py`: each grade's headline and
-  action; hostile model IDs and error text render literally; error text never
+- `ai-review/tests/unit/test_summary_render.py`: every row of the headline
+  table, including `fix_configuration` on a `rerun_recommended` grade; hostile model IDs and error text render literally; error text never
   appears inside a table cell; the reserved section survives truncation at both
   platform limits.
 - `ai-review/tests/unit/test_post.py`: a summary is created for a full run with
   no findings; recovery and idempotency; failed-panel posting is health-only
   and makes no thread or state mutation.
 - `ai-review/tests/unit/test_ci_template.py`: both templates pass
-  `--status-dir`; failed-panel scheduling on both platforms (only GitLab exit 3
-  passes through, and GitHub post re-fails after publishing); the GitHub parity
+  `--status-dir`; failed-panel scheduling on both platforms (GitHub uploads the
+  consensus artifact after exit 3 and the consensus job still fails; only
+  GitLab exit 3 passes through; post re-fails after publishing on both); the GitHub parity
   copy matches.
 - `ai-review/tests/integration/test_publish_e2e.py`: a failed panel with a
   persisted open thread leaves that thread and its state record unchanged.
