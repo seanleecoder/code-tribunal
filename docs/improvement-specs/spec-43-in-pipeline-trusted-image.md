@@ -1,86 +1,107 @@
-# SPEC-43 — Enforce the trusted image pin inside the pipeline
+# SPEC-43 — Trusted image pin under a hostile consumer pipeline
 
-- **Severity:** High (security posture of a security-review product) · **Effort:** M · **ROI rank:** post-1.0
-- **Depends on:** SPEC-06 trusted composition auditing, SPEC-35 distribution contract.
+- **Severity:** High for posture, low practical exploitability today (credentials are withheld on unprotected refs) · **Effort:** S (documentation only) · **ROI rank:** post-2.0.2
+- **Depends on:** nothing. Read it with [SPEC-47](spec-47-trusted-project-review-config.md), which owns the trusted runtime root for configuration and assets.
 
 ## Why
 
-A hostile merge request substituted the trusted container images and **nothing in the
-pipeline noticed**. Reproduced live on 2026-07-25 against the shipped 1.0.0 image
-pair, in the GitLab evidence demo (MR !12 from the unprotected branch
-`hostile/unprotected-88bc941`, parent pipeline `2705749548`, child `2705749557`, job
-`15534944192`).
+A merge request that edits the consumer's `.gitlab-ci.yml` can make every stage
+run on an arbitrary image, and nothing in the pipeline notices. To do this, the
+composition declares its own top-level `variables:` overriding
+`AI_REVIEW_BASE_IMAGE` and `AI_REVIEW_REVIEWER_IMAGE`, and turns
+`inherit.variables` and both `forward.*` back on for the `ai_review` trigger.
 
-The hostile `.gitlab-ci.yml` did two things:
+The probe is now automated by
+[`scripts/gitlab_hostile_canary.py`](../../scripts/gitlab_hostile_canary.py)
+and recorded on every release. The 2.0.2 record is
+[`record-gitlab-hostile-mr.md`](../evidence/record-gitlab-hostile-mr.md): MR !40
+from an unprotected branch, Candidate Canary run `37234182540`, runtime source
+`3db908f`, 2026-10-04. It records `image_substituted: hostile_image_pulled:
+true` and notes "in-pipeline image enforcement is not implemented (SPEC-43)".
+The same substitution was first reproduced live on 1.0.0 on 2026-07-25.
 
-1. declared its own top-level `variables:` overriding `AI_REVIEW_BASE_IMAGE` and
-   `AI_REVIEW_REVIEWER_IMAGE` to `docker.io/library/alpine:3.20`, and
-   `AI_REVIEW_TRUSTED_IMAGE_SHA` to all zeros;
-2. flipped `inherit.variables` to `true` and both `forward.yaml_variables` /
-   `forward.pipeline_variables` to `true` on the `ai_review` trigger.
+Containment today comes from two places:
 
-Forwarded pipeline variables then took precedence over the protected template
-project's own `variables:`, and `prepare_ai_review` pulled and ran the attacker's
-image — the job trace shows `Pulling docker image docker.io/library/alpine:3.20`. The
-pinned base image was never pulled, and the trace contains no trusted-image or
-composition verification step at all.
+- **Protected-credential withholding.** On an unprotected ref, GitLab withheld
+  `OPENROUTER_API_KEY`, `GITLAB_TOKEN` and `CURSOR_API_KEY`. Prepare failed
+  closed and every later stage was skipped.
+- **The out-of-band trust auditor.**
+  [`scripts/pipeline_trust.py`](../../scripts/pipeline_trust.py) rejects the
+  composition, but an operator must run it.
 
-**It failed only incidentally.** The job exited 127 with
-`/bin/sh: eval: line 227: python: not found`, because that particular image has no
-Python interpreter. An attacker choosing an image that *does* contain Python would not
-have hit that wall. Calling this outcome "fails closed" would misread luck as
-enforcement.
+Fork merge requests and insiders on protected refs remain untested. For an
+insider, credential withholding does not apply.
 
-What actually contained it, and why 1.0.0 shipped anyway:
+The October commits `be7cab5`, `f81e1ff`, `7bae16f` and `709cd5b` validate Code
+Tribunal's *own* template pins at release time
+(`scripts/check_release_inputs.py`, `scripts/release_finalize.py`). They do not
+run in a consumer pipeline and are not progress on this spec.
+`AI_REVIEW_TRUSTED_IMAGE_SHA` is declared in the GitLab template, but no job
+reads it, and neither Dockerfile bakes a source marker.
 
-- the branch was unprotected, so GitLab withheld both protected credentials — the
-  hostile job confirmed `OPENROUTER_API_KEY absent` and `GITLAB_TOKEN absent`;
-- [`pipeline_trust.py`](../../scripts/pipeline_trust.py) does detect the
-  composition, exiting 1 on exactly these two mutations — but it is an operator-run
-  static check, not an in-pipeline gate;
-- the documented acceptance criterion for that evidence row is satisfied by *either*
-  the composition being retained *or* credentials being withheld and the pipeline
-  failing.
+## The bootstrapping limit
 
-Full detail in
-[`record-gitlab-hostile-mr.md`](../evidence/record-gitlab-hostile-mr.md) §3.
-For a product whose purpose is reviewing code for security, "an attacker who picks an
-image containing Python is not stopped by the pipeline" is a posture worth closing
-rather than only documenting.
+The consumer authors the file that composes the pipeline. Any check inside that
+pipeline can be removed or skipped by the same edit that swaps the image:
 
-## The bootstrapping problem
+- a job that verifies a marker;
+- a required trust-audit stage;
+- an assertion inside `prepare`.
 
-The obvious fix — have `prepare` assert it is running the expected image — does not
-work naively: a check that lives **inside** the trusted image cannot run at all if the
-image was swapped, and an attacker's image will simply not perform it. The assertion
-must be something a substituted image **fails by construction**, not something it
-could satisfy or skip. Candidate directions:
+A substituted image will simply not perform a check that lives in the trusted
+image. No in-pipeline construct can stop a hostile author of the consumer CI
+file. The real boundaries sit outside that file.
 
-- have the untrusted-side job verify a marker that only the trusted image can produce
-  (for example a build-time value baked into the image that must equal
-  `AI_REVIEW_TRUSTED_IMAGE_SHA`), and treat *absence* of the marker as failure, so
-  omission is not a bypass;
-- move the digest resolution out of overridable variable scope entirely, so the
-  consumer cannot express a different image;
-- run the trust audit as a required in-pipeline stage on trusted infrastructure before
-  any credential-bearing stage executes.
+## Decision
 
-Each has to be evaluated against the fact that the consumer authors the very file that
-composes the pipeline.
+### Documentation (S; any release)
 
-## Also in scope
+- Recommend a protected external CI configuration as the strong control:
+  - GitLab "CI/CD configuration file" set to `path@group/protected-project`;
+  - or a pipeline execution or compliance policy.
 
-Review whether the documented `inherit.variables: false` / `forward.*: false`
-hardening is meaningful when a consumer's own `.gitlab-ci.yml` can set them back to
-`true`. If it is not a real boundary, no document may imply that it is — and the
-current wording of the GitLab guidance should be re-read with that in mind.
+  Either way, merge request authors cannot edit the composition. Document it in
+  [`getting-started/gitlab.md`](../getting-started/gitlab.md) and the
+  [security model](../SECURITY_MODEL.md).
+- State plainly in `getting-started/gitlab.md` that the hardened child's
+  `inherit.variables: false` and `forward.*: false` settings are a boundary only
+  while merge request authors cannot edit the consumer CI file. Today the page
+  presents them as hardening without that condition. `SECURITY_MODEL.md`
+  already states the limit; align its "closed child-pipeline forwarding
+  boundary" mitigation bullet with it.
+- Recommend running `pipeline_trust.py` from a protected scheduled pipeline or
+  a merge-request approval rule, not only ad hoc.
+
+### Rejected: drift-detection marker
+
+A build-time runtime-source marker baked into both images, checked by prepare and
+post against `AI_REVIEW_TRUSTED_IMAGE_SHA`, was considered and rejected on
+2026-10-13:
+
+- It is not a security boundary, because a hostile composition can drop the
+  variable, the check, or both.
+- It would cost Dockerfile, template and release-tooling changes plus an image
+  republish.
+- Release tooling already validates Code Tribunal's own pins, and
+  `pipeline_trust.py` catches composition drift.
+- It would add the kind of release machinery that S01 is removing.
+
+Reconsider it only if a real pin-drift incident occurs that the auditor would
+not have caught.
+
+The unused `AI_REVIEW_TRUSTED_IMAGE_SHA` template variable stays, because
+release and canary tooling consume it.
 
 ## Tests
 
-- A consumer config that forwards hostile image variables must fail before any
-  credential-bearing stage runs.
-- A substituted image that omits the verification marker must fail closed, not pass by
-  omission.
-- The existing trust-auditor coverage in `test_verify_pipeline_trust.py` must keep
-  rejecting both mutations, and gain a case asserting the in-pipeline enforcement path.
-- Regression: the legitimate hardened child composition must remain green.
+- [`test_verify_pipeline_trust.py`](../../ai-review/tests/unit/test_verify_pipeline_trust.py)
+  keeps rejecting both mutations: `test_flags_missing_variable_inheritance_boundary`,
+  `test_flags_yaml_variable_forwarding` and `test_flags_pipeline_variable_forwarding`.
+- The GitLab examples in `getting-started/gitlab.md` stay covered by the
+  pipeline-trust tests after the wording change.
+- The hostile canary continues to record `image_substituted` truthfully.
+
+## Completion
+
+This spec is complete when the documentation changes have merged. Then delete
+this file and its index row.

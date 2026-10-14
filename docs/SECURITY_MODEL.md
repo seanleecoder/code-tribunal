@@ -35,12 +35,20 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. Hostile-MR evidence was recorded for 1.0.0 in one scoped
-topology — a merge request from an **unprotected** ref in the hardened mirrored
-child, where GitLab withheld both protected credentials, prepare failed closed
-with an empty input bundle, and no credential value appeared in any trace or
-artifact (see the
-[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). So
+proved per deployment. The Candidate Canary records hostile-MR evidence for every
+release, most recently 2.0.2 (see the
+[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). It covers one scoped
+topology: a merge request from an **unprotected** ref in the hardened mirrored
+child. The record shows four things:
+
+- GitLab withheld every protected credential: the hostile job saw each one as
+  absent.
+- Prepare failed closed with an empty input bundle, and every later stage was
+  skipped.
+- The forged publication artifacts went unconsumed.
+- The leak scan of the five redacted run summaries found no credential material.
+
+It does not scan every job trace and artifact for exact credential values. So
 “credential isolated” means that recorded scope plus the tested subprocess
 allowlist and template design — not a completed claim about every installation.
 Fork-based merge requests and protected-ref insiders are untested.

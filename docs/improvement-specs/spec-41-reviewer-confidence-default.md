@@ -1,103 +1,118 @@
 # SPEC-41 — Stop losing every finding from a seat that omits `confidence`
 
-- **Severity:** Medium (silent panel degradation on valid findings) · **Effort:** S · **ROI rank:** post-1.0
-- **Depends on:** SPEC-32 reviewer-quality artifact shape.
+- **Severity:** Medium (silent panel degradation on valid findings) · **Effort:** part A S, part B M (through SPEC-66) · **ROI rank:** post-2.0.2, first
+- **Depends on:** part A on nothing. Part B (visibility) is delivered by
+  [SPEC-66](spec-66-run-health-summary.md) stage (a).
 
 ## Why
 
-`confidence` is in the `required` list of `/$defs/finding` in
-[`ai-review/schemas/finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json).
-A finding that omits it fails `_validate_finalized_finding`, and finalization drops
-that finding (`ai-review/src/ai_review/schema.py`, the
-`except (SchemaValidationError, ValueError, KeyError, TypeError)` arm). One missing
-scalar therefore discards an otherwise valid, correctly anchored, high-value finding.
+`confidence` is required by `/$defs/finding` in
+[`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json)
+and by [`raw_finding_batch.schema.json`](../../ai-review/schemas/raw_finding_batch.schema.json).
+A finding that omits it fails `_validate_finalized_finding`, and finalization
+drops that finding. The drop happens in the
+`except (SchemaValidationError, ValueError, KeyError, TypeError)` arm of the
+finding loop in [`schema.py`](../../ai-review/src/ai_review/schema.py). One
+missing scalar therefore discards an otherwise valid, correctly anchored
+finding. When a model omits it everywhere, the seat loses every finding.
 
-Observed live on 2026-07-25 during the 1.0.0 evidence runs, on the GitLab evidence
-demo (child pipeline `2705723423`, job `15534808436`): the `opencode` seat running the
-real shipped default model `google/gemini-3.1-flash-lite` produced **3 genuine
-security findings** and lost all three to
-`'confidence' is a required property`, giving
-`raw_finding_count=3, accepted_finding_count=0, usable_for_resolution=false`. The
-panel fell from `full` to `degraded` with `panel_convergence: 0.667`. The other two
-seats complied and posted normally.
+Observed live on 2026-07-25 during the 1.0.0 evidence runs (GitLab child
+pipeline `2705723423`, job `15534808436`). The `opencode` seat, running the
+then-default `google/gemini-3.1-flash-lite`, produced three genuine security
+findings and lost all three to `'confidence' is a required property`. The batch
+recorded `raw_finding_count=3, accepted_finding_count=0,
+usable_for_resolution=false`, and the panel fell from `full` to `degraded`. The
+same seat and field degraded two earlier 1.0 candidate runs. Those incidents
+are history: the shipped OpenCode default is now `xiaomi/mimo-v2.6-flash`
+([`review.yaml`](../../ai-review/config/review.yaml)).
 
-This is not new and not a one-off: the same seat and the same missing field degraded
-two earlier candidate runs, `29837070046` and `29840867952`, as recorded in
-[`record-github-default-model-smoke.md`](../evidence/record-github-default-model-smoke.md).
-It is weak-model non-compliance rather than a missing instruction — the prompt does
-ask for the field, at `ai-review/prompts/review.md` line 8, which includes
-`"confidence":0.0` in the required JSON shape.
+There are two problems:
 
-Two distinct problems follow:
+1. **Harshness.** A missing advisory scalar discards real findings.
+2. **Silence.** The loss surfaces only as a stderr line plus the batch's
+   `dropped_finding_count`. Nothing is posted, so a degraded panel looks like a
+   clean run on the merge request.
+3. **False resolution.** `batch_quality_fields` keeps a seat usable for
+   resolution once it has at least one accepted finding, even if others were
+   dropped. Suppose a seat's only report of an issue is dropped and no other
+   seat reports it. The issue is then absent from the run, and
+   `_plan_stale_records` can auto-resolve its open thread under the resolution
+   quorum.
 
-1. **Harshness.** The product discards real findings over a missing advisory scalar,
-   with a shipped default model that demonstrably omits it.
-2. **Silence.** The loss surfaces only as a stderr line plus counters in
-   `out/status/<reviewer>.json`. A degraded panel still gates a release and still
-   posts a reduced review; at a glance it looks like a clean run. During 1.0.0 this
-   was caught only because someone read the consensus artifact.
+[`config.py`](../../ai-review/src/ai_review/config.py) cites this defect as
+the reason for the three-seat minimum.
 
-## Status refresh (main at `2b8b2ce`)
+## Current state (main at `da35afa`, 2.0.2)
 
-The defect is unchanged: `confidence` is still in the `required` list of
-`/$defs/finding` and finalization still drops a finding that omits it. Two things
-about the *evidence* above have moved on, and neither closes the spec:
+Open. S05 in #171 (`5845db9`) removed `confidence` and added a posted loss
+notice, which would have closed this spec. #171 and its #172 follow-up were
+reverted in `63ca67a` for the compatible 2.0.2 release. Artifacts remain
+`finding_batch.v1`, the field remains required, and no test covers a finding
+without `confidence`.
 
-- The shipped OpenCode default model is now `google/gemini-3.5-flash-lite`, not the
-  `google/gemini-3.1-flash-lite` recorded in the incident. The observation stands as
-  history; do not re-cite that model id as the current default.
-- OpenCode now obtains its batch through the structured-output transport
-  (SPEC-50), which sends the stage
-  schema to the provider as `format: {"type":"json_schema", …}`. That makes a
-  schema-shaped omission less likely *on that one seat* when the provider honors the
-  schema. It is not a fix: the other three seats have no such transport, provider
-  compliance with a JSON schema is not guaranteed, and the drop happens in
-  finalization regardless of how the batch arrived. Re-measure the frequency before
-  arguing this is now rare, and do not let the transport decide the A/B/C question
-  below.
+Facts that shape the fix:
 
-## 2.0.2 status
+- **`confidence` is only a tie-breaker.** It orders:
+  - the group representative (`_representative` in `consensus.py`);
+  - the primary signature finding behind `issue_id`
+    (`choose_primary_signature_finding` in `grouping.py`);
+  - per-seat cap ranking (`_rank_findings_for_cap` in `schema.py`).
 
-Open. The unreleased S05 cutover in #171 and its #172 follow-up are reverted for
-compatible 2.0.2. Finding artifacts remain `finding_batch.v1`, confidence remains
-required, and missing confidence can discard valid findings without a posted loss
-notice. The shipped OpenCode default is now `xiaomi/mimo-v2.6-flash`; the Gemini
-incidents above are historical. Reintroducing S05 belongs to separately planned
-major-release work.
+  The cap ranking already treats a missing value as the lowest rank. Grouping
+  buckets, `consensus_policy.apply_group_decision`, and both renderers never read
+  it. No decision or support count depends on it.
+- **Critique finalization already defaults it.** A critique without
+  `confidence` gets `1.0` in `schema.py`.
+- **Schema transport differs by seat.** Claude (`--json-schema`), Codex
+  (`--output-schema`) and OpenCode (structured output) send
+  `raw_finding_batch.schema.json` to the provider. Cursor has no schema
+  transport. Provider compliance with a schema is not guaranteed, and the drop
+  happens in finalization however the batch arrived.
 
-## Decision to make
+## Decision
 
-Not obviously "just default it" — `confidence` feeds grouping and voting, so a wrong
-default can distort consensus rather than just soften a failure. Inspect how it is
-consumed in [`consensus.py`](../../ai-review/src/ai_review/consensus.py) before
-choosing:
+### Part A — tolerate the missing scalar (compatible; target 2.0.3)
 
-- **Option A — tolerate.** Default the field when absent (a neutral value, or the
-  minimum that cannot inflate a group's standing), record that it was defaulted on
-  the finding, and keep the finding. Must not let a defaulted value push a group over
-  a surfacing or blocking threshold it would otherwise miss.
-- **Option B — stay strict, fail loudly.** Keep dropping, but make it visible:
-  surface dropped-for-schema-reasons counts in the consensus summary and the posted
-  summary comment, so a degraded panel is unmistakable.
-- **Option C — both.** Tolerate the missing scalar, and still report the leniency.
+In finding finalization, when `confidence` is absent, set it to `0.0` before
+validation and write one redacted stderr line naming the seat and finding
+index. Any other malformed `confidence` (wrong type, out of range) still drops
+the finding.
 
-Independently of A/B/C, address the silence: a panel that lost a whole seat should be
-distinguishable from a clean panel without reading artifacts.
+- `0.0` is the lowest valid value. A defaulted finding can never outrank a
+  finding with an explicit confidence for the representative, the
+  primary-signature choice, or the cap. Ties with an explicit `0.0` fall through
+  to the existing deterministic keys.
+- `finding_batch.v1` stays valid and unchanged. The finalized finding does not
+  record that it was defaulted, because the closed schema has no field for it.
+  That flag would be a versioned change and belongs with S05.
+- Keep `raw_finding_batch.schema.json` strict. Codex strict structured output
+  requires every property to be listed as required, and the schema still steers
+  compliant models toward emitting the field.
 
-## Scope note for evidence coverage
+### Part B — make loss visible (SPEC-66 stage (a))
 
-The below-quorum FYI/summary path is currently unreachable from the deterministic
-mock, because the mock emits identical findings on every seat and so always reaches
-quorum (see the runbook). A per-seat mock scenario — emitting from one seat only —
-would unlock live coverage of that path, and belongs with whichever option is chosen
-here since both touch seat-level admission.
+The posted signal is SPEC-66's always-present health headline. It reports raw,
+accepted, dropped and cap-omitted counts per seat, and grades a run with drops as
+`degraded`. Do not build a second loss notice here. SPEC-66 ships compatibly,
+so part B lands with SPEC-66 stage (a) in 2.1.0.
 
 ## Tests
 
-- Unit: a batch where one finding omits `confidence` → assert the chosen behaviour
-  (kept-with-default and flagged, or dropped with the new visible signal).
-- Unit: a defaulted `confidence` must not change grouping/voting outcomes versus an
-  explicit equivalent value, and must not create a blocking group that a compliant
-  batch would not have produced.
-- Integration: a panel where one seat is fully dropped must produce an
-  unambiguous degraded signal in the consensus artifact and the posted output.
+- `test_schema_validation.py`: a batch in which one finding omits `confidence`
+  keeps the finding, finalizes it with `0.0`, and counts it as accepted. A
+  non-numeric or out-of-range `confidence` is still dropped.
+- `test_finding_cap.py`: a defaulted finding ranks below an explicit `0.0` of
+  equal severity under the cap.
+- `test_consensus_reducer.py`: a group containing a defaulted finding yields
+  the same groups, decisions, representative and `issue_id` as the same input
+  with an explicit `0.0`.
+- Part B's integration test, in which a fully dropped seat produces an
+  unambiguous degraded signal in the artifact and the posted output, is owned by
+  SPEC-66.
+
+## Evidence coverage note
+
+The below-quorum FYI/summary path is unreachable from the deterministic mock,
+because the mock emits identical findings on every seat. A per-seat mock
+scenario that emits from one seat only would unlock that coverage. It belongs
+with SPEC-66, which needs degraded-panel fixtures anyway.

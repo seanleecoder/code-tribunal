@@ -8,6 +8,7 @@ Resuming one does not imply resuming the others.
 - [Standalone deterministic reducer](spec-18-standalone-reducer.md)
 - [Spend enforcement](spend-enforcement.md)
 - [External issue-tracker integration](issue-tracker-integration.md)
+- [Unanchored review advisories](unanchored-advisories.md) (formerly SPEC-46)
 
 Runtime placeholders for these ideas were removed on 2026-07-14. Any future
 proposal must start with a new compatibility and migration review rather than
