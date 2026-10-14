@@ -2,7 +2,7 @@
 
 - **Status:** Proposed (post-2.0.2; not a current product feature).
 - **Severity:** Medium (hardening). No current path lets PR/MR content change review policy. The gaps below are config-relative asset lookup and cross-job configuration drift that only consensus detects.
-- **Effort:** S. Input preparation, prompt rendering, the adapter runner, and post; no schema, template, or artifact change.
+- **Effort:** S. Input preparation, prompt rendering, configuration digest, the adapter runner, and post; no schema, template, or artifact change.
 - **ROI rank:** post-2.0.2. Release vehicle: 2.0.3 or any compatible release.
 - **ADR required:** no. It adds no configuration source and no product dimension.
 - **Depends on:** nothing. It is the binding prerequisite for [SPEC-48](spec-48-auditable-review-scope-exclusions.md).
@@ -44,12 +44,20 @@ Four gaps remain:
 ## Decisions
 
 - Gaps 1–3 are in scope.
-- Gap 4 is a follow-up, not part of this spec. None of the omitted fields has an
-  environment override, so they can differ between jobs only if the jobs load
-  different config files, which already requires a different image or
-  `AI_REVIEW_CONFIG` (SPEC-43's boundary). A spec that adds an overridable or
-  coverage-relevant key, such as SPEC-48's `review_scope`, adds that key to the
-  summary in its own change.
+- Gap 4 is closed by hashing the whole configuration instead of extending the
+  projection (simplification item N05, decided 2026-10-14):
+  - `effective_config_digest` becomes the SHA-256 of the canonical JSON of the
+    entire validated configuration, after defaults and environment overrides.
+    The configuration holds no credentials; they live only in the environment.
+  - Delete the hand-written `effective_config_summary` projection.
+  - The manifest's `effective_config` field then carries the full canonical
+    configuration. Consensus key-diffs and SPEC-66's model, effort and timeout
+    lookups keep reading the same field.
+  - Mismatch messages name the differing top-level keys from a canonical diff.
+  - Any key a later spec adds, such as SPEC-48's `review_scope`, is bound
+    automatically.
+  - The digest value changes once. Its format and every field that carries it stay
+    the same, so this is compatible.
 - `inputs/config.review.yaml` stays as an audit copy, and later stages keep loading
   `$AI_REVIEW_CONFIG`. Repointing stages at the bundle copy would need a template
   change and buys nothing once the digest is checked everywhere.
@@ -64,6 +72,9 @@ Four gaps remain:
 - `render_review_prompt` and `render_critique_prompt` keep reading
   `inputs/prompts/`. When it is missing, they fall back to
   `trusted_runtime_root() / "prompts"`, not the config file's parent.
+- Merge the two renderers into one `_render(stage, blocks)` (simplification item N10)
+  while rewriting this lookup. Today config loading, limits, the prompt-path
+  fallback and the size guard are duplicated between them.
 - No environment variable selects the root. In the image and in a source checkout,
   `trusted_runtime_root()` resolves to the same `ai-review/` directory that the
   shipped config's grandparent does today, so shipped behavior does not change.
@@ -74,7 +85,7 @@ Four gaps remain:
 
 One helper in `config.py` (or `adapter_artifacts.py`, next to the existing digest
 helpers) compares `effective_config_digest(config)` with the manifest's
-`effective_config_sha256`. On mismatch it names the divergent summary keys, using
+`effective_config_sha256`. On mismatch it names the divergent top-level keys, using
 the same key-diff message that consensus already produces. A manifest without the
 digest is a mismatch with the message "re-run prepare".
 
@@ -87,6 +98,10 @@ digest is a mismatch with the message "re-run prepare".
   `create_runtime_platform`. On mismatch, print the message to stderr and exit 1
   without writing `post_result.json`. This is the same outcome as an invalid config
   today.
+  The same pull request adds the run binding from
+  [SPEC-68](spec-68-posting-correctness-fixes.md) fix 3. Post rejects a consensus
+  artifact whose `run_id`, `head_sha` or `input_manifest_sha256` does not match the
+  manifest.
 - **Consensus** keeps `_require_effective_config_integrity` and the per-batch digest
   checks unchanged.
 

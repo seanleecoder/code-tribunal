@@ -481,6 +481,10 @@ never contradicts the action line:
 
 - The headline, problem bullets and action are reserved space. The existing
   drop loop truncates finding sections only.
+- Keep the layout open for persisted state. The next major release moves state
+  inside this comment (simplification item N04: one bot comment per merge request).
+  Size the reserved health space so that state can later claim its own reserved
+  block within the platform limit. Do not add a second always-present comment.
 - The details block is bounded: at most eight rows, plus error text capped at
   300 characters per job.
 - It is part of the reserved section, not a droppable section descriptor.
