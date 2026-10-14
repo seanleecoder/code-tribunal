@@ -71,6 +71,16 @@ file. The real boundaries sit outside that file.
   boundary" mitigation bullet with it.
 - Recommend running `pipeline_trust.py` from a protected scheduled pipeline or
   a merge-request approval rule, not only ad hoc.
+- **Deprecate the hardened child mode** (simplification item N02, decided
+  2026-10-14):
+  - Its isolation holds only when merge-request authors cannot edit the CI file,
+    which is exactly when a direct include is already safe.
+  - Mark the child example and its section in `getting-started/gitlab.md` as
+    deprecated, with removal in the next major release. Recommend direct include
+    plus a protected external CI configuration.
+  - Add the deprecation to the CHANGELOG and register it in
+    [temporary compatibility](../development/temporary-compatibility.md), naming
+    the removal release.
 
 ### Rejected: drift-detection marker
 

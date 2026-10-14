@@ -157,9 +157,10 @@ reject the configuration with `ConfigError`. A malformed rule is never disabled 
 assigned a different category. A category that is enabled but has no rules is valid
 and excludes nothing.
 
-**Binding.** `effective_config_summary` gains a `review_scope` entry: the enabled
-categories and the ordered active rules (pattern, category, reason). The effective
-policy therefore enters `effective_config_sha256`, and SPEC-47's per-stage check
+**Binding.** The resolved `review_scope` (the enabled categories and the ordered
+active rules: pattern, category, reason) is part of the validated configuration.
+SPEC-47 hashes the whole configuration, so the policy enters
+`effective_config_sha256` with no extra code, and SPEC-47's per-stage check
 makes a job that sees a different selector or different rules fail before
 consequential work. Rule order is part of the effective policy.
 
@@ -504,7 +505,7 @@ exception.
 
 | Seam | Required change |
 | --- | --- |
-| Effective-config binding | Add the `review_scope` entry (enabled categories, ordered active rules) to `effective_config_summary`. Rely on SPEC-47's checks in review, critique, consensus, and post; add no new binding mechanism. |
+| Effective-config binding | None beyond resolving `AI_REVIEW_SCOPE_EXCLUSIONS` into the validated `review_scope` before hashing. SPEC-47's full-configuration digest and per-stage checks bind it; add no new binding mechanism. |
 | [`review.yaml`](../../ai-review/config/review.yaml) and [`configuration.md`](../configuration.md) | Ship the rule list with `enabled_categories: []`. Document the categories, the shipped patterns, `AI_REVIEW_SCOPE_EXCLUSIONS`, custom-image rules, and the coverage-reduction warning. |
 | [`config.py`](../../ai-review/src/ai_review/config.py) | Add `review_scope` to `TOP_LEVEL_KEYS` with strict validation, a bounded pure matcher API, and the `AI_REVIEW_SCOPE_EXCLUSIONS` category selector in `apply_env_overrides` (parsed like `apply_reviewer_roster`). No pattern-carrying variable. Do not use Python filesystem globbing or platform generated-file metadata. |
 | [`platform/gitlab.py`](../../ai-review/src/ai_review/platform/gitlab.py) | Make a pagination cap reached by `fetch_diff` a `ReviewPlatformError` instead of a stderr warning. Expose the complete, completeness-checked structured change list so filtering runs before text synthesis. |
