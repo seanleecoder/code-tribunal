@@ -117,9 +117,10 @@ Several things are missing entirely:
 - the `render-body` version;
 - config keys.
 
-## Adapter execution: `adapter_status.v2`
+## Adapter execution: optional fields on `adapter_status.v1`
 
-Add two optional properties to the status artifact built in
+Add two optional properties to the existing `adapter_status.v1` schema, keeping its
+identifier, for the status artifact built in
 [`schema.py`](../../ai-review/src/ai_review/schema.py) and written by
 [`adapter_artifacts.py`](../../ai-review/src/ai_review/adapter_artifacts.py).
 
@@ -221,7 +222,17 @@ disagree. Record `status_disagrees_with_batch` in notes when that happens.
 
 ### Record shape
 
-`run_health` is a new required top-level consensus property:
+`run_health` is a new **optional** top-level property of `consensus.v2`. The schema
+identifier does not change (see [Versioning](#versioning)). Schema optionality exists
+only for compatibility; it does not make the field optional in practice:
+
+- **Producer:** consensus from this release on always writes `run_health`.
+- **Consumer:** post requires it. An artifact without `run_health` comes from an
+  earlier release, so post rejects it before any platform mutation, with a message
+  saying it is from an earlier release. There is no fallback rendering, so no dual
+  path and no temporary-compatibility row.
+
+The record looks like this:
 
 ```json
 "run_health": {
@@ -591,8 +602,11 @@ minor releases, in this order, because each is useful alone:
 The numbered list below is grouped by boundary.
 
 1. **Adapter execution.**
-   - `adapter_status.schema.json` v2, plus types and `schema.py` builder
-     fields.
+   - Optional `usage` and `notes` properties on `adapter_status.schema.json`,
+     keeping `adapter_status.v1`, plus types and `schema.py` builder fields.
+   - Document in [artifacts and schemas](../reference/artifacts-and-schemas.md)
+     that adding an optional property under the same identifier is a minor
+     change.
    - Usage and notes extraction in `adapter_output.py`, `opencode_client.py`
      and `adapter_runner.py`.
    - The `codex.sh` `--json` sidecar.
@@ -603,7 +617,8 @@ The numbered list below is grouped by boundary.
 2. **Consensus.**
    - The `--status-dir` loader and validation, the per-job derivation, the
      grade/action function, and stdout rendering.
-   - `consensus.schema.json`, types and goldens.
+   - An optional `run_health` property on `consensus.schema.json`, keeping
+     `consensus.v2`, plus types and goldens.
    - Both CI templates, plus the GitHub parity copy.
 3. **Posting/rendering.**
    - `run_health_section`.
@@ -672,8 +687,14 @@ The numbered list below is grouped by boundary.
   direct contributors excluded from eligibility; valid versus invalid duplicate
   observation; and removing the `critique` object changes no decision.
 - `ai-review/tests/unit/test_schema_validation.py` and
-  `ai-review/tests/unit/test_types_schema_alignment.py`: `adapter_status.v2`
-  and `run_health` shapes and bounds.
+  `ai-review/tests/unit/test_types_schema_alignment.py`: the optional
+  `usage`/`notes` on `adapter_status.v1` and the optional `run_health` on
+  `consensus.v2`, with their shapes and bounds.
+  - A 2.0.2-shaped status file without the new fields still validates.
+  - A 2.0.2-shaped consensus artifact without `run_health` still validates
+    against the schema.
+  - `test_post.py` asserts that post rejects that artifact before any platform
+    call.
 - `ai-review/tests/unit/test_summary_render.py`: every row of the headline
   table, including `fix_configuration` on a `rerun_recommended` grade; hostile model IDs and error text render literally; error text never
   appears inside a table cell; the reserved section survives truncation at both
