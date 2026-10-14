@@ -156,12 +156,26 @@ are not re-described.
 - **Updates:** Renovate replaces the manual seven-step pin refresh. It covers npm
   lockfiles, Dockerfile digests including `ARG` defaults, action SHAs, pip
   constraints, and regex managers for `.pin` files.
-- **Pin lint:** zizmor (`unpinned-uses`, `unpinned-images`, `ref-version-mismatch`)
-  replaces the generic part of `check_supply_chain_pins.py`.
-- **Project-specific checks:** about 150 lines stay:
-  - GitHub/GitLab image-pin equality;
-  - `npm ci` and constraints usage;
-  - placeholder rejection.
+- **Workflow pin lint:** zizmor (`unpinned-uses`, `unpinned-images`,
+  `ref-version-mismatch`) replaces the workflow-file part of
+  `check_supply_chain_pins.py`. zizmor audits GitHub Actions workflows only. It
+  does not read Dockerfiles or GitLab templates, and Renovate updates pins without
+  rejecting a mutable reference.
+- **Project-specific checks:** about 200 lines stay in-repo:
+  - **Dockerfile digests.** Every `FROM` line in `base.Dockerfile` and
+    `reviewer.Dockerfile` must reference an image by `@sha256:` digest, or a
+    build argument whose default does. The reviewer's `ARG AI_REVIEW_BASE_IMAGE`
+    default must be digest-pinned and identical to the base `FROM`. Generalizing
+    from today's per-image patterns to every `FROM` also covers the two
+    `debian:trixie-slim` stages (`cursor-cli`, `ripgrep-bin`), which are pinned
+    but currently unchecked.
+  - GitHub/GitLab image-pin equality.
+  - `npm ci` and the pip `--constraint` usage in the Dockerfiles.
+  - Placeholder rejection in the `.pin` files.
+
+  No off-the-shelf Dockerfile linter replaces these checks: hadolint's DL3007 only
+  rejects `latest`. Adopting one later requires showing it rejects every mutable
+  `FROM` and `ARG` default before the in-repo check is removed.
 - **Lychee:** CI runs the pinned `lycheeverse/lychee-action`, and the Lychee
   installer leaves `check_markdown_links.py`.
 - **ADR-0001:** its statement that "the supply-chain checker audits both inputs"
