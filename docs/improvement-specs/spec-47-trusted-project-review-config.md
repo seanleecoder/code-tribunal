@@ -2,10 +2,10 @@
 
 - **Status:** Proposed (post-2.0.2; not a current product feature).
 - **Severity:** Medium (hardening). No current path lets PR/MR content change review policy. The gaps below are config-relative asset lookup and cross-job configuration drift that only consensus detects.
-- **Effort:** S. Input preparation, prompt rendering, configuration digest, the adapter runner, and post; no schema, template, or artifact change.
+- **Effort:** S. Input preparation, prompt rendering, configuration digest, the adapter runner, and post; no schema or template change. Prepare stops writing three unread bundle entries (decided 2026-10-16).
 - **ROI rank:** post-2.0.2. Release vehicle: 2.0.3 or any compatible release.
 - **ADR required:** no. It adds no configuration source and no product dimension.
-- **Depends on:** nothing. It is the binding prerequisite for [SPEC-48](spec-48-auditable-review-scope-exclusions.md).
+- **Depends on:** nothing.
 - **Companion:** [SPEC-43](spec-43-in-pipeline-trusted-image.md) owns trust in the CI definition and image. This spec owns asset lookup and configuration binding inside a trusted job.
 
 ## Rationale
@@ -23,11 +23,15 @@ Four gaps remain:
    [`prompt_render.py`](../../ai-review/src/ai_review/prompt_render.py) falls back to
    the config file's parent when `inputs/prompts/` is missing. Prompts and rules
    therefore follow whatever `AI_REVIEW_CONFIG` points at instead of the image.
-2. **An unread config copy.** Prepare writes `inputs/config.review.yaml` as a byte
-   copy of the loaded file, and `config_sha256` binds it, but no stage reads it.
-   Every stage loads `$AI_REVIEW_CONFIG` itself.
-   [`artifacts-and-schemas.md`](../reference/artifacts-and-schemas.md) lists its
-   consumer as "all later stages/audit", which is false.
+   Both images already ship them: `base.Dockerfile` copies `ai-review/prompts` and
+   `ai-review/rules` into `/opt/ai-review`, and the reviewer image is built `FROM`
+   the base image.
+2. **Unread bundle entries.** Prepare writes `inputs/config.review.yaml` as a byte
+   copy of the loaded file and records `config_sha256` and `rules_sha256` in the
+   manifest. Nothing in `ai-review/src`, `scripts/` or the templates reads any of
+   the three. Every stage loads `$AI_REVIEW_CONFIG` itself.
+   [`artifacts-and-schemas.md`](../reference/artifacts-and-schemas.md) lists the
+   config copy's consumer as "all later stages/audit", which is false.
 3. **Binding checked in one stage.** Only consensus compares the live effective
    config with the manifest (`_require_effective_config_integrity` in
    [`consensus.py`](../../ai-review/src/ai_review/consensus.py)). The adapter runner
@@ -54,32 +58,35 @@ Four gaps remain:
     configuration. Consensus key-diffs and SPEC-66's model, effort and timeout
     lookups keep reading the same field.
   - Mismatch messages name the differing top-level keys from a canonical diff.
-  - Any key a later spec adds, such as SPEC-48's `review_scope`, is bound
-    automatically.
+  - Any key a later spec adds is bound automatically.
   - The digest value changes once. Its format and every field that carries it stay
     the same, so this is compatible.
-- `inputs/config.review.yaml` stays as an audit copy, and later stages keep loading
-  `$AI_REVIEW_CONFIG`. Repointing stages at the bundle copy would need a template
-  change and buys nothing once the digest is checked everywhere.
+- **Read assets from the image and delete the unread entries (decided
+  2026-10-16).** Every stage renders prompts and rules from
+  `reviewers.trusted_runtime_root()`. Prepare stops copying `prompts/`, `rules/`
+  and the configuration into the bundle, and the manifest stops carrying
+  `config_sha256` and `rules_sha256`. The image pair is the binding for prompt and
+  rule text: both images come from one pinned release. The manifest has no schema
+  and no stage reads these entries, so the deletion ships in 2.0.3 and is listed in
+  the CHANGELOG.
 
 ## Exact changes
 
 ### 1. Runtime assets from the trusted root
 
-- Prepare copies `rules/` and `prompts/` from `reviewers.trusted_runtime_root()`,
-  not from `config_path.parent.parent`. `rules_sha256` is computed over the same
-  directory.
-- `render_review_prompt` and `render_critique_prompt` keep reading
-  `inputs/prompts/`. When it is missing, they fall back to
-  `trusted_runtime_root() / "prompts"`, not the config file's parent.
+- `render_review_prompt` and `render_critique_prompt` read `prompts/` and `rules/`
+  from `reviewers.trusted_runtime_root()`. There is no bundle lookup and no
+  fallback.
+- Prepare no longer copies `rules/`, `prompts/` or `config.review.yaml` into the
+  bundle, and no longer writes `config_sha256` or `rules_sha256`.
 - Merge the two renderers into one `_render(stage, blocks)` (simplification item N10)
   while rewriting this lookup. Today config loading, limits, the prompt-path
   fallback and the size guard are duplicated between them.
 - No environment variable selects the root. In the image and in a source checkout,
   `trusted_runtime_root()` resolves to the same `ai-review/` directory that the
-  shipped config's grandparent does today, so shipped behavior does not change.
-  Tests that relied on a config-relative prompt or rules directory pass an explicit
-  fixture instead.
+  shipped config's grandparent does today, so shipped prompt text does not change.
+  Tests that relied on a bundle or config-relative prompt or rules directory take
+  the root as an explicit parameter instead.
 
 ### 2. Binding check before consequential work
 
@@ -109,25 +116,26 @@ The check detects variables scoped to only some jobs; it is not tamper-proofing.
 
 ### 3. Documentation
 
-The implementing pull request changes the `inputs/config.review.yaml` row in
-[`artifacts-and-schemas.md`](../reference/artifacts-and-schemas.md) to: consumer
-"audit"; contract "byte copy of the configuration prepare loaded, bound by
-`config_sha256`; later stages load `AI_REVIEW_CONFIG` and must reproduce the
-manifest's `effective_config_sha256`". It also changes the
-[security model](../SECURITY_MODEL.md) sentence on cross-stage bindings to say that
-review, critique, consensus, and post each verify the effective config.
+The implementing pull request removes the `inputs/rules/`, `inputs/prompts/` and
+`inputs/config.review.yaml` rows from
+[`artifacts-and-schemas.md`](../reference/artifacts-and-schemas.md), and states that
+prompts and rules come from the image and that every stage loads
+`AI_REVIEW_CONFIG` and must reproduce the manifest's `effective_config_sha256`. It
+also changes the [security model](../SECURITY_MODEL.md) sentence on cross-stage
+bindings to say that review, critique, consensus, and post each verify the
+effective config.
 
 ## Tests
 
 Extend the existing files:
 
-- [`test_input_bundle.py`](../../ai-review/tests/unit/test_input_bundle.py): rules
-  and prompts come from `trusted_runtime_root()` when `--config` points at a copied
-  config in a temporary directory that has its own `prompts/` and `rules/`.
+- [`test_input_bundle.py`](../../ai-review/tests/unit/test_input_bundle.py): the
+  bundle contains no `prompts/`, `rules/` or `config.review.yaml`, and the manifest
+  has no `config_sha256` or `rules_sha256`.
 - [`test_review_prompt_render.py`](../../ai-review/tests/unit/test_review_prompt_render.py)
   and [`test_critique_prompt_render.py`](../../ai-review/tests/unit/test_critique_prompt_render.py):
-  with `inputs/prompts/` absent, the fallback reads the trusted root, not the config
-  parent.
+  prompts and rules come from the trusted root even when `--config` points at a
+  copied config in a temporary directory that has its own `prompts/` and `rules/`.
 - [`test_adapter_runner.py`](../../ai-review/tests/unit/test_adapter_runner.py): a
   roster, model, or critique override that differs from prepare produces
   `config_error`/`EffectiveConfigMismatch` with no adapter spawn and no prompt file.
@@ -144,7 +152,8 @@ Extend the existing files:
 - A job whose `AI_REVIEW_*` overrides differ from prepare's fails before a provider
   call (review/critique) or a platform client (post), with a message that names the
   divergent keys.
-- The artifact reference describes `inputs/config.review.yaml` accurately.
+- The bundle carries no prompt, rule or configuration copy, and the artifact
+  reference no longer lists them.
 - Shipped templates, image-only consumers, and local fixtures behave as before when
   every job sees the same variables.
 

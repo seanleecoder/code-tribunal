@@ -5,6 +5,7 @@
 - **Depends on:** nothing.
 - **Decision:** S11 from the [simplification audit](simplification-audit/SIMPLIFICATION_REVIEW.md), narrowed. The maintainer chose this on 2026-10-13: demote, do not drop, and do not yet remove the veto. The severity-downgrade part of S11 (`critique.allow_severity_downgrade`, off by default) is out of scope.
 - **Requires:** an amendment to [ADR-0002](../decisions/0002-post-1.0-review-output-policy.md), in the same pull request. ADR-0002 decision 3 and the consequence "Majority-noise groups are invisible in the merge request" assume that suppression exists.
+- **Absorbs:** `Found by` on summary entries, the one part of SPEC-45 kept when it was retired on 2026-10-16. It edits the same `_summary_line`.
 
 ## Why
 
@@ -49,30 +50,34 @@ opt-in suppression audit.
    "ambiguous_unassigned"`. Only majority noise produces that combination, so
    no new artifact field is needed. Ordering and the `max_fyi_findings` cap are
    unchanged.
-3. **Artifact compatibility.** The `"drop"` value stays in the `decision` enum
+3. **`Found by`.** Every summary entry (FYI and fallback) shows `Found by`, the
+   sorted `contributing_reviewers`, each through `literal_span`. Place it before
+   the noise marker. Inline bodies already list the same reviewers under
+   `Support:`, so they are unchanged and `render-body` is not bumped.
+4. **Artifact compatibility.** The `"drop"` value stays in the `decision` enum
    of `consensus.v2`, and `summary.drop_count` stays required. The producer no
    longer emits `"drop"`, so `drop_count` is always `0`. Register both as a
    temporary compatibility row
    ([register](../development/temporary-compatibility.md)), with a code comment
    naming its ID, to be removed at the next major consensus cutover. Keep the
    `Decision` literal in `types.py` aligned with the schema until then.
-4. **Lifecycle.** A demoted group is now in state planning, like any other FYI
+5. **Lifecycle.** A demoted group is now in state planning, like any other FYI
    group. A matching open thread keeps its record. It stays open with
    `last_decision: "fyi"` and is no longer auto-resolved by the noise vote. A
    human disposition (`resolve`, `wontfix`, `reopen`) still applies as before.
    Record this in the CHANGELOG as a visible behaviour change.
-5. **Docs.**
+6. **Docs.**
    - Update the decision table in
      [`reference/consensus.md`](../reference/consensus.md).
    - Amend ADR-0002: decision 3's audit and the "invisible" consequence are
-     superseded, because nothing is suppressed any more.
+     superseded, because nothing is suppressed any more. (Decision 2 was amended
+     on 2026-10-16 when SPEC-45 was retired.)
    - Note in [artifacts and schemas](../reference/artifacts-and-schemas.md) that
      `drop_count` is retained for compatibility and is always `0`.
 
 ## Interactions
 
-- **SPEC-45** no longer needs `drop_reason`, the disposition audit, or
-  `critique.show_disposition_audit`.
+- **SPEC-45** was retired on 2026-10-16. Its `Found by` change is step 3 here.
 - **SPEC-66**'s critique subsection reports
   `groups_demoted_by_noise_majority` in place of a dropped count.
 - **S13 (absence-based resolution)** is unchanged. This spec only stops one
@@ -88,7 +93,9 @@ opt-in suppression audit.
 - `test_summary_render.py`:
   - a demoted group's entry carries the marker with the noise count;
   - a single-supporter FYI group and an ambiguous FYI group do not;
-  - a hostile title still renders literally.
+  - a hostile title still renders literally;
+  - every entry shows `Found by` with the sorted reviewers, a hostile reviewer
+    value renders literally, and inline bodies are byte-identical to before.
 - `test_state_plan.py`: an open record whose group is now demoted stays `open`
   with `last_decision == "fyi"` and is not resolved, even when the resolution
   quorum holds.

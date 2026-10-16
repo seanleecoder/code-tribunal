@@ -5,25 +5,25 @@ The [static review](SIMPLIFICATION_REVIEW.md) audited main at
 for future decisions, not a set of implementation instructions. Each open item
 still needs its own decision, and items marked "ADR" need an accepted ADR first.
 
-## Dispositions (main at `da35afa`, decisions through 2026-10-14)
+## Dispositions (main at `55a9db6`, decisions through 2026-10-16)
 
 | ID | Item | Status | Next step |
 |---|---|---|---|
-| S01 | Retire release certificates, evidence ledgers and waivers | **Direction accepted 2026-10-13.** Every release runs the full canary (panel, lifecycle, hostile) with no waivers (decided 2026-10-14). Draft: [ADR-0004](../../decisions/0004-simplified-release-process.md). | Accept ADR-0004, release 2.0.3 with the old process, then migrate (ADR-0004 lists the steps) and release 2.1.0 with the new one. |
+| S01 | Retire release certificates, evidence ledgers and waivers | **Direction accepted 2026-10-13.** Every release runs the panel and lifecycle canaries with no waivers (decided 2026-10-14); the hostile canary runs only when the trust boundary changes (2026-10-16). Draft: [ADR-0004](../../decisions/0004-simplified-release-process.md). | Accept ADR-0004, release 2.0.3 with the old process, then migrate (ADR-0004 lists the steps) and release 2.1.0 with the new one. |
 | S02 | Delete documentation-policy machinery | Done in [#168](https://github.com/seanleecoder/code-tribunal/pull/168). Link/anchor and release-note checks are kept. | — |
 | S03 | Remove production mock/fallback paths (`AI_REVIEW_LOCAL_MOCK`) | **Cheap variant chosen 2026-10-14:** one Python mock switch. | 2.1.x. A missing CLI or key always fails. Delete the shell mock code, the `REQUIRE_REAL_*` controls and the refusal-text matching. The canaries keep working unchanged. |
 | S04 | Resolve configuration once; remove non-choices | Pending; staged through N05. | Default drift is fixed in 2.0.3 (SPEC-68). The typed object lands in 2.1.x. The breaking removal of knobs is in the next major. |
 | S05 | Shrink the model-facing finding/critique contracts | Reverted. [#171](https://github.com/seanleecoder/code-tribunal/pull/171) and [#172](https://github.com/seanleecoder/code-tribunal/pull/172) were reverted in `63ca67a` for compatible 2.0.2. | Re-land in the next major release. SPEC-41 part A ships without it. |
 | S06 | One result envelope instead of a batch plus status mirror | Pending. SPEC-66 ships compatibly with status files as a consensus input (decided 2026-10-13). | If adopted in the next major release, fold SPEC-66's status fields into the envelope and delete the status-dir loader. |
 | S07 | Python as the sole adapter launcher | Pending; staged through N07 and N08. | OpenCode first, then seat setup moves into the registry (2.1.x). The other shells keep only the command line. |
-| S08 | Explicit pinned transport codecs | Pending; staged through N06. | Per-seat codecs in 2.1.x, before SPEC-66 (b). The remaining fallbacks are deleted after S05. |
+| S08 | Explicit pinned transport codecs | Pending; staged through N06. | Per-seat codecs in 2.1.x. The remaining fallbacks are deleted after S05. |
 | S09 | Remove opt-in live mirroring (`mirror_logs`) | Pending | Ready: self-contained. |
 | S10 | Remove grouping's union-find prepass | Done in [#170](https://github.com/seanleecoder/code-tribunal/pull/170), verified by differential check against the pre-change code. | — |
 | S11 | Remove the noise veto and severity negotiation | **Narrowed 2026-10-13:** majority noise demotes to FYI instead of dropping ([SPEC-67](../spec-67-majority-noise-to-fyi.md)). | Implement SPEC-67. The severity-downgrade half (off by default) is undecided. |
 | S12 | Stop maintaining a second schema interpreter in tests | Pending; N16 is a first slice. | Delete test-only TypedDicts in 2.0.3; the rest after S06. |
-| S13 | Remove absence-based thread resolution | **Kept for now (2026-10-13).** | Revisit with SPEC-66 data on degraded-run frequency. SPEC-41 part A and SPEC-67 remove two causes of false resolution first. |
+| S13 | Remove absence-based thread resolution | **Kept for now (2026-10-13).** | Revisit with SPEC-66 data on degraded-run frequency. SPEC-41 part A, SPEC-67 and SPEC-68 fix 1 remove three causes of false resolution first. When revisited, consider "auto-resolve only on a full-grade run" as a replacement for `min_successful_reviewers_for_resolution`, not an addition (noted 2026-10-16). |
 | S14 | Narrow state matching; one state format | Pending. The legacy state decoder (`STATE_NOTE_LEGACY_RE` in `memory.py`) is not in the [temporary-compatibility register](../../development/temporary-compatibility.md). | Register it in 2.0.3. The single migration in the next major also moves state into the summary comment (N04) and replaces the post-time anchor remap (N14). |
-| S15 | Render at publication; single-line inline comments | Pending; N12 is the cheap first step. | Hash only the rendered body in 2.1.0, with SPEC-45 part A. |
+| S15 | Render at publication; single-line inline comments | Pending; N12 is the cheap first step. | Hash only the rendered body in 2.1.0 (N12). SPEC-45, its former companion, was retired on 2026-10-16. |
 | S16 | Simplify CI without collapsing credential boundaries | Pending; product calls made 2026-10-14 (N02, N03). | GitLab keeps direct include only, and GitHub moves to a reusable workflow; both ship in the next major. |
 | S17 | Replace the smoke manifest framework | Done in [#169](https://github.com/seanleecoder/code-tribunal/pull/169). | — |
 | S18 | Prune tests by contract ownership | Partial: `test-strict` and `compile` targets and retired-machinery tests removed. | Continue alongside each owning change; no standalone work. |
@@ -40,22 +40,22 @@ otherwise build on top of it. Line counts are estimates covering source and test
 | ID | Item | Lines | Timing | Notes |
 |---|---|---:|---|---|
 | N01 | Replace the custom pin checker with Renovate (updates) and zizmor (workflow pin lint), keeping about 200 lines of project-specific checks, including every Dockerfile `FROM`/`ARG` digest | −1,050 | 2.1.0, with S01 | Decided 2026-10-14. Named in ADR-0004. zizmor does not read Dockerfiles, so their digest checks stay in-repo. |
-| N02 | GitLab: support direct include only; drop hardened child mode | −300 | Deprecate in the 2.0.3 docs (SPEC-43); delete in the next major | Decided 2026-10-14. Child isolation is not a boundary (SPEC-43). |
+| N02 | GitLab: support direct include only; drop hardened child mode | −300 | Deprecate in the 2.0.3 docs (SPEC-43); delete in the next major | Decided 2026-10-14. Child isolation is not a boundary (SPEC-43). The deletion includes `_validate_child_mode` in `scripts/pipeline_trust.py` and its child-mode tests. |
 | N03 | GitHub: reusable workflow (`workflow_call`) replaces the copied template and its sync machinery | −400 | Decide in ADR-0004; ship in the next major | Decided 2026-10-14. Check names change, so it is breaking. |
-| N04 | One bot comment per merge request: state moves inside the summary | −200 | SPEC-66 (a) reserves the space; implement with S14 in the next major | Decided 2026-10-14. Needs N13 first. Fixes summary ownership by construction. |
-| N05 | Parse configuration once into a frozen typed object; hash the whole configuration | −300 | 2.0.3 drift fix (SPEC-68) and full-config digest (SPEC-47); object in 2.1.x before SPEC-48 | Stages S04. |
-| N06 | Per-seat `output_codec` in the registry; delete retired OpenCode stream forms and stage-less inference | −240 | 2.1.x, before SPEC-66 (b) | Stages S08. Usage capture then lands in one codec result. |
-| N07 | Launch OpenCode from `opencode_client` (Python); delete the 269-line shell script, keep the HTTP client | −400 | 2.1.x, before SPEC-66 (b) | First S07 slice. |
+| N04 | One bot comment per merge request: state moves inside the summary | −200 | SPEC-66 reserves the space; implement with S14 in the next major | Decided 2026-10-14. Needs N13 first. Fixes summary ownership by construction. |
+| N05 | Parse configuration once into a frozen typed object; hash the whole configuration | −300 | 2.0.3 drift fix (SPEC-68) and full-config digest (SPEC-47); object in 2.1.x before the S04 knob removal | Stages S04. |
+| N06 | Per-seat `output_codec` in the registry; delete retired OpenCode stream forms and stage-less inference | −240 | 2.1.x | Stages S08. (Its ordering before SPEC-66 usage capture lapsed when usage capture was dropped on 2026-10-16.) |
+| N07 | Launch OpenCode from `opencode_client` (Python); delete the 269-line shell script, keep the HTTP client | −400 | 2.1.x | First S07 slice. |
 | N08 | Seat setup (environment, isolated home, effort flag, schema transport) declared in the registry; shells keep only the command line. Gives Claude an isolated home like the other seats. | −190 | 2.1.x, after the S03 mock switch | Stages S07. Also stops stripping `$schema` in four places, and stops duplicating Claude's command line in the image probe. |
 | N09 | Strip agent-instruction files once in trusted prepare, not four ways in the shells | −90 | 2.0.3 | Snapshot digest changes. |
 | N10 | Merge the review and critique prompt renderers | −25 | 2.0.3, inside SPEC-47 | |
 | N11 | Match state only in post; consensus becomes state-free (delete `state_aliases.json`, `issue_id_source`, `state_match`) | −600 | Next major (`consensus.v3`) | SPEC-68 fix 1 is the compatible bug fix first. |
-| N12 | Hash only the rendered body; stop writing the marker's `source=` | −70 | 2.1.0, with SPEC-45 part A; delete `group.body_hash` in the next major | Stages S15. Render changes stop touching the consensus goldens. |
+| N12 | Hash only the rendered body; stop writing the marker's `source=` | −70 | 2.1.0; delete `group.body_hash` in the next major | Stages S15. Render changes stop touching the consensus goldens. |
 | N13 | Stop writing state fields nothing reads | −120 | 2.1.x | Prerequisite for N04, and lowers the risk of exceeding the state size limit. |
 | N14 | Replace the post-time anchor remap with the group's context hashes | −255 | Next major, with S14 | Replay the lifecycle end-to-end tests. |
 | N15 | Delete consensus integrity checks the trusted stages already guarantee (quality-invariant re-check, model check, duplicate unknown-target check) | −165 | 2.1.0, or with S06 | SPEC-68 fix 3 adds the one missing binding. |
 | N16 | Delete TypedDicts used only by the schema-alignment test | −100 | 2.0.3 | First S12 slice. |
-| N17 | `input_bundle`: GitHub revision through the platform client, a two-point head recheck, no JS fork step, no unread digests | −200 | 2.1.x, with SPEC-66 (c), so the live evidence is paid once | |
+| N17 | `input_bundle`: GitHub revision through the platform client, a two-point head recheck, no JS fork step, no unread digests | −200 | 2.1.x | No longer paired with SPEC-66's failed-panel publication, which was dropped on 2026-10-16. SPEC-47 already deletes `config_sha256` and `rules_sha256` in 2.0.3. |
 | N18 | Merge the five canary scripts into two platform modules behind one CLI | −950 | After 2.1.0 | Not in the same release as the process change. |
 | N19 | Docs pruning: the 0.4/1.x migration sections, the 1.0.0 known issue, impossible caveats, and one copy of each duplicated topic | −350 | 2.0.3; evidence docs with S01 | |
 | N20 | Image hygiene: stop copying unused scripts, CI files and READMEs into the base image | small | Next image rebuild (2.0.3) | |
@@ -72,8 +72,6 @@ otherwise build on top of it. Line counts are estimates covering source and test
 - **Deferred until SPEC-66 data exists:**
   - Claude's JSON envelope versus stream-json, which trades the timeout trace for
     about 400 lines;
-  - Codex usage from stdout events instead of a sidecar file, decided in
-    SPEC-66 (b);
   - making Codex and OpenCode structured-output only.
 
 ## Notes on completed items
