@@ -89,12 +89,12 @@ the finding.
   requires every property to be listed as required, and the schema still steers
   compliant models toward emitting the field.
 
-### Part B — make loss visible (SPEC-66 stage (a))
+### Part B — make loss visible (SPEC-66)
 
 The posted signal is SPEC-66's always-present health headline. It reports raw,
 accepted, dropped and cap-omitted counts per seat, and grades a run with drops as
 `degraded`. Do not build a second loss notice here. SPEC-66 ships compatibly,
-so part B lands with SPEC-66 stage (a) in 2.1.0.
+so part B lands with SPEC-66 in 2.1.0.
 
 ## Tests
 

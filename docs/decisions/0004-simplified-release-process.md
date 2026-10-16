@@ -41,9 +41,9 @@ The assurance that matters already lives elsewhere:
 - **Provenance.** `publish-ai-review-images.yml` builds, smoke-tests, pushes and
   attests both images from the runtime source R on main. `validate_candidate_identity.py`
   verifies the digests, the OCI revision label and the attestation signer.
-- **Behaviour.** The Candidate Canary runs the real four-seat panel, the thread
-  lifecycle and the hostile-merge-request probe against the exact digests on both
-  platforms.
+- **Behaviour.** The Candidate Canary runs the real four-seat panel and the thread
+  lifecycle against the exact digests on both platforms, and the GitLab
+  hostile-merge-request probe when the trust boundary changes.
 - **Authorization.** The maintainer's SSH-signed tag, verified against main's
   `.github/allowed_signers`.
 
@@ -61,11 +61,25 @@ the release manifest and its checksum asset are retired. ADR-0003's
 release-authority dimension now reads: "signed release tags whose canonical
 templates pin the released image digests".
 
-### 2. Assurance: a full canary on every release, without waivers
+### 2. Assurance: the core canary on every release, without waivers
 
-Every release requires a green Candidate Canary run of `panel`, `lifecycle` and
-`hostile` on the exact pinned digests. `publish-release.yml` enforces this before
-publishing. There is no scoping table and no waiver ledger.
+Every release requires a green Candidate Canary run of `panel` and `lifecycle` on
+the exact pinned digests. `publish-release.yml` enforces this before publishing.
+There is no scoping table and no waiver ledger.
+
+The `hostile` campaign is required only when a release changes the GitLab
+template, the trust auditor (`pipeline_trust.py`), or how prepare obtains
+credentials. The release pull-request checklist records whether it applied, and
+the release pull-request review checks that the cited canary run includes it. Most
+of what it checks is not release behaviour (decided 2026-10-16):
+
+- `image_substituted` records a limitation that SPEC-43 accepts as unfixable
+  inside the pipeline;
+- `credentials_withheld` checks the canary project's GitLab protection settings;
+- `auditor_rejects_hostile` duplicates the auditor's unit tests.
+
+The part that tests Code Tribunal, prepare failing closed without credentials,
+gets a unit test in the cutover pull request.
 
 Narrower checks become a release pull-request checklist that applies only when
 relevant:
@@ -214,6 +228,7 @@ Each pull request primarily changes one boundary.
 3. **Cutover (release and supply chain), after 2.0.3 is published.**
    - Add `check_release.py`, the new `publish-release.yml`, and the canary
      `run-name` plus its `candidate.json` identity artifact.
+   - Add the unit test that prepare fails closed without platform credentials.
    - Delete the retired scripts, their tests, the Makefile targets
      (`release-inputs` leaves `make quality`), `release-inputs.json` and
      `TEMPLATE.md`.
@@ -230,7 +245,8 @@ Each pull request primarily changes one boundary.
    - Delete the generated `record-*.md` files. Tagged notes link to them by
      `blob/vX`, so nothing breaks.
 5. **2.1.0, the trial run.**
-   - Bump `IMAGE_VERSION`, build R, run the full canary, re-pin in P, sign the tag,
+   - Bump `IMAGE_VERSION`, build R, run the required canary campaigns (hostile
+     included, because the cutover changes the template pins), re-pin in P, sign the tag,
      and publish.
    - Exit criterion: one release body traces source, tested digests and consumer
      pins.

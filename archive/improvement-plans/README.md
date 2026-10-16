@@ -9,6 +9,7 @@ Resuming one does not imply resuming the others.
 - [Spend enforcement](spend-enforcement.md)
 - [External issue-tracker integration](issue-tracker-integration.md)
 - [Unanchored review advisories](unanchored-advisories.md) (formerly SPEC-46)
+- [Review-scope exclusions](review-scope-exclusions.md) (formerly SPEC-48)
 
 Runtime placeholders for these ideas were removed on 2026-07-14. Any future
 proposal must start with a new compatibility and migration review rather than
