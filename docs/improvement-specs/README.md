@@ -95,6 +95,7 @@ recommendation's disposition.
 | SPEC-45 (2026-10-16) | Retire; keep only `Found by` | Folded into SPEC-67. No `render-body.v5` bump and no `critique_observations` in `consensus.v3`. |
 | SPEC-47 bundle copies (2026-10-16) | Read assets from the image; delete the unread copies now | 2.0.3 drops `inputs/prompts/`, `inputs/rules/`, `inputs/config.review.yaml`, `config_sha256` and `rules_sha256`. |
 | Hostile canary (2026-10-16) | Only when the trust boundary changes | Recorded in ADR-0004 decision 2. A unit test covers prepare failing closed without credentials. |
+| State overflow (2026-10-16) | Fix the causes in 2.0.3 through N13; close the SPEC-52 draft (#113) | Stop appending `run_history` and bound alias growth. The draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | S13 revisit (2026-10-16) | Note an option, no change | When S13 is revisited, consider "auto-resolve only on a full-grade run" as a replacement for the resolution quorum, not an addition. |
 
 ## Recommended order
@@ -121,6 +122,8 @@ unexpected artifacts.
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);
    - delete test-only TypedDicts (N16);
+   - stop writing unread state fields and stop unbounded state growth: no
+     `run_history`, bounded alias families (N13);
    - prune the docs (N19);
    - image hygiene (N20).
 
@@ -141,17 +144,16 @@ unexpected artifacts.
 12. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
 13. The S03 mock switch, then seat setup in the registry (N08).
 14. The typed configuration object (N05), before the S04 knob removal.
-15. Stop writing unread state fields (N13).
-16. The `input_bundle` revision cleanup (N17).
+15. The `input_bundle` revision cleanup (N17).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 
-17. Re-land S05, which restores `resolve_location` and removes `confidence`.
-18. Consensus becomes state-free (N11). `consensus.v3` also drops
+16. Re-land S05, which restores `resolve_location` and removes `confidence`.
+17. Consensus becomes state-free (N11). `consensus.v3` also drops
     `group.body_hash` and removes SPEC-67's `drop` compatibility row.
-19. One S14 state migration: state moves into the summary comment (N04), and the
+18. One S14 state migration: state moves into the summary comment (N04), and the
     anchor remap uses context hashes (N14).
-20. Consumer-visible changes:
+19. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in
       `pipeline_trust.py` and their tests;
