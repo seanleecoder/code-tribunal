@@ -245,11 +245,16 @@ Action: none required; findings from the remaining seats were evaluated. Re-run 
 </details>
 ````
 
-**Headline and action**, first match wins:
+**Headline and action**, first match wins. A job is a *configuration failure*
+when its outcome is `config_error` or its `error_class` is
+`ReviewerConfigValidation`. The runner reports an invalid model ID as
+`model_error` with that class (`_model_id_validation_error` in
+[`adapter_runner.py`](../../ai-review/src/ai_review/adapter_runner.py)), and
+re-running unchanged fails the same way.
 
 | Condition | Headline | Action line |
 |---|---|---|
-| Any job's outcome is `config_error` | `Review health: configuration error — fix before re-running.` | Fix the reviewer configuration named above; re-running unchanged will fail the same way. |
+| Any job is a configuration failure | `Review health: configuration error — fix before re-running.` | Fix the reviewer configuration named above; re-running unchanged will fail the same way. |
 | Grade `rerun_recommended` | `Review health: re-run recommended.` | Re-run the review from prepare; do not retry individual jobs or mix artifacts. |
 | Grade `degraded` and some job is not `success` | `Review health: degraded — re-run optional.` | The sentence in the example above. |
 | Grade `degraded` (drops or caps only) | `Review health: degraded.` | None. |
@@ -260,7 +265,7 @@ Action: none required; findings from the remaining seats were evaluated. Re-run 
 | Outcome | Text |
 |---|---|
 | `timeout` | timed out after X (limit Y) |
-| `model_error` | provider or model error |
+| `model_error` | provider or model error; `configuration error` when `error_class` is `ReviewerConfigValidation` |
 | `schema_error` | output could not be parsed |
 | `unusable` | every reported finding was rejected during normalization |
 | `batch_missing` | the job reported success but its batch was not delivered to consensus |
@@ -357,8 +362,10 @@ post requires the field the consensus change adds.
 - Removing or corrupting every status file leaves group decisions,
   `panel_status`, `failed_reviewers` and exit codes byte-identical. Only
   `run_health` changes.
-- A `config_error` seat renders the configuration headline and action, never a
-  re-run suggestion, even when the grade is `rerun_recommended`.
+- A `config_error` seat, or a `model_error` seat with `error_class`
+  `ReviewerConfigValidation` (an invalid model ID), renders the configuration
+  headline and action, never a re-run suggestion, even when the grade is
+  `rerun_recommended`.
 - A full run with no findings creates a summary comment whose only content is
   the health headline and the collapsed details.
 - A failed panel prints the health rendering in the consensus job log.
@@ -385,7 +392,8 @@ post requires the field the consensus change adds.
   consensus artifact still validates, and `test_post.py` asserts that post
   rejects it before any platform call.
 - `ai-review/tests/unit/test_summary_render.py`: every row of the headline
-  table, including a config error on a `rerun_recommended` grade; hostile model
+  table, including a config error on a `rerun_recommended` grade and an invalid
+  model ID (`model_error` with `ReviewerConfigValidation`); hostile model
   IDs and error text render literally; error text never appears inside a table
   cell; the reserved section survives truncation at both platform limits.
 - `ai-review/tests/unit/test_post.py`: a summary is created for a full run with
