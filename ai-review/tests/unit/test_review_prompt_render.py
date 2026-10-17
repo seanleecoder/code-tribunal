@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.config import effective_config_binding, load_config
 from ai_review.prompt_render import _diff_stats_text, render_review_prompt
 from ai_review.schema import load_json_file, write_canonical_json
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.adapter_inputs import bind_manifest_to_config  # noqa: E402
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -94,15 +97,14 @@ class ManifestBlockTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp) / "inputs"
             _write_inputs(input_dir, _FIXTURE_DIFF)
-            manifest_path = input_dir / "manifest.json"
-            manifest = load_json_file(manifest_path)
-            binding = effective_config_binding(load_config(_REPO_CONFIG))
-            write_canonical_json(manifest_path, {**manifest, **binding})
+            bind_manifest_to_config(input_dir, _REPO_CONFIG)
+            manifest = load_json_file(input_dir / "manifest.json")
             rendered = render_review_prompt(input_dir, _REPO_CONFIG, "claude")
 
         # The config only binds stages; reviewers would pay for it in every call.
+        self.assertIn("effective_config", manifest)
         self.assertNotIn('"effective_config":', rendered)
-        self.assertIn(binding["effective_config_sha256"], rendered)
+        self.assertIn(manifest["effective_config_sha256"], rendered)
         self.assertIn('"run_id":"local-test"', rendered)
 
 

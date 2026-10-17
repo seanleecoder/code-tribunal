@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from .canonical import stable_json_hash
 from .config import EffectiveConfigMismatch, load_config, require_effective_config_binding
-from .consensus import input_manifest_sha256
 from .platform.runtime import create_runtime_platform
 from .posting import post_consensus
 from .schema import load_json_file, validate_instance, write_canonical_json
@@ -41,8 +41,12 @@ def exit_code_for_status(status: object) -> int:
     return 0 if status in SUCCESSFUL_POST_STATUSES else POST_OPERATIONAL_FAILURE_EXIT
 
 
-def consensus_run_mismatch(consensus: Any, manifest: Any) -> str | None:
-    """Describe how a consensus artifact belongs to another run, or return None.
+class ConsensusRunMismatch(ValueError):
+    """The consensus artifact was built from another run's manifest."""
+
+
+def _require_consensus_from_run(consensus: Any, manifest: Any) -> None:
+    """Refuse a consensus artifact that belongs to another run.
 
     Catches artifacts mixed across runs, such as a retried job that downloads
     another run's consensus or an operator replay. It is not tamper protection:
@@ -52,15 +56,14 @@ def consensus_run_mismatch(consensus: Any, manifest: Any) -> str | None:
     expected = {
         "run_id": manifest.get("run_id"),
         "head_sha": manifest.get("head_sha"),
-        "input_manifest_sha256": input_manifest_sha256(manifest),
+        "input_manifest_sha256": stable_json_hash(manifest),
     }
     for field, value in expected.items():
         if consensus.get(field) != value:
-            return (
+            raise ConsensusRunMismatch(
                 f"consensus {field} does not match the manifest in --inputs; "
                 "the consensus artifact belongs to another run"
             )
-    return None
 
 
 def cli(argv: list[str] | None = None) -> int:
@@ -81,11 +84,9 @@ def cli(argv: list[str] | None = None) -> int:
     # no thread or state and writes no post_result.json, like an invalid config.
     try:
         require_effective_config_binding(config, manifest)
-    except EffectiveConfigMismatch as exc:
+        _require_consensus_from_run(loaded_consensus, manifest)
+    except (EffectiveConfigMismatch, ConsensusRunMismatch) as exc:
         print(f"ai-review post: {exc}", file=sys.stderr)
-        return POST_OPERATIONAL_FAILURE_EXIT
-    if (run_mismatch := consensus_run_mismatch(loaded_consensus, manifest)) is not None:
-        print(f"ai-review post: {run_mismatch}", file=sys.stderr)
         return POST_OPERATIONAL_FAILURE_EXIT
     client = create_runtime_platform(config, allow_dry_run_defaults=args.dry_run)
     diff_path = Path(args.inputs) / "mr.diff"

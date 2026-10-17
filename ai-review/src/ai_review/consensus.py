@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .anchors import anchor_path_key, candidate_issue_signature_hash
-from .canonical import CanonicalError, canonical_json, sha256_hex
+from .canonical import CanonicalError, stable_json_hash
 from .config import (
     EffectiveConfigMismatch,
     enabled_reviewers,
@@ -33,11 +33,6 @@ from .schema import (
     write_canonical_json,
 )
 from .types import Consensus, FindingGroup, PanelStatus, State
-
-
-def input_manifest_sha256(manifest: Any) -> str:
-    """Digest that binds a consensus artifact to the manifest it was built from."""
-    return sha256_hex(canonical_json(manifest))
 
 
 def panel_status(successful: list[str], enabled: list[str]) -> str:
@@ -276,7 +271,7 @@ def build_consensus(
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
         "head_sha": manifest["head_sha"],
-        "input_manifest_sha256": input_manifest_sha256(manifest),
+        "input_manifest_sha256": stable_json_hash(manifest),
         "successful_reviewers": successful,
         "resolution_eligible_reviewers": resolution_eligible,
         "failed_reviewers": failed,

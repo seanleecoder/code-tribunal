@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import io
 import sys
@@ -13,6 +14,7 @@ import ai_review.post as post_module
 import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
+from ai_review.canonical import stable_json_hash
 from ai_review.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigError,
@@ -20,7 +22,6 @@ from ai_review.config import (
     load_config,
     validate_config,
 )
-from ai_review.consensus import input_manifest_sha256
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
@@ -74,7 +75,7 @@ def _write_post_cli_run(root: Path, consensus: dict[str, Any]) -> list[str]:
     inputs = root / "inputs"
     inputs.mkdir()
     write_canonical_json(inputs / "manifest.json", manifest)
-    bound = {**consensus, "input_manifest_sha256": input_manifest_sha256(manifest)}
+    bound = {**consensus, "input_manifest_sha256": stable_json_hash(manifest)}
     write_canonical_json(root / "consensus.json", bound)
     return [
         "--config",
@@ -222,7 +223,7 @@ class PostTests(PostCase):
         stderr = io.StringIO()
         with (
             patch("ai_review.post.create_runtime_platform") as factory,
-            patch("sys.stderr", stderr),
+            contextlib.redirect_stderr(stderr),
         ):
             exit_code = post_module.cli(argv)
 

@@ -16,6 +16,7 @@ from ai_review.config import (
     ConfigError,
     EffectiveConfigMismatch,
     apply_env_overrides,
+    effective_config_binding,
     effective_config_digest,
     enabled_reviewers,
     load_config,
@@ -629,10 +630,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
     def test_binding_accepts_the_config_prepare_recorded(self) -> None:
         config = load_config(_REPO_CONFIG)
-        manifest = {
-            "effective_config": deepcopy(config),
-            "effective_config_sha256": effective_config_digest(config),
-        }
+        manifest = effective_config_binding(deepcopy(config))
 
         self.assertEqual(
             require_effective_config_binding(config, manifest),
@@ -641,10 +639,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
     def test_binding_names_the_divergent_top_level_keys(self) -> None:
         config = load_config(_REPO_CONFIG)
-        manifest = {
-            "effective_config": deepcopy(config),
-            "effective_config_sha256": effective_config_digest(config),
-        }
+        manifest = effective_config_binding(deepcopy(config))
         with mock.patch.dict(
             "os.environ",
             {"AI_REVIEW_POSTING_MODE": "github_reviews", "AI_REVIEW_CODEX_MODEL": "x/y"},

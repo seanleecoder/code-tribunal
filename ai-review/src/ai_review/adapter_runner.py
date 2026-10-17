@@ -25,10 +25,10 @@ from .adapter_process import (
     _model_id_validation_error,
     _run_adapter_process,
 )
-from .anchors import is_sha256
 from .config import (
     ConfigError,
     load_config,
+    recorded_effective_config_digest,
     require_effective_config_binding,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -65,20 +65,37 @@ def run_adapter(reviewer: str, stage: str) -> int:
     run_id = str(manifest.get("run_id") or "unknown-run")
     # Prepare's digest stamps every artifact; past the binding check below, the
     # live digest equals it.
-    recorded_digest = manifest.get("effective_config_sha256")
-    config_digest = str(recorded_digest) if is_sha256(recorded_digest) else None
+    config_digest = recorded_effective_config_digest(manifest)
     model = "unknown-model"
 
     def _fail(
         status: str,
         *,
-        digest: str,
+        digest: str | None,
         model: str,
         error_class: str | None = None,
         error_message: str | None = None,
         exit_code: int = _EXIT_ERROR,
     ) -> int:
-        """Write a digest-bound empty batch and matching failure status."""
+        """Write a digest-bound empty batch and matching failure status.
+
+        Without a digest only the status is written, so consensus does not
+        consume a placeholder batch.
+        """
+        if digest is None:
+            _write_status(
+                output_dir,
+                reviewer,
+                stage,
+                status,
+                started_at,
+                started_monotonic,
+                output_file,
+                error_class=error_class,
+                error_message=error_message,
+                run_id=run_id,
+            )
+            return exit_code
         _write_empty(
             output_dir,
             output_file,
@@ -108,22 +125,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             usable_for_resolution=False,
         )
         return exit_code
-
-    def _fail_status_only(status: str, *, error_class: str, error_message: str) -> int:
-        """Write a status without a batch when no config digest can be resolved."""
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            status,
-            started_at,
-            started_monotonic,
-            output_file,
-            error_class=error_class,
-            error_message=error_message,
-            run_id=run_id,
-        )
-        return _EXIT_ERROR
 
     try:
         if mock_error := _local_mock_unauthorized():
@@ -304,12 +305,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             exc.stderr or "",
             kind="timeout",
         )
-        if config_digest is None:
-            return _fail_status_only(
-                "timeout",
-                error_class="TimeoutExpired",
-                error_message=str(exc),
-            )
         return _fail(
             "timeout",
             digest=config_digest,
@@ -318,17 +313,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_message=str(exc),
         )
     except Exception as exc:
-        status = "config_error" if isinstance(exc, ConfigError) else "internal_error"
-        if config_digest is None:
-            # Last resort: cannot stamp a digest; still emit a config_error status
-            # without a finding batch so consensus does not consume a placeholder.
-            return _fail_status_only(
-                status,
-                error_class=exc.__class__.__name__,
-                error_message=str(exc),
-            )
         return _fail(
-            status,
+            "config_error" if isinstance(exc, ConfigError) else "internal_error",
             digest=config_digest,
             model="unknown-model",
             error_class=exc.__class__.__name__,

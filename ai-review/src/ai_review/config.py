@@ -444,6 +444,12 @@ def effective_config_binding(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def recorded_effective_config_digest(manifest: Any) -> str | None:
+    """Prepare's effective-config digest from a manifest, or None if absent."""
+    digest = manifest.get("effective_config_sha256") if isinstance(manifest, dict) else None
+    return str(digest) if is_sha256(digest) else None
+
+
 def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> str:
     """Return this stage's config digest once it matches the prepare manifest.
 
@@ -453,10 +459,8 @@ def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> s
     scoped to only some CI jobs; it is not tamper protection, because whoever
     writes the manifest also chooses the digest it records.
     """
-    recorded_digest = (
-        manifest.get("effective_config_sha256") if isinstance(manifest, dict) else None
-    )
-    if not is_sha256(recorded_digest):
+    recorded_digest = recorded_effective_config_digest(manifest)
+    if recorded_digest is None:
         raise EffectiveConfigMismatch(
             "manifest missing effective_config_sha256; re-run prepare with a "
             "current ai-review release"
@@ -464,21 +468,17 @@ def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> s
     current_digest = effective_config_digest(config)
     if recorded_digest == current_digest:
         return current_digest
+    divergent: list[str] = []
     recorded = manifest.get("effective_config")
-    divergent = (
-        sorted(
-            key
-            for key in set(recorded) | set(config)
-            if recorded.get(key) != config.get(key)
+    if isinstance(recorded, dict):
+        divergent = sorted(
+            key for key in set(recorded) | set(config) if recorded.get(key) != config.get(key)
         )
-        if isinstance(recorded, dict)
-        else []
-    )
     raise EffectiveConfigMismatch(
         "effective config differs from the prepare manifest — AI_REVIEW_* "
         "override variables are not scoped identically across jobs "
         f"(divergent={','.join(divergent) or 'effective_config_sha256'} "
-        f"manifest_digest={str(recorded_digest)[:12]}… "
+        f"manifest_digest={recorded_digest[:12]}… "
         f"current_digest={current_digest[:12]}…)"
     )
 
