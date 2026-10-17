@@ -953,6 +953,15 @@ def _write_adapter(adapter_dir: Path, reviewer: str, script: str) -> None:
     adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
 
 
+def _write_sentinel_adapter(adapter_dir: Path, reviewer: str, sentinel: Path) -> None:
+    """An adapter that records it ran by touching ``sentinel``, then finds nothing."""
+    _write_adapter(
+        adapter_dir,
+        reviewer,
+        f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+    )
+
+
 class AdapterStatusEndToEndTests(unittest.TestCase):
     def setUp(self) -> None:
         self._env_keys = ["AI_REVIEW_INPUT_DIR", "AI_REVIEW_OUTPUT_DIR", "AI_REVIEW_CONFIG"]
@@ -1005,11 +1014,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 encoding="utf-8",
             )
             sentinel = Path(tmp) / "adapter-invoked"
-            _write_adapter(
-                paths["adapter_dir"],
-                "codex",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-            )
+            _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
             self._set_env(paths, config_path)
 
             self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
@@ -1091,11 +1096,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 paths = _scaffold_project(Path(tmp))
                 config_path = _write_reviewer_config(paths["config_dir"], "codex")
                 sentinel = Path(tmp) / "adapter-invoked"
-                _write_adapter(
-                    paths["adapter_dir"],
-                    "codex",
-                    f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-                )
+                _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
                 self._set_env(paths, config_path)
                 bind_manifest_to_config(paths["input_dir"], config_path)
                 manifest = load_json_file(paths["input_dir"] / "manifest.json")
@@ -1128,11 +1129,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             sentinel = Path(tmp) / "adapter-invoked"
-            _write_adapter(
-                paths["adapter_dir"],
-                "codex",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-            )
+            _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
             self._set_env(paths, config_path)
 
             self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
@@ -1467,11 +1464,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            _write_adapter(
-                paths["adapter_dir"],
-                "cursor",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
-            )
+            _write_sentinel_adapter(paths["adapter_dir"], "cursor", sentinel)
             self._set_env(paths, config_path)
 
             self.assertEqual(run_prepared_adapter("cursor", "review"), 0)

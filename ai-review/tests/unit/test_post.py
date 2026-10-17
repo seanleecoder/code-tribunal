@@ -13,14 +13,14 @@ import ai_review.post as post_module
 import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.canonical import canonical_json, sha256_hex
 from ai_review.config import (
     CONFIG_SCHEMA_VERSION,
     ConfigError,
-    effective_config_digest,
+    effective_config_binding,
     load_config,
     validate_config,
 )
+from ai_review.consensus import input_manifest_sha256
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
@@ -64,19 +64,17 @@ def _write_post_cli_run(root: Path, consensus: dict[str, Any]) -> list[str]:
     config under the current environment, and the consensus is bound to the
     manifest as consensus binds it.
     """
-    config = load_config(_REPO_CONFIG)
     manifest = {
         "run_id": consensus["run_id"],
         "project_id": consensus["project_id"],
         "merge_request_iid": consensus["merge_request_iid"],
         "head_sha": consensus["head_sha"],
-        "effective_config": config,
-        "effective_config_sha256": effective_config_digest(config),
+        **effective_config_binding(load_config(_REPO_CONFIG)),
     }
     inputs = root / "inputs"
     inputs.mkdir()
     write_canonical_json(inputs / "manifest.json", manifest)
-    bound = {**consensus, "input_manifest_sha256": sha256_hex(canonical_json(manifest))}
+    bound = {**consensus, "input_manifest_sha256": input_manifest_sha256(manifest)}
     write_canonical_json(root / "consensus.json", bound)
     return [
         "--config",
@@ -120,13 +118,6 @@ class PostTests(PostCase):
         validate_instance(result, "post_result.schema.json")
 
     def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
-        fixture_path = (
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "golden"
-            / "default_transitive_split_consensus.json"
-        )
-        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
         for field, invalid_value in (
             ("category", "correctness **injected**"),
@@ -138,7 +129,7 @@ class PostTests(PostCase):
                 inputs = root / "inputs"
                 inputs.mkdir()
                 write_canonical_json(inputs / "manifest.json", {})
-                invalid = load_json_file(fixture_path)
+                invalid = load_json_file(_GOLDEN_CONSENSUS)
                 invalid["groups"][0][field] = invalid_value
                 consensus_path = root / "consensus.json"
                 write_canonical_json(consensus_path, invalid)
@@ -149,7 +140,7 @@ class PostTests(PostCase):
                         post_module.cli(
                             [
                                 "--config",
-                                str(config_path),
+                                str(_REPO_CONFIG),
                                 "--inputs",
                                 str(inputs),
                                 "--consensus",

@@ -436,6 +436,14 @@ def effective_config_digest(config: dict[str, Any]) -> str:
     return stable_json_hash(config)
 
 
+def effective_config_binding(config: dict[str, Any]) -> dict[str, Any]:
+    """The manifest fields prepare records and later stages must reproduce."""
+    return {
+        "effective_config": config,
+        "effective_config_sha256": effective_config_digest(config),
+    }
+
+
 def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> str:
     """Return this stage's config digest once it matches the prepare manifest.
 

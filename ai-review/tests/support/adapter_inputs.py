@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from ai_review.adapter_runner import run_adapter
-from ai_review.config import ConfigError, effective_config_digest, load_config
+from ai_review.config import ConfigError, effective_config_binding, load_config
 from ai_review.schema import load_json_file, write_canonical_json
 
 
@@ -38,8 +38,7 @@ def bind_manifest_to_config(input_dir: Path, config_path: Path) -> None:
     if not manifest_path.exists():
         return
     manifest = load_json_file(manifest_path)
-    manifest["effective_config"] = config
-    manifest["effective_config_sha256"] = effective_config_digest(config)
+    manifest.update(effective_config_binding(config))
     write_canonical_json(manifest_path, manifest)
 
 

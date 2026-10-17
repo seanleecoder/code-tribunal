@@ -8,8 +8,7 @@ import time
 from pathlib import Path
 
 from .adapter_artifacts import (
-    _manifest_effective_config_sha256,
-    _manifest_run_id,
+    _load_manifest,
     _output_file,
     _write_empty,
     _write_parse_debug,
@@ -26,6 +25,7 @@ from .adapter_process import (
     _model_id_validation_error,
     _run_adapter_process,
 )
+from .anchors import is_sha256
 from .config import (
     ConfigError,
     load_config,
@@ -61,10 +61,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
     output_file = _output_file(stage, reviewer)
     started_at = now_iso()
     started_monotonic = time.monotonic()
-    run_id = _manifest_run_id(input_dir)
-    # Until the binding check passes this is prepare's digest, which stamps any
-    # failure artifact; afterwards the live digest equals it.
-    config_digest = _manifest_effective_config_sha256(input_dir)
+    manifest = _load_manifest(input_dir)
+    run_id = str(manifest.get("run_id") or "unknown-run")
+    # Prepare's digest stamps every artifact; past the binding check below, the
+    # live digest equals it.
+    recorded_digest = manifest.get("effective_config_sha256")
+    config_digest = str(recorded_digest) if is_sha256(recorded_digest) else None
     model = "unknown-model"
 
     def _fail(
@@ -133,13 +135,10 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if stage not in reviewer_definition.supported_stages:
             raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         config = load_config(config_path)
-        manifest_path = input_dir / "manifest.json"
         # Before the skip decision, prompt rendering, or adapter spawn: a job whose
         # AI_REVIEW_* view differs from prepare's must not spend provider
         # credentials. A mismatch is an EffectiveConfigMismatch config_error.
-        config_digest = require_effective_config_binding(
-            config, load_json_file(manifest_path) if manifest_path.exists() else None
-        )
+        require_effective_config_binding(config, manifest)
         reviewer_config = config["reviewers"].get(reviewer)
         if not isinstance(reviewer_config, dict):
             raise ConfigError(f"unknown reviewer: {reviewer}")

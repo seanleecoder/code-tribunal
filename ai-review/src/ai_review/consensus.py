@@ -35,6 +35,11 @@ from .schema import (
 from .types import Consensus, FindingGroup, PanelStatus, State
 
 
+def input_manifest_sha256(manifest: Any) -> str:
+    """Digest that binds a consensus artifact to the manifest it was built from."""
+    return sha256_hex(canonical_json(manifest))
+
+
 def panel_status(successful: list[str], enabled: list[str]) -> str:
     """Execution health only.
 
@@ -271,7 +276,7 @@ def build_consensus(
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
         "head_sha": manifest["head_sha"],
-        "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
+        "input_manifest_sha256": input_manifest_sha256(manifest),
         "successful_reviewers": successful,
         "resolution_eligible_reviewers": resolution_eligible,
         "failed_reviewers": failed,
@@ -285,14 +290,6 @@ def build_consensus(
     }
 
 
-def _require_effective_config_integrity(config: dict[str, Any], manifest: dict[str, Any]) -> str:
-    """Fail when prepare and consensus disagree on the effective config."""
-    try:
-        return require_effective_config_binding(config, manifest)
-    except EffectiveConfigMismatch as exc:
-        raise ConsensusIntegrityError(str(exc)) from exc
-
-
 def validate_consensus_inputs(
     *,
     config: dict[str, Any],
@@ -302,7 +299,7 @@ def validate_consensus_inputs(
 ) -> None:
     """Validate finding/critique batches against prepare run and effective config."""
     try:
-        config_digest = _require_effective_config_integrity(config, manifest)
+        config_digest = require_effective_config_binding(config, manifest)
         run_id = str(manifest.get("run_id") or "").strip()
         if not run_id:
             raise ConsensusIntegrityError("manifest missing run_id")
@@ -395,6 +392,8 @@ def validate_consensus_inputs(
                     raise ConsensusIntegrityError(
                         f"critique duplicate_of unknown for critic={critic}"
                     )
+    except EffectiveConfigMismatch as exc:
+        raise ConsensusIntegrityError(str(exc)) from exc
     except SchemaValidationError as exc:
         raise ConsensusIntegrityError(f"malformed consensus input artifact: {exc}") from exc
 

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 from .adapter_output import _head_tail_preview
-from .anchors import is_sha256
 from .redact import redact_text
 from .schema import (
     adapter_status_artifact,
@@ -28,25 +28,13 @@ from .schema import (
 _RAW_STDOUT_ARTIFACT_LIMIT = 2 * 1024 * 1024
 
 
-def _manifest_run_id(input_dir: Path) -> str:
-    manifest_path = input_dir / "manifest.json"
-    if manifest_path.exists():
-        manifest = load_json_file(manifest_path)
-        if isinstance(manifest, dict) and manifest.get("run_id"):
-            return str(manifest["run_id"])
-    return "unknown-run"
-
-
-def _manifest_effective_config_sha256(input_dir: Path) -> str | None:
+def _load_manifest(input_dir: Path) -> dict[str, Any]:
+    """The prepare manifest, or an empty mapping when there is none."""
     manifest_path = input_dir / "manifest.json"
     if not manifest_path.exists():
-        return None
+        return {}
     manifest = load_json_file(manifest_path)
-    if isinstance(manifest, dict):
-        digest = manifest.get("effective_config_sha256")
-        if is_sha256(digest):
-            return str(digest)
-    return None
+    return manifest if isinstance(manifest, dict) else {}
 
 
 def _output_file(stage: str, reviewer: str) -> Path:

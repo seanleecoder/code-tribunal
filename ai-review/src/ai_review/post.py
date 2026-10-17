@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from .canonical import canonical_json, sha256_hex
 from .config import EffectiveConfigMismatch, load_config, require_effective_config_binding
+from .consensus import input_manifest_sha256
 from .platform.runtime import create_runtime_platform
 from .posting import post_consensus
 from .schema import load_json_file, validate_instance, write_canonical_json
@@ -47,13 +47,12 @@ def consensus_run_mismatch(consensus: Any, manifest: Any) -> str | None:
     Catches artifacts mixed across runs, such as a retried job that downloads
     another run's consensus or an operator replay. It is not tamper protection:
     whoever writes the artifact also chooses these fields, and ADR-0002's note
-    that inter-stage integrity is unaddressed still stands. The manifest digest
-    is computed exactly as consensus computes it.
+    that inter-stage integrity is unaddressed still stands.
     """
     expected = {
         "run_id": manifest.get("run_id"),
         "head_sha": manifest.get("head_sha"),
-        "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
+        "input_manifest_sha256": input_manifest_sha256(manifest),
     }
     for field, value in expected.items():
         if consensus.get(field) != value:

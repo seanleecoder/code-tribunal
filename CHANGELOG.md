@@ -17,9 +17,9 @@ versioning.
 - The effective-config digest now covers the whole validated configuration,
   including limits, state, security, and every posting setting, instead of a
   hand-picked subset. The manifest's `effective_config` carries that
-  configuration, and mismatch messages name the differing top-level keys. The
-  digest value changes once, so every job in a pipeline must run the same
-  release.
+  configuration, and mismatch messages name the differing top-level keys.
+  Reviewer prompts omit it. The digest value changes once, so every job in a
+  pipeline must run the same release.
 
 ### Fixed
 
