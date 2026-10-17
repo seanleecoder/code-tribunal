@@ -144,16 +144,17 @@ class FindingCapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp)
             (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
-            finalized = finalize_finding_batch(
-                raw,
-                reviewer="claude",
-                model="model",
-                run_id="local",
-                started_at="2026-06-29T00:00:00Z",
-                input_dir=input_dir,
-                max_findings=2,
-                effective_config_sha256="0" * 64,
-            )
+            with contextlib.redirect_stderr(io.StringIO()):
+                finalized = finalize_finding_batch(
+                    raw,
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at="2026-06-29T00:00:00Z",
+                    input_dir=input_dir,
+                    max_findings=2,
+                    effective_config_sha256="0" * 64,
+                )
         self.assertEqual(
             [finding["title"] for finding in finalized["findings"]],
             ["Explicit zero", "Missing confidence"],

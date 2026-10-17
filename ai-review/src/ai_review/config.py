@@ -201,9 +201,8 @@ INLINE_SIDES: tuple[str, ...] = get_args(AnchorSide.__value__)
 # panel can reach two, but with zero fault tolerance: one failed or silently
 # degraded seat makes it unreachable for every finding, and the run then reports
 # an empty review indistinguishable from a clean one. Silent seat loss is not
-# hypothetical — before SPEC-41, a reviewer that omitted `confidence` lost every
-# finding, and malformed anchors or fields still drop findings. Three keeps a
-# two-support path reachable after one seat is lost.
+# hypothetical: malformed fields and unresolvable anchors drop findings. Three
+# keeps a two-support path reachable after one seat is lost.
 #
 # The shipped configuration already enables exactly three seats, so this is not a
 # default change. It does reject two-seat deployments that were valid under v2.
