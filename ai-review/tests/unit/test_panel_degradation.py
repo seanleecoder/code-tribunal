@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from ai_review.config import effective_config_digest, effective_config_summary, load_config
+from ai_review.config import effective_config_digest, load_config
 from ai_review.consensus import cli
 from ai_review.schema import (
     empty_finding_batch,
@@ -45,7 +45,7 @@ _MANIFEST = {
     "repo_snapshot_sha256": "0" * 64,
     "config_sha256": "0" * 64,
     "rules_sha256": "0" * 64,
-    "effective_config": effective_config_summary(_CONFIG),
+    "effective_config": _CONFIG,
     "effective_config_sha256": _CONFIG_DIGEST,
     "created_at": "2026-06-29T00:00:00Z",
 }
@@ -177,7 +177,7 @@ class PanelDegradationTests(unittest.TestCase):
             digest = effective_config_digest(config)
             manifest = {
                 **_MANIFEST,
-                "effective_config": effective_config_summary(config),
+                "effective_config": config,
                 "effective_config_sha256": digest,
             }
 

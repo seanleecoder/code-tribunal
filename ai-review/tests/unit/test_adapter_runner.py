@@ -31,6 +31,10 @@ from ai_review.schema import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.adapter_inputs import (  # noqa: E402
+    bind_manifest_to_config,
+    run_prepared_adapter,
+)
 from support.config_yaml import CONFIG_TAIL, config_tail, panel_filler  # noqa: E402
 
 _OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
@@ -829,7 +833,7 @@ class EffortEnvTests(unittest.TestCase):
                 with mock.patch(
                     "ai_review.adapter_runner.resolve_adapter_path", return_value=adapter
                 ):
-                    self.assertEqual(run_adapter("codex", "review"), 0)
+                    self.assertEqual(run_prepared_adapter("codex", "review"), 0)
                 seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
                 batch = load_json_file(output_dir / "findings" / "codex.json")
                 self.assertEqual(batch["adapter_status"], "success")
@@ -981,7 +985,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(paths["adapter_dir"], "codex", '#!/bin/sh\necho "boom" >&2\nexit 1\n')
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
@@ -1008,7 +1012,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
             self.assertFalse(sentinel.exists())
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
@@ -1052,12 +1056,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["effective_config_sha256"], "2" * 64)
             self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
-    def test_failure_after_config_resolution_uses_resolved_digest(self) -> None:
+    def test_failure_after_config_resolution_stamps_the_bound_digest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            manifest = load_json_file(paths["input_dir"] / "manifest.json")
-            manifest["effective_config_sha256"] = "2" * 64
-            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             self._set_env(paths, config_path)
             self._adapter_path_patch.stop()
@@ -1067,15 +1068,82 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 "ai_review.adapter_runner.resolve_adapter_path",
                 side_effect=ReviewerRegistryError("adapter unavailable"),
             ):
-                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+                self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(status["status"], "config_error")
-            self.assertNotEqual(status["effective_config_sha256"], "2" * 64)
+            self.assertEqual(
+                status["effective_config_sha256"], manifest["effective_config_sha256"]
+            )
             self.assertEqual(
                 status["effective_config_sha256"], batch["effective_config_sha256"]
             )
+
+    def test_effective_config_drift_fails_before_any_adapter_work(self) -> None:
+        for drift, divergent in (
+            ({"AI_REVIEW_REVIEWERS": "claude,codex,opencode"}, "reviewers"),
+            ({"AI_REVIEW_CODEX_MODEL": "openai/drifted"}, "reviewers"),
+            ({"AI_REVIEW_CRITIQUE_ENABLED": "true"}, "critique"),
+        ):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp:
+                paths = _scaffold_project(Path(tmp))
+                config_path = _write_reviewer_config(paths["config_dir"], "codex")
+                sentinel = Path(tmp) / "adapter-invoked"
+                _write_adapter(
+                    paths["adapter_dir"],
+                    "codex",
+                    f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+                )
+                self._set_env(paths, config_path)
+                bind_manifest_to_config(paths["input_dir"], config_path)
+                manifest = load_json_file(paths["input_dir"] / "manifest.json")
+
+                with mock.patch.dict(os.environ, drift):
+                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+                self._adapter_path_patch.stop()
+                del self._adapter_path_patch
+
+                self.assertFalse(sentinel.exists())
+                self.assertFalse((paths["output_dir"] / ".tmp").exists())
+                status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+                batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+                self.assertEqual(status["status"], "config_error")
+                self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
+                self.assertIn(
+                    f"divergent={divergent} ", status["error_message_redacted"]
+                )
+                self.assertEqual(batch["adapter_status"], "config_error")
+                for artifact in (status, batch):
+                    self.assertEqual(
+                        artifact["effective_config_sha256"],
+                        manifest["effective_config_sha256"],
+                    )
+
+    def test_manifest_without_effective_config_digest_fails_before_adapter_work(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            sentinel = Path(tmp) / "adapter-invoked"
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"findings":[]}}\'\n',
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            self.assertFalse(sentinel.exists())
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
+            self.assertIn("re-run prepare", status["error_message_redacted"])
+            # No digest to stamp, so no batch for consensus to read as a result.
+            self.assertFalse((paths["output_dir"] / "findings" / "codex.json").exists())
 
     def test_shell_mock_allow_refusal_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1090,7 +1158,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "config_error")
@@ -1128,7 +1196,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
             self.assertEqual(batch["adapter_status"], "model_error")
@@ -1160,7 +1228,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
 
             status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
             self.assertEqual(status["status"], "model_error")
@@ -1179,7 +1247,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("opencode", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
             status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
@@ -1195,7 +1263,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(paths["adapter_dir"], "codex", "#!/bin/sh\nprintf 'not json at all'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
@@ -1221,7 +1289,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             status_dir = paths["output_dir"] / "status"
             raw_path = status_dir / "codex-parse-raw-stdout.txt"
@@ -1243,7 +1311,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "review"), 0)
 
             status_dir = paths["output_dir"] / "status"
             self.assertFalse((status_dir / "codex-parse-debug.txt").exists())
@@ -1293,7 +1361,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "review"), 0)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "success")
@@ -1315,7 +1383,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "timeout")
@@ -1340,7 +1408,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self._set_env(paths, config_path)
 
             started = time.monotonic()
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
             elapsed = time.monotonic() - started
 
             # Effective timeout is ~1s (config 6 minus the runner's 5s margin); a
@@ -1364,7 +1432,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             debug = paths["output_dir"] / "status" / "codex-timeout-debug.txt"
             self.assertTrue(debug.exists())
@@ -1406,7 +1474,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("cursor", "review"), 0)
+            self.assertEqual(run_prepared_adapter("cursor", "review"), 0)
 
             batch = load_json_file(paths["output_dir"] / "findings" / "cursor.json")
             self.assertEqual(batch["adapter_status"], "skipped")
@@ -1426,7 +1494,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "critique"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "critique"), 0)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "skipped")
@@ -1453,7 +1521,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "critique"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "critique"), 0)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "success")
@@ -1488,7 +1556,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "critique"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "critique"), 0)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "success")
@@ -1522,7 +1590,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_adapter("codex", "critique"), _EXIT_ERROR)
+            self.assertEqual(run_prepared_adapter("codex", "critique"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")

@@ -14,11 +14,13 @@ from ai_review.config import (
     RETIRED_ENV_OVERRIDES,
     V3_REMOVED_CONFIG_KEYS,
     ConfigError,
+    EffectiveConfigMismatch,
     apply_env_overrides,
     effective_config_digest,
-    effective_config_summary,
     enabled_reviewers,
     load_config,
+    require_effective_config_binding,
+    resolve_reviewer_timeout_seconds,
     validate_config,
 )
 
@@ -329,16 +331,15 @@ class LoadConfigOverrideTests(unittest.TestCase):
                     config = load_config(_REPO_CONFIG)
                 self.assertEqual(len(enabled_reviewers(config)), expected)
 
-    def test_roster_round_trips_to_summary_and_changes_the_digest(self) -> None:
+    def test_roster_changes_the_digest(self) -> None:
         default = effective_config_digest(load_config(_REPO_CONFIG))
         with mock.patch.dict(
             "os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}
         ):
             config = load_config(_REPO_CONFIG)
 
-        summary = effective_config_summary(config)
-        self.assertFalse(summary["reviewers"]["claude"]["enabled"])
-        self.assertTrue(summary["reviewers"]["cursor"]["enabled"])
+        self.assertFalse(config["reviewers"]["claude"]["enabled"])
+        self.assertTrue(config["reviewers"]["cursor"]["enabled"])
         # A roster scoped to only some CI jobs must surface as config drift rather
         # than a differently-sized panel per stage.
         self.assertNotEqual(effective_config_digest(config), default)
@@ -412,32 +413,22 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertTrue(config["critique"]["enabled"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
 
-    def test_legacy_reviewer_config_critique_fallback_is_capped_in_summary(self) -> None:
+    def test_legacy_reviewer_config_critique_fallback_is_capped(self) -> None:
         config = load_config(_REPO_CONFIG)
         for reviewer in config["reviewers"].values():
             reviewer.pop("critique_timeout_seconds")
 
         validate_config(config)
-        summary = effective_config_summary(config)
 
         for name, reviewer in config["reviewers"].items():
             with self.subTest(reviewer=name):
                 self.assertEqual(
-                    summary["reviewers"][name]["critique_timeout_seconds"],
+                    resolve_reviewer_timeout_seconds(reviewer, "critique"),
                     min(reviewer["timeout_seconds"], 900),
                 )
 
-        self.assertEqual(
-            effective_config_digest(config),
-            effective_config_digest(load_config(_REPO_CONFIG)),
-        )
-
-    def test_effective_timeout_fields_are_in_summary_and_digest(self) -> None:
+    def test_timeout_fields_change_the_digest(self) -> None:
         config = load_config(_REPO_CONFIG)
-        summary = effective_config_summary(config)
-        self.assertEqual(summary["reviewers"]["codex"]["timeout_seconds"], 1800)
-        self.assertEqual(summary["reviewers"]["codex"]["critique_timeout_seconds"], 900)
-
         modified = deepcopy(config)
         modified["reviewers"]["codex"]["critique_timeout_seconds"] = 1200
         self.assertNotEqual(effective_config_digest(config), effective_config_digest(modified))
@@ -621,20 +612,56 @@ class LoadConfigOverrideTests(unittest.TestCase):
 
         self.assertFalse(config["state"]["fail_closed_on_load_error"])
 
-    def test_effective_config_summary_covers_decision_critical_policy(self) -> None:
-        from ai_review.config import effective_config_summary
-
+    def test_effective_config_digest_binds_every_section(self) -> None:
         config = load_config(_REPO_CONFIG)
+        default = effective_config_digest(config)
+        for section, key, value in (
+            ("posting", "inline_multiline", False),
+            ("state", "fail_closed_on_load_error", True),
+            ("limits", "max_files", 1),
+            ("security", "allow_external_fork_secrets", True),
+            ("panel", "min_successful_reviewers_for_resolution", 3),
+        ):
+            with self.subTest(section=section, key=key):
+                modified = deepcopy(config)
+                modified[section][key] = value
+                self.assertNotEqual(effective_config_digest(modified), default)
 
-        summary = effective_config_summary(config)
-        self.assertEqual(summary["posting_mode"], "gitlab_discussions")
-        # No state_backend key: the value was derived from posting_mode, so it
-        # only ever restated a field the digest already binds.
-        self.assertNotIn("state_backend", summary)
-        self.assertEqual(summary["panel_min_successful_reviewers_for_resolution"], 2)
-        self.assertTrue(summary["critique_enabled"])
-        self.assertTrue(summary["critique_blind_reviewer_identity"])
-        self.assertFalse(summary["critique_allow_severity_downgrade"])
+    def test_binding_accepts_the_config_prepare_recorded(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        manifest = {
+            "effective_config": deepcopy(config),
+            "effective_config_sha256": effective_config_digest(config),
+        }
+
+        self.assertEqual(
+            require_effective_config_binding(config, manifest),
+            effective_config_digest(config),
+        )
+
+    def test_binding_names_the_divergent_top_level_keys(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        manifest = {
+            "effective_config": deepcopy(config),
+            "effective_config_sha256": effective_config_digest(config),
+        }
+        with mock.patch.dict(
+            "os.environ",
+            {"AI_REVIEW_POSTING_MODE": "github_reviews", "AI_REVIEW_CODEX_MODEL": "x/y"},
+        ):
+            drifted = load_config(_REPO_CONFIG)
+
+        with self.assertRaises(EffectiveConfigMismatch) as ctx:
+            require_effective_config_binding(drifted, manifest)
+        self.assertIn("divergent=posting,reviewers ", str(ctx.exception))
+
+    def test_binding_without_a_recorded_digest_asks_for_prepare(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        for manifest in (None, {}, {"effective_config_sha256": "short"}):
+            with self.subTest(manifest=manifest):
+                with self.assertRaises(EffectiveConfigMismatch) as ctx:
+                    require_effective_config_binding(config, manifest)
+                self.assertIn("re-run prepare", str(ctx.exception))
 
 
 class ConfigVersionMigrationTests(unittest.TestCase):

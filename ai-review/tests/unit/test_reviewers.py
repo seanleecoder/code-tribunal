@@ -17,7 +17,7 @@ from ai_review.adapter_process import (
     _OPENROUTER_BASE_URL,
     _build_adapter_env,
 )
-from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.config import ConfigError, validate_config
 from ai_review.reviewers import (
     REVIEWER_IDS,
@@ -26,10 +26,13 @@ from ai_review.reviewers import (
     resolve_adapter_path,
     trusted_runtime_root,
 )
-from ai_review.schema import load_json_file
+from ai_review.schema import load_json_file, write_canonical_json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.adapter_inputs import write_adapter_input_bundle  # noqa: E402
+from support.adapter_inputs import (  # noqa: E402
+    run_prepared_adapter,
+    write_adapter_input_bundle,
+)
 
 _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 _SHIPPED_CONFIG = _AI_REVIEW_ROOT / "config" / "review.yaml"
@@ -180,13 +183,16 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         *,
         env: dict[str, str],
         bundle: bool,
+        manifest: bool = True,
         expected_exit: int = 0,
     ) -> tuple[dict[str, object] | None, dict[str, object]]:
         """Run one seat and stage in a sandbox, returning its batch and status.
 
-        The batch is ``None`` when the runner deliberately wrote none: a failure it
-        cannot stamp an effective-config digest onto emits a status without a batch,
-        so consensus does not consume a placeholder.
+        Without ``bundle`` the input directory holds only a manifest, or nothing
+        at all without ``manifest``. The batch is ``None`` when the runner
+        deliberately wrote none: a failure it cannot stamp an effective-config
+        digest onto emits a status without a batch, so consensus does not consume
+        a placeholder.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -195,7 +201,14 @@ class ReviewerAdapterContractTests(unittest.TestCase):
             if bundle:
                 write_adapter_input_bundle(input_dir)
             else:
+                # A skipped seat reads nothing but the manifest, which still
+                # carries prepare's effective-config binding.
                 input_dir.mkdir(parents=True)
+                if manifest:
+                    write_canonical_json(
+                        input_dir / "manifest.json",
+                        {"schema_version": "input_manifest.v1", "run_id": "local-test"},
+                    )
             sandbox = {
                 "AI_REVIEW_INPUT_DIR": str(input_dir),
                 "AI_REVIEW_OUTPUT_DIR": str(output_dir),
@@ -206,7 +219,7 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                 # PATH is deliberately absent from `sandbox`: a seat that reached a
                 # real CLI would find none, so nothing here can pass by accident on
                 # a developer machine that happens to have one installed.
-                self.assertEqual(run_adapter(reviewer, stage), expected_exit)
+                self.assertEqual(run_prepared_adapter(reviewer, stage), expected_exit)
             stage_dir = "findings" if stage == "review" else "critiques"
             status_stem = reviewer if stage == "review" else f"critique-{reviewer}"
             batch_path = output_dir / stage_dir / f"{reviewer}.json"
@@ -300,7 +313,12 @@ class ReviewerAdapterContractTests(unittest.TestCase):
             side_effect=AssertionError("an unsupported stage must not spawn an adapter"),
         ):
             batch, status = self._run_seat(
-                "codex", "critique", env={}, bundle=False, expected_exit=_EXIT_ERROR
+                "codex",
+                "critique",
+                env={},
+                bundle=False,
+                manifest=False,
+                expected_exit=_EXIT_ERROR,
             )
 
         self.assertEqual(status["status"], "config_error")
@@ -308,9 +326,10 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         self.assertIn(
             "does not support stage critique", str(status["error_message_redacted"])
         )
-        # The refusal precedes the config load, so no effective-config digest exists
-        # to stamp a batch with; a status alone is what keeps consensus from reading
-        # a placeholder batch as a real (empty) result.
+        # The refusal precedes the config load and there is no manifest, so no
+        # effective-config digest exists to stamp a batch with; a status alone is
+        # what keeps consensus from reading a placeholder batch as a real (empty)
+        # result.
         self.assertIsNone(batch)
 
 

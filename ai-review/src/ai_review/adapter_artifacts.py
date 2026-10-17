@@ -11,11 +11,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
 
 from .adapter_output import _head_tail_preview
 from .anchors import is_sha256
-from .config import ConfigError, effective_config_digest
 from .redact import redact_text
 from .schema import (
     adapter_status_artifact,
@@ -49,19 +47,6 @@ def _manifest_effective_config_sha256(input_dir: Path) -> str | None:
         if is_sha256(digest):
             return str(digest)
     return None
-
-
-def _resolve_config_digest(input_dir: Path, config: dict[str, Any] | None = None) -> str:
-    """Prefer the live effective digest; fall back to the prepare manifest stamp."""
-    if config is not None:
-        return effective_config_digest(config)
-    digest = _manifest_effective_config_sha256(input_dir)
-    if digest is None:
-        raise ConfigError(
-            "effective_config_sha256 unavailable: load config or re-run prepare "
-            "so the manifest records the digest"
-        )
-    return digest
 
 
 def _output_file(stage: str, reviewer: str) -> Path:

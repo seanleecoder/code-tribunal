@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import sys
 import tempfile
 import unittest
@@ -12,7 +13,14 @@ import ai_review.post as post_module
 import ai_review.posting as posting_module
 import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.config import CONFIG_SCHEMA_VERSION, ConfigError, validate_config
+from ai_review.canonical import canonical_json, sha256_hex
+from ai_review.config import (
+    CONFIG_SCHEMA_VERSION,
+    ConfigError,
+    effective_config_digest,
+    load_config,
+    validate_config,
+)
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
@@ -39,6 +47,48 @@ from support.fake_post_client import (  # noqa: E402
     StatePostClient,
 )
 from support.post_case import PostCase  # noqa: E402
+
+_REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_GOLDEN_CONSENSUS = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "golden"
+    / "default_transitive_split_consensus.json"
+)
+
+
+def _write_post_cli_run(root: Path, consensus: dict[str, Any]) -> list[str]:
+    """Write one run's bound manifest and consensus; return the post argv.
+
+    The manifest carries prepare's effective-config binding for the repository
+    config under the current environment, and the consensus is bound to the
+    manifest as consensus binds it.
+    """
+    config = load_config(_REPO_CONFIG)
+    manifest = {
+        "run_id": consensus["run_id"],
+        "project_id": consensus["project_id"],
+        "merge_request_iid": consensus["merge_request_iid"],
+        "head_sha": consensus["head_sha"],
+        "effective_config": config,
+        "effective_config_sha256": effective_config_digest(config),
+    }
+    inputs = root / "inputs"
+    inputs.mkdir()
+    write_canonical_json(inputs / "manifest.json", manifest)
+    bound = {**consensus, "input_manifest_sha256": sha256_hex(canonical_json(manifest))}
+    write_canonical_json(root / "consensus.json", bound)
+    return [
+        "--config",
+        str(_REPO_CONFIG),
+        "--inputs",
+        str(inputs),
+        "--consensus",
+        str(root / "consensus.json"),
+        "--out",
+        str(root / "post-result.json"),
+        "--dry-run",
+    ]
 
 
 class PostTests(PostCase):
@@ -142,31 +192,12 @@ class PostTests(PostCase):
     def test_cli_returns_nonzero_and_still_writes_the_artifact_on_failure(self) -> None:
         # The artifact must survive an operational failure: it is the only
         # diagnostic left now that nothing downstream reads it.
-        config_path = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
-        fixture_path = (
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "golden"
-            / "default_transitive_split_consensus.json"
-        )
-        consensus = load_json_file(fixture_path)
+        consensus = load_json_file(_GOLDEN_CONSENSUS)
 
         for status, expected_exit in (("success", 0), ("partial_failed", 1)):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                inputs = root / "inputs"
-                inputs.mkdir()
-                write_canonical_json(
-                    inputs / "manifest.json",
-                    {
-                        "run_id": consensus["run_id"],
-                        "project_id": consensus["project_id"],
-                        "merge_request_iid": consensus["merge_request_iid"],
-                        "head_sha": consensus["head_sha"],
-                    },
-                )
-                consensus_path = root / "consensus.json"
-                write_canonical_json(consensus_path, consensus)
+                argv = _write_post_cli_run(root, consensus)
                 output_path = root / "post-result.json"
 
                 def _post(
@@ -191,22 +222,73 @@ class PostTests(PostCase):
                     patch("ai_review.post.create_runtime_platform"),
                     patch("ai_review.post.post_consensus", _post),
                 ):
-                    exit_code = post_module.cli(
-                        [
-                            "--config",
-                            str(config_path),
-                            "--inputs",
-                            str(inputs),
-                            "--consensus",
-                            str(consensus_path),
-                            "--out",
-                            str(output_path),
-                            "--dry-run",
-                        ]
-                    )
+                    exit_code = post_module.cli(argv)
 
                 self.assertEqual(exit_code, expected_exit)
                 self.assertEqual(load_json_file(output_path)["status"], status)
+
+    def _assert_refused_before_platform(self, root: Path, argv: list[str]) -> str:
+        stderr = io.StringIO()
+        with (
+            patch("ai_review.post.create_runtime_platform") as factory,
+            patch("sys.stderr", stderr),
+        ):
+            exit_code = post_module.cli(argv)
+
+        self.assertEqual(exit_code, post_module.POST_OPERATIONAL_FAILURE_EXIT)
+        factory.assert_not_called()
+        self.assertFalse((root / "post-result.json").exists())
+        return stderr.getvalue()
+
+    def test_cli_refuses_a_consensus_artifact_from_another_run(self) -> None:
+        for field, value in (
+            ("run_id", "another-run"),
+            ("head_sha", "f" * 40),
+            ("input_manifest_sha256", "f" * 64),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+                consensus = load_json_file(root / "consensus.json")
+                consensus[field] = value
+                write_canonical_json(root / "consensus.json", consensus)
+
+                message = self._assert_refused_before_platform(root, argv)
+                self.assertIn(f"consensus {field} does not match", message)
+
+    def test_cli_refuses_a_manifest_changed_after_consensus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+            manifest = load_json_file(root / "inputs" / "manifest.json")
+            manifest["diff_sha256"] = "f" * 64
+            write_canonical_json(root / "inputs" / "manifest.json", manifest)
+
+            message = self._assert_refused_before_platform(root, argv)
+            self.assertIn("consensus input_manifest_sha256 does not match", message)
+
+    def test_cli_refuses_an_effective_config_that_differs_from_prepare(self) -> None:
+        for env, divergent in (
+            ({"AI_REVIEW_POSTING_MODE": "github_reviews"}, "posting"),
+            ({"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}, "reviewers"),
+        ):
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+                with patch.dict("os.environ", env):
+                    message = self._assert_refused_before_platform(root, argv)
+                self.assertIn(f"divergent={divergent} ", message)
+
+    def test_cli_refuses_a_manifest_without_an_effective_config_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+            manifest = load_json_file(root / "inputs" / "manifest.json")
+            del manifest["effective_config_sha256"]
+            write_canonical_json(root / "inputs" / "manifest.json", manifest)
+
+            message = self._assert_refused_before_platform(root, argv)
+            self.assertIn("re-run prepare", message)
 
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
         # validate_config rejects this mode, so the value is injected after

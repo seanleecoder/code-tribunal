@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.config import effective_config_digest, effective_config_summary, load_config
+from ai_review.config import effective_config_digest, load_config
 from ai_review.consensus import cli
 from ai_review.schema import load_json_file, write_canonical_json
 
@@ -35,7 +35,7 @@ def _manifest_for_config(config: dict, *, run_id: str = "local-test") -> dict:
         "repo_snapshot_sha256": "0" * 64,
         "config_sha256": "0" * 64,
         "rules_sha256": "0" * 64,
-        "effective_config": effective_config_summary(config),
+        "effective_config": config,
         "effective_config_sha256": effective_config_digest(config),
         "created_at": "2026-06-29T00:00:00Z",
     }

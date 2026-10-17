@@ -84,7 +84,13 @@ State is accepted only from the expected bot author and carries a checksum.
 Post reads and updates only a summary comment the bot authored; another
 participant's note carrying the summary marker is ignored with a warning.
 Human commands require platform authorization. Cross-stage run/config bindings
-prevent accidental evidence mixing.
+prevent accidental evidence mixing: review, critique, consensus, and post each
+verify that their effective config reproduces the manifest's
+`effective_config_sha256` before consequential work, and post refuses a
+consensus artifact whose `run_id`, `head_sha`, or `input_manifest_sha256` does
+not match the manifest. These bindings detect misconfiguration and mixed runs;
+they are not tamper protection, because whoever writes an artifact also chooses
+the values it records.
 
 Author and hostile-state behavior is covered by
 [`test_state_note_authenticity.py`](../ai-review/tests/security/test_state_note_authenticity.py)

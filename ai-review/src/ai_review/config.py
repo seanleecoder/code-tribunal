@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, get_args
 
+from .anchors import is_sha256
 from .canonical import stable_json_hash
 from .reviewers import REVIEWER_IDS, REVIEWERS
 from .types import AnchorSide
@@ -11,6 +12,10 @@ from .types import AnchorSide
 
 class ConfigError(ValueError):
     pass
+
+
+class EffectiveConfigMismatch(ConfigError):
+    """This stage's effective config differs from the one prepare recorded."""
 
 
 # The configuration contract this runtime accepts. v3 is v2 minus the keys that
@@ -278,10 +283,10 @@ def apply_reviewer_roster(
     A disabled seat is not an error anywhere downstream: the adapter runner writes
     a ``skipped`` batch and status without spawning its CLI, and consensus accepts
     ``skipped`` artifacts from seats outside the roster. Because this mutates
-    ``enabled`` before ``validate_config``, the roster also flows into
-    ``effective_config_summary`` and therefore the cross-stage digest, so a roster
-    variable scoped to only some CI jobs is caught as configuration drift instead
-    of silently producing a differently-sized panel per stage.
+    ``enabled`` before ``validate_config``, the roster also flows into the
+    cross-stage effective-config digest, so a roster variable scoped to only some
+    CI jobs is caught as configuration drift instead of silently producing a
+    differently-sized panel per stage.
 
     """
     if raw is None or not raw.strip():
@@ -334,7 +339,8 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
     Applied at load time so every stage (reviewer fan-out, panel sizing, and the
     deterministic consensus engine) sees a consistent view. This requires the
     override vars to be set as project-wide CI/CD variables (visible to all jobs);
-    the consensus stage fails if its view disagrees with the prepare manifest.
+    every stage after prepare fails if its view disagrees with the prepare
+    manifest (``require_effective_config_binding``).
 
     Recognized overrides:
     - ``AI_REVIEW_REVIEWERS`` -> the authoritative panel roster (see
@@ -397,50 +403,6 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
 
 
 
-def effective_config_summary(config: dict[str, Any]) -> dict[str, Any]:
-    """Summarize consequential config in effect after env overrides.
-
-    Recorded in the prepare manifest and re-derived by consensus as a
-    misconfiguration detector for cross-job ``AI_REVIEW_*`` / policy drift — not
-    a tamper-proofing mechanism (artifact writers already choose the digest they
-    stamp). Includes reviewer models/toggles and the remaining decision-critical
-    panel and critique policy fields.
-    """
-    reviewers = config.get("reviewers", {}) if isinstance(config, dict) else {}
-    critique = config.get("critique", {}) if isinstance(config, dict) else {}
-    posting = config.get("posting", {}) if isinstance(config, dict) else {}
-    panel = config.get("panel", {}) if isinstance(config, dict) else {}
-    return {
-        "reviewers": {
-            name: {
-                "model": reviewer.get("model"),
-                "enabled": bool(reviewer.get("enabled")),
-                "effort": reviewer.get("effort"),
-                # Resolve stage budgets here, rather than recording raw input,
-                # so the digest binds the same policy used by the runner.
-                "timeout_seconds": resolve_reviewer_timeout_seconds(reviewer, "review"),
-                "critique_timeout_seconds": resolve_reviewer_timeout_seconds(
-                    reviewer, "critique"
-                ),
-                "max_findings": (
-                    int(reviewer["max_findings"])
-                    if reviewer.get("max_findings") is not None
-                    else None
-                ),
-            }
-            for name, reviewer in sorted(reviewers.items())
-            if isinstance(reviewer, dict)
-        },
-        "critique_enabled": bool(critique.get("enabled")),
-        "critique_blind_reviewer_identity": bool(critique.get("blind_reviewer_identity")),
-        "critique_allow_severity_downgrade": bool(critique.get("allow_severity_downgrade")),
-        "posting_mode": posting.get("mode") if isinstance(posting, dict) else None,
-        "panel_min_successful_reviewers_for_resolution": int(
-            panel.get("min_successful_reviewers_for_resolution", 0) or 0
-        ),
-    }
-
-
 def resolve_reviewer_timeout_seconds(
     reviewer_config: dict[str, Any], stage: str
 ) -> int:
@@ -465,8 +427,52 @@ def resolve_reviewer_timeout_seconds(
 
 
 def effective_config_digest(config: dict[str, Any]) -> str:
-    """Canonical SHA-256 of ``effective_config_summary`` for cross-stage binding."""
-    return stable_json_hash(effective_config_summary(config))
+    """Canonical SHA-256 of the whole validated config, for cross-stage binding.
+
+    The config holds no credentials (they live only in the environment), so
+    prepare records the config itself in the manifest's ``effective_config``
+    and every key, including one a later change adds, is bound automatically.
+    """
+    return stable_json_hash(config)
+
+
+def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> str:
+    """Return this stage's config digest once it matches the prepare manifest.
+
+    Every stage after prepare calls this before consequential work: review and
+    critique before a provider call, consensus before reading evidence, and post
+    before creating a platform client. It detects ``AI_REVIEW_*`` variables
+    scoped to only some CI jobs; it is not tamper protection, because whoever
+    writes the manifest also chooses the digest it records.
+    """
+    recorded_digest = (
+        manifest.get("effective_config_sha256") if isinstance(manifest, dict) else None
+    )
+    if not is_sha256(recorded_digest):
+        raise EffectiveConfigMismatch(
+            "manifest missing effective_config_sha256; re-run prepare with a "
+            "current ai-review release"
+        )
+    current_digest = effective_config_digest(config)
+    if recorded_digest == current_digest:
+        return current_digest
+    recorded = manifest.get("effective_config")
+    divergent = (
+        sorted(
+            key
+            for key in set(recorded) | set(config)
+            if recorded.get(key) != config.get(key)
+        )
+        if isinstance(recorded, dict)
+        else []
+    )
+    raise EffectiveConfigMismatch(
+        "effective config differs from the prepare manifest — AI_REVIEW_* "
+        "override variables are not scoped identically across jobs "
+        f"(divergent={','.join(divergent) or 'effective_config_sha256'} "
+        f"manifest_digest={str(recorded_digest)[:12]}… "
+        f"current_digest={current_digest[:12]}…)"
+    )
 
 
 def load_config(path: str | Path) -> dict[str, Any]:

@@ -19,9 +19,8 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 | Spec | Status | Effort | Vehicle | Summary |
 |---|---|---|---|---|
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Ready (part A) | A: S · B: via SPEC-66 | A: 2.0.3 | A finding without `confidence` is dropped, so a non-compliant seat loses everything. Part A defaults it to `0.0`, which can only lose tie-breaks. Part B (visibility) is SPEC-66. |
-| [SPEC-68](spec-68-posting-correctness-fixes.md) | Partial; fix 3 ready with SPEC-47 | S (one fix remaining) | 2.0.3 | Post does not bind its consensus artifact to its input run before platform access. |
 | [SPEC-67](spec-67-majority-noise-to-fyi.md) | Ready | S | 2.0.3 | Majority-noise groups are demoted to FYI instead of silently dropped, and a noise vote no longer auto-resolves a thread. Summary entries show `Found by`. Includes the ADR-0002 amendment. |
-| [SPEC-47](spec-47-trusted-project-review-config.md) | Ready | S | 2.0.3 | Render prompts and rules from the image's trusted runtime root, delete the unread bundle copies and hashes, and verify the effective-config binding in review and post as well as consensus. Repository-hosted project policy was rejected. |
+| [SPEC-47](spec-47-trusted-project-review-config.md) | Partial; asset half ready | S | 2.0.3 | Render prompts and rules from the image's trusted runtime root, merge the two prompt renderers, and delete the unread bundle copies and hashes. The full-config digest and the binding check in every stage are done. Repository-hosted project policy was rejected. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Ready | S (docs) | Any | Document the real GitLab trust boundary: a protected external CI config path or policy. In-pipeline image checks cannot stop a hostile CI author; the drift marker was rejected. |
 | [SPEC-66](spec-66-run-health-summary.md) | Proposed; narrowed 2026-10-16 | M (one PR) | 2.1.0 | Per-job model, effort, outcome and duration with a full/degraded/re-run grade, in a summary present on every published run and in the consensus job log. No usage, cost, failed-panel publication or critique coverage. |
 
@@ -109,16 +108,15 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. SPEC-68 fix 3: bind post's consensus artifact to its run. Lands with SPEC-47.
-2. SPEC-41 part A: default a missing `confidence`.
-3. SPEC-67: majority noise demotes to FYI, `Found by` on summary entries, plus the
+1. SPEC-41 part A: default a missing `confidence`.
+2. SPEC-67: majority noise demotes to FYI, `Found by` on summary entries, plus the
    ADR-0002 amendment.
-4. SPEC-47: prompts and rules from the image with the unread bundle copies deleted,
-   the full-configuration digest (N05), one prompt renderer (N10), and binding
-   checks in every stage.
-5. SPEC-43: GitLab trust-boundary documentation and the child-mode deprecation
+3. SPEC-47's remaining half: prompts and rules from the image with the unread
+   bundle copies deleted, and one prompt renderer (N10). The full-configuration
+   digest (N05), the binding checks in every stage, and SPEC-68 fix 3 are done.
+4. SPEC-43: GitLab trust-boundary documentation and the child-mode deprecation
    (N02).
-6. Small cleanups:
+5. Small cleanups:
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);
    - delete test-only TypedDicts (N16);
@@ -129,31 +127,31 @@ unexpected artifacts.
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-7. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
+6. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
    the release tooling (S01), replace the pin checker with Renovate and zizmor
    (N01), and prune the evidence docs.
-8. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
+7. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This closes SPEC-41 part B.
-9. The hash-only body (N12).
-10. Delete the over-built integrity checks (N15).
+8. The hash-only body (N12).
+9. Delete the over-built integrity checks (N15).
 
 **Step 3 — 2.1.x minor releases.**
 
-11. Merge the canary scripts into two platform modules (N18). This comes after
+10. Merge the canary scripts into two platform modules (N18). This comes after
     2.1.0, so the assurance tool and the process do not change together.
-12. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
-13. The S03 mock switch, then seat setup in the registry (N08).
-14. The typed configuration object (N05), before the S04 knob removal.
-15. The `input_bundle` revision cleanup (N17).
+11. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
+12. The S03 mock switch, then seat setup in the registry (N08).
+13. The typed configuration object (N05), before the S04 knob removal.
+14. The `input_bundle` revision cleanup (N17).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 
-16. Re-land S05, which restores `resolve_location` and removes `confidence`.
-17. Consensus becomes state-free (N11). `consensus.v3` also drops
+15. Re-land S05, which restores `resolve_location` and removes `confidence`.
+16. Consensus becomes state-free (N11). `consensus.v3` also drops
     `group.body_hash` and removes SPEC-67's `drop` compatibility row.
-18. One S14 state migration: state moves into the summary comment (N04), and the
+17. One S14 state migration: state moves into the summary comment (N04), and the
     anchor remap uses context hashes (N14).
-19. Consumer-visible changes:
+18. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in
       `pipeline_trust.py` and their tests;

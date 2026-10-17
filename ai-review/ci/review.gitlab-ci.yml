@@ -17,8 +17,8 @@ variables:
   AI_REVIEW_CRITIQUE_ENABLED: "true"
   # Environment-consistency contract: set AI_REVIEW_* policy overrides as
   # project/group/pipeline variables (inherited by every job). Prepare records
-  # effective_config_sha256; consensus fails closed if a later job sees a
-  # different effective config. Supported override names:
+  # effective_config_sha256; review, critique, consensus, and post each fail
+  # closed if they see a different effective config. Supported override names:
   # AI_REVIEW_REVIEWERS AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL
   # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL
   # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT

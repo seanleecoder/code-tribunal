@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.schema import (
     SchemaValidationError,
     empty_critique_batch,
@@ -33,6 +33,7 @@ _GOLDEN_CONSENSUS = (
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.adapter_inputs import run_prepared_adapter  # noqa: E402
 from support.config_yaml import CONFIG_TAIL, panel_filler  # noqa: E402
 
 
@@ -595,7 +596,7 @@ class SchemaValidationTests(unittest.TestCase):
                     "ai_review.adapter_runner.resolve_adapter_path",
                     return_value=bad_adapter,
                 ):
-                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+                    self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
             finally:
                 for key, value in previous.items():
                     if value is None:

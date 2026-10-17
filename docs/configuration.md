@@ -468,13 +468,23 @@ with its SHA-256, in
 
 ## Stage visibility and integrity
 
-Configuration overrides that affect decisions must be visible to prepare,
-review, critique, consensus, and post. Prepare records an
+Configuration overrides must be visible to prepare, review, critique,
+consensus, and post. Prepare records the whole validated configuration, after
+defaults and overrides, as the manifest's `effective_config`, and its digest as
 `effective_config_sha256`; successful reviewer and critique evidence is bound to
-it. Consensus exits 3 when consequential configuration, run identity, or
-artifact identity differs. This digest detects pipeline misconfiguration; it is
-not cryptographic authentication against a writer that already controls a
-trusted job.
+it. Every later stage loads `AI_REVIEW_CONFIG` itself and must reproduce that
+digest before consequential work, and the failure names the differing top-level
+keys:
+
+- a review or critique job writes a `config_error` status with error class
+  `EffectiveConfigMismatch` and exits nonzero before rendering a prompt or
+  calling a provider;
+- consensus exits 3, as it does when run or artifact identity differs;
+- post exits 1 before creating a platform client, and also refuses a consensus
+  artifact from another run.
+
+This digest detects pipeline misconfiguration; it is not cryptographic
+authentication against a writer that already controls a trusted job.
 
 ## 1.x migration summary
 

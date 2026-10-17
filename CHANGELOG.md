@@ -7,7 +7,26 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Review, critique, and post now check the effective config against the prepare
+  manifest, as consensus already did. A job that sees different `AI_REVIEW_*`
+  overrides fails before a provider call or platform client: review and critique
+  write a `config_error` status with error class `EffectiveConfigMismatch`, and
+  post exits 1 without writing `post_result.json` (SPEC-47).
+- The effective-config digest now covers the whole validated configuration,
+  including limits, state, security, and every posting setting, instead of a
+  hand-picked subset. The manifest's `effective_config` carries that
+  configuration, and mismatch messages name the differing top-level keys. The
+  digest value changes once, so every job in a pipeline must run the same
+  release.
+
 ### Fixed
+
+- Post refuses a consensus artifact whose `run_id`, `head_sha`, or
+  `input_manifest_sha256` does not match the manifest in its inputs, before
+  creating a platform client. A retried job or replay can no longer mutate
+  threads under another run's result (SPEC-68 fix 3).
 
 - A finding whose match to earlier threads is ambiguous no longer lets post
   resolve those threads as absent. Its open candidate threads are marked stale
