@@ -8,13 +8,17 @@ rather than restating the table.
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
+import tempfile
 import unittest
+from pathlib import Path
 
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group
-from ai_review.schema import validate_instance
+from ai_review.schema import finalize_finding_batch, validate_instance
 
 from .test_consensus_state_matching import (
     _batch,
@@ -515,6 +519,87 @@ class EffectiveVerdictTests(unittest.TestCase):
         # critique's `info` never participates.
         self.assertEqual(forward["final_severity"], "minor")
         self.assertEqual(reversed_order["final_severity"], "minor")
+
+
+class MissingConfidenceTests(unittest.TestCase):
+    """SPEC-41: a defaulted confidence is indistinguishable from an explicit 0.0."""
+
+    _DIFF = "\n".join(
+        [
+            "diff --git a/src/foo.py b/src/foo.py",
+            "--- a/src/foo.py",
+            "+++ b/src/foo.py",
+            "@@ -1,1 +1,2 @@",
+            " def f():",
+            "+    return records[0]",
+        ]
+    )
+
+    def _finalized(self, reviewer: str, confidence: float | None) -> dict:
+        raw_finding = {
+            "anchor": {
+                "new_path": "src/foo.py",
+                "old_path": "src/foo.py",
+                "side": "new",
+                "start": {"old_line": None, "new_line": 2, "line_code": None},
+                "end": {"old_line": None, "new_line": 2, "line_code": None},
+                "hunk_header": "@@ -1,1 +1,2 @@",
+                "context_hash": "0" * 64,
+                "symbol": None,
+            },
+            "severity": "major",
+            "category": "correctness",
+            "title": "Validate before indexing",
+            # The body is outside the grouping signature, so it shows which
+            # seat's finding became the representative.
+            "body": f"{reviewer} body",
+            "evidence": ["records[0]"],
+            "suggestion": None,
+        }
+        if confidence is not None:
+            raw_finding["confidence"] = confidence
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "run",
+            "reviewer": reviewer,
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [raw_finding],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mr.diff").write_text(self._DIFF, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                return finalize_finding_batch(
+                    raw,
+                    reviewer=reviewer,
+                    model="model",
+                    run_id="run",
+                    started_at="2026-06-29T00:00:00Z",
+                    input_dir=tmp,
+                    effective_config_sha256="0" * 64,
+                )
+
+    def _consensus(self, claude_confidence: float | None) -> dict:
+        consensus = build_consensus(
+            _manifest(),
+            [self._finalized("claude", claude_confidence), self._finalized("codex", 0.0)],
+            _config(),
+        )
+        validate_instance(consensus, "consensus.schema.json")
+        return consensus
+
+    def test_defaulted_finding_reduces_like_an_explicit_zero(self) -> None:
+        defaulted = self._consensus(None)
+        explicit = self._consensus(0.0)
+
+        self.assertEqual(defaulted, explicit)
+        [group] = defaulted["groups"]
+        self.assertEqual(group["decision"], "surface")
+        self.assertEqual(group["contributing_reviewers"], ["claude", "codex"])
+        # Equal confidence and severity fall through to the reviewer key.
+        self.assertEqual(group["body"], "claude body")
 
 
 class MajorityNoiseTests(unittest.TestCase):

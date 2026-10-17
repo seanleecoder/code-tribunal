@@ -686,6 +686,78 @@ class SchemaValidationTests(unittest.TestCase):
             self.assertNotIn("extra_model_note", finalized["findings"][0])
             validate_instance(finalized, "finding_batch.schema.json")
 
+    def test_missing_confidence_defaults_to_zero_and_malformed_is_dropped(self) -> None:
+        # SPEC-41: a seat that omits the tie-breaker keeps its findings, but a
+        # present value that is wrong still drops the finding.
+        diff_text = "\n".join(
+            [
+                "diff --git a/src/foo.py b/src/foo.py",
+                "--- a/src/foo.py",
+                "+++ b/src/foo.py",
+                "@@ -1,1 +1,2 @@",
+                " def f():",
+                "+    return records[0]",
+            ]
+        )
+        finding = {
+            "anchor": {
+                "new_path": "src/foo.py",
+                "old_path": "src/foo.py",
+                "side": "new",
+                "start": {"old_line": None, "new_line": 2, "line_code": None},
+                "end": {"old_line": None, "new_line": 2, "line_code": None},
+                "hunk_header": "@@ -1,1 +1,2 @@",
+                "context_hash": "0" * 64,
+                "symbol": None,
+            },
+            "severity": "major",
+            "category": "correctness",
+            "title": "Validate before indexing",
+            "body": "records[0] is used without a guard.",
+            "evidence": ["records[0]"],
+            "suggestion": None,
+        }
+        cases: list[tuple[str, dict[str, object], int]] = [
+            ("missing", {}, 1),
+            ("non-numeric", {"confidence": "high"}, 0),
+            ("out of range", {"confidence": 1.5}, 0),
+        ]
+        for name, extra, accepted in cases:
+            with self.subTest(name):
+                raw = {
+                    "schema_version": "finding_batch.v1",
+                    "run_id": "local",
+                    "reviewer": "opencode",
+                    "adapter_status": "success",
+                    "model": "model",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "findings": [{**copy.deepcopy(finding), **extra}],
+                }
+                with tempfile.TemporaryDirectory() as tmp:
+                    (Path(tmp) / "mr.diff").write_text(diff_text, encoding="utf-8")
+                    with contextlib.redirect_stderr(io.StringIO()) as err:
+                        finalized = finalize_finding_batch(
+                            raw,
+                            reviewer="opencode",
+                            model="model",
+                            run_id="local",
+                            started_at="2026-06-29T00:00:00Z",
+                            input_dir=tmp,
+                            effective_config_sha256="0" * 64,
+                        )
+                validate_instance(finalized, "finding_batch.schema.json")
+                self.assertEqual(finalized["accepted_finding_count"], accepted)
+                self.assertEqual(finalized["dropped_finding_count"], 1 - accepted)
+                if accepted:
+                    self.assertEqual(finalized["findings"][0]["confidence"], 0.0)
+                    self.assertTrue(finalized["usable_for_resolution"])
+                    self.assertIn(
+                        "opencode finding 1 has no confidence; using 0.0", err.getvalue()
+                    )
+                else:
+                    self.assertIn("dropped opencode finding 1", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

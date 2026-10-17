@@ -18,7 +18,6 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 
 | Spec | Status | Effort | Vehicle | Summary |
 |---|---|---|---|---|
-| [SPEC-41](spec-41-reviewer-confidence-default.md) | Ready (part A) | A: S · B: via SPEC-66 | A: 2.0.3 | A finding without `confidence` is dropped, so a non-compliant seat loses everything. Part A defaults it to `0.0`, which can only lose tie-breaks. Part B (visibility) is SPEC-66. |
 | [SPEC-67](spec-67-majority-noise-to-fyi.md) | Ready | S | 2.0.3 | Majority-noise groups are demoted to FYI instead of silently dropped, and a noise vote no longer auto-resolves a thread. Summary entries show `Found by`. Includes the ADR-0002 amendment. |
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Partial; asset half ready | S | 2.0.3 | Render prompts and rules from the image's trusted runtime root, merge the two prompt renderers, and delete the unread bundle copies and hashes. The full-config digest and the binding check in every stage are done. Repository-hosted project policy was rejected. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Ready | S (docs) | Any | Document the real GitLab trust boundary: a protected external CI config path or policy. In-pipeline image checks cannot stop a hostile CI author; the drift marker was rejected. |
@@ -108,7 +107,8 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. SPEC-41 part A: default a missing `confidence`.
+1. SPEC-41 part A is done: a missing `confidence` defaults to `0.0`. Part B
+   (visibility of dropped findings) is SPEC-66.
 2. SPEC-67: majority noise demotes to FYI, `Found by` on summary entries, plus the
    ADR-0002 amendment.
 3. SPEC-47's remaining half: prompts and rules from the image with the unread
@@ -131,7 +131,8 @@ unexpected artifacts.
    the release tooling (S01), replace the pin checker with Renovate and zizmor
    (N01), and prune the evidence docs.
 7. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
-   run with space reserved for state (N04). This closes SPEC-41 part B.
+   run with space reserved for state (N04). This makes dropped findings visible
+   (formerly SPEC-41 part B).
 8. The hash-only body (N12).
 9. Delete the over-built integrity checks (N15).
 
