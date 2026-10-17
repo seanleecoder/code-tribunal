@@ -274,27 +274,28 @@ def _plan_stale_records(
         if issue_id in planned_issue_ids:
             continue
         updated = dict(record)
-        if issue_id in protected_issue_ids:
+        # A human command names this thread, so it applies even when an ambiguous
+        # match protects the record; protection only blocks absence resolution.
+        command = human_commands.get(issue_id)
+        if command == "reopen":
+            updated["status"] = "open"
+            updated["human_disposition"] = "reopen"
+        elif command == "wontfix":
+            updated["status"] = "wontfix"
+            updated["human_disposition"] = "wontfix"
+        elif command == "resolve":
+            updated["status"] = "resolved"
+            updated["human_disposition"] = "resolve"
+        elif issue_id in protected_issue_ids:
             if updated.get("status") == "open":
                 updated["status"] = "stale"
                 updated["remap_status"] = "ambiguous"
-        else:
-            command = human_commands.get(issue_id)
-            if command == "reopen":
-                updated["status"] = "open"
-                updated["human_disposition"] = "reopen"
-            elif command == "wontfix":
-                updated["status"] = "wontfix"
-                updated["human_disposition"] = "wontfix"
-            elif command == "resolve":
-                updated["status"] = "resolved"
-                updated["human_disposition"] = "resolve"
-            elif record.get("status") == "open":
-                updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
-                if not resolution_quorum:
-                    outcome.stale_unverified += 1
-            elif record.get("status") == "stale_unverified" and resolution_quorum:
-                updated["status"] = "resolved"
+        elif record.get("status") == "open":
+            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
+            if not resolution_quorum:
+                outcome.stale_unverified += 1
+        elif record.get("status") == "stale_unverified" and resolution_quorum:
+            updated["status"] = "resolved"
         planned_records.append(
             cast(
                 StateRecord,

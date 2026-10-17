@@ -266,6 +266,26 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, "1" * 64), "wontfix")
         self.assertEqual(self._status_of(plan, "2" * 64), "resolved")
 
+    def test_human_command_on_a_protected_candidate_still_applies(self) -> None:
+        candidate = "1" * 64
+        for command, prior, expected in (
+            ("wontfix", "open", "wontfix"),
+            ("resolve", "open", "resolved"),
+            ("reopen", "wontfix", "open"),
+            ("reopen", "resolved", "open"),
+        ):
+            with self.subTest(command=command, prior=prior):
+                candidates = self._ambiguous_candidates()
+                candidates[0]["status"] = prior
+                plan = _plan(
+                    persisted=candidates,
+                    fyi=[self._unassigned_group()],
+                    commands={candidate: command},
+                )
+
+                self.assertEqual(self._status_of(plan, candidate), expected)
+                self.assertEqual(self._status_of(plan, "2" * 64), "stale")
+
     def test_later_unambiguous_match_updates_only_that_candidate(self) -> None:
         first = _plan(persisted=self._ambiguous_candidates(), fyi=[self._unassigned_group()])
         plan = _plan(persisted=first.planned_state["records"], inline=[_group("1" * 64)])
