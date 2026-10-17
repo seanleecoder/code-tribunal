@@ -471,6 +471,22 @@ def plan_state(
         if previous is not None and isinstance(previous.get("issue_id"), str):
             planned_issue_ids.add(previous["issue_id"])
 
+    # Consensus leaves issue_id unset when its state match was ambiguous. Such a
+    # group never gets a record of its own, but the records it matched are still
+    # present and must not be resolved as absent.
+    for group in inline_candidates + summary_fallback_groups + fyi_groups:
+        if group.get("issue_id") is not None:
+            continue
+        candidate_ids = [
+            record["issue_id"] for record in find_matching_record(group, persisted_state).records
+        ]
+        if candidate_ids:
+            protected_issue_ids.update(candidate_ids)
+            outcome.warnings.append(
+                "ambiguous existing record match for unassigned group; "
+                f"protected {len(candidate_ids)} candidate record(s)"
+            )
+
     _plan_stale_records(
         base_records=base_records,
         planned_records=planned_records,

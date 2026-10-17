@@ -51,7 +51,7 @@ def _consensus(*, eligible: list[str] | None = None) -> dict[str, Any]:
     }
 
 
-def _group(issue_id: str) -> dict[str, Any]:
+def _group(issue_id: str | None) -> dict[str, Any]:
     return {
         "issue_id": issue_id,
         "decision": "surface",
@@ -107,6 +107,7 @@ def _plan(
     consensus: dict[str, Any] | None = None,
     persisted: list[dict[str, Any]] | None = None,
     inline: list[dict[str, Any]] | None = None,
+    fyi: list[dict[str, Any]] | None = None,
     commands: dict[str, str] | None = None,
 ) -> Any:
     return plan_state(
@@ -116,7 +117,7 @@ def _plan(
         _state(persisted or []),
         cast(Any, inline or []),
         [],
-        [],
+        cast(Any, fyi or []),
         commands or {},
     )
 
@@ -214,6 +215,65 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         )
 
         self.assertEqual(self._status_of(plan, issue_id), "wontfix")
+
+    def _ambiguous_candidates(self) -> list[dict[str, Any]]:
+        aliases = {
+            "candidate_issue_signatures": [],
+            "source_finding_ids": ["b" * 64],
+            "context_hashes": [],
+            "title_fingerprints": [],
+            "symbols": [],
+        }
+        return [
+            _record("1" * 64, discussion_id="d1", aliases=aliases),
+            _record("2" * 64, discussion_id="d2", aliases=aliases),
+        ]
+
+    def _unassigned_group(self) -> dict[str, Any]:
+        """What consensus emits when its own state match was ambiguous."""
+        return dict(_group(None), decision="fyi", issue_id_source="ambiguous_unassigned")
+
+    def test_unassigned_ambiguous_group_protects_its_candidates(self) -> None:
+        for min_resolution, eligible in ((1, ["claude"]), (2, ["claude"])):
+            with self.subTest(min_resolution=min_resolution):
+                plan = _plan(
+                    config=_config(min_resolution=min_resolution),
+                    consensus=_consensus(eligible=eligible),
+                    persisted=self._ambiguous_candidates(),
+                    fyi=[self._unassigned_group()],
+                )
+
+                for issue_id in ("1" * 64, "2" * 64):
+                    record = next(r for r in plan.planned_records if r["issue_id"] == issue_id)
+                    self.assertEqual(record["status"], "stale")
+                    self.assertEqual(record["remap_status"], "ambiguous")
+                self.assertEqual(len(plan.planned_records), 2)
+                self.assertEqual(plan.outcome.stale_unverified, 0)
+                self.assertEqual(
+                    plan.outcome.warnings,
+                    [
+                        "ambiguous existing record match for unassigned group; "
+                        "protected 2 candidate record(s)"
+                    ],
+                )
+
+    def test_unassigned_ambiguous_group_keeps_settled_candidates_settled(self) -> None:
+        candidates = self._ambiguous_candidates()
+        candidates[0].update(status="wontfix", human_disposition="wontfix")
+        candidates[1].update(status="resolved")
+        plan = _plan(persisted=candidates, fyi=[self._unassigned_group()])
+
+        self.assertEqual(self._status_of(plan, "1" * 64), "wontfix")
+        self.assertEqual(self._status_of(plan, "2" * 64), "resolved")
+
+    def test_later_unambiguous_match_updates_only_that_candidate(self) -> None:
+        first = _plan(persisted=self._ambiguous_candidates(), fyi=[self._unassigned_group()])
+        plan = _plan(persisted=first.planned_state["records"], inline=[_group("1" * 64)])
+
+        self.assertEqual(self._status_of(plan, "1" * 64), "open")
+        untouched = next(r for r in plan.planned_records if r["issue_id"] == "2" * 64)
+        self.assertEqual(untouched["status"], "stale")
+        self.assertEqual(untouched["remap_status"], "ambiguous")
 
     def test_retention_overflow_is_reported_and_clears_the_issue_index(self) -> None:
         config = _config(retention={"max_state_bytes": 1})
