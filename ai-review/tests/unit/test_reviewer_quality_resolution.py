@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +58,29 @@ def _raw_malformed() -> dict[str, Any]:
     }
 
 
+def _finalize(findings: list[Any]) -> tuple[dict[str, Any], str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        input_dir = Path(tmp)
+        (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            finalized = finalize_finding_batch(
+                {
+                    "adapter_status": "success",
+                    # Pinned so batches finalized in different seconds still compare equal.
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "findings": findings,
+                },
+                reviewer="claude",
+                model="model",
+                run_id="run",
+                started_at="2026-06-29T00:00:00Z",
+                effective_config_sha256="0" * 64,
+                input_dir=input_dir,
+            )
+    validate_instance(finalized, "finding_batch.schema.json")
+    return finalized, err.getvalue()
+
+
 class ReviewerQualityResolutionTests(unittest.TestCase):
     def test_valid_empty_batch_is_usable_for_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,6 +134,31 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         self.assertEqual(finalized["accepted_finding_count"], 1)
         self.assertEqual(finalized["dropped_finding_count"], 1)
         self.assertTrue(finalized["usable_for_resolution"])
+
+    def test_missing_confidence_defaults_to_zero_and_malformed_still_drops(self) -> None:
+        # SPEC-41: confidence only breaks ties, so a seat that omits it keeps its
+        # findings and stays usable for resolution. A present but wrong value
+        # still drops the finding.
+        missing = _raw_valid()
+        del missing["confidence"]
+        finalized, err = _finalize(
+            [
+                missing,
+                {**_raw_valid(), "confidence": "high"},
+                {**_raw_valid(), "confidence": 1.5},
+            ]
+        )
+        self.assertEqual(finalized["accepted_finding_count"], 1)
+        self.assertEqual(finalized["findings"][0]["confidence"], 0.0)
+        self.assertIn("claude finding 1 has no confidence; using 0.0", err)
+        self.assertIn("dropped claude finding 2", err)
+        self.assertIn("dropped claude finding 3", err)
+
+        # Everything downstream sees the same finding as an explicit 0.0.
+        defaulted, _ = _finalize([missing])
+        explicit, _ = _finalize([{**_raw_valid(), "confidence": 0.0}])
+        self.assertEqual(defaulted, explicit)
+        self.assertTrue(defaulted["usable_for_resolution"])
 
     def test_all_dropped_batch_cannot_resolve(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
