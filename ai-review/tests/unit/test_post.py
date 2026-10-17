@@ -32,6 +32,7 @@ from ai_review.schema import load_json_file, validate_instance, write_canonical_
 from ai_review.state_plan import plan_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.config_yaml import runtime_config  # noqa: E402
 from support.fake_post_client import (  # noqa: E402
     DiffFailPostClient,
     FakePostClient,
@@ -885,7 +886,7 @@ class PostTests(PostCase):
         anchor["end"] = {"old_line": None, "new_line": 4, "line_code": None}
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(),
+            self._config(inline_multiline=False),
             self._manifest("head"),
             consensus,
         )
@@ -894,14 +895,45 @@ class PostTests(PostCase):
         self.assertTrue(any("multiline anchor" in warning for warning in result["warnings"]))
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_omitted_inline_settings_allow_multiline_on_all_documented_sides(self) -> None:
+        for side in ("new", "old", "unchanged"):
+            with self.subTest(side=side):
+                client = FakePostClient("head")
+                config = runtime_config(lambda c: c["posting"].pop("v1_inline_sides"))
+                consensus = self._consensus()
+                anchor = consensus["groups"][0]["representative_anchor"]
+                anchor["side"] = side
+                anchor["start"] = {
+                    "old_line": 2 if side != "new" else None,
+                    "new_line": 2 if side != "old" else None,
+                    "line_code": None,
+                }
+                anchor["end"] = {
+                    "old_line": 4 if side != "new" else None,
+                    "new_line": 4 if side != "old" else None,
+                    "line_code": None,
+                }
+
+                result = post_consensus(
+                    client,  # type: ignore[arg-type]
+                    config,
+                    self._manifest("head"),
+                    consensus,
+                )
+
+                self.assertEqual(result["created_discussions"], 1)
+                self.assertEqual(result["summary_comment"]["action"], "none")
+                self.assertIn("line_range", client.created_positions[0])
+                validate_instance(result, "post_result.schema.json")
+
     def test_post_fyi_findings_go_to_summary(self) -> None:
-        # Bug #4: FYI findings must be posted to the summary comment when fyi_mode=summary_comment.
+        # Bug #4: FYI findings are posted to the summary comment.
         client = FakePostClient("head")
         consensus = self._consensus()
         consensus["groups"][0]["decision"] = "fyi"
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(fyi_mode="summary_comment"),
+            self._config(),
             self._manifest("head"),
             consensus,
         )
@@ -910,20 +942,6 @@ class PostTests(PostCase):
         self.assertEqual(result["summary_comment"]["fyi_findings"], 1)
         self.assertEqual(len(client.summary_notes), 1)
         self.assertIn("Advisory (FYI) findings", client.summary_notes[0]["body"])
-        validate_instance(result, "post_result.schema.json")
-
-    def test_post_fyi_not_posted_when_mode_disabled(self) -> None:
-        client = FakePostClient("head")
-        consensus = self._consensus()
-        consensus["groups"][0]["decision"] = "fyi"
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(fyi_mode="off"),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(result["summary_comment"]["action"], "none")
-        self.assertEqual(client.summary_notes, [])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_with_no_findings_writes_state_and_mutates_nothing_else(self) -> None:
@@ -997,7 +1015,6 @@ class PostTests(PostCase):
         result = post_consensus(
             client,  # type: ignore[arg-type]
             self._config(
-                fyi_mode="summary_comment",
                 limits={"max_fyi_findings": 50},
                 # 60 tracked findings do not fit the default byte budget, and
                 # state overflow fails the run closed before any summary is
@@ -1264,7 +1281,7 @@ class PostTests(PostCase):
                     ):
                         posting_module.finalize_state(
                             client, manifest, consensus, result, plan, [], [], [],
-                                posting_mode=mode, fyi_mode="off", max_fyi=0,
+                            posting_mode=mode, max_fyi=0,
                             bot_author_id=client.BOT_ID, dry_run=False,
                         )
                     self.assertEqual(len(session.calls), 1)
@@ -1287,7 +1304,7 @@ class PostTests(PostCase):
                     )
                     posting_module.finalize_state(
                         retry, manifest, consensus, retry_result, retry_plan, [], [], [],
-                        posting_mode=mode, fyi_mode="off", max_fyi=0,
+                        posting_mode=mode, max_fyi=0,
                         bot_author_id=retry.BOT_ID, dry_run=False,
                     )
                     self.assertEqual(retry_result["status"], "success")

@@ -39,6 +39,7 @@ from .state_plan import (
 from .summary_render import _sort_groups, render_summary_body
 from .types import (
     Anchor,
+    AnchorSide,
     Consensus,
     FindingGroup,
     PostResult,
@@ -231,7 +232,7 @@ class PostGroupClassification:
 def _classify_post_groups(
     groups: list[FindingGroup],
     *,
-    inline_sides: set[str],
+    inline_sides: set[AnchorSide],
     inline_multiline: bool,
 ) -> PostGroupClassification:
     """Route each consensus group to a thread, the summary fallback, or FYI.
@@ -579,7 +580,6 @@ def finalize_state(
     fyi_groups: list[FindingGroup],
     *,
     posting_mode: str,
-    fyi_mode: str,
     max_fyi: int,
     bot_author_id: int,
     dry_run: bool,
@@ -588,7 +588,6 @@ def finalize_state(
     # anchored is still a finding two reviewers supported independently; the
     # configuration key that used to suppress this list erased it from all
     # product output, leaving it only in persisted state and a warning.
-    fyi_to_post = fyi_groups if fyi_mode == "summary_comment" else []
     result["summary_comment"] = cast(
         SummaryComment,
         upsert_summary_comment(
@@ -597,7 +596,7 @@ def finalize_state(
             consensus["run_id"],
             raw_discussions,
             summary_fallback_groups,
-            fyi_to_post,
+            fyi_groups,
             max_fyi,
             posting_mode=posting_mode,
             bot_author_id=bot_author_id,
@@ -763,9 +762,8 @@ def post_consensus(
         result["status"] = "stale_head"
         return result
 
-    inline_multiline = bool(posting.get("inline_multiline", False))
-    inline_sides = set(posting.get("v1_inline_sides", ["new"]))
-    fyi_mode = str(posting.get("fyi_mode", "summary_comment"))
+    inline_multiline = posting["inline_multiline"]
+    inline_sides = set(posting["v1_inline_sides"])
     max_fyi = int(limits.get("max_fyi_findings", 50))
     context = prepare_post_context(
         client,
@@ -829,7 +827,6 @@ def post_consensus(
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         posting_mode=posting_mode,
-        fyi_mode=fyi_mode,
         max_fyi=max_fyi,
         bot_author_id=context.bot_author_id,
         dry_run=dry_run,
