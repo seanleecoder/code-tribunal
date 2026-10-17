@@ -1,92 +1,15 @@
 # SPEC-68 — Posting and state correctness fixes for 2.0.3
 
-- **Severity:** Medium. Each defect can silently resolve a thread, block posting, or change behaviour without any configuration change being visible. · **Effort:** S (four independent fixes of about 10 lines each, plus tests) · **ROI rank:** post-2.0.2, step 1
-- **Vehicle:** 2.0.3. All four fixes are compatible: no schema, template, or artifact change.
+- **Status:** Fixes 1 (#183), 2 (#184) and 4 are complete; see the
+  [CHANGELOG](../../CHANGELOG.md). Only fix 3 remains.
+- **Severity:** Medium. Mixing consensus and inputs from different runs can mutate
+  threads under the wrong review result. · **Effort:** S (one remaining fix)
+- **Vehicle:** 2.0.3. No schema, template, or artifact change.
 - **Depends on:** nothing. Fix 3 lands in the same pull request as
   [SPEC-47](spec-47-trusted-project-review-config.md), because SPEC-47 already adds a
   pre-work binding check to post.
 - **Found by:** the 2026-10-13 simplification review of the decision, state, and
-  posting layers. Fixes 1, 2 and 4 were confirmed by reading the code at `da35afa`.
-  Fix 1 was also reproduced in a planning dry run.
-
-Land each fix as its own pull request.
-
-## Fix 1 — an ambiguous match auto-resolves its candidate threads
-
-**Defect.**
-
-- When consensus cannot choose between several persisted records for one group, it
-  sets `issue_id = None` and `issue_id_source = "ambiguous_unassigned"`
-  (`consensus.py`, the state-alias matching block).
-- Post planning then builds `all_current_groups` only from groups whose `issue_id`
-  is a string (`plan_state` in `state_plan.py`). The ambiguous group is skipped
-  before matching, so its candidate records are never added to
-  `protected_issue_ids`.
-- `_plan_stale_records` then treats those records as absent. With the resolution
-  quorum, it marks every candidate `resolved`. A reproduction with two open
-  records, one ambiguous FYI group, and a quorum of two produced
-  `[('aa', 'resolved'), ('bb', 'resolved')]`.
-
-The policy in `decide_group` ("an ambiguous match … cannot safely choose which
-historical thread to mutate") is therefore contradicted by the stage after it:
-nothing is mutated as an update, but every candidate is resolved.
-
-**Fix.**
-
-- In `plan_state`, run `find_matching_record` for groups whose `issue_id` is
-  `None` as well. Match against the full persisted state, not the pool that
-  excludes records already claimed by other groups. With the strongest
-  candidates filtered out, the match falls through to a weaker precedence and
-  protects an unrelated record.
-- Add every candidate to `protected_issue_ids`, and leave the rest to
-  `_plan_stale_records`. Do not add candidates to `planned_issue_ids`. A later
-  group that claims a candidate must still win, whatever the group order.
-- In `_plan_stale_records`, apply a human command before protection. A command
-  names a specific thread, so ambiguity only blocks absence resolution. Protection
-  turns an `open` record into `stale` with `remap_status: "ambiguous"` and leaves
-  a settled record's status unchanged.
-- Never create a new record for an ID-less group.
-
-**Tests (`test_state_plan.py`).**
-
-- An ambiguous group with two open candidate records leaves both `stale` and
-  `ambiguous`, never `resolved`, with and without the resolution quorum.
-- Settled candidates keep their status, and `wontfix`, `resolve` and `reopen`
-  on a candidate still apply.
-- When other groups claim the candidates, an unrelated weaker match is still
-  resolved as absent.
-- A later run that matches one candidate unambiguously updates that one only.
-
-## Fix 2 — the summary comment has no ownership check
-
-**Defect.** `find_summary_note` (`notes.py`) returns the first discussion whose root
-note carries an `ai-review-summary:v1` marker, from any author.
-`upsert_summary_comment` (`posting.py`) then reacts to whichever note it found:
-
-- **Plant a marker.** Any participant who posts a marker breaks every later run.
-  Post tries to update a note it does not own; the platform rejects that, and the
-  failure escapes before state or `post_result` is written.
-- **Copy the hash.** A participant who copies the bot's current `body_hash` makes
-  post report `unchanged`, so the real summary is never updated.
-
-State notes already avoid this: `state_note_candidates` filters on
-`expected_author_id`, using `client.current_user_id()`.
-
-**Fix.**
-
-- `find_summary_note` takes `expected_author_id` and ignores notes from other
-  authors, recording one warning per ignored note.
-- `upsert_summary_comment` passes the bot ID that post already fetches. Dry runs
-  keep today's behaviour.
-
-**Tests.**
-
-- `test_post.py`: a non-bot note carrying the marker is ignored. The bot creates
-  its own summary, and the warning is recorded.
-- `test_post.py`: a non-bot note carrying a copy of the current hash does not
-  suppress the bot's update.
-- Fakes for both platforms: a non-bot note with a marker leaves the bot's
-  summary unchanged.
+  posting layers.
 
 ## Fix 3 — post does not bind its consensus artifact to this run
 
@@ -116,39 +39,8 @@ code comment and in the [security model](../SECURITY_MODEL.md).
 - Each mismatched field fails before any platform call.
 - A matching artifact posts as today.
 
-## Fix 4 — configuration defaults disagree between the YAML and the code
-
-**Defect.**
-
-- `post_consensus` (`posting.py`) falls back to `inline_multiline = False` and
-  `v1_inline_sides = ["new"]`. The shipped
-  [`review.yaml`](../../ai-review/config/review.yaml) and the configuration docs say
-  `true` and `[new, old, unchanged]`. A custom configuration that omits either key
-  silently gets the narrower behaviour.
-- Any `posting.fyi_mode` other than `summary_comment` silently discards every FYI
-  finding. The value is never validated: `fyi_mode` is only a known key name in
-  `config.py`.
-
-**Fix.**
-
-- `validate_config` sets the documented defaults for `inline_multiline`,
-  `v1_inline_sides` and `fyi_mode`, and rejects a `fyi_mode` value other than
-  `summary_comment`.
-- Consumers read the validated value without their own fallback.
-- The typed configuration object planned for 2.1.x (simplification item N05) later
-  removes this whole class of drift.
-
-**Tests (`test_config_env_overrides.py` or the config validation tests).**
-
-- Omitted keys resolve to the documented defaults.
-- An unknown `fyi_mode` is rejected with a clear message.
-
 ## Acceptance
 
-- No planning path resolves a record that an ambiguous group matched.
-- Only bot-authored summary notes are read or updated.
 - Post refuses a consensus artifact from another run before any platform call.
-- The documented defaults are the effective defaults, and an invalid `fyi_mode` is
-  rejected.
-- `make quality` passes, and the CHANGELOG lists each fix under 2.0.3.
-- Delete this file and its index row when all four fixes have merged.
+- `make quality` passes, and the CHANGELOG lists the fix under 2.0.3.
+- Delete this file and its index row when fix 3 has merged.

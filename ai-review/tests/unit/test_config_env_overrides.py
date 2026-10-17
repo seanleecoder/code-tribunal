@@ -738,6 +738,76 @@ class ConfigVersionMigrationTests(unittest.TestCase):
 
 
 class PostingModeConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.shipped = load_config(_REPO_CONFIG)
+
+    def test_omitted_posting_keys_use_documented_defaults(self) -> None:
+        defaults = {
+            "inline_multiline": True,
+            "v1_inline_sides": ["new", "old", "unchanged"],
+            "fyi_mode": "summary_comment",
+        }
+        self.assertEqual({key: self.shipped["posting"][key] for key in defaults}, defaults)
+
+        for omitted in (*defaults, "posting"):
+            with self.subTest(omitted=omitted):
+                config = deepcopy(self.shipped)
+                if omitted == "posting":
+                    config.pop("posting")
+                else:
+                    config["posting"].pop(omitted)
+
+                validate_config(config)
+
+                self.assertEqual({key: config["posting"][key] for key in defaults}, defaults)
+
+    def test_explicit_inline_settings_are_preserved(self) -> None:
+        for key, value in (
+            ("inline_multiline", False),
+            ("v1_inline_sides", ["new"]),
+            ("v1_inline_sides", []),
+            ("v1_inline_sides", ["new", "new"]),
+            ("v1_inline_sides", ["old", "unchanged"]),
+        ):
+            with self.subTest(key=key, value=value):
+                config = deepcopy(self.shipped)
+                config["posting"][key] = value
+
+                validate_config(config)
+
+                self.assertEqual(config["posting"][key], value)
+
+    def test_invalid_posting_values_are_rejected(self) -> None:
+        cases = (
+            (
+                "inline_multiline",
+                (None, "false", "true", 0, 1, [], {}),
+                r"posting\.inline_multiline must be a boolean",
+            ),
+            (
+                "v1_inline_sides",
+                (
+                    None, "new", {"new": True}, ("new",), ["new", "olds"],
+                    [None], [False], [1], [["new"]], [{"side": "new"}],
+                ),
+                r"posting\.v1_inline_sides must be a list of new, old, unchanged",
+            ),
+            (
+                "fyi_mode",
+                ("off", "thread", "", None, False, [], {}),
+                r"posting\.fyi_mode must be summary_comment; remove the setting",
+            ),
+        )
+        for key, values, message in cases:
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    config = deepcopy(self.shipped)
+                    config["posting"][key] = value
+
+                    with self.assertRaisesRegex(ConfigError, message):
+                        validate_config(config)
+
     def test_state_backend_is_rejected_with_removal_guidance(self) -> None:
         """Any value, including the one v2 derived, is now an error.
 

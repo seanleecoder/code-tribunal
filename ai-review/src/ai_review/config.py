@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from .canonical import stable_json_hash
 from .reviewers import REVIEWER_IDS, REVIEWERS
+from .types import AnchorSide
 
 
 class ConfigError(ValueError):
@@ -181,6 +182,9 @@ RETIRED_ENV_OVERRIDES = {
 # levels; a closed set also means the value that reaches shell argv can never
 # carry quoting/injection payloads.
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
+# Diff sides `posting.v1_inline_sides` may name, from the anchor vocabulary.
+INLINE_SIDES: tuple[str, ...] = get_args(AnchorSide.__value__)
 
 # Smallest panel a v3 deployment may run, on every path: the shipped YAML,
 # AI_REVIEW_REVIEWERS after all overrides are applied. Three, not two, for two
@@ -492,6 +496,16 @@ def _validate_posting(config: dict[str, Any]) -> None:
     mode = posting.setdefault("mode", "gitlab_discussions")
     if mode not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
+    if not isinstance(posting.setdefault("inline_multiline", True), bool):
+        raise ConfigError("posting.inline_multiline must be a boolean")
+    inline_sides = posting.setdefault("v1_inline_sides", list(INLINE_SIDES))
+    if not isinstance(inline_sides, list) or any(side not in INLINE_SIDES for side in inline_sides):
+        raise ConfigError(f"posting.v1_inline_sides must be a list of {', '.join(INLINE_SIDES)}")
+    if posting.setdefault("fyi_mode", "summary_comment") != "summary_comment":
+        raise ConfigError(
+            "posting.fyi_mode must be summary_comment; "
+            "remove the setting or set it to summary_comment"
+        )
 
 
 def _validate_state(config: dict[str, Any]) -> None:

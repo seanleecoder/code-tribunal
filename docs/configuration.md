@@ -236,9 +236,9 @@ not when they happen to choose similar phrasing.
 | Key | Type/default | Meaning |
 |---|---|---|
 | `posting.mode` | enum, `gitlab_discussions` | `gitlab_discussions` or `github_reviews`. |
-| `posting.v1_inline_sides` | list, `[new, old, unchanged]` | Diff sides eligible for inline placement. |
+| `posting.v1_inline_sides` | list, `[new, old, unchanged]` | Diff sides eligible for inline placement; each item must be `new`, `old`, or `unchanged`. |
 | `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
-| `posting.fyi_mode` | enum, `summary_comment` | Current destination for FYI (unsurfaced) findings. |
+| `posting.fyi_mode` | enum, `summary_comment` | FYI (unsurfaced) findings go to the summary comment; other values are rejected. |
 | `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
 
 Persistent cross-run state is always active and has no backend setting.

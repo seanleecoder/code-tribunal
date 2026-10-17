@@ -17,6 +17,14 @@ versioning.
   another participant that carries the summary marker no longer makes post
   fail on an edit it cannot make, or report a stale summary as unchanged; it
   is ignored with a warning (SPEC-68 fix 2).
+- Custom configurations that omit inline posting settings now use the documented
+  defaults: multiline comments enabled and all three diff sides allowed. FYI
+  findings default to the summary comment, and unsupported `posting.fyi_mode`
+  values are rejected instead of silently discarding findings (SPEC-68 fix 4).
+  To keep the previous inline behaviour, set `posting.v1_inline_sides: [new]` and
+  `posting.inline_multiline: false`. Remove an unsupported `posting.fyi_mode`
+  setting or set it to `summary_comment`. Invalid inline setting types, including
+  explicit nulls, and unknown inline sides are rejected during config validation.
 
 ## [2.0.2] - 2026-10-04
 

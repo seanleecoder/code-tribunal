@@ -19,7 +19,7 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 | Spec | Status | Effort | Vehicle | Summary |
 |---|---|---|---|---|
 | [SPEC-41](spec-41-reviewer-confidence-default.md) | Ready (part A) | A: S · B: via SPEC-66 | A: 2.0.3 | A finding without `confidence` is dropped, so a non-compliant seat loses everything. Part A defaults it to `0.0`, which can only lose tie-breaks. Part B (visibility) is SPEC-66. |
-| [SPEC-68](spec-68-posting-correctness-fixes.md) | Ready | S (four fixes) | 2.0.3 | An ambiguous match auto-resolves its candidate threads; the summary note has no ownership check; post does not bind consensus to its run; configuration defaults drift from the YAML. |
+| [SPEC-68](spec-68-posting-correctness-fixes.md) | Partial; fix 3 ready with SPEC-47 | S (one fix remaining) | 2.0.3 | Post does not bind its consensus artifact to its input run before platform access. |
 | [SPEC-67](spec-67-majority-noise-to-fyi.md) | Ready | S | 2.0.3 | Majority-noise groups are demoted to FYI instead of silently dropped, and a noise vote no longer auto-resolves a thread. Summary entries show `Found by`. Includes the ADR-0002 amendment. |
 | [SPEC-47](spec-47-trusted-project-review-config.md) | Ready | S | 2.0.3 | Render prompts and rules from the image's trusted runtime root, delete the unread bundle copies and hashes, and verify the effective-config binding in review and post as well as consensus. Repository-hosted project policy was rejected. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Ready | S (docs) | Any | Document the real GitLab trust boundary: a protected external CI config path or policy. In-pipeline image checks cannot stop a hostile CI author; the drift marker was rejected. |
@@ -109,7 +109,7 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. SPEC-68: four correctness fixes. Fix 3 lands with SPEC-47.
+1. SPEC-68 fix 3: bind post's consensus artifact to its run. Lands with SPEC-47.
 2. SPEC-41 part A: default a missing `confidence`.
 3. SPEC-67: majority noise demotes to FYI, `Found by` on summary entries, plus the
    ADR-0002 amendment.
