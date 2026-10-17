@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from ai_review.memory import encode_state_note, state_note_candidates
-from ai_review.notes import SUMMARY_MARKER_RE
+from ai_review.notes import SUMMARY_MARKER_RE, note_author_id
+from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
@@ -20,6 +21,8 @@ from ai_review.platform.gitlab import (
 
 
 class FakePostClient:
+    BOT_ID = 10
+
     def __init__(self, current_head_sha: str) -> None:
         self.current_head_sha = current_head_sha
         self.created = 0
@@ -60,7 +63,7 @@ class FakePostClient:
         return [entry for entry in self.updated_mr_notes if entry["note_id"] in summary_ids]
 
     def current_user(self) -> dict[str, Any]:
-        return {"id": 10, "username": "ai-review-bot"}
+        return {"id": self.BOT_ID, "username": "ai-review-bot"}
 
     def current_user_id(self) -> int | None:
         try:
@@ -135,24 +138,34 @@ class FakePostClient:
         return list(self.mr_notes)
 
     def create_state_note(self, project_id: str, change_id: str, body: str) -> dict[str, Any]:
-        note_id = 900 + len(self.mr_notes)
         # Authored by the bot, like the real platform: state-note lookup rejects
         # notes from any other author, so a fake that omits this would make every
         # run discard the state it just wrote.
-        note = {"id": note_id, "body": body, "author": {"id": 10}}
+        return self._append_note(body, author_id=self.BOT_ID)
+
+    def add_foreign_note(self, body: str, *, author_id: int = 99) -> int:
+        """A top-level note another participant posted."""
+        return int(self._append_note(body, author_id=author_id)["id"])
+
+    def _append_note(self, body: str, *, author_id: int) -> dict[str, Any]:
+        note_id = 900 + len(self.mr_notes)
+        note = {"id": note_id, "body": body, "author": {"id": author_id}}
         self.mr_notes.append(note)
         # Individual MR notes are returned by the discussions listing too, so a
         # subsequent run can find and upsert the same summary note.
-        self.discussions.append({"id": f"note-{note_id}", "notes": [{"id": note_id, "body": body}]})
+        self.discussions.append({"id": f"note-{note_id}", "notes": [dict(note)]})
         return note
 
     def update_state_note(
         self, project_id: str, change_id: str, note_id: int, body: str
     ) -> dict[str, Any]:
-        self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for note in self.mr_notes:
             if note.get("id") == note_id:
+                # The platform refuses to edit another author's note.
+                if note_author_id(note) != self.BOT_ID:
+                    raise ReviewPlatformError(f"403 Forbidden: note {note_id}")
                 note["body"] = body
+        self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for discussion in self.discussions:
             for note in discussion.get("notes", []):
                 if note.get("id") == note_id:
@@ -182,4 +195,6 @@ class StatePostClient(FakePostClient):
 
     def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
         super().__init__(current_head_sha)
-        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": 10}}]
+        self.mr_notes = [
+            {"id": 1, "body": encode_state_note(state), "author": {"id": self.BOT_ID}}
+        ]

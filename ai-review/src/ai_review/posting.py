@@ -21,7 +21,6 @@ from .memory import (
     normalize_state,
 )
 from .notes import (
-    ExistingReviewDiscussion,
     find_summary_note,
     index_ai_review_discussions,
 )
@@ -63,6 +62,8 @@ def load_persisted_state(
     client: ReviewPlatform,
     config: dict[str, Any],
     manifest: dict[str, Any],
+    *,
+    bot_author_id: int,
 ) -> tuple[State | None, list[str]]:
     """Load the persisted state note, or report its absence.
 
@@ -72,11 +73,6 @@ def load_persisted_state(
     this boundary and ``prepare_post_context`` decides what to put in its place.
     """
     state_config = config.get("state", {})
-    bot_author_id = client.current_user_id()
-    if bot_author_id is None:
-        raise RuntimeError(
-            "persisted state requires current_user lookup to verify state-note author"
-        )
     notes = _list_state_notes(
         client,
         manifest["project_id"],
@@ -138,31 +134,6 @@ def write_persisted_state(
     return created if isinstance(created, dict) else None
 
 
-def recover_state_from_discussions(
-    client: ReviewPlatform,
-    manifest: dict[str, Any],
-    existing_discussions: list[ExistingReviewDiscussion],
-    *,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    """Recover state from trusted AI-review discussion markers.
-
-    This is the only discussion-marker recovery seam: markers are accepted only
-    from the authenticated bot user and are converted into the same deterministic
-    alias/fingerprint state shape consumed by find_matching_record.
-    """
-    bot_author_id = None if dry_run else client.current_user_id()
-    if not dry_run and bot_author_id is None:
-        raise RuntimeError(
-            "discussion-marker recovery requires GitLab current_user lookup to verify author"
-        )
-    return state_from_existing_discussions(
-        existing_discussions,
-        current_head_sha=manifest["head_sha"],
-        expected_author_id=bot_author_id,
-    )
-
-
 def _note_id_from_response(response: Any) -> int | None:
     if isinstance(response, dict) and isinstance(response.get("id"), int):
         return int(response["id"])
@@ -179,6 +150,8 @@ def upsert_summary_comment(
     max_fyi: int,
     *,
     posting_mode: str,
+    bot_author_id: int,
+    warnings: list[str],
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary = {
@@ -199,7 +172,9 @@ def upsert_summary_comment(
     if dry_run:
         summary["action"] = "created"
         return summary
-    existing = find_summary_note(raw_discussions)
+    existing = find_summary_note(
+        raw_discussions, expected_author_id=bot_author_id, warnings=warnings
+    )
     if existing is None:
         response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
@@ -606,6 +581,7 @@ def finalize_state(
     posting_mode: str,
     fyi_mode: str,
     max_fyi: int,
+    bot_author_id: int,
     dry_run: bool,
 ) -> PostResult:
     # Summary fallback is unconditional. A surfaced finding that could not be
@@ -624,6 +600,8 @@ def finalize_state(
             fyi_to_post,
             max_fyi,
             posting_mode=posting_mode,
+            bot_author_id=bot_author_id,
+            warnings=result["warnings"],
             dry_run=dry_run,
         ),
     )
@@ -692,6 +670,7 @@ class PostContext:
     raw_discussions: list[dict[str, Any]]
     persisted_state: State
     human_commands: dict[str, str]
+    bot_author_id: int
 
 
 def prepare_post_context(
@@ -710,20 +689,27 @@ def prepare_post_context(
         if dry_run
         else client.list_threads(manifest["project_id"], manifest["merge_request_iid"])
     )
-    persisted_state, state_warnings = load_persisted_state(client, config, manifest)
+    # One identity lookup serves every author check in the run: state notes,
+    # discussion-marker recovery, and the summary comment. Without it, any of
+    # them could accept a note planted by another participant.
+    bot_author_id = client.current_user_id()
+    if bot_author_id is None:
+        raise RuntimeError("post requires current_user lookup to verify note authors")
+    persisted_state, state_warnings = load_persisted_state(
+        client, config, manifest, bot_author_id=bot_author_id
+    )
     if persisted_state is None:
         # Absence, not disablement. Recovery runs only on this branch: when a
         # valid note was loaded its records are authoritative, and the marker
-        # scan would cost a current_user round trip for a discarded result.
+        # scan would be wasted on a discarded result.
         # Normalizing `None` yields the same empty document the recovery-off
         # path wants, so the two only differ in what they hand to normalize.
         state_config = config.get("state", {})
         recovered = (
-            recover_state_from_discussions(
-                client,
-                manifest,
+            state_from_existing_discussions(
                 index_ai_review_discussions(raw_discussions),
-                dry_run=dry_run,
+                current_head_sha=manifest["head_sha"],
+                expected_author_id=bot_author_id,
             )
             if state_config.get("recover_from_discussion_markers", True)
             else None
@@ -746,6 +732,7 @@ def prepare_post_context(
         raw_discussions=raw_discussions,
         persisted_state=persisted_state,
         human_commands=human_commands,
+        bot_author_id=bot_author_id,
     )
 
 
@@ -844,5 +831,6 @@ def post_consensus(
         posting_mode=posting_mode,
         fyi_mode=fyi_mode,
         max_fyi=max_fyi,
+        bot_author_id=context.bot_author_id,
         dry_run=dry_run,
     )
