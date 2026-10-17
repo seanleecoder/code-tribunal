@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, overload
 
 from .canonical import sha256_hex
-from .consensus_policy import SUPPORT_REQUIRED
+from .consensus_policy import demoted_by_noise
 from .constants import SEVERITY_RANK
 from .render import (
     encode_marker_token,
@@ -25,22 +25,6 @@ def _anchor_location(anchor: dict[str, Any]) -> str:
     return f"{path}:{line}" if isinstance(line, int) else path
 
 
-def _demoted_noise_count(group: Mapping[str, Any]) -> int | None:
-    """Return the noise vote count when majority noise demoted this group.
-
-    Only majority noise yields an ``fyi`` group that meets the support threshold
-    outside an ambiguous match, so the artifact needs no extra field for it.
-    """
-    if (
-        group.get("decision") != "fyi"
-        or int(group.get("support_count") or 0) < SUPPORT_REQUIRED
-        or group.get("issue_id_source") == "ambiguous_unassigned"
-    ):
-        return None
-    critique_summary = group.get("critique_summary") or {}
-    return int(critique_summary.get("noise") or 0)
-
-
 def _summary_line(group: Mapping[str, Any]) -> str:
     anchor = group.get("representative_anchor", {}) or {}
     location = literal_span(_anchor_location(anchor), required=True)
@@ -48,13 +32,13 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     category = str(group.get("category") or "")
     title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
     category_part = f" {category}" if category else ""
-    reviewers = sorted(str(reviewer) for reviewer in group.get("contributing_reviewers") or [])
-    found_by = ", ".join(literal_span(reviewer, required=True) for reviewer in reviewers)
-    header = f"- **{severity}**{category_part} — {location}: {title}"
-    if found_by:
-        header += f" — Found by {found_by}"
-    noise = _demoted_noise_count(group)
-    if noise is not None:
+    found_by = ", ".join(
+        literal_span(str(reviewer), required=True)
+        for reviewer in sorted(group["contributing_reviewers"])
+    )
+    header = f"- **{severity}**{category_part} — {location}: {title} — Found by {found_by}"
+    if demoted_by_noise(group):
+        noise = group["critique_summary"]["noise"]
         critics = "critic" if noise == 1 else "critics"
         header += f" — marked noise by {noise} independent {critics}"
     detail = prose_block(str(group.get("body") or ""))

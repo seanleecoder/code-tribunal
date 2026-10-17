@@ -13,7 +13,7 @@ import unittest
 
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
-from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group
+from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
 from ai_review.schema import validate_instance
 
 from .test_consensus_state_matching import (
@@ -143,9 +143,9 @@ class DecisionTableTests(unittest.TestCase):
                 "fyi",
             ),
             (
-                "ambiguous state match outranks majority noise",
+                "ambiguous state match outranks critic support",
                 ["claude", "codex", "opencode"],
-                [_critique_batch("cursor", [_critique("cursor", first, "noise")])],
+                [_critique_batch("cursor", [_critique("cursor", first, "agree")])],
                 "major",
                 _AMBIGUOUS_STATE,
                 "fyi",
@@ -537,39 +537,34 @@ class MajorityNoiseTests(unittest.TestCase):
         )
 
         self.assertEqual(one_of_two["groups"][0]["decision"], "surface")
+        # Majority noise demotes a corroborated group; it is never dropped.
+        self.assertEqual(one_of_one["groups"][0]["support_count"], 2)
         self.assertEqual(one_of_one["groups"][0]["decision"], "fyi")
-
-    def test_majority_noise_demotes_a_corroborated_group_and_never_drops_it(self) -> None:
-        consensus = _run(
-            contributors=["claude", "codex"],
-            critique_batches=[
-                _critique_batch(
-                    "opencode", [_critique("opencode", _SOURCE_IDS["claude"], "noise")]
-                ),
-                _critique_batch(
-                    "cursor", [_critique("cursor", _SOURCE_IDS["codex"], "noise")]
-                ),
-            ],
-        )
-
-        group = consensus["groups"][0]
-        self.assertEqual(group["support_count"], 2)
-        self.assertEqual(group["decision"], "fyi")
         self.assertEqual(
-            consensus["summary"], {"surface_count": 0, "fyi_count": 1, "drop_count": 0}
+            one_of_one["summary"], {"surface_count": 0, "fyi_count": 1, "drop_count": 0}
         )
 
-    def test_ambiguous_group_is_never_dropped_on_critique_evidence(self) -> None:
+    def test_ambiguous_group_keeps_its_reviewed_severity_under_critique(self) -> None:
         consensus = _run(
             contributors=["claude", "codex", "opencode"],
+            config=_critique_config(allow_severity_downgrade=True),
             critique_batches=[
-                _critique_batch("cursor", [_critique("cursor", _SOURCE_IDS["claude"], "noise")])
+                _critique_batch(
+                    "cursor",
+                    [
+                        _critique(
+                            "cursor", _SOURCE_IDS["claude"], "dispute", adjusted_severity="minor"
+                        )
+                    ],
+                )
             ],
             state=_AMBIGUOUS_STATE,
         )
 
-        self.assertEqual(consensus["groups"][0]["issue_id_source"], "ambiguous_unassigned")
-        self.assertEqual(consensus["groups"][0]["decision"], "fyi")
+        group = consensus["groups"][0]
+        self.assertEqual(group["issue_id_source"], "ambiguous_unassigned")
+        self.assertEqual(group["decision"], "fyi")
+        self.assertEqual(group["final_severity"], "major")
 
 
 class PureDecisionTests(unittest.TestCase):
@@ -591,6 +586,23 @@ class PureDecisionTests(unittest.TestCase):
                     ),
                     expected,
                 )
+
+    def test_demoted_by_noise_is_the_inverse_of_decide_group(self) -> None:
+        for support in range(SUPPORT_REQUIRED + 2):
+            for noise in (False, True):
+                for ambiguous in (False, True):
+                    group = {
+                        "decision": decide_group(
+                            support_count=support, majority_noise=noise, ambiguous=ambiguous
+                        ),
+                        "support_count": support,
+                        "issue_id_source": "ambiguous_unassigned" if ambiguous else "new_signature",
+                    }
+                    with self.subTest(support=support, noise=noise, ambiguous=ambiguous):
+                        self.assertEqual(
+                            demoted_by_noise(group),
+                            noise and not ambiguous and support >= SUPPORT_REQUIRED,
+                        )
 
     def test_support_threshold_is_two(self) -> None:
         self.assertEqual(SUPPORT_REQUIRED, 2)

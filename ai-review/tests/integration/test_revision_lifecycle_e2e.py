@@ -55,6 +55,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         "AI_REVIEW_CRITIQUE_ENABLED": "false",
     }
 
+    # Critique on, so prepare stamps it into the manifest's effective config.
+    CRITIQUE_ENV = {**CONSENSUS_ENV, "AI_REVIEW_CRITIQUE_ENABLED": "true"}
+
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         bundle = prepare_simple_bundle(tmp)
         config = load_config(bundle / "config.review.yaml")
@@ -143,6 +146,43 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
     def _source_ids(self, batch: dict[str, Any]) -> set[str]:
         return {f["source_finding_id"] for f in batch["findings"]}
+
+    def _noise_critique(
+        self,
+        config: dict[str, Any],
+        manifest: dict[str, Any],
+        batches: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """OpenCode's validated noise vote on the first batch's finding.
+
+        Callers pass only Claude's and Codex's batches, so OpenCode is the one
+        eligible critic and its vote is a majority.
+        """
+        pooled = self._source_ids(batches[0])
+        noise = finalize_critique_batch(
+            {
+                "critiques": [
+                    {
+                        "target_source_finding_id": sorted(pooled)[0],
+                        "verdict": "noise",
+                        "rationale": "Style preference, not a defect.",
+                        "adjusted_severity": None,
+                        "confidence": 0.9,
+                    }
+                ]
+            },
+            critic="opencode",
+            run_id=manifest["run_id"],
+            effective_config_sha256=manifest["effective_config_sha256"],
+            pooled_finding_ids=pooled,
+        )
+        validate_consensus_inputs(
+            config=config,
+            manifest=manifest,
+            finding_batches=batches,
+            critique_batches=[("opencode", noise)],
+        )
+        return noise
 
     def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
@@ -276,38 +316,13 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
 
     def test_majority_noise_on_a_rerun_keeps_the_thread_open(self) -> None:
-        # Critique is on, so prepare stamps it into the manifest's effective config.
-        env = {**self.CONSENSUS_ENV, "AI_REVIEW_CRITIQUE_ENABLED": "true"}
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", env):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CRITIQUE_ENV
+        ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
-            # Only Claude and Codex contribute findings, so OpenCode is the one
-            # eligible critic and its noise vote is a majority.
             batches = self._batches("blocking", bundle, manifest, config)[:2]
-            target = sorted(self._source_ids(batches[0]))[0]
-            noise = finalize_critique_batch(
-                {
-                    "critiques": [
-                        {
-                            "target_source_finding_id": target,
-                            "verdict": "noise",
-                            "rationale": "Style preference, not a defect.",
-                            "adjusted_severity": None,
-                            "confidence": 0.9,
-                        }
-                    ]
-                },
-                critic="opencode",
-                run_id=manifest["run_id"],
-                effective_config_sha256=manifest["effective_config_sha256"],
-                pooled_finding_ids=self._source_ids(batches[0]),
-            )
-            validate_consensus_inputs(
-                config=config,
-                manifest=manifest,
-                finding_batches=batches,
-                critique_batches=[("opencode", noise)],
-            )
+            noise = self._noise_critique(config, manifest, batches)
 
             c_surface = build_consensus(manifest, batches, config)
             post_consensus(client, config, manifest, c_surface, diff_text=diff_text)
@@ -329,38 +344,19 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     def test_noise_demoted_body_change_still_updates_the_thread_when_it_surfaces(self) -> None:
         # Surface A, then B demoted by noise, then B surfaced. The demoted run
         # leaves the thread showing A, so the surfaced run must update it.
-        env = {**self.CONSENSUS_ENV, "AI_REVIEW_CRITIQUE_ENABLED": "true"}
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", env):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CRITIQUE_ENV
+        ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             blocking = self._batches("blocking", bundle, manifest, config)[:2]
             blocking_alt = self._batches("blocking_alt", bundle, manifest, config)[:2]
-            noise = finalize_critique_batch(
-                {
-                    "critiques": [
-                        {
-                            "target_source_finding_id": sorted(
-                                self._source_ids(blocking_alt[0])
-                            )[0],
-                            "verdict": "noise",
-                            "rationale": "Style preference, not a defect.",
-                            "adjusted_severity": None,
-                            "confidence": 0.9,
-                        }
-                    ]
-                },
-                critic="opencode",
-                run_id=manifest["run_id"],
-                effective_config_sha256=manifest["effective_config_sha256"],
-                pooled_finding_ids=self._source_ids(blocking_alt[0]),
-            )
+            noise = self._noise_critique(config, manifest, blocking_alt)
 
             c_a = build_consensus(manifest, blocking, config)
             post_consensus(client, config, manifest, c_a, diff_text=diff_text)
             body_a = self._inline_body(client)
-            c_noise = build_consensus(
-                manifest, blocking_alt, config, critique_batches=[noise]
-            )
+            c_noise = build_consensus(manifest, blocking_alt, config, critique_batches=[noise])
             post_consensus(client, config, manifest, c_noise, diff_text=diff_text)
             body_after_noise = self._inline_body(client)
             hash_after_noise = self._sole_state_record(client)["last_posted_body_hash"]

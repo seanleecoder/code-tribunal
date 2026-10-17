@@ -10,10 +10,8 @@ bearing on whether a group surfaces.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
-
-from .types import Decision
+from collections.abc import Iterable, Mapping
+from typing import Any, Literal
 
 # Product invariant, not an operator setting: a grouped issue surfaces when two
 # unique reviewer identities independently support it across direct review and
@@ -24,7 +22,9 @@ from .types import Decision
 SUPPORT_REQUIRED = 2
 
 
-def decide_group(*, support_count: int, majority_noise: bool, ambiguous: bool) -> Decision:
+def decide_group(
+    *, support_count: int, majority_noise: bool, ambiguous: bool
+) -> Literal["surface", "fyi"]:
     """Decide one group. The branches are ordered by precedence, not by taste.
 
     An ambiguous cross-run state match stays ``fyi`` whatever the support: Code
@@ -38,6 +38,23 @@ def decide_group(*, support_count: int, majority_noise: bool, ambiguous: bool) -
     if ambiguous or majority_noise:
         return "fyi"
     return "surface" if support_count >= SUPPORT_REQUIRED else "fyi"
+
+
+def demoted_by_noise(group: Mapping[str, Any]) -> bool:
+    """Whether majority noise alone made this group ``fyi``.
+
+    The inverse of ``decide_group``, kept beside it so the rule has one author:
+    the group is ``fyi`` but would have surfaced without the noise vote. The
+    artifact carries no field for this, so the summary derives it here.
+    """
+    return group["decision"] == "fyi" and (
+        decide_group(
+            support_count=group["support_count"],
+            majority_noise=False,
+            ambiguous=group["issue_id_source"] == "ambiguous_unassigned",
+        )
+        == "surface"
+    )
 
 
 def apply_group_decision(
