@@ -1,4 +1,4 @@
-"""The one implementation of the surface/FYI/drop policy.
+"""The one implementation of the surface/FYI policy.
 
 Pure and dependency-free on purpose: both pre-critique group construction and
 post-critique application assign ``decision`` through ``apply_group_decision``,
@@ -31,13 +31,12 @@ def decide_group(*, support_count: int, majority_noise: bool, ambiguous: bool) -
     Tribunal cannot safely choose which historical thread to mutate, and
     ``consensus.schema.json`` pins ``decision`` to ``fyi`` for an unassigned
     group, so any other answer fails validation against its own artifact schema.
-    Majority independent noise then drops the group. Only after both does the
-    support threshold apply.
+    Majority independent noise then demotes the group to ``fyi``: the critics
+    judged it low value, not wrong, so it stays visible in the summary without a
+    thread. Only after both does the support threshold apply.
     """
-    if ambiguous:
+    if ambiguous or majority_noise:
         return "fyi"
-    if majority_noise:
-        return "drop"
     return "surface" if support_count >= SUPPORT_REQUIRED else "fyi"
 
 

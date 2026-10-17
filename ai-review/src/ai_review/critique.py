@@ -237,8 +237,8 @@ def _apply_critiques(
     for index, group in enumerate(groups):
         ambiguous = group.get("issue_id_source") == "ambiguous_unassigned"
         if ambiguous:
-            # A group whose thread identity cannot be assigned is never dropped
-            # on critique evidence, and its severity is left as reviewed.
+            # A group whose thread identity cannot be assigned stays fyi whatever
+            # the critique evidence, and its severity is left as reviewed.
             apply_group_decision(group, agreeing_critics=agreeing.get(index, []))
             continue
         # "Eligible" counts critics that *could* have critiqued the group, not

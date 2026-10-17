@@ -108,10 +108,12 @@ def _record_for_group(
             "status": status,
             "last_seen_sha": manifest.get("head_sha", ""),
             "anchor": group.get("representative_anchor", previous.get("anchor", {})),
-            "last_posted_body_hash": group.get(
-                "body_hash",
-                previous.get("last_posted_body_hash", "0" * 64),
-            ),
+            # Only posting knows what a thread shows: it records the hash when it
+            # creates or updates one. An FYI or fallback group never touches the
+            # thread, so writing its hash here would make a later identical
+            # surface look already posted.
+            "last_posted_body_hash": previous.get("last_posted_body_hash")
+            or group.get("body_hash", "0" * 64),
             "last_decision": group.get("decision", previous.get("last_decision", "surface")),
             "last_final_severity": group.get(
                 "final_severity",

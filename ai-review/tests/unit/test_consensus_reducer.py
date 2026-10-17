@@ -104,7 +104,7 @@ class DecisionTableTests(unittest.TestCase):
                 [_critique_batch("cursor", [_critique("cursor", first, "noise")])],
                 "major",
                 None,
-                "drop",
+                "fyi",
             ),
             (
                 "two direct contributors and one dispute",
@@ -457,9 +457,9 @@ class EffectiveVerdictTests(unittest.TestCase):
             ]
         )
 
-        # One eligible critic, one effective noise: 1 > 1/2 drops the group.
+        # One eligible critic, one effective noise: 1 > 1/2 demotes the group.
         self.assertEqual(group["critique_summary"], {**_EMPTY_SUMMARY, "noise": 1})
-        self.assertEqual(group["decision"], "drop")
+        self.assertEqual(group["decision"], "fyi")
 
     def test_valid_duplicate_and_agree_collapse_to_duplicate_without_support(self) -> None:
         group = self._grouped_pair_run(
@@ -537,7 +537,27 @@ class MajorityNoiseTests(unittest.TestCase):
         )
 
         self.assertEqual(one_of_two["groups"][0]["decision"], "surface")
-        self.assertEqual(one_of_one["groups"][0]["decision"], "drop")
+        self.assertEqual(one_of_one["groups"][0]["decision"], "fyi")
+
+    def test_majority_noise_demotes_a_corroborated_group_and_never_drops_it(self) -> None:
+        consensus = _run(
+            contributors=["claude", "codex"],
+            critique_batches=[
+                _critique_batch(
+                    "opencode", [_critique("opencode", _SOURCE_IDS["claude"], "noise")]
+                ),
+                _critique_batch(
+                    "cursor", [_critique("cursor", _SOURCE_IDS["codex"], "noise")]
+                ),
+            ],
+        )
+
+        group = consensus["groups"][0]
+        self.assertEqual(group["support_count"], 2)
+        self.assertEqual(group["decision"], "fyi")
+        self.assertEqual(
+            consensus["summary"], {"surface_count": 0, "fyi_count": 1, "drop_count": 0}
+        )
 
     def test_ambiguous_group_is_never_dropped_on_critique_evidence(self) -> None:
         consensus = _run(
@@ -558,7 +578,7 @@ class PureDecisionTests(unittest.TestCase):
             ((0, False, False), "fyi"),
             ((SUPPORT_REQUIRED, False, False), "surface"),
             ((SUPPORT_REQUIRED - 1, False, False), "fyi"),
-            ((SUPPORT_REQUIRED, True, False), "drop"),
+            ((SUPPORT_REQUIRED, True, False), "fyi"),
             ((SUPPORT_REQUIRED, True, True), "fyi"),
             ((SUPPORT_REQUIRED, False, True), "fyi"),
             ((0, True, True), "fyi"),
