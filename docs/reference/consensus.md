@@ -30,14 +30,16 @@ The decision follows one ordered rule, and severity changes none of it:
 | Condition | Decision |
 |---|---|
 | The cross-run state match is ambiguous | `fyi` |
-| A majority of eligible independent critics call it noise | `drop` |
+| A majority of eligible independent critics call it noise | `fyi` |
 | Two or more unique identities support it | `surface` |
 | Otherwise | `fyi` |
 
 The order is precedence, not preference. An ambiguous state match stays `fyi`
 whatever the support, because no historical thread can be safely chosen to
-mutate; majority noise then drops the group before the support threshold is ever
-consulted.
+mutate; majority noise then demotes the group to `fyi` before the support
+threshold is ever consulted. A critic majority says a finding is low value, not
+that it is wrong, so a demoted group gets no thread but stays in the summary,
+marked with its noise count. Consensus never drops a group.
 
 A `dispute` is displayed with the group but subtracts no support: surfacing must
 never erase dissent. A `duplicate` link affects grouping only. Where one critic

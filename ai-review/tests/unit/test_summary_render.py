@@ -67,6 +67,69 @@ class SummaryRenderTests(PostCase):
         self.assertIn("  `< !-- not a marker -- >`", body)
         self.assertEqual(body.count("<!--"), 1)
 
+    def _demoted_group(self) -> dict:
+        group = self._consensus()["groups"][0]
+        group.update(
+            decision="fyi",
+            support_count=2,
+            contributing_reviewers=["codex", "claude"],
+            issue_id_source="new_signature",
+            critique_summary={"agree": 0, "dispute": 0, "noise": 2, "duplicate": 0},
+        )
+        return group
+
+    def _header(self, group: dict) -> str:
+        body, _body_hash = summary_render_module.render_summary_body(
+            "run", [], [group], 50, posting_mode="gitlab_discussions"
+        )
+        return next(line for line in body.splitlines() if line.startswith("- **"))
+
+    def test_demoted_group_entry_carries_the_noise_marker_after_found_by(self) -> None:
+        self.assertEqual(
+            self._header(self._demoted_group()),
+            "- **MAJOR** correctness — `src/foo.py:2`: `Title`"
+            " — Found by `claude`, `codex` — marked noise by 2 independent critics",
+        )
+
+        single_vote = self._demoted_group()
+        single_vote["critique_summary"]["noise"] = 1
+        self.assertTrue(
+            self._header(single_vote).endswith("— marked noise by 1 independent critic")
+        )
+
+    def test_only_a_demoted_group_carries_the_noise_marker(self) -> None:
+        single_supporter = self._demoted_group()
+        single_supporter.update(support_count=1, contributing_reviewers=["claude"])
+        ambiguous = self._demoted_group()
+        ambiguous["issue_id_source"] = "ambiguous_unassigned"
+
+        for label, group in (("single supporter", single_supporter), ("ambiguous", ambiguous)):
+            with self.subTest(label):
+                self.assertNotIn("marked noise", self._header(group))
+
+    def test_demoted_group_with_hostile_title_still_renders_literally(self) -> None:
+        group = self._demoted_group()
+        group["title"] = "# title `with` <!-- marker -->"
+
+        header = self._header(group)
+
+        self.assertIn("``# title `with` < !-- marker -- >``", header)
+        self.assertTrue(header.endswith("— marked noise by 2 independent critics"))
+
+    def test_every_summary_entry_shows_found_by_with_literal_reviewers(self) -> None:
+        fallback = self._consensus()["groups"][0]
+        fallback["contributing_reviewers"] = ["opencode", "claude"]
+        fyi = self._consensus()["groups"][0]
+        fyi.update(decision="fyi", issue_id="c" * 64, contributing_reviewers=["`**x**`"])
+
+        body, _body_hash = summary_render_module.render_summary_body(
+            "run", [fallback], [fyi], 50, posting_mode="gitlab_discussions"
+        )
+
+        headers = [line for line in body.splitlines() if line.startswith("- **")]
+        self.assertTrue(headers[0].endswith("— Found by `claude`, `opencode`"))
+        self.assertTrue(headers[1].endswith("— Found by `` `**x**` ``"))
+
     def test_summary_section_descriptors_drop_by_declared_priority(self) -> None:
         sections = [
             SummarySectionDescriptor(

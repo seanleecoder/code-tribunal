@@ -280,7 +280,8 @@ def build_consensus(
         "summary": {
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
-            "drop_count": sum(1 for group in groups if group["decision"] == "drop"),
+            # COMPAT-003: required by consensus.v2; majority noise now demotes to fyi.
+            "drop_count": 0,
         },
     }
 

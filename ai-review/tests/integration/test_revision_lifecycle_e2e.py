@@ -14,7 +14,12 @@ from ai_review.consensus import build_consensus, validate_consensus_inputs
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
 from ai_review.posting import post_consensus
-from ai_review.schema import finalize_finding_batch, load_json_file, validate_instance
+from ai_review.schema import (
+    finalize_critique_batch,
+    finalize_finding_batch,
+    load_json_file,
+    validate_instance,
+)
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
@@ -49,6 +54,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         "AI_REVIEW_POSTING_MODE": "github_reviews",
         "AI_REVIEW_CRITIQUE_ENABLED": "false",
     }
+
+    # Critique on, so prepare stamps it into the manifest's effective config.
+    CRITIQUE_ENV = {**CONSENSUS_ENV, "AI_REVIEW_CRITIQUE_ENABLED": "true"}
 
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         bundle = prepare_simple_bundle(tmp)
@@ -138,6 +146,43 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
     def _source_ids(self, batch: dict[str, Any]) -> set[str]:
         return {f["source_finding_id"] for f in batch["findings"]}
+
+    def _noise_critique(
+        self,
+        config: dict[str, Any],
+        manifest: dict[str, Any],
+        batches: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """OpenCode's validated noise vote on the first batch's finding.
+
+        Callers pass only Claude's and Codex's batches, so OpenCode is the one
+        eligible critic and its vote is a majority.
+        """
+        pooled = self._source_ids(batches[0])
+        noise = finalize_critique_batch(
+            {
+                "critiques": [
+                    {
+                        "target_source_finding_id": sorted(pooled)[0],
+                        "verdict": "noise",
+                        "rationale": "Style preference, not a defect.",
+                        "adjusted_severity": None,
+                        "confidence": 0.9,
+                    }
+                ]
+            },
+            critic="opencode",
+            run_id=manifest["run_id"],
+            effective_config_sha256=manifest["effective_config_sha256"],
+            pooled_finding_ids=pooled,
+        )
+        validate_consensus_inputs(
+            config=config,
+            manifest=manifest,
+            finding_batches=batches,
+            critique_batches=[("opencode", noise)],
+        )
+        return noise
 
     def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
@@ -269,6 +314,64 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertEqual(record["remap_status"], "remapped")
         self.assertEqual(record["anchor"]["start"]["new_line"], marker_line_2)
         self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
+
+    def test_majority_noise_on_a_rerun_keeps_the_thread_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CRITIQUE_ENV
+        ):
+            config, manifest, diff_text, bundle = self._bundle(Path(tmp))
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            batches = self._batches("blocking", bundle, manifest, config)[:2]
+            noise = self._noise_critique(config, manifest, batches)
+
+            c_surface = build_consensus(manifest, batches, config)
+            post_consensus(client, config, manifest, c_surface, diff_text=diff_text)
+            c_noise = build_consensus(manifest, batches, config, critique_batches=[noise])
+            p_noise = post_consensus(client, config, manifest, c_noise, diff_text=diff_text)
+            record = self._sole_state_record(client)
+            summaries = [str(note["body"]) for note in client.summary_notes]
+
+        self.assertEqual(c_surface["summary"]["surface_count"], 1)
+        self.assertEqual([group["decision"] for group in c_noise["groups"]], ["fyi"])
+        self.assertEqual(c_noise["summary"]["drop_count"], 0)
+        self.assertEqual(p_noise["resolved_discussions"], 0)
+        self.assertEqual(client.resolved_threads, {})
+        self.assertEqual(record["status"], "open")
+        self.assertEqual(record["last_decision"], "fyi")
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("— marked noise by 1 independent critic", summaries[0])
+
+    def test_noise_demoted_body_change_still_updates_the_thread_when_it_surfaces(self) -> None:
+        # Surface A, then B demoted by noise, then B surfaced. The demoted run
+        # leaves the thread showing A, so the surfaced run must update it.
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ", self.CRITIQUE_ENV
+        ):
+            config, manifest, diff_text, bundle = self._bundle(Path(tmp))
+            client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+            blocking = self._batches("blocking", bundle, manifest, config)[:2]
+            blocking_alt = self._batches("blocking_alt", bundle, manifest, config)[:2]
+            noise = self._noise_critique(config, manifest, blocking_alt)
+
+            c_a = build_consensus(manifest, blocking, config)
+            post_consensus(client, config, manifest, c_a, diff_text=diff_text)
+            body_a = self._inline_body(client)
+            c_noise = build_consensus(manifest, blocking_alt, config, critique_batches=[noise])
+            post_consensus(client, config, manifest, c_noise, diff_text=diff_text)
+            body_after_noise = self._inline_body(client)
+            hash_after_noise = self._sole_state_record(client)["last_posted_body_hash"]
+            c_b = build_consensus(manifest, blocking_alt, config)
+            p_b = post_consensus(client, config, manifest, c_b, diff_text=diff_text)
+            body_b = self._inline_body(client)
+            record = self._sole_state_record(client)
+
+        self.assertEqual(c_noise["groups"][0]["decision"], "fyi")
+        self.assertEqual(body_after_noise, body_a)
+        self.assertEqual(hash_after_noise, c_a["groups"][0]["body_hash"])
+        self.assertEqual(p_b["updated_discussions"], 1)
+        self.assertEqual(p_b["skipped_unchanged"], 0)
+        self.assertNotEqual(body_b, body_a)
+        self.assertEqual(record["last_posted_body_hash"], c_b["groups"][0]["body_hash"])
 
     @staticmethod
     def _inline_body(client: FakeGitHubClient) -> str:

@@ -70,6 +70,10 @@ def _record_for_group(
     human_disposition: str | None = None,
     remap_status: str = "exact",
 ) -> dict[str, Any]:
+    # ``last_posted_body_hash`` is deliberately not set here: ``**previous``
+    # carries it and only posting, which knows what a thread shows, writes it.
+    # Planning a group's hash would make an FYI or fallback group that never
+    # touched its thread look already posted when the same body later surfaces.
     previous = existing or {}
     raw_match_keys = group.get("match_keys")
     match_keys = raw_match_keys if isinstance(raw_match_keys, dict) else {}
@@ -108,10 +112,6 @@ def _record_for_group(
             "status": status,
             "last_seen_sha": manifest.get("head_sha", ""),
             "anchor": group.get("representative_anchor", previous.get("anchor", {})),
-            "last_posted_body_hash": group.get(
-                "body_hash",
-                previous.get("last_posted_body_hash", "0" * 64),
-            ),
             "last_decision": group.get("decision", previous.get("last_decision", "surface")),
             "last_final_severity": group.get(
                 "final_severity",

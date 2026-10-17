@@ -9,6 +9,16 @@ versioning.
 
 ### Changed
 
+- A finding that a majority of independent critics call noise is now listed
+  under the summary's advisory (FYI) findings, marked
+  `marked noise by N independent critics`, instead of disappearing from the
+  merge request. A noise vote no longer resolves an existing thread: the thread
+  stays open with `last_decision: "fyi"` until the code changes or a maintainer
+  resolves it. Consensus no longer emits `decision: "drop"`, and
+  `summary.drop_count` is always `0`; both stay in `consensus.v2` for
+  compatibility (SPEC-67).
+- Every summary entry shows `Found by` with the sorted reviewers that reported
+  it. Inline thread bodies are unchanged (SPEC-67).
 - Review, critique, and post now check the effective config against the prepare
   manifest, as consensus already did. A job that sees different `AI_REVIEW_*`
   overrides fails before a provider call or platform client: review and critique

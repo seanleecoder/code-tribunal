@@ -18,6 +18,7 @@ type Category = Literal[
     "other",
 ]
 type AnchorSide = Literal["new", "old", "unchanged"]
+# COMPAT-003: "drop" mirrors the consensus.v2 enum; consensus no longer emits it.
 type Decision = Literal["surface", "fyi", "drop"]
 type ReviewerId = str
 type RunId = str

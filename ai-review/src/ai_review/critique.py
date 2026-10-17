@@ -235,12 +235,6 @@ def _apply_critiques(
 
     allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
     for index, group in enumerate(groups):
-        ambiguous = group.get("issue_id_source") == "ambiguous_unassigned"
-        if ambiguous:
-            # A group whose thread identity cannot be assigned is never dropped
-            # on critique evidence, and its severity is left as reviewed.
-            apply_group_decision(group, agreeing_critics=agreeing.get(index, []))
-            continue
         # "Eligible" counts critics that *could* have critiqued the group, not
         # only those that did: a critic with a successful critique batch and no
         # stake in the group is evidence either way.
@@ -252,7 +246,9 @@ def _apply_critiques(
         majority_noise = bool(eligible_critics) and noise_counts.get(index, 0) > len(
             eligible_critics
         ) / 2
-        if allow_downgrade:
+        # A group whose thread identity cannot be assigned keeps its reviewed
+        # severity; decide_group already keeps it fyi.
+        if allow_downgrade and group.get("issue_id_source") != "ambiguous_unassigned":
             severity = str(group["final_severity"])
             group["final_severity"] = _severity_after_group_downgrade(
                 severity,

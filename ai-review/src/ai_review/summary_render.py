@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, overload
 
 from .canonical import sha256_hex
+from .consensus_policy import demoted_by_noise
 from .constants import SEVERITY_RANK
 from .render import (
     encode_marker_token,
@@ -31,7 +32,15 @@ def _summary_line(group: Mapping[str, Any]) -> str:
     category = str(group.get("category") or "")
     title = literal_span(str(group.get("title") or ""), max_length=240, required=True)
     category_part = f" {category}" if category else ""
-    header = f"- **{severity}**{category_part} — {location}: {title}"
+    found_by = ", ".join(
+        literal_span(str(reviewer), required=True)
+        for reviewer in sorted(group["contributing_reviewers"])
+    )
+    header = f"- **{severity}**{category_part} — {location}: {title} — Found by {found_by}"
+    if demoted_by_noise(group):
+        noise = group["critique_summary"]["noise"]
+        critics = "critic" if noise == 1 else "critics"
+        header += f" — marked noise by {noise} independent {critics}"
     detail = prose_block(str(group.get("body") or ""))
     if detail is None:
         return header

@@ -149,6 +149,20 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, gone), "resolved")
         self.assertEqual(plan.outcome.stale_unverified, 0)
 
+    def test_noise_demoted_group_keeps_its_open_record_despite_quorum(self) -> None:
+        issue_id = "a" * 64
+        demoted = {**_group(issue_id), "decision": "fyi"}
+        plan = _plan(
+            persisted=[_record(issue_id, last_decision="surface")],
+            fyi=[demoted],
+        )
+
+        record = self._record_of(plan, issue_id)
+        assert record is not None
+        self.assertEqual(record["status"], "open")
+        self.assertEqual(record["last_decision"], "fyi")
+        self.assertEqual(record["discussion_id"], "discussion")
+
     def test_disappeared_record_is_stale_unverified_without_quorum(self) -> None:
         gone = "d" * 64
         plan = _plan(
