@@ -1,9 +1,9 @@
 # Install Code Tribunal on GitLab
 
-GitLab supports a direct include and a hardened mirrored child pipeline. Use the
-child form when merge-request authors can influence the consumer CI namespace or
-included configuration. Direct mode is simpler but requires the root CI file and
-all relevant includes to be protected by review or policy.
+Install Code Tribunal with a direct include, and protect the CI file that
+composes it with a protected external CI configuration or a GitLab pipeline
+policy. The hardened mirrored child pipeline is deprecated and will be removed
+in the next major release; see [Deprecated: hardened child](#deprecated-hardened-child).
 
 ## Prerequisites
 
@@ -15,28 +15,57 @@ all relevant includes to be protected by review or policy.
 
 ## Choose the integration
 
-Copy one of the tested examples and replace the example project and SHA:
+Copy the tested [direct include example](examples/gitlab-direct.yml) and replace
+the example project and SHA. Ensure the consumer pipeline declares an
+`ai_review` stage if its stage list does not already include one.
 
-- [Direct include example](examples/gitlab-direct.yml)
-- [Hardened child example](examples/gitlab-child.yml)
+## Protect the CI composition
 
-For direct mode, ensure the consumer pipeline declares an `ai_review` stage if
-its stage list does not already include one. For child mode, keep both includes
-at the same project and SHA, disable inherited/default variables, disable YAML
-and pipeline-variable forwarding, and retain `strategy: mirror`.
+Anyone who can edit the consumer `.gitlab-ci.yml` can redefine the image
+variables, enable variable forwarding, and run every stage on an arbitrary image.
+No check inside that pipeline can prevent this: the edit that swaps the image can
+also remove the check, and a substituted image will not run a check that lives in
+the trusted image. The boundary must sit outside the file merge-request authors
+can edit. Use one of:
 
-Audit the result from a trusted checkout:
+- **A protected external CI configuration file.** In **Settings → CI/CD →
+  General pipelines → CI/CD configuration file**, set
+  `.gitlab-ci.yml@group/protected-project` so the composition lives in a project
+  merge-request authors cannot push to. Users who run pipelines need read access
+  to that project.
+- **A pipeline execution policy or compliance pipeline** that injects the Code
+  Tribunal include from a project the merge-request author cannot edit.
+
+Without either, the composition is protected only by code review of every change
+to the CI file, and an unprotected-branch merge request is contained only because
+GitLab withholds protected variables from it.
+
+Audit the composition from a trusted checkout:
 
 ```bash
 python scripts/pipeline_trust.py \
   path/to/.gitlab-ci.yml \
-  --mode child \
+  --mode direct \
   --template-project org/code-tribunal-ci \
   --template-sha 1111111111111111111111111111111111111111
 ```
 
-Use `--mode direct` for the direct example. Supply the expected project and SHA
-as operator-controlled arguments, never merge-request variables.
+Supply the expected project and SHA as operator-controlled arguments, never
+merge-request variables. Run the auditor from a protected scheduled pipeline or
+as a required check owned by an approval rule, not only ad hoc, so that drift in
+the composition is noticed without someone remembering to look.
+
+### Deprecated: hardened child
+
+The [hardened child example](examples/gitlab-child.yml) still works in 2.0.x and
+is removed in the next major release. Its `inherit.variables: false` and
+`forward.*: false` settings are a boundary only while merge-request authors
+cannot edit the consumer CI file, which is exactly when a direct include is
+already safe. Migrate to the direct include plus a protected CI composition.
+
+Until then, keep both child includes at the same project and SHA, disable
+inherited/default variables, disable YAML and pipeline-variable forwarding,
+retain `strategy: mirror`, and audit with `--mode child`.
 
 ## Configure protected variables
 
@@ -51,8 +80,8 @@ In **Settings → CI/CD → Variables**, configure:
 
 Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
 Configure runtime overrides as protected project/group variables so every stage
-sees the same effective configuration. Child mode deliberately rejects general
-variable forwarding.
+sees the same effective configuration. The deprecated child mode deliberately
+rejects general variable forwarding.
 
 When upgrading to the MiMo default, clear any persisted
 `AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
@@ -125,7 +154,7 @@ prove protected-variable behavior in a particular GitLab deployment.
 ## Update or roll back
 
 Change the template SHA only after reviewing the target revision and its image
-pins. Update the two child includes together. Read the
+pins. In the deprecated child mode, update the two child includes together. Read the
 [upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
 1.0.x to 2.0: remove custom jobs, `needs`, or rules that reference `ai_review_gate`. A rollback restores the previous
 template SHA and reruns prepare; never feed artifacts created by one source or

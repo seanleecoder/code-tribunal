@@ -18,7 +18,6 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 
 | Spec | Status | Effort | Vehicle | Summary |
 |---|---|---|---|---|
-| [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Ready | S (docs) | Any | Document the real GitLab trust boundary: a protected external CI config path or policy. In-pipeline image checks cannot stop a hostile CI author; the drift marker was rejected. |
 | [SPEC-66](spec-66-run-health-summary.md) | Proposed; narrowed 2026-10-16 | M (one PR) | 2.1.0 | Per-job model, effort, outcome and duration with a full/degraded/re-run grade, in a summary present on every published run and in the consensus job log. No usage, cost, failed-panel publication or critique coverage. |
 
 Retired on 2026-10-16:
@@ -76,7 +75,7 @@ recommendation's disposition.
 | SPEC-47 project-hosted policy | Phase (i) only | No ADR. SPEC-48 takes its patterns from trusted config. |
 | S01 release process | Write an ADR now; release 2.1.0 with the new process | ADR-0003's release-authority row is amended. |
 | SPEC-46 | Archive as a short plan | The full text is in git history. |
-| SPEC-43 drift marker | Rejected | Documentation only. |
+| SPEC-43 drift marker | Rejected | Documentation only. A hostile CI author can drop the marker check; reconsider only after a pin-drift incident the auditor would have missed. |
 | 2.0.3 scope (2026-10-14) | One 2.0.3 carrying all of step 1 | One canary run. |
 | GitLab integration modes (2026-10-14) | Direct include only | Child mode is deprecated in 2.0.3 and deleted in the next major release (N02). |
 | GitHub installation (2026-10-14) | Reusable workflow | Decided in ADR-0004; ships in the next major release (N03). |
@@ -105,8 +104,8 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. SPEC-43: GitLab trust-boundary documentation and the child-mode deprecation
-   (N02).
+1. Done: SPEC-43, the GitLab trust-boundary documentation and the child-mode
+   deprecation (N02, COMPAT-004).
 2. Small cleanups:
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);

@@ -119,7 +119,8 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile
     skipped, the forgery goes unconsumed, and `pipeline_trust.py` rejects the
     composition while accepting the demo's own.
   - The image substitution itself is recorded, not asserted, because
-    in-pipeline image enforcement is not implemented (SPEC-43).
+    no in-pipeline check can stop a hostile author of the consumer CI file
+    (see the [security model](docs/SECURITY_MODEL.md)).
   - It uploads `candidate-canary-gitlab-hostile-summary`.
 
 Dispatch `campaigns=lifecycle,hostile` to validate posting, state, and the

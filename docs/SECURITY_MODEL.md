@@ -23,8 +23,9 @@ hostile replacement of the trusted job definition.
 
 ### Trusted CI delivery and reviewer credentials
 
-Mitigations include protected immutable GitLab includes, a closed child-pipeline
-forwarding boundary, consumer trust auditing, GitHub `pull_request` execution,
+Mitigations include protected immutable GitLab includes, a protected external
+CI configuration or pipeline policy for the consumer composition, consumer trust
+auditing, GitHub `pull_request` execution,
 digest-pinned images, reviewer-specific credential selection, scrubbed
 subprocess environments, read-only/no-shell reviewer policies, model/endpoint
 validation, and secret redaction.
@@ -62,6 +63,23 @@ from `scripts/pipeline_trust.py`, which rejects such a composition but
 runs out-of-band. Run that auditor against your consumer configuration, and do
 not read “digest-pinned templates” as a runtime guarantee against a hostile
 consumer config.
+
+No in-pipeline check can close this. The consumer CI file composes the pipeline,
+so the edit that swaps the image can also delete a verification job, a required
+audit stage, or the variable a check compares against, and a substituted image
+will not run a check that lives in the trusted image. The hardened child's
+`inherit.variables: false` and `forward.*: false` settings are subject to the
+same limit: they hold only while merge-request authors cannot edit the consumer
+CI file. The real boundary is outside that file:
+
+- a protected external CI configuration file
+  (`.gitlab-ci.yml@group/protected-project`), or
+- a pipeline execution or compliance policy.
+
+Either way, merge-request authors cannot edit the composition. Run
+`pipeline_trust.py` from a protected scheduled pipeline or an approval-rule
+check so that composition drift is detected without an operator remembering to
+run it. See [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition).
 
 ### Repository snapshot containment
 
@@ -111,9 +129,11 @@ and must not be described as implemented container isolation.
 ### Forks and untrusted workflow changes
 
 Canonical GitHub workflows skip external forks. GitLab protected variables are
-withheld from unprotected refs, and hardened child mode blocks general variable
-forwarding. Direct GitLab mode is safe only when the root CI namespace and all
-relevant includes are protected from merge-request authors.
+withheld from unprotected refs. Either GitLab mode is safe only when the root CI
+file and all relevant includes are protected from merge-request authors, by a
+protected external CI configuration or a pipeline policy. The deprecated hardened
+child mode's forwarding settings add nothing once that holds and protect nothing
+when it does not.
 
 ## Failure policy
 
