@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from .anchors import anchor_path_key, candidate_issue_signature_hash, is_sha256
-from .canonical import CanonicalError, canonical_json, sha256_hex
+from .anchors import anchor_path_key, candidate_issue_signature_hash
+from .canonical import CanonicalError, stable_json_hash
 from .config import (
-    effective_config_digest,
-    effective_config_summary,
+    EffectiveConfigMismatch,
     enabled_reviewers,
     load_config,
+    require_effective_config_binding,
 )
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
@@ -271,7 +271,7 @@ def build_consensus(
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
         "head_sha": manifest["head_sha"],
-        "input_manifest_sha256": sha256_hex(canonical_json(manifest)),
+        "input_manifest_sha256": stable_json_hash(manifest),
         "successful_reviewers": successful,
         "resolution_eligible_reviewers": resolution_eligible,
         "failed_reviewers": failed,
@@ -285,37 +285,6 @@ def build_consensus(
     }
 
 
-def _require_effective_config_integrity(config: dict[str, Any], manifest: dict[str, Any]) -> str:
-    """Fail when prepare and consensus disagree on consequential effective config."""
-    recorded_digest = manifest.get("effective_config_sha256")
-    current_digest = effective_config_digest(config)
-    recorded_summary = manifest.get("effective_config")
-    current_summary = effective_config_summary(config)
-    if not is_sha256(recorded_digest):
-        raise ConsensusIntegrityError(
-            "manifest missing effective_config_sha256; re-run prepare with a "
-            "current ai-review release"
-        )
-    if recorded_digest != current_digest or (
-        isinstance(recorded_summary, dict) and recorded_summary != current_summary
-    ):
-        divergent_keys: list[str] = []
-        if isinstance(recorded_summary, dict):
-            keys = sorted(set(recorded_summary) | set(current_summary))
-            for key in keys:
-                if recorded_summary.get(key) != current_summary.get(key):
-                    divergent_keys.append(key)
-        detail = ",".join(divergent_keys) if divergent_keys else "effective_config_sha256"
-        raise ConsensusIntegrityError(
-            "effective config differs from the prepare manifest — AI_REVIEW_* "
-            f"override variables are not scoped identically across jobs "
-            f"(divergent={detail} "
-            f"manifest_digest={str(recorded_digest)[:12]}… "
-            f"consensus_digest={current_digest[:12]}…)"
-        )
-    return current_digest
-
-
 def validate_consensus_inputs(
     *,
     config: dict[str, Any],
@@ -325,7 +294,7 @@ def validate_consensus_inputs(
 ) -> None:
     """Validate finding/critique batches against prepare run and effective config."""
     try:
-        config_digest = _require_effective_config_integrity(config, manifest)
+        config_digest = require_effective_config_binding(config, manifest)
         run_id = str(manifest.get("run_id") or "").strip()
         if not run_id:
             raise ConsensusIntegrityError("manifest missing run_id")
@@ -418,6 +387,8 @@ def validate_consensus_inputs(
                     raise ConsensusIntegrityError(
                         f"critique duplicate_of unknown for critic={critic}"
                     )
+    except EffectiveConfigMismatch as exc:
+        raise ConsensusIntegrityError(str(exc)) from exc
     except SchemaValidationError as exc:
         raise ConsensusIntegrityError(f"malformed consensus input artifact: {exc}") from exc
 

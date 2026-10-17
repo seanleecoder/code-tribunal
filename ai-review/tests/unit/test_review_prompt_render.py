@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from ai_review.prompt_render import _diff_stats_text, render_review_prompt
-from ai_review.schema import write_canonical_json
+from ai_review.schema import load_json_file, write_canonical_json
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from support.adapter_inputs import bind_manifest_to_config  # noqa: E402
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
@@ -86,6 +90,22 @@ class ReviewPromptRenderTests(unittest.TestCase):
             rendered.index("<MR_DIFF_UNTRUSTED_DATA>"),
         )
         self.assertIn("bundle prompt", rendered)
+
+
+class ManifestBlockTests(unittest.TestCase):
+    def test_prompt_manifest_omits_the_effective_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir = Path(tmp) / "inputs"
+            _write_inputs(input_dir, _FIXTURE_DIFF)
+            bind_manifest_to_config(input_dir, _REPO_CONFIG)
+            manifest = load_json_file(input_dir / "manifest.json")
+            rendered = render_review_prompt(input_dir, _REPO_CONFIG, "claude")
+
+        # The config only binds stages; reviewers would pay for it in every call.
+        self.assertIn("effective_config", manifest)
+        self.assertNotIn('"effective_config":', rendered)
+        self.assertIn(manifest["effective_config_sha256"], rendered)
+        self.assertIn('"run_id":"local-test"', rendered)
 
 
 if __name__ == "__main__":

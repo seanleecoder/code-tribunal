@@ -27,10 +27,10 @@ Most of that information already exists but never reaches the comment:
   critique job. It records outcome, `duration_ms`, `error_class` and a redacted
   error message, but no stage after the adapter reads it. It is the only source
   of `error_class`, of critique timings, and of the outcomes where the runner
-  writes no batch (`_fail_status_only` in
+  writes no batch (`_fail` without a digest in
   [`adapter_runner.py`](../../ai-review/src/ai_review/adapter_runner.py)).
 - Model, effort and timeouts live in the manifest's `effective_config`, which
-  consensus already verifies against its live configuration digest.
+  every later stage verifies against its live configuration digest.
 - Per-seat raw, accepted and dropped counts are in every `finding_batch.v1`,
   and the cap-omitted count is derivable from them. `consensus.v2` aggregates
   none of them. Those dropped counts are exactly how the

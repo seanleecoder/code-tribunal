@@ -251,9 +251,6 @@ class RepositoryDistributionContractTests(unittest.TestCase):
 
         self.assertNotIn("merge_gate", config_module.TOP_LEVEL_KEYS)
         self.assertFalse(hasattr(config_module, "MERGE_GATE_KEYS"))
-        self.assertNotIn(
-            "merge_gate_enabled", config_module.effective_config_summary({})
-        )
         self.assertIn("merge_gate", config_module.V3_REMOVED_CONFIG_KEYS)
         self.assertIn(
             "AI_REVIEW_MERGE_GATE_ENABLED", config_module.RETIRED_ENV_OVERRIDES

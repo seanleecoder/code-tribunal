@@ -23,6 +23,15 @@ def _read_rules(rules_dir: Path) -> str:
     return "\n\n".join(chunks)
 
 
+def _prompt_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    """The manifest as reviewers see it, without the effective config.
+
+    The config binds stages to each other; a reviewer gains nothing from it, and
+    it would cost prompt bytes on every provider call.
+    """
+    return {key: value for key, value in manifest.items() if key != "effective_config"}
+
+
 def _diff_stats_text(diff_text: str) -> str:
     # Approximate size summary so reviewers can calibrate exploration depth
     # (referenced by prompts/review.md). Calibration hint, not ground truth: a
@@ -65,7 +74,7 @@ def render_review_prompt(input_dir: str | Path, config_path: str | Path, reviewe
             reviewer,
             "</REVIEWER>",
             "<INPUT_MANIFEST_JSON>",
-            canonical_json_text(manifest),
+            canonical_json_text(_prompt_manifest(manifest)),
             "</INPUT_MANIFEST_JSON>",
             "<PRIOR_DECISIONS_JSON>",
             canonical_json_text(prior_decisions),
@@ -175,7 +184,7 @@ def render_critique_prompt(
             critic,
             "</CRITIC>",
             "<INPUT_MANIFEST_JSON>",
-            canonical_json_text(manifest),
+            canonical_json_text(_prompt_manifest(manifest)),
             "</INPUT_MANIFEST_JSON>",
             "<RULES>",
             rules,

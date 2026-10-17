@@ -13,12 +13,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
-from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
+from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.adapter_inputs import write_adapter_input_bundle  # noqa: E402
+from support.adapter_inputs import (  # noqa: E402
+    bind_manifest_to_config,
+    run_prepared_adapter,
+    write_adapter_input_bundle,
+)
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
@@ -452,6 +456,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
             input_dir = root / "inputs"
             output_dir = root / "out"
             write_adapter_input_bundle(input_dir)
+            bind_manifest_to_config(input_dir, _REPO_CONFIG)
             completed = subprocess.run(
                 [str(_ADAPTERS / "run_reviewer.sh"), "claude", "review"],
                 check=False,
@@ -711,7 +716,7 @@ PY
                 os.environ["AI_REVIEW_INPUT_DIR"] = "inputs"
                 os.environ["AI_REVIEW_OUTPUT_DIR"] = "out"
             try:
-                self.assertEqual(run_adapter(reviewer, stage), 0)
+                self.assertEqual(run_prepared_adapter(reviewer, stage), 0)
                 stage_dir = {"review": "findings", "critique": "critiques"}[stage]
                 batch = load_json_file(output_dir / stage_dir / f"{reviewer}.json")
                 if cli_name == "cursor-agent":
@@ -831,7 +836,7 @@ PY
             os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("cursor", "review"), 0)
+                self.assertEqual(run_prepared_adapter("cursor", "review"), 0)
                 batch = load_json_file(output_dir / "findings" / "cursor.json")
             finally:
                 for key, value in previous.items():
@@ -1002,7 +1007,7 @@ PY
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("claude", "review"), 0)
+                self.assertEqual(run_prepared_adapter("claude", "review"), 0)
                 batch = load_json_file(output_dir / "findings" / "claude.json")
                 cli_args = (output_dir / "claude.args").read_text(encoding="utf-8")
                 stdin = (output_dir / "claude.stdin").read_text(encoding="utf-8")
@@ -1090,7 +1095,7 @@ PY
             os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai.evil.com/api"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("claude", "review"), 0)
+                self.assertEqual(run_prepared_adapter("claude", "review"), 0)
                 batch = load_json_file(output_dir / "findings" / "claude.json")
                 cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
             finally:
@@ -1125,7 +1130,7 @@ PY
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
-                self.assertEqual(run_adapter("claude", "critique"), 0)
+                self.assertEqual(run_prepared_adapter("claude", "critique"), 0)
                 batch = load_json_file(output_dir / "critiques" / "claude.json")
                 argv = (output_dir / "claude.argv").read_text(encoding="utf-8").splitlines()
                 cwd = (output_dir / "claude.pwd").read_text(encoding="utf-8").strip()
@@ -1474,7 +1479,7 @@ PY
             try:
                 # This helper only drives the invalid-config (model_error) path,
                 # so the adapter now exits non-zero.
-                self.assertEqual(run_adapter(reviewer, "review"), _EXIT_ERROR)
+                self.assertEqual(run_prepared_adapter(reviewer, "review"), _EXIT_ERROR)
                 self.assertFalse(
                     (output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists()
                 )

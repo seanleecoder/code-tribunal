@@ -7,13 +7,48 @@ that shape: the registry-driven reviewer contract in
 ``unit/test_reviewers.py`` and the provider-specific adapter suite in
 ``unit/test_openrouter_adapters.py``. It lives here so neither owns it, and so a
 new steering file only has to be added in one place to be covered by both.
+
+``run_prepared_adapter`` is shared more widely: every adapter-runner suite that
+writes its own manifest needs prepare's effective-config binding in it.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from ai_review.schema import write_canonical_json
+from ai_review.adapter_runner import run_adapter
+from ai_review.config import ConfigError, effective_config_binding, load_config
+from ai_review.schema import load_json_file, write_canonical_json
+
+
+def bind_manifest_to_config(input_dir: Path, config_path: Path) -> None:
+    """Record the effective config in the manifest, as prepare does.
+
+    The runner refuses to run when its effective config differs from the
+    manifest's, so a hand-written manifest is bound under the same ``AI_REVIEW_*``
+    environment the runner will see. An invalid config is left unbound: the
+    runner reports it itself.
+    """
+    manifest_path = input_dir / "manifest.json"
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return
+    if not manifest_path.exists():
+        return
+    manifest = load_json_file(manifest_path)
+    manifest.update(effective_config_binding(config))
+    write_canonical_json(manifest_path, manifest)
+
+
+def run_prepared_adapter(reviewer: str, stage: str) -> int:
+    """``run_adapter`` with the manifest bound to the current environment."""
+    bind_manifest_to_config(
+        Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs")),
+        Path(os.environ.get("AI_REVIEW_CONFIG", "config/review.yaml")),
+    )
+    return run_adapter(reviewer, stage)
 
 
 def write_adapter_input_bundle(input_dir: Path) -> None:

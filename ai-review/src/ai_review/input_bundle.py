@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import sha256_hex
-from .config import effective_config_digest, effective_config_summary, load_config
+from .config import effective_config_binding, load_config
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
@@ -441,8 +441,7 @@ def _prepare_bound_bundle(
                 "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
                 "config_sha256": sha256_hex(config_bytes),
                 "rules_sha256": _directory_sha256(source_rules),
-                "effective_config": effective_config_summary(config_dict),
-                "effective_config_sha256": effective_config_digest(config_dict),
+                **effective_config_binding(config_dict),
                 "created_at": now_iso(),
             }
             bound.revalidate()

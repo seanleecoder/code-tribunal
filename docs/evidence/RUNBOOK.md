@@ -329,8 +329,8 @@ part of the prepare-stamped effective-config digest — so set them consistently
 the **review and critique** jobs (project-wide is simplest). If you also change a
 config-affecting override for Chain B (`AI_REVIEW_CRITIQUE_ENABLED`,
 `AI_REVIEW_REVIEWERS`, `AI_REVIEW_<R>_MODEL/EFFORT`), that *does* feed the effective-config digest,
-so scope it identically across **all** jobs or consensus fails closed on divergence
-(SPEC-33). Never edit a production template.
+so scope it identically across **all** jobs or the first later job that sees a
+different config fails closed (SPEC-33, SPEC-47). Never edit a production template.
 
 > **Sticky-variable warning — do not let the mock leak into Chain A.** Chain A is
 > the *real* smoke and must run with the mock off and require-real on. Persisted

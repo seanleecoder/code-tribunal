@@ -8,10 +8,8 @@ import time
 from pathlib import Path
 
 from .adapter_artifacts import (
-    _manifest_effective_config_sha256,
-    _manifest_run_id,
+    _load_manifest,
     _output_file,
-    _resolve_config_digest,
     _write_empty,
     _write_parse_debug,
     _write_status,
@@ -30,6 +28,8 @@ from .adapter_process import (
 from .config import (
     ConfigError,
     load_config,
+    recorded_effective_config_digest,
+    require_effective_config_binding,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
@@ -61,19 +61,41 @@ def run_adapter(reviewer: str, stage: str) -> int:
     output_file = _output_file(stage, reviewer)
     started_at = now_iso()
     started_monotonic = time.monotonic()
-    run_id = _manifest_run_id(input_dir)
-    config_digest = _manifest_effective_config_sha256(input_dir)
+    manifest = _load_manifest(input_dir)
+    run_id = str(manifest.get("run_id") or "unknown-run")
+    # Prepare's digest stamps every artifact; past the binding check below, the
+    # live digest equals it.
+    config_digest = recorded_effective_config_digest(manifest)
+    model = "unknown-model"
 
     def _fail(
         status: str,
         *,
-        digest: str,
+        digest: str | None,
         model: str,
         error_class: str | None = None,
         error_message: str | None = None,
         exit_code: int = _EXIT_ERROR,
     ) -> int:
-        """Write a digest-bound empty batch and matching failure status."""
+        """Write a digest-bound empty batch and matching failure status.
+
+        Without a digest only the status is written, so consensus does not
+        consume a placeholder batch.
+        """
+        if digest is None:
+            _write_status(
+                output_dir,
+                reviewer,
+                stage,
+                status,
+                started_at,
+                started_monotonic,
+                output_file,
+                error_class=error_class,
+                error_message=error_message,
+                run_id=run_id,
+            )
+            return exit_code
         _write_empty(
             output_dir,
             output_file,
@@ -104,22 +126,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return exit_code
 
-    def _fail_status_only(status: str, *, error_class: str, error_message: str) -> int:
-        """Write a status without a batch when no config digest can be resolved."""
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            status,
-            started_at,
-            started_monotonic,
-            output_file,
-            error_class=error_class,
-            error_message=error_message,
-            run_id=run_id,
-        )
-        return _EXIT_ERROR
-
     try:
         if mock_error := _local_mock_unauthorized():
             raise ConfigError(mock_error)
@@ -130,7 +136,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if stage not in reviewer_definition.supported_stages:
             raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         config = load_config(config_path)
-        config_digest = _resolve_config_digest(input_dir, config)
+        # Before the skip decision, prompt rendering, or adapter spawn: a job whose
+        # AI_REVIEW_* view differs from prepare's must not spend provider
+        # credentials. A mismatch is an EffectiveConfigMismatch config_error. The
+        # returned digest equals prepare's; assigning it narrows the type to str.
+        config_digest = require_effective_config_binding(config, manifest)
         reviewer_config = config["reviewers"].get(reviewer)
         if not isinstance(reviewer_config, dict):
             raise ConfigError(f"unknown reviewer: {reviewer}")
@@ -284,28 +294,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return 0
     except subprocess.TimeoutExpired as exc:
-        model = "unknown-model"
-        try:
-            config = load_config(config_path)
-            model = str(config.get("reviewers", {}).get(reviewer, {}).get("model", model))
-            digest = _resolve_config_digest(input_dir, config)
-        except Exception:
-            try:
-                digest = _resolve_config_digest(input_dir, None)
-            except Exception:
-                _write_parse_debug(
-                    output_dir,
-                    reviewer,
-                    stage,
-                    exc.output or "",
-                    exc.stderr or "",
-                    kind="timeout",
-                )
-                return _fail_status_only(
-                    "timeout",
-                    error_class="TimeoutExpired",
-                    error_message=str(exc),
-                )
         # Archive whatever the reviewer emitted before the kill so a timeout is
         # debuggable even when live mirroring was off (the default) — otherwise a
         # stuck reviewer leaves no trace of what it was doing.
@@ -319,27 +307,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return _fail(
             "timeout",
-            digest=digest,
+            digest=config_digest,
             model=model,
             error_class="TimeoutExpired",
             error_message=str(exc),
         )
     except Exception as exc:
-        try:
-            digest = config_digest if config_digest is not None else _resolve_config_digest(
-                input_dir, None
-            )
-        except ConfigError:
-            # Last resort: cannot stamp a digest; still emit a config_error status
-            # without a finding batch so consensus does not consume a placeholder.
-            return _fail_status_only(
-                "config_error" if isinstance(exc, ConfigError) else "internal_error",
-                error_class=exc.__class__.__name__,
-                error_message=str(exc),
-            )
         return _fail(
             "config_error" if isinstance(exc, ConfigError) else "internal_error",
-            digest=digest,
+            digest=config_digest,
             model="unknown-model",
             error_class=exc.__class__.__name__,
             error_message=str(exc),
