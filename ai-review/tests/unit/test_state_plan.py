@@ -191,12 +191,9 @@ class PlanStateWithoutClientTests(unittest.TestCase):
                 plan = _plan(persisted=[_record(gone)], commands={gone: command})
 
                 self.assertEqual(self._status_of(plan, gone), expected)
-                disposition = next(
-                    record["human_disposition"]
-                    for record in plan.planned_records
-                    if record["issue_id"] == gone
-                )
-                self.assertEqual(disposition, command)
+                record = self._record_of(plan, gone)
+                assert record is not None
+                self.assertEqual(record["human_disposition"], command)
 
     def test_prior_wontfix_survives_a_regrouped_finding(self) -> None:
         issue_id = "a" * 64
@@ -301,9 +298,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         weaker = record("3" * 64, "src/bar.py", symbols=["s"], title_fingerprints=["t"])
         unassigned = dict(
             self._unassigned_group(),
-            source_finding_ids=["e" * 64],
             match_keys={
-                "category": "correctness",
                 "path_keys": ["src/foo.py"],
                 "context_hashes": ["h"],
                 "title_fingerprints": ["t"],
