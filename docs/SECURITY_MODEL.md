@@ -74,9 +74,20 @@ CI file. The real boundary is outside that file:
 
 - a protected external CI configuration file
   (`.gitlab-ci.yml@group/protected-project`), or
-- a pipeline execution or compliance policy.
+- a pipeline execution policy in `override_project_ci` mode that does not
+  re-include the project's own CI file.
 
-Either way, merge-request authors cannot edit the composition. Run
+Either way, merge-request authors cannot edit the composition, and no
+author-written job runs in a pipeline that receives protected credentials. An
+`inject_policy` policy does not meet that bar: project jobs still run beside the
+injected ones and can read protected variables in any protected-ref pipeline.
+
+The composition is not the only route to the image variables. The template runs
+on `web` and `api` pipelines that set `CI_MERGE_REQUEST_IID`, and a pipeline
+variable overrides the template's image pins. A user allowed to run pipelines on
+a protected branch can therefore substitute the image without editing any CI
+file, unless the project restricts pipeline variables to no one or to trusted
+maintainers. Treat that restriction as part of the boundary. Run
 `pipeline_trust.py` from a protected scheduled pipeline or an approval-rule
 check so that composition drift is detected without an operator remembering to
 run it. See [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition).
@@ -131,9 +142,11 @@ and must not be described as implemented container isolation.
 Canonical GitHub workflows skip external forks. GitLab protected variables are
 withheld from unprotected refs. Either GitLab mode is safe only when the root CI
 file and all relevant includes are protected from merge-request authors, by a
-protected external CI configuration or a pipeline policy. The deprecated hardened
-child mode's forwarding settings add nothing once that holds and protect nothing
-when it does not.
+protected external CI configuration or an `override_project_ci` pipeline policy.
+The deprecated hardened child's `forward.pipeline_variables: false` also keeps
+pipeline variables from manual and API runs out of the review jobs; a direct
+include needs the project's pipeline-variable restriction to match it. The
+child's settings protect nothing when the CI file is editable.
 
 ## Failure policy
 

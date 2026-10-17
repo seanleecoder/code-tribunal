@@ -1,8 +1,9 @@
 # Install Code Tribunal on GitLab
 
-Install Code Tribunal with a direct include, and protect the CI file that
-composes it with a protected external CI configuration or a GitLab pipeline
-policy. The hardened mirrored child pipeline is deprecated and will be removed
+Install Code Tribunal with a direct include, protect the CI file that composes
+it with a protected external CI configuration or an overriding pipeline
+execution policy, and restrict pipeline variables; see
+[Protect the CI composition](#protect-the-ci-composition). The hardened mirrored child pipeline is deprecated and will be removed
 in the next major release; see [Deprecated: hardened child](#deprecated-hardened-child).
 
 ## Prerequisites
@@ -26,19 +27,36 @@ variables, enable variable forwarding, and run every stage on an arbitrary image
 No check inside that pipeline can prevent this: the edit that swaps the image can
 also remove the check, and a substituted image will not run a check that lives in
 the trusted image. The boundary must sit outside the file merge-request authors
-can edit. Use one of:
+can edit, and no author-controlled job may share a pipeline with the protected
+credentials. Use one of:
 
 - **A protected external CI configuration file.** In **Settings → CI/CD →
   General pipelines → CI/CD configuration file**, set
   `.gitlab-ci.yml@group/protected-project` so the composition lives in a project
   merge-request authors cannot push to. Users who run pipelines need read access
   to that project.
-- **A pipeline execution policy or compliance pipeline** that injects the Code
-  Tribunal include from a project the merge-request author cannot edit.
+- **A pipeline execution policy in `override_project_ci` mode** whose policy
+  configuration includes Code Tribunal and does not re-include the project's own
+  `.gitlab-ci.yml`.
 
-Without either, the composition is protected only by code review of every change
-to the CI file, and an unprotected-branch merge request is contained only because
-GitLab withholds protected variables from it.
+An `inject_policy` (formerly `inject_ci`) policy is not sufficient. The project's
+own jobs still run beside the injected ones, and in any pipeline that receives
+protected variables, such as a merge request from a protected source branch, an
+author-written job can read `GITLAB_TOKEN` and the provider keys directly.
+
+**Also restrict pipeline variables.** The template runs on `web` and `api`
+pipelines that set `CI_MERGE_REQUEST_IID`, and a pipeline variable overrides the
+template's `AI_REVIEW_BASE_IMAGE` and `AI_REVIEW_REVIEWER_IMAGE`. A user allowed
+to run pipelines on a protected branch could otherwise start one with a
+substituted image and protected credentials without editing any CI file. In
+**Settings → CI/CD → Variables**, set the minimum role to use pipeline variables
+to **No one allowed**, or to a role you trust as much as the template project's
+maintainers. Treat pipeline schedules and trigger tokens that set variables the
+same way.
+
+Without these controls, the composition is protected only by code review of
+every change to the CI file, and an unprotected-branch merge request is
+contained only because GitLab withholds protected variables from it.
 
 Audit the composition from a trusted checkout:
 
@@ -60,8 +78,11 @@ the composition is noticed without someone remembering to look.
 The [hardened child example](examples/gitlab-child.yml) still works in 2.0.x and
 is removed in the next major release. Its `inherit.variables: false` and
 `forward.*: false` settings are a boundary only while merge-request authors
-cannot edit the consumer CI file, which is exactly when a direct include is
-already safe. Migrate to the direct include plus a protected CI composition.
+cannot edit the consumer CI file. Once the composition is protected, the only
+extra thing they add is keeping pipeline variables out of the child, and
+restricting pipeline variables gives a direct include the same protection.
+Migrate to the direct include plus a protected CI composition and restricted
+pipeline variables.
 
 Until then, keep both child includes at the same project and SHA, disable
 inherited/default variables, disable YAML and pipeline-variable forwarding,
