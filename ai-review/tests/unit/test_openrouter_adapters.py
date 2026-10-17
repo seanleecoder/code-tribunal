@@ -1032,8 +1032,8 @@ PY
         self.assertIn("/claude -p ", cli_args)
         self.assertIn("--output-format stream-json", cli_args)
         self.assertIn("--tools Read,Grep,Glob", cli_args)
-        self.assertNotIn("bundle prompt", cli_args)
-        self.assertIn("bundle prompt", stdin)
+        self.assertNotIn("<SYSTEM_RULES>", cli_args)
+        self.assertIn("<SYSTEM_RULES>", stdin)
         # Structured-output steering: the review schema text is passed inline
         # (mirroring codex --output-schema), not the post-consensus batch schema.
         self.assertIn("--json-schema", cli_args)

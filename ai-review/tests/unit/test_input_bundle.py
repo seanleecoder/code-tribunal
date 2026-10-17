@@ -395,6 +395,32 @@ class BundlePublicationTests(unittest.TestCase):
 
             self.assertEqual(bundle_bytes(first), bundle_bytes(second))
 
+    def test_bundle_carries_no_prompt_rule_or_config_copy(self) -> None:
+        # Prompts and rules come from the image, and every stage loads its own
+        # config, so prepare copies none of them and records no digest for them.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+            diff = root / "change.diff"
+            diff.write_text("diff --git a/f.py b/f.py\n", encoding="utf-8")
+            bundle = prepare_local_bundle(_REPO_CONFIG, diff, repo, root / "inputs")
+
+            self.assertEqual(
+                sorted(item.name for item in bundle.iterdir()),
+                [
+                    "manifest.json",
+                    "mr.diff",
+                    "prior_decisions.json",
+                    "repo_snapshot",
+                    "state_aliases.json",
+                ],
+            )
+            manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("config_sha256", manifest)
+            self.assertNotIn("rules_sha256", manifest)
+
     def test_manifest_is_published_after_all_other_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

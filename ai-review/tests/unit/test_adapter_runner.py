@@ -752,14 +752,10 @@ class EffortEnvTests(unittest.TestCase):
             project = root / "ai-review"
             config_dir = project / "config"
             adapter_dir = project / "adapters"
-            prompt_dir = project / "prompts"
-            rules_dir = project / "rules"
             input_dir = root / "inputs"
             output_dir = root / "out"
-            for path in [config_dir, adapter_dir, prompt_dir, rules_dir, input_dir]:
+            for path in [config_dir, adapter_dir, input_dir]:
                 path.mkdir(parents=True, exist_ok=True)
-            (prompt_dir / "review.md").write_text("Return JSON only.", encoding="utf-8")
-            (rules_dir / "README.md").write_text("rules", encoding="utf-8")
             (input_dir / "mr.diff").write_text("", encoding="utf-8")
             write_canonical_json(
                 input_dir / "manifest.json",
@@ -776,8 +772,6 @@ class EffortEnvTests(unittest.TestCase):
                     "head_sha": "1" * 40,
                     "diff_sha256": "0" * 64,
                     "repo_snapshot_sha256": "0" * 64,
-                    "config_sha256": "0" * 64,
-                    "rules_sha256": "0" * 64,
                     "created_at": "2026-06-29T00:00:00Z",
                 },
             )
@@ -862,15 +856,10 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
     project = root / "ai-review"
     config_dir = project / "config"
     adapter_dir = project / "adapters"
-    prompt_dir = project / "prompts"
-    rules_dir = project / "rules"
     input_dir = root / "inputs"
     output_dir = root / "out"
-    for path in [config_dir, adapter_dir, prompt_dir, rules_dir, input_dir]:
+    for path in [config_dir, adapter_dir, input_dir]:
         path.mkdir(parents=True, exist_ok=True)
-    (prompt_dir / "review.md").write_text("Return JSON only.", encoding="utf-8")
-    (prompt_dir / "critique.md").write_text("Return critique JSON only.", encoding="utf-8")
-    (rules_dir / "README.md").write_text("rules", encoding="utf-8")
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
     write_canonical_json(
         input_dir / "manifest.json",
@@ -887,8 +876,6 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
             "head_sha": "1" * 40,
             "diff_sha256": "0" * 64,
             "repo_snapshot_sha256": "0" * 64,
-            "config_sha256": "0" * 64,
-            "rules_sha256": "0" * 64,
             "created_at": "2026-06-29T00:00:00Z",
         },
     )

@@ -1,7 +1,7 @@
 # SPEC-43 — Trusted image pin under a hostile consumer pipeline
 
 - **Severity:** High for posture, low practical exploitability today (credentials are withheld on unprotected refs) · **Effort:** S (documentation only) · **ROI rank:** post-2.0.2
-- **Depends on:** nothing. Read it with [SPEC-47](spec-47-trusted-project-review-config.md), which owns the trusted runtime root for configuration and assets.
+- **Depends on:** nothing. Inside a trusted job, adapters, prompts and rules already resolve below the image's trusted runtime root (SPEC-47, done); this spec owns trust in the CI definition and image.
 
 ## Why
 

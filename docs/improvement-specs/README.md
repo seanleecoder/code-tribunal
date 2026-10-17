@@ -18,7 +18,6 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 
 | Spec | Status | Effort | Vehicle | Summary |
 |---|---|---|---|---|
-| [SPEC-47](spec-47-trusted-project-review-config.md) | Partial; asset half ready | S | 2.0.3 | Render prompts and rules from the image's trusted runtime root, merge the two prompt renderers, and delete the unread bundle copies and hashes. The full-config digest and the binding check in every stage are done. Repository-hosted project policy was rejected. |
 | [SPEC-43](spec-43-in-pipeline-trusted-image.md) | Ready | S (docs) | Any | Document the real GitLab trust boundary: a protected external CI config path or policy. In-pipeline image checks cannot stop a hostile CI author; the drift marker was rejected. |
 | [SPEC-66](spec-66-run-health-summary.md) | Proposed; narrowed 2026-10-16 | M (one PR) | 2.1.0 | Per-job model, effort, outcome and duration with a full/degraded/re-run grade, in a summary present on every published run and in the consensus job log. No usage, cost, failed-panel publication or critique coverage. |
 
@@ -106,12 +105,9 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. SPEC-47's remaining half: prompts and rules from the image with the unread
-   bundle copies deleted, and one prompt renderer (N10). The full-configuration
-   digest (N05), the binding checks in every stage, and SPEC-68 fix 3 are done.
-2. SPEC-43: GitLab trust-boundary documentation and the child-mode deprecation
+1. SPEC-43: GitLab trust-boundary documentation and the child-mode deprecation
    (N02).
-3. Small cleanups:
+2. Small cleanups:
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);
    - delete test-only TypedDicts (N16);
@@ -122,32 +118,32 @@ unexpected artifacts.
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-4. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
+3. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
    the release tooling (S01), replace the pin checker with Renovate and zizmor
    (N01), and prune the evidence docs.
-5. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
+4. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
-6. The hash-only body (N12).
-7. Delete the over-built integrity checks (N15).
+5. The hash-only body (N12).
+6. Delete the over-built integrity checks (N15).
 
 **Step 3 — 2.1.x minor releases.**
 
-8. Merge the canary scripts into two platform modules (N18). This comes after
+7. Merge the canary scripts into two platform modules (N18). This comes after
    2.1.0, so the assurance tool and the process do not change together.
-9. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
-10. The S03 mock switch, then seat setup in the registry (N08).
-11. The typed configuration object (N05), before the S04 knob removal.
-12. The `input_bundle` revision cleanup (N17).
+8. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
+9. The S03 mock switch, then seat setup in the registry (N08).
+10. The typed configuration object (N05), before the S04 knob removal.
+11. The `input_bundle` revision cleanup (N17).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 
-13. Re-land S05, which restores `resolve_location` and removes `confidence`.
-14. Consensus becomes state-free (N11). `consensus.v3` also drops
+12. Re-land S05, which restores `resolve_location` and removes `confidence`.
+13. Consensus becomes state-free (N11). `consensus.v3` also drops
     `group.body_hash` and removes the `drop` decision and `summary.drop_count`
     (COMPAT-003).
-15. One S14 state migration: state moves into the summary comment (N04), and the
+14. One S14 state migration: state moves into the summary comment (N04), and the
     anchor remap uses context hashes (N14).
-16. Consumer-visible changes:
+15. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in
       `pipeline_trust.py` and their tests;

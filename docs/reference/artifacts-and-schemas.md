@@ -9,10 +9,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring, post | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
-| `inputs/prompts/` | prepare | prompt rendering | immutable copy of trusted review/critique prompt templates; directory digest is indirectly bound by the trusted image/source |
-| `inputs/rules/` | prepare | prompt rendering | immutable trusted rule files; `rules_sha256` is recorded in the manifest |
 | `inputs/state_aliases.json` | prepare | consensus/post | [`state_aliases.schema.json`](../../ai-review/schemas/state_aliases.schema.json) |
-| `inputs/config.review.yaml` | prepare | all later stages/audit | immutable copy of loaded configuration; validated against the executable config contract |
 | `out/status/<reviewer>.json` | reviewer adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
 | `out/status/critique-<reviewer>.json` | critic adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
 | `out/status/<stage>-<reviewer>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
@@ -23,6 +20,12 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); the `drop` decision and `summary.drop_count` are retained for compatibility, and `drop_count` is always `0` |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
 | encoded state note/comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and checksum |
+
+The bundle carries no prompt, rule, or configuration copy. Review and critique
+render prompts and rules from `prompts/` and `rules/` below the image's trusted
+runtime root, never from the bundle or from wherever `AI_REVIEW_CONFIG` points.
+Every stage loads `AI_REVIEW_CONFIG` itself and must reproduce the manifest's
+`effective_config_sha256`.
 
 `post_result.json` is the terminal artifact: nothing downstream reads it, and
 `post` validates it against its schema on write. It is operator diagnostics plus

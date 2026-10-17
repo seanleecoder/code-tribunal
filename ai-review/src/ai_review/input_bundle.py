@@ -380,13 +380,11 @@ def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
 def _prepare_bound_bundle(
     bound: _BoundRevision,
     *,
-    config_path: Path,
     config_dict: dict[str, Any],
     out_path: Path,
 ) -> Path:
     """Build every input bundle through the same revision-bound artifact path."""
     _enforce_diff_limits(bound.diff_text, config_dict)
-    config_bytes = config_path.read_bytes()
     out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
     # A manifest makes every sibling artifact consumable. Invalidate any prior
@@ -396,12 +394,6 @@ def _prepare_bound_bundle(
         with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
             staging_path = Path(staging)
             (staging_path / "mr.diff").write_bytes(bound.diff_text.encode("utf-8"))
-            (staging_path / "config.review.yaml").write_bytes(config_bytes)
-
-            source_rules = config_path.parent.parent / "rules"
-            source_prompts = config_path.parent.parent / "prompts"
-            shutil.copytree(source_rules, staging_path / "rules", dirs_exist_ok=True)
-            shutil.copytree(source_prompts, staging_path / "prompts", dirs_exist_ok=True)
 
             snapshot_dir = staging_path / "repo_snapshot"
             copy_repo_snapshot(
@@ -439,8 +431,6 @@ def _prepare_bound_bundle(
                 **bound.manifest_extensions,
                 "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
                 "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-                "config_sha256": sha256_hex(config_bytes),
-                "rules_sha256": _directory_sha256(source_rules),
                 **effective_config_binding(config_dict),
                 "created_at": now_iso(),
             }
@@ -481,7 +471,6 @@ def prepare_local_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )
@@ -794,7 +783,6 @@ def prepare_github_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )
@@ -869,7 +857,6 @@ def prepare_gitlab_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )

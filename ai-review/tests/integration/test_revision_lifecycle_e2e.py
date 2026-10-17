@@ -26,7 +26,7 @@ if str(TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(TESTS_ROOT))
 FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
 _e2e_bundle = importlib.import_module("support.e2e_bundle")
-AI_REVIEW_ROOT = _e2e_bundle.AI_REVIEW_ROOT
+SHIPPED_CONFIG_PATH = importlib.import_module("support.config_yaml").SHIPPED_CONFIG_PATH
 FIXTURE_ROOT = _e2e_bundle.FIXTURE_ROOT
 prepare_simple_bundle = _e2e_bundle.prepare_simple_bundle
 
@@ -60,7 +60,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         bundle = prepare_simple_bundle(tmp)
-        config = load_config(bundle / "config.review.yaml")
+        config = load_config(SHIPPED_CONFIG_PATH)
         manifest = dict(
             load_json_file(bundle / "manifest.json"),
             project_id="octo/repo",
@@ -132,7 +132,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         diff_file = tmp / f"{name}.diff"
         diff_file.write_text(diff_text, encoding="utf-8")
         bundle = prepare_local_bundle(
-            AI_REVIEW_ROOT / "config" / "review.yaml",
+            SHIPPED_CONFIG_PATH,
             diff_file,
             repo,
             tmp / f"{name}-bundle",
@@ -264,7 +264,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             diff2 = self._marker_diff(unrelated_lines=3)
             bundle1, manifest1 = self._marker_bundle(tmpp, "r1", diff1)
             bundle2, manifest2_raw = self._marker_bundle(tmpp, "r2", diff2)
-            config = load_config(bundle1 / "config.review.yaml")
+            config = load_config(SHIPPED_CONFIG_PATH)
             head2 = "0123456789abcdef0123456789abcdef01234567"
             manifest2 = dict(manifest2_raw, head_sha=head2)
             # A genuine second revision: new head SHA, and — because each bundle was
