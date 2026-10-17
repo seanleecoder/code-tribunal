@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
+from .notes import note_author_id
 from .schema import now_iso
 from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
@@ -234,14 +235,6 @@ def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -
     return state
 
 
-def _note_author_id(note: dict[str, Any]) -> int | None:
-    author = note.get("author")
-    if not isinstance(author, dict):
-        return None
-    author_id = author.get("id")
-    return author_id if isinstance(author_id, int) else None
-
-
 def state_note_candidates(
     notes: list[dict[str, Any]],
     *,
@@ -260,10 +253,10 @@ def state_note_candidates(
             )
         ):
             continue
-        if expected_author_id is not None and _note_author_id(note) != expected_author_id:
+        if expected_author_id is not None and note_author_id(note) != expected_author_id:
             author_mismatches += 1
             warnings.append(
-                f"ignored state note {note.get('id')} from non-bot author {_note_author_id(note)}"
+                f"ignored state note {note.get('id')} from non-bot author {note_author_id(note)}"
             )
             continue
         candidates.append(note)

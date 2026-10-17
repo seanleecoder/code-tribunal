@@ -173,12 +173,11 @@ class FakeGitHubClient:
         self._issue_comments.append(note)
         return self._normalize_issue_comment(note)
 
-    def add_foreign_issue_comment(self, body: str, *, author_id: int, login: str) -> int:
+    def add_foreign_note(self, body: str, *, author_id: int = 99) -> int:
         """A PR conversation comment another participant posted."""
         comment_id = self._id()
-        self._issue_comments.append(
-            {"id": comment_id, "body": body, "user": {"id": author_id, "login": login}}
-        )
+        user = {"id": author_id, "login": f"user-{author_id}"}
+        self._issue_comments.append({"id": comment_id, "body": body, "user": user})
         return comment_id
 
     def update_state_note(

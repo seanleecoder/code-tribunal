@@ -178,33 +178,25 @@ class PublishEndToEndTests(unittest.TestCase):
                         manifest, project_id="octo-org/octo-repo", merge_request_iid="17"
                     )
                     client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
-                    planted_id = client.add_foreign_issue_comment(
-                        planted, author_id=7, login="participant"
-                    )
                 else:
                     client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
-                    planted_id = client.add_foreign_note(
-                        planted, author_id=7, username="participant"
-                    )
+                planted_id = client.add_foreign_note(planted)
                 consensus = build_consensus(manifest, self._fyi_batches(), config)
 
                 first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
                 second = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
 
+                # The fakes refuse to edit a note the bot did not author, so both
+                # runs succeeding also proves the planted note was left alone.
                 validate_instance(second, "post_result.schema.json")
                 self.assertEqual(first["summary_comment"]["action"], "created")
                 self.assertEqual(second["summary_comment"]["action"], "unchanged")
                 self.assertEqual(
                     second["summary_comment"]["note_id"], first["summary_comment"]["note_id"]
                 )
-                self.assertNotEqual(first["summary_comment"]["note_id"], planted_id)
                 self.assertIn(
-                    f"ignored summary note {planted_id} from non-bot author 7", second["warnings"]
+                    f"ignored summary note {planted_id} from non-bot author 99", second["warnings"]
                 )
-                planted_note = next(
-                    note for note in client.summary_notes if note["id"] == planted_id
-                )
-                self.assertEqual(planted_note["body"], planted)
                 self.assertEqual(len(client.summary_notes), 2)
                 self.assertEqual(len(client.state_notes), 1)
 

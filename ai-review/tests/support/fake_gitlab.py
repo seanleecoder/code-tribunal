@@ -140,10 +140,9 @@ class FakeGitLabClient:
         self.created_note_bodies.append(body)
         return copy.deepcopy(note)
 
-    def add_foreign_note(self, body: str, *, author_id: int, username: str) -> int:
+    def add_foreign_note(self, body: str, *, author_id: int = 99) -> int:
         """A top-level MR note another participant posted."""
-        note = self._note(self._allocate_note_id(), body)
-        note["author"] = {"id": author_id, "username": username}
+        note = self._note(self._allocate_note_id(), body, author_id=author_id)
         self.mr_notes.append(note)
         self.discussions.append(
             {"id": f"note-{note['id']}", "resolved": False, "notes": [copy.deepcopy(note)]}
@@ -230,12 +229,22 @@ class FakeGitLabClient:
         return note_id
 
     def _note(
-        self, note_id: int, body: str, *, position: dict[str, Any] | None = None
+        self,
+        note_id: int,
+        body: str,
+        *,
+        position: dict[str, Any] | None = None,
+        author_id: int | None = None,
     ) -> dict[str, Any]:
+        author = (
+            {"id": self.bot_user_id, "username": self.bot_username}
+            if author_id is None
+            else {"id": author_id, "username": f"user-{author_id}"}
+        )
         note = {
             "id": note_id,
             "body": body,
-            "author": {"id": self.bot_user_id, "username": self.bot_username},
+            "author": author,
             "created_at": "2026-07-11T00:00:00Z",
             "updated_at": "2026-07-11T00:00:00Z",
         }

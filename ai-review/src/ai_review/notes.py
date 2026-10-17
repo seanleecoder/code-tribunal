@@ -195,14 +195,14 @@ def index_ai_review_discussions(
                 category=rendered.get("category"),
                 title=rendered.get("title", ""),
                 resolved=bool(discussion.get("resolved") or root.get("resolved")),
-                author_id=_root_author_id(root),
+                author_id=note_author_id(root),
             )
         )
     return indexed
 
 
-def _root_author_id(root: dict[str, Any]) -> int | None:
-    author = root.get("author")
+def note_author_id(note: dict[str, Any]) -> int | None:
+    author = note.get("author")
     author_id = author.get("id") if isinstance(author, dict) else None
     return author_id if isinstance(author_id, int) else None
 
@@ -235,7 +235,7 @@ def find_summary_note(
         note_id = root.get("id")
         if not isinstance(note_id, int):
             continue
-        author_id = _root_author_id(root)
+        author_id = note_author_id(root)
         if author_id != expected_author_id:
             warnings.append(f"ignored summary note {note_id} from non-bot author {author_id}")
             continue

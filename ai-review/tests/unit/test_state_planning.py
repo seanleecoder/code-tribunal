@@ -20,14 +20,16 @@ from ai_review.posting import (
     PostContext,
     _initial_post_result,
     finalize_state,
-    load_persisted_state,
     post_consensus,
     post_inline,
     prepare_post_context,
-    recover_state_from_discussions,
 )
 from ai_review.render import render_body
-from ai_review.state_plan import _desired_discussion_resolved, plan_state
+from ai_review.state_plan import (
+    _desired_discussion_resolved,
+    plan_state,
+    state_from_existing_discussions,
+)
 from ai_review.types import PostResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -42,35 +44,19 @@ from support.post_case import PostCase  # noqa: E402
 class StatePlanningTests(PostCase):
     """Pure state planning, reconciliation, and human-command collection."""
 
-    def test_load_persisted_state_fails_closed_when_current_user_unavailable(self) -> None:
-        class BrokenUserClient(FakePostClient):
-            def current_user(self) -> dict[str, Any]:
-                raise RuntimeError("user lookup failed")
-
-            def list_state_notes(self, project_id: str, mr_iid: str) -> list[dict[str, Any]]:
-                return []
-
-        with self.assertRaisesRegex(RuntimeError, "current_user"):
-            load_persisted_state(
-                BrokenUserClient("head"),
-                self._config(),
-                self._manifest("head"),
-            )
-
     def test_post_consensus_fails_closed_when_current_user_unavailable(self) -> None:
-        """State-note lookup is the first thing that needs the bot identity.
+        """The bot identity is resolved once, before any author check runs.
 
-        It used to be marker recovery, because a state-disabled config skipped
-        the note lookup entirely. Every valid config now loads persisted state,
-        so an unusable identity is caught one step earlier — before either
-        author check can silently accept a stranger's note or marker.
+        State notes, discussion-marker recovery, and the summary comment all
+        compare against it, so an unusable identity fails the run before any
+        of them can silently accept a stranger's note or marker.
         """
 
         class BrokenUserClient(FakePostClient):
             def current_user(self) -> dict[str, Any]:
                 raise RuntimeError("user lookup failed")
 
-        with self.assertRaisesRegex(RuntimeError, "persisted state requires current_user"):
+        with self.assertRaisesRegex(RuntimeError, "post requires current_user"):
             post_consensus(
                 BrokenUserClient("head"),
                 self._config(),
@@ -78,19 +64,7 @@ class StatePlanningTests(PostCase):
                 self._consensus(),
             )
 
-    def test_recover_state_from_discussions_fails_closed_without_current_user(self) -> None:
-        class BrokenUserClient(FakePostClient):
-            def current_user(self) -> dict[str, Any]:
-                raise RuntimeError("user lookup failed")
-
-        with self.assertRaisesRegex(RuntimeError, "discussion-marker recovery"):
-            recover_state_from_discussions(
-                BrokenUserClient("head"),
-                self._manifest("head"),
-                [],
-            )
-
-    def test_recover_state_from_discussions_filters_to_authenticated_bot(self) -> None:
+    def test_discussion_marker_state_filters_to_authenticated_bot(self) -> None:
         group = self._consensus()["groups"][0]
         body, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         discussions = index_ai_review_discussions(
@@ -132,10 +106,10 @@ class StatePlanningTests(PostCase):
             ]
         )
 
-        recovered = recover_state_from_discussions(
-            FakePostClient("head"),
-            self._manifest("head"),
+        recovered = state_from_existing_discussions(
             discussions,
+            current_head_sha="head",
+            expected_author_id=FakePostClient.BOT_ID,
         )
 
         self.assertEqual([record["discussion_id"] for record in recovered["records"]], ["trusted"])
@@ -431,6 +405,7 @@ class StatePlanningTests(PostCase):
             posting_mode="gitlab_discussions",
             fyi_mode="summary_comment",
             max_fyi=50,
+            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -487,6 +462,7 @@ class StatePlanningTests(PostCase):
             posting_mode="gitlab_discussions",
             fyi_mode="summary_comment",
             max_fyi=50,
+            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -538,6 +514,7 @@ class StatePlanningTests(PostCase):
             posting_mode="gitlab_discussions",
             fyi_mode="summary_comment",
             max_fyi=50,
+            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -588,6 +565,7 @@ class StatePlanningTests(PostCase):
             posting_mode="gitlab_discussions",
             fyi_mode="summary_comment",
             max_fyi=50,
+            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
