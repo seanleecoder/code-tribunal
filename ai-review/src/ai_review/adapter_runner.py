@@ -137,8 +137,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
         config = load_config(config_path)
         # Before the skip decision, prompt rendering, or adapter spawn: a job whose
         # AI_REVIEW_* view differs from prepare's must not spend provider
-        # credentials. A mismatch is an EffectiveConfigMismatch config_error.
-        require_effective_config_binding(config, manifest)
+        # credentials. A mismatch is an EffectiveConfigMismatch config_error. The
+        # returned digest equals prepare's; assigning it narrows the type to str.
+        config_digest = require_effective_config_binding(config, manifest)
         reviewer_config = config["reviewers"].get(reviewer)
         if not isinstance(reviewer_config, dict):
             raise ConfigError(f"unknown reviewer: {reviewer}")
