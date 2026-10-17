@@ -123,6 +123,44 @@ class FindingCapTests(unittest.TestCase):
         self.assertIn("dropped", err.getvalue())
         validate_instance(finalized, "finding_batch.schema.json")
 
+    def test_cap_ranks_missing_confidence_below_explicit_zero(self) -> None:
+        # SPEC-41: the defaulted finding comes first in input order, so only the
+        # confidence key can put the explicit 0.0 ahead of it. It still outranks
+        # a lower severity, which takes the slot only if the finding is dropped.
+        missing_confidence = _finding(2, "major", "Missing confidence")
+        del missing_confidence["confidence"]
+        explicit_zero = _finding(3, "major", "Explicit zero")
+        explicit_zero["confidence"] = 0.0
+        raw = {
+            "schema_version": "finding_batch.v1",
+            "run_id": "local",
+            "reviewer": "claude",
+            "adapter_status": "success",
+            "model": "model",
+            "started_at": "2026-06-29T00:00:00Z",
+            "completed_at": "2026-06-29T00:00:01Z",
+            "findings": [missing_confidence, explicit_zero, _finding(4, "minor", "Minor")],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            input_dir = Path(tmp)
+            (input_dir / "mr.diff").write_text(DIFF, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                finalized = finalize_finding_batch(
+                    raw,
+                    reviewer="claude",
+                    model="model",
+                    run_id="local",
+                    started_at="2026-06-29T00:00:00Z",
+                    input_dir=input_dir,
+                    max_findings=2,
+                    effective_config_sha256="0" * 64,
+                )
+        self.assertEqual(
+            [finding["title"] for finding in finalized["findings"]],
+            ["Explicit zero", "Missing confidence"],
+        )
+        validate_instance(finalized, "finding_batch.schema.json")
+
     def test_bad_anchor_drops_only_that_finding(self) -> None:
         # Bug #3: one finding whose anchor does not map to a changed line must not
         # discard the whole batch; the valid findings are kept.

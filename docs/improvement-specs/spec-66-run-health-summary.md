@@ -33,8 +33,8 @@ Most of that information already exists but never reaches the comment:
   every later stage verifies against its live configuration digest.
 - Per-seat raw, accepted and dropped counts are in every `finding_batch.v1`,
   and the cap-omitted count is derivable from them. `consensus.v2` aggregates
-  none of them. Those dropped counts are exactly how the
-  [SPEC-41](spec-41-reviewer-confidence-default.md) loss becomes visible.
+  none of them. Those dropped counts are how finding loss becomes visible:
+  malformed fields and unresolvable anchors still drop findings.
 
 Two cases are missing entirely:
 
@@ -402,6 +402,8 @@ post requires the field the consensus change adds.
   `--status-dir`; the GitHub parity copy matches.
 - `ai-review/tests/contract/test_golden_consensus.py`: goldens carry
   `run_health` and are stable under file-order permutation.
+- `ai-review/tests/unit/test_post.py`: a seat whose findings are all dropped
+  grades the run `degraded` in the artifact and in the posted summary.
 
 ## Open questions
 

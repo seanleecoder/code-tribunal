@@ -23,6 +23,11 @@ versioning.
 
 ### Fixed
 
+- A finding that omits `confidence` is no longer dropped. Finalization sets it
+  to `0.0`, the lowest valid value, so it can only lose tie-breaks, and writes
+  one stderr line naming the seat and finding. A present but non-numeric or
+  out-of-range `confidence` still drops the finding, and `finding_batch.v1` is
+  unchanged (SPEC-41).
 - Post refuses a consensus artifact whose `run_id`, `head_sha`, or
   `input_manifest_sha256` does not match the manifest in its inputs, before
   creating a platform client. A retried job or replay can no longer mutate

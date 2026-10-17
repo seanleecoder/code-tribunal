@@ -469,6 +469,16 @@ def finalize_finding_batch(
                 str(normalized["category"]),
                 title_fp,
             )
+            # `confidence` only breaks ties, so a missing value must not drop an
+            # otherwise valid finding (SPEC-41). 0.0 can never outrank an explicit
+            # value; a present but malformed value still fails validation.
+            if "confidence" not in normalized:
+                normalized["confidence"] = 0.0
+                sys.stderr.write(
+                    redact_text(
+                        f"ai-review: {reviewer} finding {index} has no confidence; using 0.0\n"
+                    )
+                )
             _validate_finalized_finding(
                 normalized,
                 batch=batch,
