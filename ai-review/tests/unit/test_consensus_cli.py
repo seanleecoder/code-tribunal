@@ -33,8 +33,6 @@ def _manifest_for_config(config: dict, *, run_id: str = "local-test") -> dict:
         "head_sha": "1" * 40,
         "diff_sha256": "0" * 64,
         "repo_snapshot_sha256": "0" * 64,
-        "config_sha256": "0" * 64,
-        "rules_sha256": "0" * 64,
         **effective_config_binding(config),
         "created_at": "2026-06-29T00:00:00Z",
     }

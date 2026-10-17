@@ -30,6 +30,16 @@ versioning.
   configuration, and mismatch messages name the differing top-level keys.
   Reviewer prompts omit it. The digest value changes once, so every job in a
   pipeline must run the same release.
+- Review and critique prompts and rules now always come from the image's
+  `prompts/` and `rules/`, not from directories beside the file that
+  `AI_REVIEW_CONFIG` names. The shipped prompt text is unchanged (SPEC-47).
+
+### Removed
+
+- Prepare no longer writes `inputs/prompts/`, `inputs/rules/`, or
+  `inputs/config.review.yaml`, and the manifest no longer carries
+  `config_sha256` or `rules_sha256`. No stage read them: every stage loads its
+  own configuration and is bound by `effective_config_sha256` (SPEC-47).
 
 ### Fixed
 

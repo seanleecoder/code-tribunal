@@ -12,9 +12,10 @@ from pathlib import Path
 
 from ai_review.input_bundle import prepare_local_bundle
 
+from .config_yaml import SHIPPED_CONFIG_PATH
+
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = TESTS_ROOT / "fixtures"
-AI_REVIEW_ROOT = TESTS_ROOT.parent
 
 
 def prepare_simple_bundle(tmp: Path) -> Path:
@@ -30,7 +31,7 @@ def prepare_simple_bundle(tmp: Path) -> Path:
         encoding="utf-8",
     )
     return prepare_local_bundle(
-        AI_REVIEW_ROOT / "config" / "review.yaml",
+        SHIPPED_CONFIG_PATH,
         FIXTURE_ROOT / "diffs" / "simple.diff",
         repo,
         tmp / "bundle",

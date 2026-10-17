@@ -54,11 +54,6 @@ def run_prepared_adapter(reviewer: str, stage: str) -> int:
 def write_adapter_input_bundle(input_dir: Path) -> None:
     input_dir.mkdir(parents=True, exist_ok=True)
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
-    (input_dir / "config.review.yaml").write_text("reviewers: {}\n", encoding="utf-8")
-    (input_dir / "rules").mkdir()
-    (input_dir / "rules" / "rule.md").write_text("bundle rule\n", encoding="utf-8")
-    (input_dir / "prompts").mkdir()
-    (input_dir / "prompts" / "review.md").write_text("bundle prompt\n", encoding="utf-8")
     (input_dir / ".opencode").mkdir()
     (input_dir / ".opencode" / "agent.md").write_text("bundle agent\n", encoding="utf-8")
     repo_snapshot = input_dir / "repo_snapshot"
@@ -111,8 +106,6 @@ def write_adapter_input_bundle(input_dir: Path) -> None:
             "head_sha": "1" * 40,
             "diff_sha256": "0" * 64,
             "repo_snapshot_sha256": "0" * 64,
-            "config_sha256": "0" * 64,
-            "rules_sha256": "0" * 64,
             "created_at": "2026-06-29T00:00:00Z",
         },
     )

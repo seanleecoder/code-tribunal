@@ -22,7 +22,7 @@ if str(TESTS_ROOT) not in sys.path:
 FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
 FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClient
 _e2e_bundle = importlib.import_module("support.e2e_bundle")
-AI_REVIEW_ROOT = _e2e_bundle.AI_REVIEW_ROOT
+SHIPPED_CONFIG_PATH = importlib.import_module("support.config_yaml").SHIPPED_CONFIG_PATH
 FIXTURE_ROOT = _e2e_bundle.FIXTURE_ROOT
 prepare_simple_bundle = _e2e_bundle.prepare_simple_bundle
 
@@ -235,7 +235,7 @@ class PublishEndToEndTests(unittest.TestCase):
 
     def _prepare_bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
         bundle = prepare_simple_bundle(tmp)
-        config = load_config(bundle / "config.review.yaml")
+        config = load_config(SHIPPED_CONFIG_PATH)
         config["critique"]["enabled"] = False
         config["posting"]["inline_multiline"] = False
         config["posting"]["v1_inline_sides"] = ["new"]

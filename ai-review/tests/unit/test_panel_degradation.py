@@ -43,8 +43,6 @@ _MANIFEST = {
     "head_sha": "1" * 40,
     "diff_sha256": "0" * 64,
     "repo_snapshot_sha256": "0" * 64,
-    "config_sha256": "0" * 64,
-    "rules_sha256": "0" * 64,
     **effective_config_binding(_CONFIG),
     "created_at": "2026-06-29T00:00:00Z",
 }

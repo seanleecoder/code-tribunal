@@ -168,7 +168,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         prompt_tmp: Path | None = None
 
         if stage == "review":
-            rendered = render_review_prompt(input_dir, config_path, reviewer)
+            rendered = render_review_prompt(input_dir, config, reviewer)
             tmp_dir = output_dir / ".tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)
             prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
@@ -179,7 +179,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             pooled_out = output_dir / "pooled_findings" / f"{reviewer}.json"
             rendered = render_critique_prompt(
                 input_dir,
-                config_path,
+                config,
                 reviewer,
                 output_dir / "findings",
                 pooled_findings_out=pooled_out,

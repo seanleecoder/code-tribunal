@@ -380,13 +380,11 @@ def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
 def _prepare_bound_bundle(
     bound: _BoundRevision,
     *,
-    config_path: Path,
     config_dict: dict[str, Any],
     out_path: Path,
 ) -> Path:
     """Build every input bundle through the same revision-bound artifact path."""
     _enforce_diff_limits(bound.diff_text, config_dict)
-    config_bytes = config_path.read_bytes()
     out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
     # A manifest makes every sibling artifact consumable. Invalidate any prior
@@ -396,12 +394,6 @@ def _prepare_bound_bundle(
         with tempfile.TemporaryDirectory(prefix=".bundle-", dir=out_path) as staging:
             staging_path = Path(staging)
             (staging_path / "mr.diff").write_bytes(bound.diff_text.encode("utf-8"))
-            (staging_path / "config.review.yaml").write_bytes(config_bytes)
-
-            source_rules = config_path.parent.parent / "rules"
-            source_prompts = config_path.parent.parent / "prompts"
-            shutil.copytree(source_rules, staging_path / "rules", dirs_exist_ok=True)
-            shutil.copytree(source_prompts, staging_path / "prompts", dirs_exist_ok=True)
 
             snapshot_dir = staging_path / "repo_snapshot"
             copy_repo_snapshot(
@@ -439,8 +431,6 @@ def _prepare_bound_bundle(
                 **bound.manifest_extensions,
                 "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
                 "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-                "config_sha256": sha256_hex(config_bytes),
-                "rules_sha256": _directory_sha256(source_rules),
                 **effective_config_binding(config_dict),
                 "created_at": now_iso(),
             }
@@ -460,10 +450,9 @@ def prepare_local_bundle(
     repo: str | Path,
     out: str | Path,
 ) -> Path:
-    config_path = Path(config)
     diff_path = Path(diff)
     out_path = Path(out)
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     diff_text = diff_path.read_text(encoding="utf-8")
     bound = _BoundRevision(
         project_id="local",
@@ -481,7 +470,6 @@ def prepare_local_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )
@@ -707,7 +695,6 @@ def prepare_github_bundle(
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
-    config_path = Path(config)
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
@@ -716,7 +703,7 @@ def prepare_github_bundle(
     checkout_head_sha = _github_checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     try:
         client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
@@ -794,7 +781,6 @@ def prepare_github_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )
@@ -805,12 +791,11 @@ def prepare_gitlab_bundle(
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
-    config_path = Path(config)
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
@@ -869,7 +854,6 @@ def prepare_gitlab_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_path=config_path,
         config_dict=config_dict,
         out_path=out_path,
     )

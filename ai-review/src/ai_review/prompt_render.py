@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_json_text
-from .config import load_config
+from .reviewers import trusted_runtime_root
 from .schema import load_json_file, write_canonical_json
 
 
@@ -12,7 +12,8 @@ class PromptRenderError(ValueError):
     pass
 
 
-def _read_rules(rules_dir: Path) -> str:
+def _read_rules() -> str:
+    rules_dir = trusted_runtime_root() / "rules"
     if not rules_dir.exists():
         return ""
     chunks: list[str] = []
@@ -48,51 +49,43 @@ def _diff_stats_text(diff_text: str) -> str:
     return f"files_changed: {files}\ninsertions: {insertions}\ndeletions: {deletions}"
 
 
-def render_review_prompt(input_dir: str | Path, config_path: str | Path, reviewer: str) -> str:
-    input_dir = Path(input_dir)
-    config = load_config(config_path)
-    limits: dict[str, Any] = config.get("limits", {})
-    max_prompt_bytes = int(limits.get("max_prompt_bytes", 500000))
+def _render(stage: str, config: dict[str, Any], blocks: list[tuple[str, str]]) -> str:
+    """Render one stage prompt: the image's system rules, then tagged blocks.
 
-    prompt_path = input_dir / "prompts" / "review.md"
-    if not prompt_path.exists():
-        prompt_path = Path(config_path).resolve().parent.parent / "prompts" / "review.md"
+    Prompt text comes from the image, never from the bundle or the config file's
+    location, so it cannot follow wherever AI_REVIEW_CONFIG points.
+    """
+    max_prompt_bytes = int(config.get("limits", {}).get("max_prompt_bytes", 500000))
+    prompt_path = trusted_runtime_root() / "prompts" / f"{stage}.md"
     system_rules = prompt_path.read_text(encoding="utf-8")
-
-    manifest = load_json_file(input_dir / "manifest.json")
-    prior_decisions_path = input_dir / "prior_decisions.json"
-    prior_decisions = load_json_file(prior_decisions_path) if prior_decisions_path.exists() else {}
-    diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
-    rules = _read_rules(input_dir / "rules")
-
     rendered = "\n\n".join(
-        [
-            "<SYSTEM_RULES>",
-            system_rules,
-            "</SYSTEM_RULES>",
-            "<REVIEWER>",
-            reviewer,
-            "</REVIEWER>",
-            "<INPUT_MANIFEST_JSON>",
-            canonical_json_text(_prompt_manifest(manifest)),
-            "</INPUT_MANIFEST_JSON>",
-            "<PRIOR_DECISIONS_JSON>",
-            canonical_json_text(prior_decisions),
-            "</PRIOR_DECISIONS_JSON>",
-            "<RULES>",
-            rules,
-            "</RULES>",
-            "<DIFF_STATS>",
-            _diff_stats_text(diff_text),
-            "</DIFF_STATS>",
-            "<MR_DIFF_UNTRUSTED_DATA>",
-            diff_text,
-            "</MR_DIFF_UNTRUSTED_DATA>",
-        ]
+        part
+        for tag, body in [("SYSTEM_RULES", system_rules), *blocks]
+        for part in (f"<{tag}>", body, f"</{tag}>")
     )
     if len(rendered.encode("utf-8")) > max_prompt_bytes:
         raise PromptRenderError("rendered prompt exceeds limits.max_prompt_bytes")
     return rendered
+
+
+def render_review_prompt(input_dir: str | Path, config: dict[str, Any], reviewer: str) -> str:
+    input_dir = Path(input_dir)
+    manifest = load_json_file(input_dir / "manifest.json")
+    prior_decisions_path = input_dir / "prior_decisions.json"
+    prior_decisions = load_json_file(prior_decisions_path) if prior_decisions_path.exists() else {}
+    diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
+    return _render(
+        "review",
+        config,
+        [
+            ("REVIEWER", reviewer),
+            ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
+            ("PRIOR_DECISIONS_JSON", canonical_json_text(prior_decisions)),
+            ("RULES", _read_rules()),
+            ("DIFF_STATS", _diff_stats_text(diff_text)),
+            ("MR_DIFF_UNTRUSTED_DATA", diff_text),
+        ],
+    )
 
 
 def _reviewer_aliases(reviewers: list[str]) -> dict[str, str]:
@@ -148,24 +141,14 @@ def load_successful_finding_batches(findings_dir: str | Path) -> list[dict[str, 
 
 def render_critique_prompt(
     input_dir: str | Path,
-    config_path: str | Path,
+    config: dict[str, Any],
     critic: str,
     findings_dir: str | Path,
     *,
     pooled_findings_out: str | Path | None = None,
 ) -> str:
     input_dir = Path(input_dir)
-    config = load_config(config_path)
-    limits: dict[str, Any] = config.get("limits", {})
-    max_prompt_bytes = int(limits.get("max_prompt_bytes", 500000))
-
-    prompt_path = input_dir / "prompts" / "critique.md"
-    if not prompt_path.exists():
-        prompt_path = Path(config_path).resolve().parent.parent / "prompts" / "critique.md"
-    system_rules = prompt_path.read_text(encoding="utf-8")
-
     manifest = load_json_file(input_dir / "manifest.json")
-    rules = _read_rules(input_dir / "rules")
     pooled_findings = build_pooled_findings(
         manifest,
         load_successful_finding_batches(findings_dir),
@@ -174,26 +157,13 @@ def render_critique_prompt(
     )
     if pooled_findings_out is not None:
         write_canonical_json(pooled_findings_out, pooled_findings)
-
-    rendered = "\n\n".join(
+    return _render(
+        "critique",
+        config,
         [
-            "<SYSTEM_RULES>",
-            system_rules,
-            "</SYSTEM_RULES>",
-            "<CRITIC>",
-            critic,
-            "</CRITIC>",
-            "<INPUT_MANIFEST_JSON>",
-            canonical_json_text(_prompt_manifest(manifest)),
-            "</INPUT_MANIFEST_JSON>",
-            "<RULES>",
-            rules,
-            "</RULES>",
-            "<POOLED_FINDINGS_JSON>",
-            canonical_json_text(pooled_findings),
-            "</POOLED_FINDINGS_JSON>",
-        ]
+            ("CRITIC", critic),
+            ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
+            ("RULES", _read_rules()),
+            ("POOLED_FINDINGS_JSON", canonical_json_text(pooled_findings)),
+        ],
     )
-    if len(rendered.encode("utf-8")) > max_prompt_bytes:
-        raise PromptRenderError("rendered prompt exceeds limits.max_prompt_bytes")
-    return rendered

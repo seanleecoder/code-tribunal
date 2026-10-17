@@ -340,34 +340,37 @@ class BundlePublicationTests(unittest.TestCase):
             staging.mkdir()
             out.mkdir()
 
+            # The publisher is name-agnostic: each entry exercises one replacement case.
             (staging / "mr.diff").write_text("new diff\n", encoding="utf-8")
-            (staging / "rules").mkdir()
-            (staging / "rules" / "current.md").write_text("new\n", encoding="utf-8")
-            (staging / "prompts").mkdir()
-            (staging / "prompts" / "current.md").write_text("new\n", encoding="utf-8")
-            (staging / "config.review.yaml").write_text("new config\n", encoding="utf-8")
+            (staging / "dir_over_file").mkdir()
+            (staging / "dir_over_file" / "current.md").write_text("new\n", encoding="utf-8")
+            (staging / "dir_over_dir").mkdir()
+            (staging / "dir_over_dir" / "current.md").write_text("new\n", encoding="utf-8")
+            (staging / "file_over_symlink").write_text("new file\n", encoding="utf-8")
             (staging / "manifest.json").write_text("{}\n", encoding="utf-8")
 
             (out / "mr.diff").mkdir()
             (out / "mr.diff" / "stale").write_text("stale\n", encoding="utf-8")
-            (out / "rules").write_text("stale file\n", encoding="utf-8")
-            (out / "prompts" / "nested").mkdir(parents=True)
-            (out / "prompts" / "nested" / "stale.md").write_text("stale\n", encoding="utf-8")
+            (out / "dir_over_file").write_text("stale file\n", encoding="utf-8")
+            (out / "dir_over_dir" / "nested").mkdir(parents=True)
+            (out / "dir_over_dir" / "nested" / "stale.md").write_text("stale\n", encoding="utf-8")
             symlink_target = root / "symlink-target"
             symlink_target.write_text("do not replace\n", encoding="utf-8")
-            (out / "config.review.yaml").symlink_to(symlink_target)
+            (out / "file_over_symlink").symlink_to(symlink_target)
             marker = out / "user-owned.txt"
             marker.write_text("keep\n", encoding="utf-8")
 
             _publish_staged_bundle(staging, out)
 
             self.assertEqual((out / "mr.diff").read_text(encoding="utf-8"), "new diff\n")
-            self.assertEqual((out / "rules" / "current.md").read_text(encoding="utf-8"), "new\n")
-            self.assertFalse((out / "prompts" / "nested").exists())
             self.assertEqual(
-                (out / "config.review.yaml").read_text(encoding="utf-8"), "new config\n"
+                (out / "dir_over_file" / "current.md").read_text(encoding="utf-8"), "new\n"
             )
-            self.assertFalse((out / "config.review.yaml").is_symlink())
+            self.assertFalse((out / "dir_over_dir" / "nested").exists())
+            self.assertEqual(
+                (out / "file_over_symlink").read_text(encoding="utf-8"), "new file\n"
+            )
+            self.assertFalse((out / "file_over_symlink").is_symlink())
             self.assertEqual(symlink_target.read_text(encoding="utf-8"), "do not replace\n")
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep\n")
 
@@ -395,6 +398,32 @@ class BundlePublicationTests(unittest.TestCase):
 
             self.assertEqual(bundle_bytes(first), bundle_bytes(second))
 
+    def test_bundle_carries_no_prompt_rule_or_config_copy(self) -> None:
+        # Prompts and rules come from the image, and every stage loads its own
+        # config, so prepare copies none of them and records no digest for them.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+            diff = root / "change.diff"
+            diff.write_text("diff --git a/f.py b/f.py\n", encoding="utf-8")
+            bundle = prepare_local_bundle(_REPO_CONFIG, diff, repo, root / "inputs")
+
+            self.assertEqual(
+                sorted(item.name for item in bundle.iterdir()),
+                [
+                    "manifest.json",
+                    "mr.diff",
+                    "prior_decisions.json",
+                    "repo_snapshot",
+                    "state_aliases.json",
+                ],
+            )
+            manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("config_sha256", manifest)
+            self.assertNotIn("rules_sha256", manifest)
+
     def test_manifest_is_published_after_all_other_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -403,7 +432,7 @@ class BundlePublicationTests(unittest.TestCase):
             staging.mkdir()
             out.mkdir()
             (staging / "mr.diff").write_text("diff\n", encoding="utf-8")
-            (staging / "rules").mkdir()
+            (staging / "repo_snapshot").mkdir()
             (staging / "manifest.json").write_text("{}\n", encoding="utf-8")
             published: list[str] = []
 
@@ -892,14 +921,12 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             out.mkdir()
             for filename in (
                 "mr.diff",
-                "config.review.yaml",
                 "prior_decisions.json",
                 "state_aliases.json",
             ):
                 (out / filename).write_text("old\n", encoding="utf-8")
-            for dirname in ("rules", "prompts", "repo_snapshot"):
-                (out / dirname).mkdir()
-                (out / dirname / "old").write_text("old\n", encoding="utf-8")
+            (out / "repo_snapshot").mkdir()
+            (out / "repo_snapshot" / "old").write_text("old\n", encoding="utf-8")
             (out / "manifest.json").write_text('{"old": true}\n', encoding="utf-8")
             marker = out / "user-owned.txt"
             marker.write_text("keep\n", encoding="utf-8")
