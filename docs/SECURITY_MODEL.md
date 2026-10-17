@@ -81,6 +81,8 @@ Git checkouts cannot create them.
 ### State authenticity and integrity
 
 State is accepted only from the expected bot author and carries a checksum.
+Post reads and updates only a summary comment the bot authored; another
+participant's note carrying the summary marker is ignored with a warning.
 Human commands require platform authorization. Cross-stage run/config bindings
 prevent accidental evidence mixing.
 

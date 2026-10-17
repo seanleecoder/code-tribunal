@@ -6,6 +6,7 @@ from typing import Any
 from ai_review.memory import state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.gitlab import (
+    GitLabReviewPlatformError,
     MergeRequestVersion,
     build_position,
     current_user_id,
@@ -139,6 +140,16 @@ class FakeGitLabClient:
         self.created_note_bodies.append(body)
         return copy.deepcopy(note)
 
+    def add_foreign_note(self, body: str, *, author_id: int, username: str) -> int:
+        """A top-level MR note another participant posted."""
+        note = self._note(self._allocate_note_id(), body)
+        note["author"] = {"id": author_id, "username": username}
+        self.mr_notes.append(note)
+        self.discussions.append(
+            {"id": f"note-{note['id']}", "resolved": False, "notes": [copy.deepcopy(note)]}
+        )
+        return int(note["id"])
+
     def update_state_note(
         self,
         project_id_or_path: str | int,
@@ -148,6 +159,8 @@ class FakeGitLabClient:
     ) -> dict[str, Any]:
         for note in self.mr_notes:
             if note.get("id") == note_id:
+                if note["author"]["id"] != self.bot_user_id:
+                    raise GitLabReviewPlatformError(f"403 Forbidden: note {note_id}")
                 note["body"] = body
                 self._update_discussion_note_copy(note_id, body)
                 self.updated_note_bodies.append(body)

@@ -4,7 +4,12 @@ from typing import Any
 
 from ai_review.memory import STATE_NOTE_SPEC_RE, state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
-from ai_review.platform.github import STATE_MARKER, PullRequestVersion, build_position
+from ai_review.platform.github import (
+    STATE_MARKER,
+    GitHubReviewPlatformError,
+    PullRequestVersion,
+    build_position,
+)
 
 
 class FakeGitHubClient:
@@ -168,11 +173,21 @@ class FakeGitHubClient:
         self._issue_comments.append(note)
         return self._normalize_issue_comment(note)
 
+    def add_foreign_issue_comment(self, body: str, *, author_id: int, login: str) -> int:
+        """A PR conversation comment another participant posted."""
+        comment_id = self._id()
+        self._issue_comments.append(
+            {"id": comment_id, "body": body, "user": {"id": author_id, "login": login}}
+        )
+        return comment_id
+
     def update_state_note(
         self, project_id_or_path: str | int, change_id: str | int, note_id: int, body: str
     ) -> dict[str, Any]:
         for note in self._issue_comments:
             if note["id"] == note_id:
+                if note["user"]["id"] != self.bot_id:
+                    raise GitHubReviewPlatformError(f"403 Forbidden: comment {note_id}")
                 note["body"] = self._with_state_marker(body)
                 return self._normalize_issue_comment(note)
         raise RuntimeError("missing note")

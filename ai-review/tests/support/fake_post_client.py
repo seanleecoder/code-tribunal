@@ -12,6 +12,7 @@ from typing import Any
 
 from ai_review.memory import encode_state_note, state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
+from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
     build_position,
@@ -143,12 +144,22 @@ class FakePostClient:
         self.mr_notes.append(note)
         # Individual MR notes are returned by the discussions listing too, so a
         # subsequent run can find and upsert the same summary note.
-        self.discussions.append({"id": f"note-{note_id}", "notes": [{"id": note_id, "body": body}]})
+        self.discussions.append({"id": f"note-{note_id}", "notes": [dict(note)]})
         return note
+
+    def add_foreign_note(self, note_id: int, body: str, *, author_id: int = 99) -> None:
+        """A top-level note another participant posted, listed like the bot's own."""
+        note = {"id": note_id, "body": body, "author": {"id": author_id}}
+        self.mr_notes.append(note)
+        self.discussions.append({"id": f"note-{note_id}", "notes": [dict(note)]})
 
     def update_state_note(
         self, project_id: str, change_id: str, note_id: int, body: str
     ) -> dict[str, Any]:
+        # The platform refuses to edit another author's note.
+        for note in self.mr_notes:
+            if note.get("id") == note_id and note.get("author", {}).get("id") != 10:
+                raise ReviewPlatformError(f"403 Forbidden: note {note_id} is not the bot's")
         self.updated_mr_notes.append({"note_id": note_id, "body": body})
         for note in self.mr_notes:
             if note.get("id") == note_id:

@@ -13,6 +13,10 @@ versioning.
   resolve those threads as absent. Its open candidate threads are marked stale
   with an ambiguous remap, and settled candidates keep their status (SPEC-68
   fix 1).
+- Post reads and updates only the summary comment the bot authored. A note from
+  another participant that carries the summary marker no longer makes post
+  fail on an edit it cannot make, or report a stale summary as unchanged; it
+  is ignored with a warning (SPEC-68 fix 2).
 
 ## [2.0.2] - 2026-10-04
 

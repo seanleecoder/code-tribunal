@@ -195,18 +195,30 @@ def index_ai_review_discussions(
                 category=rendered.get("category"),
                 title=rendered.get("title", ""),
                 resolved=bool(discussion.get("resolved") or root.get("resolved")),
-                author_id=(
-                    root.get("author", {}).get("id")
-                    if isinstance(root.get("author"), dict)
-                    and isinstance(root.get("author", {}).get("id"), int)
-                    else None
-                ),
+                author_id=_root_author_id(root),
             )
         )
     return indexed
 
 
-def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | None:
+def _root_author_id(root: dict[str, Any]) -> int | None:
+    author = root.get("author")
+    author_id = author.get("id") if isinstance(author, dict) else None
+    return author_id if isinstance(author_id, int) else None
+
+
+def find_summary_note(
+    discussions: list[dict[str, Any]],
+    *,
+    expected_author_id: int,
+    warnings: list[str],
+) -> tuple[int, str] | None:
+    """Return the bot's own summary note and its recorded body hash.
+
+    A marker is plain text anyone can post or copy, so a note from another
+    author is never the summary: updating it fails on the platform, and a
+    copied hash would make post report the real summary as unchanged.
+    """
     for discussion in discussions:
         notes = discussion.get("notes")
         if not isinstance(notes, list) or not notes:
@@ -222,6 +234,10 @@ def find_summary_note(discussions: list[dict[str, Any]]) -> tuple[int, str] | No
             continue
         note_id = root.get("id")
         if not isinstance(note_id, int):
+            continue
+        author_id = _root_author_id(root)
+        if author_id != expected_author_id:
+            warnings.append(f"ignored summary note {note_id} from non-bot author {author_id}")
             continue
         return note_id, match.group("body_hash")
     return None

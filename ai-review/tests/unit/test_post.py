@@ -810,6 +810,72 @@ class PostTests(PostCase):
         self.assertEqual(client.updated_summary_notes, [])
         validate_instance(rerun, "post_result.schema.json")
 
+    def _summary_fallback_consensus(self, title: str | None = None) -> dict[str, Any]:
+        consensus = self._consensus()
+        consensus["groups"][0]["representative_anchor"]["side"] = "old"
+        if title is not None:
+            consensus["groups"][0]["title"] = title
+        return consensus
+
+    def test_post_ignores_summary_marker_planted_by_another_author(self) -> None:
+        # SPEC-68 fix 2: a participant's note carrying the marker used to be
+        # adopted as the summary, and the platform's refusal to edit it failed
+        # the run before state was written.
+        client = FakePostClient("head")
+        client.add_foreign_note(
+            77, f"<!-- ai-review-summary:v1 run_id=forged body_hash={'0' * 64} -->"
+        )
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            self._summary_fallback_consensus(),
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["summary_comment"]["action"], "created")
+        self.assertNotEqual(result["summary_comment"]["note_id"], 77)
+        self.assertIn("ignored summary note 77 from non-bot author 99", result["warnings"])
+        self.assertEqual(client.updated_summary_notes, [])
+        self.assertEqual(len(client.state_notes), 1)
+        validate_instance(result, "post_result.schema.json")
+
+    def test_post_copied_summary_hash_does_not_suppress_bot_update(self) -> None:
+        client = FakePostClient("head")
+        post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            self._summary_fallback_consensus(),
+        )
+        bot_note_id = client.summary_notes[0]["id"]
+        changed = self._summary_fallback_consensus(title="Changed title")
+        # Render the next summary elsewhere, then plant a copy of it ahead of the
+        # bot's note, as a participant could by copying a rendered comment.
+        scratch = FakePostClient("head")
+        post_consensus(
+            scratch,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            copy.deepcopy(changed),
+        )
+        next_body = scratch.summary_notes[0]["body"]
+        client.add_foreign_note(77, next_body)
+        client.discussions.insert(0, client.discussions.pop())
+
+        result = post_consensus(
+            client,  # type: ignore[arg-type]
+            self._config(),
+            self._manifest("head"),
+            changed,
+        )
+        self.assertEqual(result["summary_comment"]["action"], "updated")
+        self.assertEqual(result["summary_comment"]["note_id"], bot_note_id)
+        self.assertEqual(
+            [entry["note_id"] for entry in client.updated_summary_notes], [bot_note_id]
+        )
+        self.assertIn("ignored summary note 77 from non-bot author 99", result["warnings"])
+        validate_instance(result, "post_result.schema.json")
+
     def test_post_multiline_surface_falls_back_to_summary(self) -> None:
         # Bug #2: a multiline anchor without inline_multiline support falls back to summary.
         client = FakePostClient("head")

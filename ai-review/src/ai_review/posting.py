@@ -179,6 +179,7 @@ def upsert_summary_comment(
     max_fyi: int,
     *,
     posting_mode: str,
+    warnings: list[str],
     dry_run: bool = False,
 ) -> dict[str, Any]:
     summary = {
@@ -199,7 +200,14 @@ def upsert_summary_comment(
     if dry_run:
         summary["action"] = "created"
         return summary
-    existing = find_summary_note(raw_discussions)
+    bot_author_id = client.current_user_id()
+    if bot_author_id is None:
+        raise RuntimeError(
+            "summary comment requires current_user lookup to verify summary-note author"
+        )
+    existing = find_summary_note(
+        raw_discussions, expected_author_id=bot_author_id, warnings=warnings
+    )
     if existing is None:
         response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
@@ -624,6 +632,7 @@ def finalize_state(
             fyi_to_post,
             max_fyi,
             posting_mode=posting_mode,
+            warnings=result["warnings"],
             dry_run=dry_run,
         ),
     )
