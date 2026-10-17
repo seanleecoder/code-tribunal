@@ -274,27 +274,28 @@ def _plan_stale_records(
         if issue_id in planned_issue_ids:
             continue
         updated = dict(record)
-        if issue_id in protected_issue_ids:
+        # A human command names this thread, so it applies even when an ambiguous
+        # match protects the record; protection only blocks absence resolution.
+        command = human_commands.get(issue_id)
+        if command == "reopen":
+            updated["status"] = "open"
+            updated["human_disposition"] = "reopen"
+        elif command == "wontfix":
+            updated["status"] = "wontfix"
+            updated["human_disposition"] = "wontfix"
+        elif command == "resolve":
+            updated["status"] = "resolved"
+            updated["human_disposition"] = "resolve"
+        elif issue_id in protected_issue_ids:
             if updated.get("status") == "open":
                 updated["status"] = "stale"
                 updated["remap_status"] = "ambiguous"
-        else:
-            command = human_commands.get(issue_id)
-            if command == "reopen":
-                updated["status"] = "open"
-                updated["human_disposition"] = "reopen"
-            elif command == "wontfix":
-                updated["status"] = "wontfix"
-                updated["human_disposition"] = "wontfix"
-            elif command == "resolve":
-                updated["status"] = "resolved"
-                updated["human_disposition"] = "resolve"
-            elif record.get("status") == "open":
-                updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
-                if not resolution_quorum:
-                    outcome.stale_unverified += 1
-            elif record.get("status") == "stale_unverified" and resolution_quorum:
-                updated["status"] = "resolved"
+        elif record.get("status") == "open":
+            updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
+            if not resolution_quorum:
+                outcome.stale_unverified += 1
+        elif record.get("status") == "stale_unverified" and resolution_quorum:
+            updated["status"] = "resolved"
         planned_records.append(
             cast(
                 StateRecord,
@@ -386,13 +387,23 @@ def plan_state(
     planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
-    all_current_groups = [
-        group
-        for group in inline_candidates + summary_fallback_groups + fyi_groups
-        if isinstance(group.get("issue_id"), str)
-    ]
-    for group in all_current_groups:
-        issue_id = cast(str, group["issue_id"])
+    for group in inline_candidates + summary_fallback_groups + fyi_groups:
+        issue_id = group.get("issue_id")
+        if not isinstance(issue_id, str):
+            # Consensus leaves issue_id unset on an ambiguous match; protect every record
+            # it matches. Match the full state: filtering out claimed records would fall
+            # through to a weaker precedence and protect an unrelated record.
+            candidate_ids = [
+                record["issue_id"]
+                for record in find_matching_record(group, persisted_state).records
+            ]
+            if candidate_ids:
+                protected_issue_ids.update(candidate_ids)
+                outcome.warnings.append(
+                    "ambiguous existing record match for unassigned group; "
+                    f"protected {len(candidate_ids)} candidate record(s)"
+                )
+            continue
         state_for_match = {
             "records": [
                 record
@@ -403,15 +414,9 @@ def plan_state(
         state_match = find_matching_record(group, cast(State, state_for_match))
         if state_match.status == "ambiguous":
             ambiguous_issue_ids.add(issue_id)
-            candidate_ids = [
-                record["issue_id"]
-                for record in state_match.records
-                if isinstance(record.get("issue_id"), str)
-            ]
-            protected_issue_ids.update(candidate_ids)
             outcome.warnings.append(
                 f"ambiguous existing record match for {issue_id}; "
-                f"protected {len(candidate_ids)} candidate record(s)"
+                f"protected {len(state_match.records)} candidate record(s)"
             )
             for candidate in state_match.records:
                 candidate_id = candidate.get("issue_id")
@@ -433,8 +438,6 @@ def plan_state(
         )
         if previous is not None:
             planned_matches[issue_id] = previous
-            if isinstance(previous.get("issue_id"), str):
-                protected_issue_ids.add(previous["issue_id"])
             if previous.get("discussion_id") is not None:
                 planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"

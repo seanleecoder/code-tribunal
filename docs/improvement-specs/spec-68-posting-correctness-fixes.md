@@ -34,16 +34,27 @@ nothing is mutated as an update, but every candidate is resolved.
 **Fix.**
 
 - In `plan_state`, run `find_matching_record` for groups whose `issue_id` is
-  `None` as well.
-- On an `ambiguous` or `matched` result, protect the candidates exactly as the
-  existing ambiguous branch does: status `stale`, `remap_status: "ambiguous"`,
-  and the candidate ID added to `planned_issue_ids`.
+  `None` as well. Match against the full persisted state, not the pool that
+  excludes records already claimed by other groups. With the strongest
+  candidates filtered out, the match falls through to a weaker precedence and
+  protects an unrelated record.
+- Add every candidate to `protected_issue_ids`, and leave the rest to
+  `_plan_stale_records`. Do not add candidates to `planned_issue_ids`. A later
+  group that claims a candidate must still win, whatever the group order.
+- In `_plan_stale_records`, apply a human command before protection. A command
+  names a specific thread, so ambiguity only blocks absence resolution. Protection
+  turns an `open` record into `stale` with `remap_status: "ambiguous"` and leaves
+  a settled record's status unchanged.
 - Never create a new record for an ID-less group.
 
 **Tests (`test_state_plan.py`).**
 
 - An ambiguous group with two open candidate records leaves both `stale` and
   `ambiguous`, never `resolved`, with and without the resolution quorum.
+- Settled candidates keep their status, and `wontfix`, `resolve` and `reopen`
+  on a candidate still apply.
+- When other groups claim the candidates, an unrelated weaker match is still
+  resolved as absent.
 - A later run that matches one candidate unambiguously updates that one only.
 
 ## Fix 2 — the summary comment has no ownership check

@@ -7,6 +7,13 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- A finding whose match to earlier threads is ambiguous no longer lets post
+  resolve those threads as absent. Its open candidate threads are marked stale
+  with an ambiguous remap, and settled candidates keep their status (SPEC-68
+  fix 1).
+
 ## [2.0.2] - 2026-10-04
 
 ### Changed
