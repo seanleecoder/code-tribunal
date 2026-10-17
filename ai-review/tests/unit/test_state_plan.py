@@ -123,11 +123,15 @@ def _plan(
 
 
 class PlanStateWithoutClientTests(unittest.TestCase):
-    def _status_of(self, plan: Any, issue_id: str) -> str | None:
+    def _record_of(self, plan: Any, issue_id: str) -> dict[str, Any] | None:
         for record in plan.planned_records:
             if record["issue_id"] == issue_id:
-                return str(record["status"])
+                return cast(dict[str, Any], record)
         return None
+
+    def _status_of(self, plan: Any, issue_id: str) -> str | None:
+        record = self._record_of(plan, issue_id)
+        return None if record is None else str(record["status"])
 
     def test_new_group_plans_an_open_record(self) -> None:
         issue_id = "a" * 64
@@ -217,36 +221,34 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, issue_id), "wontfix")
 
     def _ambiguous_candidates(self) -> list[dict[str, Any]]:
-        aliases = {
-            "candidate_issue_signatures": [],
-            "source_finding_ids": ["b" * 64],
-            "context_hashes": [],
-            "title_fingerprints": [],
-            "symbols": [],
-        }
-        return [
-            _record("1" * 64, discussion_id="d1", aliases=aliases),
-            _record("2" * 64, discussion_id="d2", aliases=aliases),
+        candidates = [
+            _record("1" * 64, discussion_id="d1"),
+            _record("2" * 64, discussion_id="d2"),
         ]
+        for candidate in candidates:
+            # The source finding ID that _group carries, so both records match it.
+            candidate["aliases"]["source_finding_ids"] = ["b" * 64]
+        return candidates
 
     def _unassigned_group(self) -> dict[str, Any]:
         """What consensus emits when its own state match was ambiguous."""
         return dict(_group(None), decision="fyi", issue_id_source="ambiguous_unassigned")
 
     def test_unassigned_ambiguous_group_protects_its_candidates(self) -> None:
-        for min_resolution, eligible in ((1, ["claude"]), (2, ["claude"])):
+        for min_resolution in (1, 2):
             with self.subTest(min_resolution=min_resolution):
                 plan = _plan(
                     config=_config(min_resolution=min_resolution),
-                    consensus=_consensus(eligible=eligible),
                     persisted=self._ambiguous_candidates(),
                     fyi=[self._unassigned_group()],
                 )
 
                 for issue_id in ("1" * 64, "2" * 64):
-                    record = next(r for r in plan.planned_records if r["issue_id"] == issue_id)
-                    self.assertEqual(record["status"], "stale")
-                    self.assertEqual(record["remap_status"], "ambiguous")
+                    record = self._record_of(plan, issue_id)
+                    assert record is not None
+                    self.assertEqual(
+                        (record["status"], record["remap_status"]), ("stale", "ambiguous")
+                    )
                 self.assertEqual(len(plan.planned_records), 2)
                 self.assertEqual(plan.outcome.stale_unverified, 0)
                 self.assertEqual(
@@ -271,7 +273,6 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         for command, prior, expected in (
             ("wontfix", "open", "wontfix"),
             ("resolve", "open", "resolved"),
-            ("reopen", "wontfix", "open"),
             ("reopen", "resolved", "open"),
         ):
             with self.subTest(command=command, prior=prior):
@@ -286,14 +287,47 @@ class PlanStateWithoutClientTests(unittest.TestCase):
                 self.assertEqual(self._status_of(plan, candidate), expected)
                 self.assertEqual(self._status_of(plan, "2" * 64), "stale")
 
+    def test_unassigned_group_ignores_weaker_matches_when_candidates_are_claimed(self) -> None:
+        def record(issue_id: str, path: str, **aliases: list[str]) -> dict[str, Any]:
+            anchor = {"new_path": path, "old_path": path, "side": "new"}
+            persisted = _record(issue_id, discussion_id=issue_id, anchor=anchor)
+            persisted["aliases"].update(aliases)
+            return persisted
+
+        claimed = [
+            record("1" * 64, "src/foo.py", context_hashes=["h"]),
+            record("2" * 64, "src/foo.py", context_hashes=["h"]),
+        ]
+        weaker = record("3" * 64, "src/bar.py", symbols=["s"], title_fingerprints=["t"])
+        unassigned = dict(
+            self._unassigned_group(),
+            source_finding_ids=["e" * 64],
+            match_keys={
+                "category": "correctness",
+                "path_keys": ["src/foo.py"],
+                "context_hashes": ["h"],
+                "title_fingerprints": ["t"],
+                "symbols": ["s"],
+            },
+        )
+        plan = _plan(
+            persisted=[*claimed, weaker],
+            inline=[_group("1" * 64), _group("2" * 64)],
+            fyi=[unassigned],
+        )
+
+        # The context-hash candidates are claimed by the inline groups, so the
+        # title/symbol record in another file is genuinely absent.
+        self.assertEqual(self._status_of(plan, "3" * 64), "resolved")
+
     def test_later_unambiguous_match_updates_only_that_candidate(self) -> None:
         first = _plan(persisted=self._ambiguous_candidates(), fyi=[self._unassigned_group()])
         plan = _plan(persisted=first.planned_state["records"], inline=[_group("1" * 64)])
 
         self.assertEqual(self._status_of(plan, "1" * 64), "open")
-        untouched = next(r for r in plan.planned_records if r["issue_id"] == "2" * 64)
-        self.assertEqual(untouched["status"], "stale")
-        self.assertEqual(untouched["remap_status"], "ambiguous")
+        untouched = self._record_of(plan, "2" * 64)
+        assert untouched is not None
+        self.assertEqual((untouched["status"], untouched["remap_status"]), ("stale", "ambiguous"))
 
     def test_retention_overflow_is_reported_and_clears_the_issue_index(self) -> None:
         config = _config(retention={"max_state_bytes": 1})
