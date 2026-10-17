@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.config import load_config
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
+from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import load_json_file, write_canonical_json
 
 from .test_consensus_state_matching import _batch, _config, _finding, _manifest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.config_yaml import config_tail, panel_filler  # noqa: E402
-
-_AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
-_SHIPPED_CRITIQUE_PROMPT = (_AI_REVIEW_ROOT / "prompts" / "critique.md").read_text(encoding="utf-8")
-_SHIPPED_RULES = (_AI_REVIEW_ROOT / "rules" / "README.md").read_text(encoding="utf-8")
+_IMAGE = trusted_runtime_root()
+_SHIPPED_CRITIQUE_PROMPT = (_IMAGE / "prompts" / "critique.md").read_text(encoding="utf-8")
+_SHIPPED_RULES = (_IMAGE / "rules" / "README.md").read_text(encoding="utf-8")
 
 
 def _full_config() -> dict:
@@ -80,43 +76,22 @@ class CritiquePromptRenderTests(unittest.TestCase):
     def test_render_critique_prompt_writes_audit_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            project = root / "ai-review"
-            config_dir = project / "config"
-            prompt_dir = project / "prompts"
             input_dir = root / "inputs"
             findings_dir = root / "out" / "findings"
             pooled_out = root / "out" / "pooled_findings" / "opencode.json"
-            for path in [config_dir, prompt_dir, input_dir / "rules", findings_dir]:
+            for path in [input_dir / "rules", findings_dir]:
                 path.mkdir(parents=True, exist_ok=True)
-            # Neither copy may reach the prompt: assets come from the image only.
-            (prompt_dir / "critique.md").write_text("Config-relative prompt.", encoding="utf-8")
+            # A stray bundle copy must not reach the prompt: rules come from the image.
             (input_dir / "rules" / "README.md").write_text("Bundle rule.", encoding="utf-8")
             write_canonical_json(input_dir / "manifest.json", _manifest())
             write_canonical_json(
                 findings_dir / "claude.json",
                 _batch("claude", _finding("claude", "1" * 64, "major")),
             )
-            config_path = config_dir / "review.yaml"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "schema_version: review_config.v3",
-                        "reviewers:",
-                        "  claude:",
-                        "    enabled: true",
-                        "    model: claude-model",
-                        "    timeout_seconds: 30",
-                        "    max_findings: 50",
-                        *panel_filler("claude"),
-                        *config_tail(critique_enabled=True),
-                    ]
-                ),
-                encoding="utf-8",
-            )
 
             rendered = render_critique_prompt(
                 input_dir,
-                load_config(config_path),
+                _full_config(),
                 "opencode",
                 findings_dir,
                 pooled_findings_out=pooled_out,
@@ -125,7 +100,6 @@ class CritiquePromptRenderTests(unittest.TestCase):
             self.assertIn("<POOLED_FINDINGS_JSON>", rendered)
             self.assertIn(_SHIPPED_CRITIQUE_PROMPT, rendered)
             self.assertIn(f"### README.md\n{_SHIPPED_RULES}", rendered)
-            self.assertNotIn("Config-relative prompt.", rendered)
             self.assertNotIn("Bundle rule.", rendered)
             audit = load_json_file(pooled_out)
             self.assertEqual(audit["findings"][0]["source_finding_id"], "1" * 64)

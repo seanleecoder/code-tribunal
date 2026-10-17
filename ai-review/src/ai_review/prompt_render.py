@@ -12,7 +12,8 @@ class PromptRenderError(ValueError):
     pass
 
 
-def _read_rules(rules_dir: Path) -> str:
+def _read_rules() -> str:
+    rules_dir = trusted_runtime_root() / "rules"
     if not rules_dir.exists():
         return ""
     chunks: list[str] = []
@@ -48,19 +49,15 @@ def _diff_stats_text(diff_text: str) -> str:
     return f"files_changed: {files}\ninsertions: {insertions}\ndeletions: {deletions}"
 
 
-def _render(
-    stage: str,
-    config: dict[str, Any],
-    blocks: list[tuple[str, str]],
-    runtime_root: Path,
-) -> str:
+def _render(stage: str, config: dict[str, Any], blocks: list[tuple[str, str]]) -> str:
     """Render one stage prompt: the image's system rules, then tagged blocks.
 
     Prompt text comes from the image, never from the bundle or the config file's
     location, so it cannot follow wherever AI_REVIEW_CONFIG points.
     """
     max_prompt_bytes = int(config.get("limits", {}).get("max_prompt_bytes", 500000))
-    system_rules = (runtime_root / "prompts" / f"{stage}.md").read_text(encoding="utf-8")
+    prompt_path = trusted_runtime_root() / "prompts" / f"{stage}.md"
+    system_rules = prompt_path.read_text(encoding="utf-8")
     rendered = "\n\n".join(
         part
         for tag, body in [("SYSTEM_RULES", system_rules), *blocks]
@@ -71,15 +68,8 @@ def _render(
     return rendered
 
 
-def render_review_prompt(
-    input_dir: str | Path,
-    config: dict[str, Any],
-    reviewer: str,
-    *,
-    runtime_root: Path | None = None,
-) -> str:
+def render_review_prompt(input_dir: str | Path, config: dict[str, Any], reviewer: str) -> str:
     input_dir = Path(input_dir)
-    runtime_root = runtime_root or trusted_runtime_root()
     manifest = load_json_file(input_dir / "manifest.json")
     prior_decisions_path = input_dir / "prior_decisions.json"
     prior_decisions = load_json_file(prior_decisions_path) if prior_decisions_path.exists() else {}
@@ -91,11 +81,10 @@ def render_review_prompt(
             ("REVIEWER", reviewer),
             ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
             ("PRIOR_DECISIONS_JSON", canonical_json_text(prior_decisions)),
-            ("RULES", _read_rules(runtime_root / "rules")),
+            ("RULES", _read_rules()),
             ("DIFF_STATS", _diff_stats_text(diff_text)),
             ("MR_DIFF_UNTRUSTED_DATA", diff_text),
         ],
-        runtime_root,
     )
 
 
@@ -157,10 +146,8 @@ def render_critique_prompt(
     findings_dir: str | Path,
     *,
     pooled_findings_out: str | Path | None = None,
-    runtime_root: Path | None = None,
 ) -> str:
     input_dir = Path(input_dir)
-    runtime_root = runtime_root or trusted_runtime_root()
     manifest = load_json_file(input_dir / "manifest.json")
     pooled_findings = build_pooled_findings(
         manifest,
@@ -176,8 +163,7 @@ def render_critique_prompt(
         [
             ("CRITIC", critic),
             ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
-            ("RULES", _read_rules(runtime_root / "rules")),
+            ("RULES", _read_rules()),
             ("POOLED_FINDINGS_JSON", canonical_json_text(pooled_findings)),
         ],
-        runtime_root,
     )

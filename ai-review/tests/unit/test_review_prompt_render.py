@@ -8,13 +8,12 @@ from pathlib import Path
 
 from ai_review.config import load_config
 from ai_review.prompt_render import _diff_stats_text, render_review_prompt
+from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import load_json_file, write_canonical_json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.adapter_inputs import bind_manifest_to_config  # noqa: E402
-
-_AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
-_REPO_CONFIG = _AI_REVIEW_ROOT / "config" / "review.yaml"
+from support.config_yaml import SHIPPED_CONFIG_PATH  # noqa: E402
 
 _FIXTURE_DIFF = "\n".join(
     [
@@ -58,12 +57,11 @@ def _write_inputs(input_dir: Path, diff_text: str) -> None:
     )
 
 
-def _write_assets(root: Path, label: str) -> Path:
+def _write_assets(root: Path, label: str) -> None:
     (root / "prompts").mkdir(parents=True)
     (root / "prompts" / "review.md").write_text(f"{label} prompt\n", encoding="utf-8")
     (root / "rules").mkdir()
     (root / "rules" / "rule.md").write_text(f"{label} rule\n", encoding="utf-8")
-    return root
 
 
 class DiffStatsTests(unittest.TestCase):
@@ -86,12 +84,7 @@ class ReviewPromptRenderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp) / "inputs"
             _write_inputs(input_dir, _FIXTURE_DIFF)
-            rendered = render_review_prompt(
-                input_dir,
-                load_config(_REPO_CONFIG),
-                "claude",
-                runtime_root=_write_assets(Path(tmp) / "runtime", "trusted"),
-            )
+            rendered = render_review_prompt(input_dir, load_config(SHIPPED_CONFIG_PATH), "claude")
 
         self.assertIn("<DIFF_STATS>", rendered)
         self.assertIn("files_changed: 2\ninsertions: 3\ndeletions: 1", rendered)
@@ -101,8 +94,6 @@ class ReviewPromptRenderTests(unittest.TestCase):
             rendered.index("<DIFF_STATS>"),
             rendered.index("<MR_DIFF_UNTRUSTED_DATA>"),
         )
-        self.assertIn("trusted prompt", rendered)
-        self.assertIn("### rule.md\ntrusted rule", rendered)
 
     def test_prompt_and_rules_come_from_the_image_not_the_config_location(self) -> None:
         # Prompt text must not follow AI_REVIEW_CONFIG: a copied config beside its
@@ -115,11 +106,14 @@ class ReviewPromptRenderTests(unittest.TestCase):
             _write_assets(tmp_path / "elsewhere", "config-relative")
             copied_config = tmp_path / "elsewhere" / "config" / "review.yaml"
             copied_config.parent.mkdir()
-            shutil.copyfile(_REPO_CONFIG, copied_config)
+            shutil.copyfile(SHIPPED_CONFIG_PATH, copied_config)
             rendered = render_review_prompt(input_dir, load_config(copied_config), "claude")
 
-        shipped_prompt = (_AI_REVIEW_ROOT / "prompts" / "review.md").read_text(encoding="utf-8")
+        image = trusted_runtime_root()
+        shipped_prompt = (image / "prompts" / "review.md").read_text(encoding="utf-8")
+        shipped_rules = (image / "rules" / "README.md").read_text(encoding="utf-8")
         self.assertIn(shipped_prompt, rendered)
+        self.assertIn(f"### README.md\n{shipped_rules}", rendered)
         for label in ("bundle", "config-relative"):
             self.assertNotIn(f"{label} prompt", rendered)
             self.assertNotIn(f"{label} rule", rendered)
@@ -130,9 +124,9 @@ class ManifestBlockTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_dir = Path(tmp) / "inputs"
             _write_inputs(input_dir, _FIXTURE_DIFF)
-            bind_manifest_to_config(input_dir, _REPO_CONFIG)
+            bind_manifest_to_config(input_dir, SHIPPED_CONFIG_PATH)
             manifest = load_json_file(input_dir / "manifest.json")
-            rendered = render_review_prompt(input_dir, load_config(_REPO_CONFIG), "claude")
+            rendered = render_review_prompt(input_dir, load_config(SHIPPED_CONFIG_PATH), "claude")
 
         # The config only binds stages; reviewers would pay for it in every call.
         self.assertIn("effective_config", manifest)

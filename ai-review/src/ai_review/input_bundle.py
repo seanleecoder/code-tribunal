@@ -450,10 +450,9 @@ def prepare_local_bundle(
     repo: str | Path,
     out: str | Path,
 ) -> Path:
-    config_path = Path(config)
     diff_path = Path(diff)
     out_path = Path(out)
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     diff_text = diff_path.read_text(encoding="utf-8")
     bound = _BoundRevision(
         project_id="local",
@@ -696,7 +695,6 @@ def prepare_github_bundle(
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
-    config_path = Path(config)
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
@@ -705,7 +703,7 @@ def prepare_github_bundle(
     checkout_head_sha = _github_checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     try:
         client = create_runtime_platform(config_dict)
     except PlatformRuntimeError as exc:
@@ -793,12 +791,11 @@ def prepare_gitlab_bundle(
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
-    config_path = Path(config)
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    config_dict = load_config(config_path)
+    config_dict = load_config(config)
     fork_block_reason = _external_fork_secrets_blocked(config_dict)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
