@@ -63,7 +63,7 @@ check only if you restore a 1.0.x template.
 | All findings from a seat are malformed | Seat is not resolution-eligible or operationally successful | Fix model/schema compatibility; do not lower thresholds reflexively |
 | Critique disabled or optional evidence absent | Consensus uses valid reviewer evidence without critique | Confirm this matches rollout policy |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
-| Run/config/artifact identity mismatch | The first stage to see it stops before consequential work: review or critique writes `config_error`, consensus exits 3, post exits 1 ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with identical project-scoped overrides |
+| Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with identical project-scoped overrides |
 | State load fails and `fail_closed_on_load_error=false` | Prepare warns and begins from empty recoverable state | Investigate ownership/API/checksum; expect conservative repost risk |
 | State load fails and option is true | Prepare fails | Restore state/API access or make a deliberate policy change |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
@@ -117,16 +117,16 @@ record it per run when collecting live evidence.
 
 For validation and lifecycle rehearsal without model spend, the deterministic
 mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state path
-with a canned finding set and no provider calls. It is forbidden in production
-consumer projects; the allow flag's limits are described with the
-[internal runtime variables](configuration.md#template-and-internal-runtime-variables),
-and production templates keep `AI_REVIEW_REQUIRE_REAL_*=1` as the fail-closed
-guard. These are adapter controls that affect only review/critique behavior and are not
-part of the effective-config digest, so set them consistently on the review and
-critique jobs. Config-affecting overrides (critique/reviewer/panel) do feed the
-digest, so scope any of those consistently across all jobs or consensus fails
-closed on divergence.
+scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state path with
+a canned finding set and no provider calls. It is forbidden in production
+consumer projects; see the
+[`AI_REVIEW_ALLOW_LOCAL_MOCK` entry](configuration.md#template-and-internal-runtime-variables)
+for the allow flag's limits, and production templates keep `AI_REVIEW_REQUIRE_REAL_*=1` as the
+fail-closed guard. These are adapter controls that affect only review/critique
+behavior and are not part of the effective-config digest, so set them
+consistently on the review and critique jobs. Config-affecting overrides
+(critique/reviewer/panel) do feed the digest, so scope any of those consistently
+across all jobs or the first stage to see the divergence fails.
 
 ## Image pin rotation
 

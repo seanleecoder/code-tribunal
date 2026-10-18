@@ -47,16 +47,14 @@ normally report authorized users as `MEMBER` or `COLLABORATOR`, so configure the
 resolve token there for command authorization. Ordinary comments and state
 continue to use `GITHUB_TOKEN`.
 
-Cursor is off in the shipped roster because its backend is a second egress
-destination; see [choosing the panel](../configuration.md#choosing-the-panel)
-before enabling it. On GitHub, enable it through the `AI_REVIEW_REVIEWERS`
-repository variable, not YAML alone, so the workflow passes it `CURSOR_API_KEY`.
+Cursor is off by default; see
+[choosing the panel](../configuration.md#choosing-the-panel) before enabling it.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
 unset for shipped defaults. For a strict install, set
-`state.fail_closed_on_load_error: true`; see
-[posting and state](../configuration.md#posting-and-state).
+`state.fail_closed_on_load_error: true` so a state-load error fails prepare
+instead of starting from empty state and reposting earlier findings.
 
 ## Branch protection
 

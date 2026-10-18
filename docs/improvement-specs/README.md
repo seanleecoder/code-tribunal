@@ -107,8 +107,7 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. Release 2.0.3. Every planned item has merged; the docs pruning (N19) was the
-   last.
+1. Release 2.0.3; N19 was the last planned item.
 
 **Step 2 — 2.1.0, the first release on the new process.**
 

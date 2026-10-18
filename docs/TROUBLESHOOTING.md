@@ -13,7 +13,7 @@ credentials or sensitive model content into issues.
 | Pipeline is green, a summary comment exists, but no threads were posted | Every finding had exactly one independent supporter, so all of them are FYI. This is the expected outcome for an unconfirmed finding, not a fault | Consensus `summary.surface_count` is 0 with a nonzero `fyi_count`; each group's `support_count` is 1 | Read the FYI list in the summary comment. Investigate only if a seat failed or returned nothing — a lost seat lowers what can reach two supporters |
 | A finding you expected is only FYI | Only one reviewer identity supported it; severity does not promote it | Group `support_count`, `contributing_reviewers`, `agreeing_critics` | Expected: two independent identities are required to surface. Check for a failed or silently empty seat |
 | Duplicate-looking discussion | Lost/untrusted state, changed bot identity, conservative rematch, or different category | Issue markers, state author, `issue_id`, remap status | Restore bot/state ownership; distinguish a true duplicate from a new identity |
-| `/ai-review` command ignored | Wrong thread, syntax, insufficient access, or collaborator permission could not be verified | Root finding marker, author permission, and `post_result.json` warnings naming the note and author | Reply in the finding thread with one exact command line; on GitHub organization repositories configure the fine-grained resolve token |
+| `/ai-review` command ignored | Wrong thread, syntax, insufficient access, or collaborator permission could not be verified | Root finding marker, author permission, and `post_result.json` warnings naming the note and author | Reply in the finding thread with one exact command line ([syntax and access](reference/revision-lifecycle.md#human-dispositions)); on GitHub organization repositories configure the fine-grained resolve token |
 | Thread resolution or reopening fails | Platform token cannot mutate the thread or its root comment was deleted; `post` reports `partial_failed` and exits nonzero | `post_result.json` warnings and platform API error | Repair the token or thread access and rerun; on GitHub add a fine-grained resolve token and preserve root comments |
 | GitHub prepare reports stale input | PR changed or checkout is dirty/untracked | Prepare error with selected/current SHA | Rerun current revision; never weaken SHA checks |
 | GitHub prepare reports dubious repository ownership | Custom image user/config, or prepare running from an unexpected checkout | Image source SHA, working directory, checkout owner, container uid, and prepare log | Publish the fix from trusted `main`, update all image pins together, and verify custom workflow paths; never configure `safe.directory=*` |
@@ -69,12 +69,11 @@ malformed adapter output.
 
 ## Configuration drift
 
-Prepare binds the effective configuration by SHA-256, and every later stage fails
-when it sees drift; see
+Prepare binds the effective configuration by SHA-256, and every later stage
+fails when it sees drift; see
 [stage visibility and integrity](configuration.md#stage-visibility-and-integrity).
-Set supported overrides at project/group or repository workflow scope and rerun
-from prepare. Human command syntax and access levels are in the
-[revision lifecycle](reference/revision-lifecycle.md#human-dispositions).
+Set supported
+overrides at project/group or repository workflow scope and rerun from prepare.
 
 ## Local reproduction
 

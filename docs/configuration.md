@@ -65,14 +65,16 @@ Rules, all enforced at config load with a loud `ConfigError`:
 - Each selected seat needs the credential fixed for it by the trusted image:
   `OPENROUTER_API_KEY` for Claude, Codex, and OpenCode, or `CURSOR_API_KEY` for
   Cursor. If it is absent, that seat fails and the panel degrades. The canonical
-  workflow supplies `CURSOR_API_KEY` only to the Cursor matrix entry and only
-  when Cursor is on the roster.
+  GitHub workflow supplies `CURSOR_API_KEY` only to the Cursor matrix entry and
+  only when Cursor is on the roster; GitLab
+  [differs](#credentials).
 
 Cursor is off in the shipped roster because its backend is a second egress
-destination, not because it ranks below the other seats. Its CLI cannot route
-through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
-Cursor's backend, billed to the account behind `CURSOR_API_KEY`. Enable it only
-if you deliberately accept that path; `AI_REVIEW_CURSOR_MODEL` selects its model.
+destination, not because it ranks below the other seats: prompts, diffs, and any
+snapshot content it reads reach Cursor rather than OpenRouter (the
+[egress exception](../ai-review/images/SUPPLY_CHAIN.md#cursor-cli-egress-exception)).
+Enable it only if you deliberately accept that path; `AI_REVIEW_CURSOR_MODEL`
+selects its model.
 
 Roster changes are part of the effective-config digest, so a roster visible to
 only some pipeline jobs fails the cross-stage consistency check instead of
@@ -194,10 +196,10 @@ unique reviewer identities support it independently across direct review and
 critique; severity, including `blocker`, is an impact label that changes no
 decision. There is no `severity_policy` object and no quorum setting.
 
-Grouping carries no text-similarity setting. Findings are grouped on identity that survives rewording —
-path, category, side, context hash, fingerprints, and symbol — so two reviewers
-describing one bug in different words group when they anchor to the same code,
-not when they happen to choose similar phrasing.
+Grouping carries no text-similarity setting. Findings are grouped on identity
+that survives rewording — path, category, side, context hash, fingerprints, and
+symbol — so two reviewers describing one bug in different words group when they
+anchor to the same code, not when they happen to choose similar phrasing.
 
 ### Critique
 
@@ -371,10 +373,10 @@ rejected. Native Anthropic routing is not supported.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_CLAUDE_ENABLED` | Retired; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CODEX_ENABLED` | Retired; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_OPENCODE_ENABLED` | Retired; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CURSOR_ENABLED` | Retired; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CLAUDE_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CODEX_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_OPENCODE_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CURSOR_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in 2.0 (`review_config.v3`) with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
 | `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |

@@ -90,14 +90,14 @@ Configure runtime overrides, listed in the
 project/group variables so every stage sees the same effective configuration.
 GitLab variable precedence can override the template's
 `AI_REVIEW_LOCAL_MOCK: "0"`, so never set `AI_REVIEW_LOCAL_MOCK` or
-`AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. For a strict install, set
-`state.fail_closed_on_load_error: true`; see
-[posting and state](../configuration.md#posting-and-state).
+`AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. For a strict install, set `state.fail_closed_on_load_error: true` so a
+state-load error fails prepare instead of starting from empty state and
+reposting earlier findings.
 
-Cursor is off in the shipped roster because its backend is a second egress
-destination; see [choosing the panel](../configuration.md#choosing-the-panel)
-before enabling it. Project and group variables reach every job, so on GitLab
-`CURSOR_API_KEY` is kept from the other seats only by the adapter environment
+Cursor is off by default; see
+[choosing the panel](../configuration.md#choosing-the-panel) before enabling it.
+Project and group variables reach every job, so on GitLab `CURSOR_API_KEY` is
+kept from the other seats only by the adapter environment
 ([credentials](../configuration.md#credentials)).
 
 ## Merge-request settings

@@ -73,10 +73,14 @@ injected ones.
 
 Pipeline variables are a second route to the image pins. The template runs on
 `web` and `api` pipelines whose caller supplies `CI_MERGE_REQUEST_IID`, and a
-pipeline variable overrides the template's image variables. A user allowed to run
-pipelines on a protected branch can therefore substitute the image without
+pipeline variable overrides the template's image variables. A user allowed to
+run pipelines on a protected branch can therefore substitute the image without
 editing any CI file, so restricting pipeline variables is part of the boundary.
-The deprecated child's `forward.pipeline_variables: false` blocked this route.
+The same route reaches fork content: such a pipeline may name a fork merge
+request, and it carries no `CI_MERGE_REQUEST_SOURCE_PROJECT_ID`, so prepare's
+fork guard does not fire and every seat reviews the fork's diff with protected
+credentials. The deprecated child's `forward.pipeline_variables: false` blocked
+this route.
 
 [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition)
 gives the settings and schedules `pipeline_trust.py` so that composition drift is
@@ -84,8 +88,7 @@ detected without an operator remembering to run it.
 
 ### Repository snapshot containment
 
-Prepare rejects symlinks, other than the left-out agent files below, and
-FIFO/socket/device nodes. On Linux and macOS it
+Prepare rejects symlinks and FIFO/socket/device nodes. On Linux and macOS it
 uses descriptor-relative `O_NOFOLLOW`/`O_DIRECTORY` traversal and fails closed
 where those primitives are unavailable. Directory depth is capped. A hostile
 checkout cannot copy a symlink target such as `/proc/self/environ` into the

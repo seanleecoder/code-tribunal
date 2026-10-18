@@ -43,10 +43,9 @@ internal container implementation, not a supported Python package or API.
 - Code Tribunal does not decide whether a change may merge. A repository may
   independently require conversation resolution or successful CI; that is
   repository policy, not review policy.
-- Cursor is a supported peer reviewer seat. It stays **off in the shipped
-  default roster** because it has a separate credential and its own egress path,
-  so that second egress path is always an explicit choice; select it by naming it
-  in `AI_REVIEW_REVIEWERS` and supplying `CURSOR_API_KEY`.
+- Cursor is a supported peer reviewer seat, **off in the shipped default roster**
+  because its backend is a second egress destination; see
+  [choosing the panel](docs/configuration.md#choosing-the-panel).
 - The trusted image pin is **not enforced inside the pipeline**: a consumer CI
   config can substitute the reviewer images. Containment relies on protected
   credentials being withheld from untrusted refs and on running

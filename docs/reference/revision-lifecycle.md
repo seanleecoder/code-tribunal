@@ -43,7 +43,8 @@ identifier needed to resolve or reopen its thread through GraphQL.
 Open and `wontfix` records are retained by default. Bounded resolved and stale
 record counts plus a total byte limit prevent unbounded state. Overflow is an
 operational failure that makes the `post` job exit nonzero. The posted-body
-format is `render-body.v4`. When it changes, existing bot-authored inline threads
-receive one content refresh on the next run; issue IDs, markers, state records,
-and resolution status remain unchanged. Summary notes update through their normal body-hash upsert. A rollback
-causes one reverse refresh and does not discard state.
+format is `render-body.v4`. When it changes, existing bot-authored inline
+threads receive one content refresh on the next run; issue IDs, markers, state
+records, and resolution status remain unchanged. Summary notes update through
+their normal body-hash upsert. A rollback causes one reverse refresh and does
+not discard state.
