@@ -481,6 +481,7 @@ class RunHealthRenderTests(PostCase):
                 "rerun_recommended",
                 _job("claude"),
                 _job("codex", outcome="schema_error", error_message="::error::x\nnext"),
+                _job("opencode", outcome="model_error", error_message="a ##[set-env name=X;]v"),
             )
         )
 
@@ -492,6 +493,9 @@ class RunHealthRenderTests(PostCase):
             "time=1m01s findings=1/1/0/0",
             text,
         )
+        # GitHub's legacy parser matches "##[" anywhere in a line.
+        self.assertIn("  Error: a ## [set-env name=X;]v", text)
+        self.assertNotIn("##[", text)
         for line in text.splitlines():
             self.assertFalse(line.startswith("::"))
 

@@ -228,11 +228,13 @@ def run_health_text(run_health: RunHealth) -> str:
     """Plain-text health for the consensus job log, including a failed panel.
 
     Every line begins with renderer-owned text and every value is collapsed to
-    one line, so no value can start a line.
+    one line, so no value can start a ``::`` workflow command. GitHub's legacy
+    parser also matches ``##[`` anywhere in a line, so that prefix is broken up;
+    a disabled legacy command would otherwise fail the consensus step.
     """
 
     def plain(value: str) -> str:
-        return " ".join(value.split())
+        return " ".join(value.split()).replace("##[", "## [")
 
     jobs = run_health["jobs"]
     headline, action = _health_headline_and_action(run_health, plain)

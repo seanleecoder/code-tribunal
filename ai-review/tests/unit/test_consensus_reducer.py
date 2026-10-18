@@ -780,7 +780,9 @@ class RunHealthTests(unittest.TestCase):
         statuses = {
             ("review", "opencode"): _status(
                 "opencode", "review", "config_error", duration_ms=1_000,
-                error_class="EffectiveConfigMismatch", error_message_redacted="x" * 400,
+                error_class="EffectiveConfigMismatch",
+                # A rewritten status file need not honor its field name.
+                error_message_redacted="token=example_secret " + "x" * 400,
             )
         }
         consensus = self._health(
@@ -792,6 +794,7 @@ class RunHealthTests(unittest.TestCase):
         job = self._job(consensus, "review", "opencode")
         self.assertEqual(job["outcome"], "config_error")
         self.assertEqual(len(job["error_message"]), 300)
+        self.assertTrue(job["error_message"].startswith("token=[REDACTED]"))
         self.assertTrue(job["error_message"].endswith("…"))
         self.assertIsNone(job["raw_finding_count"])
 

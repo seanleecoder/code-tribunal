@@ -25,6 +25,7 @@ from .grouping import (
     issue_id_for_group,
 )
 from .memory import find_matching_record, state_from_aliases
+from .redact import redact_text
 from .render import platform_comment_limit, render_body
 from .schema import (
     SchemaValidationError,
@@ -112,10 +113,14 @@ RUN_HEALTH_ERROR_CLASS_LIMIT = 120
 
 
 def _one_line(value: object, limit: int) -> str | None:
-    """Collapse untrusted status text to one bounded line, or ``None`` if empty."""
+    """Redact untrusted status text, then collapse it to one bounded line.
+
+    The status file's field name does not prove redaction: a model CLI in the
+    same job can rewrite the file. ``None`` means empty.
+    """
     if not isinstance(value, str):
         return None
-    text = " ".join(value.split())
+    text = " ".join(redact_text(value).split())
     if not text:
         return None
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -138,6 +143,9 @@ def load_status_files(
             try:
                 status = load_json_file(status_dir / f"{stem}.json")
                 validate_instance(status, "adapter_status.schema.json")
+                # A lone surrogate escape passes the schema but cannot be written
+                # as UTF-8; it would abort the artifact write, not just health.
+                json.dumps(status, ensure_ascii=False).encode("utf-8")
             except (OSError, ValueError, RecursionError, SchemaValidationError, CanonicalError):
                 continue
             if (
@@ -631,8 +639,7 @@ def cli(argv: list[str] | None = None) -> int:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
 
-    # Every rendered line starts with renderer-owned text, so untrusted status
-    # text cannot begin a line and act as a CI workflow command.
+    # run_health_text neutralizes CI workflow-command syntax in untrusted text.
     print(run_health_text(consensus["run_health"]))
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":

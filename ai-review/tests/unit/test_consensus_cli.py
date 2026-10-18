@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -266,6 +267,12 @@ class ConsensusStatusDirTests(unittest.TestCase):
             )
             (status_dir / "critique-claude.json").write_text("[" * 100_000, encoding="utf-8")
             (status_dir / "critique-codex.json").write_text("{", encoding="utf-8")
+            # Schema-valid, but the lone surrogate cannot be written as UTF-8.
+            surrogate = _status("opencode", "critique", "timeout")
+            surrogate["error_message_redacted"] = "PLACEHOLDER"
+            (status_dir / "critique-opencode.json").write_text(
+                json.dumps(surrogate).replace('"PLACEHOLDER"', '"\\ud800"'), encoding="utf-8"
+            )
 
         code, consensus, _stdout = self._run(write)
 

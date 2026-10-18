@@ -124,8 +124,13 @@ seat and stage its filename names, and carries the manifest's `run_id`. Anything
 else counts as absent. Status files feed only the observational `run_health`
 record. Finding and critique batches remain the only decision input, so a forged
 status file can mislead only the health section of the summary comment. Every
-model ID, reviewer ID and error message in that section is rendered literally,
-and error text is redacted, then truncated.
+model ID, reviewer ID and error message in that section is rendered literally.
+Consensus redacts error text itself before truncating it, because a rewritten
+status file need not honor its `error_message_redacted` field name. A status file
+with text that cannot be encoded as UTF-8 counts as absent. The consensus job log
+prints each value on one line after renderer-owned text and breaks up GitHub's
+legacy `##[` command prefix, so status text cannot run a workflow command in the
+trusted job.
 
 Author and hostile-state behavior is covered by
 [`test_state_note_authenticity.py`](../ai-review/tests/security/test_state_note_authenticity.py)
