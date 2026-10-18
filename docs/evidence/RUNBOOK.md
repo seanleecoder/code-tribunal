@@ -22,9 +22,12 @@ Start from the failed job's log and the campaign's summary artifact
 (`candidate-canary-<platform>-summary`, `candidate-canary-<platform>-lifecycle-summary`
 or `candidate-canary-gitlab-hostile-summary`); they usually name the failing step.
 Replay by hand only that step, using the [manual lifecycle chain](#manual-lifecycle-chain)
-or the [hostile-MR checklist](#gitlab-hostile-mr-checklist). After a concrete fix,
-dispatch a fresh run with only the failed campaigns selected; `lifecycle` and
-`hostile` spend no tokens.
+or the [hostile-MR checklist](#gitlab-hostile-mr-checklist). A run with only the
+failed campaigns selected is diagnostic only; `lifecycle` and `hostile` spend no
+tokens. The run a release cites must be a fresh, complete one that includes `panel`
+and `lifecycle` (`check_release.py` rejects anything less), plus `hostile` when the
+[release checklist](../development/release-process.md#release-pull-request-checklist)
+requires it.
 
 For a `verify-candidate` failure, reproduce
 [`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py)
@@ -54,8 +57,11 @@ The mock toggles, and why they must be scoped to the review and critique jobs, a
 described under [cost controls](../operations.md#cost-controls) and in the
 [variable reference](../configuration.md#template-and-internal-runtime-variables).
 How each demo consumer enables them, and their resting state, is in
-[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md). `AI_REVIEW_MOCK_SCENARIO` selects the
-finding set:
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md). A manual mock run needs all of
+`AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, and every
+`AI_REVIEW_REQUIRE_REAL_*=0`: the demos default the require-real controls to `1`,
+and a seat with its control at `1` ignores the mock and calls its real CLI.
+`AI_REVIEW_MOCK_SCENARIO` selects the finding set:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
