@@ -126,7 +126,9 @@ record. Finding and critique batches remain the only decision input, so a forged
 status file can mislead only the health section of the summary comment. Every
 model ID, reviewer ID and error message in that section is rendered literally.
 Consensus redacts error text itself before truncating it, because a rewritten
-status file need not honor its `error_message_redacted` field name. A status file
+status file need not honor its `error_message_redacted` field name. Text over
+8192 characters is omitted rather than cut, since a cut can split a secret past
+recognition. A status file
 with text that cannot be encoded as UTF-8 counts as absent. The consensus job log
 prints each value on one line after renderer-owned text and breaks up GitHub's
 legacy `##[` command prefix, so status text cannot run a workflow command in the

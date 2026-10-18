@@ -778,34 +778,55 @@ class RunHealthTests(unittest.TestCase):
         self.assertEqual(claude["error_class"], "AdapterExit")
         self.assertEqual(claude["error_message"], "boom second line")
 
-    def test_oversized_status_text_is_bounded_before_redaction(self) -> None:
-        # Unterminated PEM headers make the redaction regex quadratic; the
-        # runner stores whole adapter stderr, so the input is model-influenced.
-        key = "-----BEGIN PRIVATE KEY----- MIIEsecret -----END PRIVATE KEY-----"
-        hostile = key + " " + "-----BEGIN PRIVATE KEY-----" * 8000
-        statuses = {
+    def test_oversized_status_text_is_omitted_before_redaction(self) -> None:
+        # Unterminated PEM headers make the redaction regex quadratic, and the
+        # runner stores whole adapter stderr. Cutting instead of omitting would
+        # split a secret past recognition and, once earlier secrets are masked,
+        # pull the fragment into the displayed prefix.
+        key = "-----BEGIN PRIVATE KEY----- {} -----END PRIVATE KEY-----".format(
+            " ".join(f"KEYBYTES{index:05d}" for index in range(240))
+        )
+        cases = {
+            "quadratic headers": "-----BEGIN PRIVATE KEY-----" * 8000,
+            "key block across the bound": " ".join([key] * 3),
+            "whitespace-free JWT across the bound": "eyJ" + "a" * 20 + "." + "b" * 9000 + ".sig",
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                statuses = {
+                    ("review", "opencode"): _status(
+                        "opencode", "review", "model_error", error_message_redacted=text
+                    )
+                }
+                with patch.object(
+                    consensus_module, "redact_text", wraps=consensus_module.redact_text
+                ) as redact:
+                    consensus = self._health(
+                        self._ok(["claude", "codex", "cursor"]),
+                        [_agree_all(critic, []) for critic in self._REVIEWERS],
+                        statuses=statuses,
+                    )
+
+                self.assertLessEqual(
+                    max((len(call.args[0]) for call in redact.call_args_list), default=0),
+                    consensus_module._REDACTION_INPUT_LIMIT,
+                )
+                job = self._job(consensus, "review", "opencode")
+                self.assertEqual(job["error_message"], "[omitted: too long to redact]")
+
+        within_bound = {
             ("review", "opencode"): _status(
-                "opencode", "review", "model_error", error_message_redacted=hostile
+                "opencode", "review", "model_error", error_message_redacted=key + " tail"
             )
         }
-
-        with patch.object(
-            consensus_module, "redact_text", wraps=consensus_module.redact_text
-        ) as redact:
-            consensus = self._health(
-                self._ok(["claude", "codex", "cursor"]),
-                [_agree_all(critic, []) for critic in self._REVIEWERS],
-                statuses=statuses,
-            )
-
-        self.assertLessEqual(
-            max(len(call.args[0]) for call in redact.call_args_list),
-            consensus_module._REDACTION_INPUT_LIMIT,
+        consensus = self._health(
+            self._ok(["claude", "codex", "cursor"]),
+            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            statuses=within_bound,
         )
-        message = self._job(consensus, "review", "opencode")["error_message"]
-        self.assertTrue(message.startswith("[REDACTED] "))
-        self.assertNotIn("MIIEsecret", message)
-        self.assertEqual(len(message), 300)
+        self.assertEqual(
+            self._job(consensus, "review", "opencode")["error_message"], "[REDACTED] tail"
+        )
 
     def test_non_success_status_without_a_batch_reports_that_status(self) -> None:
         statuses = {
