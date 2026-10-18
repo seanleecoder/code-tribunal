@@ -47,7 +47,7 @@ otherwise build on top of it. Line counts are estimates covering source and test
 | N06 | Per-seat `output_codec` in the registry; delete retired OpenCode stream forms and stage-less inference | −240 | 2.1.x | Stages S08. (Its ordering before SPEC-66 usage capture lapsed when usage capture was dropped on 2026-10-16.) |
 | N07 | Launch OpenCode from `opencode_client` (Python); delete the 269-line shell script, keep the HTTP client | −400 | 2.1.x | First S07 slice. |
 | N08 | Seat setup (environment, isolated home, effort flag, schema transport) declared in the registry; shells keep only the command line. Gives Claude an isolated home like the other seats. | −190 | 2.1.x, after the S03 mock switch | Stages S07. Also stops stripping `$schema` in four places, and stops duplicating Claude's command line in the image probe. |
-| N09 | Strip agent-instruction files once in trusted prepare, not four ways in the shells | −90 | 2.0.3 | Snapshot digest changes. |
+| N09 | Strip agent-instruction files once in trusted prepare, not four ways in the shells | −90 | **Done** in 2.0.3 | Prepare leaves the union of every seat's agent files out of the snapshot; the adapters only copy it. Snapshot digest changes. |
 | N10 | Merge the review and critique prompt renderers | −25 | Done in 2.0.3, inside SPEC-47 | |
 | N11 | Match state only in post; consensus becomes state-free (delete `state_aliases.json`, `issue_id_source`, `state_match`) | −600 | Next major (`consensus.v3`) | SPEC-68 fix 1 is the compatible bug fix first. |
 | N12 | Hash only the rendered body; stop writing the marker's `source=` | −70 | 2.1.0; delete `group.body_hash` in the next major | Stages S15. Render changes stop touching the consensus goldens. |

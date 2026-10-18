@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from collections.abc import Callable
 from pathlib import Path
 
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
@@ -654,7 +653,6 @@ PY
         reviewer: str,
         cli_name: str,
         extra_env: dict[str, str] | None = None,
-        prepare_snapshot: Callable[[Path], None] | None = None,
         stage: str = "review",
         relative_dirs: bool = False,
     ) -> tuple[dict[str, object], str, str, dict[str, object]]:
@@ -666,8 +664,6 @@ PY
             bin_dir.mkdir()
             raw_out = output_dir / ".tmp" / f"{reviewer}-{stage}.raw.json"
             write_adapter_input_bundle(input_dir)
-            if prepare_snapshot is not None:
-                prepare_snapshot(input_dir / "repo_snapshot")
             self._write_fake_cli(bin_dir, cli_name)
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -809,15 +805,6 @@ PY
                     else:
                         os.environ[key] = value
 
-    def _add_symlinked_agent_config(self, snapshot: Path) -> None:
-        # Symlinked steering files must be stripped too, not just regular files.
-        (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
-        (snapshot / "symdir").mkdir()
-        os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
-        os.symlink("../steer.txt", snapshot / "symdir" / "CLAUDE.md")
-        os.symlink("../steer.txt", snapshot / "symdir" / ".cursorrules")
-        os.symlink("../steer.txt", snapshot / "symdir" / ".cursorignore")
-
     def test_cursor_disabled_by_default_skips_without_cli_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -849,9 +836,7 @@ PY
         self.assertFalse((output_dir / ".tmp" / "cursor-home" / "cli.args").exists())
 
     def test_cursor_real_path_invokes_cursor_cli(self) -> None:
-        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
-            "cursor", "cursor-agent", prepare_snapshot=self._add_symlinked_agent_config
-        )
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli("cursor", "cursor-agent")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "cursor")
@@ -866,22 +851,6 @@ PY
         self.assertIn("--model composer-2.5", cli_args)
         self.assertRegex(str(meta["cwd"]), r"/out/\.tmp/cursor-review-root\.\d+$")
         self.assertIn("src/reviewed.py", meta["workspace_entries"])
-        for stripped in (
-            "AGENTS.md",
-            "nested/AGENTS.md",
-            "CLAUDE.md",
-            "symdir/CLAUDE.md",
-            ".cursorrules",
-            "symdir/.cursorrules",
-            ".cursorignore",
-            "symdir/.cursorignore",
-            ".cursor",
-            ".cursor/rules.md",
-            "nested/.cursor",
-            "nested/.cursor/rules.md",
-        ):
-            self.assertNotIn(stripped, meta["workspace_entries"])
-        self.assertIn("steer.txt", meta["workspace_entries"])
 
     def test_cursor_critique_runs_with_empty_working_root(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
@@ -901,9 +870,7 @@ PY
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_codex_real_path_invokes_codex_cli(self) -> None:
-        batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
-            "codex", "codex", prepare_snapshot=self._add_symlinked_agent_config
-        )
+        batch, cli_args, _cli_env, meta = self._run_with_fake_cli("codex", "codex")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
@@ -928,38 +895,7 @@ PY
         self.assertNotRegex(cli_args, r"--cd \S*repo_snapshot")
         self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
-        # codex strips its own config (AGENTS.md, .codex) but leaves
-        # opencode-specific files intact.
-        # steer.txt (the symlink target) and its dir survive; the symlinked
-        # AGENTS.md under symdir/ is stripped along with the regular AGENTS.md.
-        self.assertEqual(
-            meta["workspace_entries"],
-            {
-                "README.md",
-                "nested/",
-                "src/",
-                "src/reviewed.py",
-                "opencode.json",
-                "opencode.jsonc",
-                "tui.json",
-                ".opencode/",
-                ".opencode/plugin.js",
-                "nested/.opencode/",
-                "nested/.opencode/agent.md",
-                "CLAUDE.md",
-                ".cursorrules",
-                ".cursorignore",
-                ".cursor/",
-                ".cursor/rules.md",
-                "nested/.cursor/",
-                "nested/.cursor/rules.md",
-                "steer.txt",
-                "symdir/",
-                "symdir/CLAUDE.md",
-                "symdir/.cursorrules",
-                "symdir/.cursorignore",
-            },
-        )
+        self.assertEqual(meta["workspace_entries"], {"README.md", "src/", "src/reviewed.py"})
 
     def test_codex_effort_reaches_model_reasoning_effort_without_coercion(self) -> None:
         for configured in ("low", "medium", "high", "xhigh", "max"):
@@ -988,14 +924,6 @@ PY
             bin_dir = root / "bin"
             bin_dir.mkdir()
             write_adapter_input_bundle(input_dir)
-            # Symlinked agent config must be stripped too, not just regular files:
-            # a symlink named CLAUDE.md/AGENTS.md would otherwise be followed.
-            snapshot = input_dir / "repo_snapshot"
-            (snapshot / "steer.txt").write_text("steering payload\n", encoding="utf-8")
-            (snapshot / "CLAUDE.md").unlink()
-            os.symlink("steer.txt", snapshot / "CLAUDE.md")
-            (snapshot / "symdir").mkdir()
-            os.symlink("../steer.txt", snapshot / "symdir" / "AGENTS.md")
             self._write_fake_cli(bin_dir, "claude")
             previous = {key: os.environ.get(key) for key in _ENV_KEYS}
             os.environ["AI_REVIEW_INPUT_DIR"] = str(input_dir)
@@ -1058,14 +986,6 @@ PY
         self.assertNotEqual(cwd, repo_snapshot_dir)
         # Reviewed files sit at the working-tree root so diff paths resolve.
         self.assertIn("src/reviewed.py", tree)
-        # Project-level agent config the MR could use to steer the reviewer is
-        # stripped at every level, including symlinked CLAUDE.md / AGENTS.md.
-        self.assertNotIn("AGENTS.md", tree)
-        self.assertNotIn("nested/AGENTS.md", tree)
-        self.assertNotIn("CLAUDE.md", tree)
-        self.assertNotIn("symdir/AGENTS.md", tree)
-        # Only the agent-config symlinks are removed; their target is untouched.
-        self.assertIn("steer.txt", tree)
 
     def test_claude_native_anthropic_route_is_unreachable(self) -> None:
         """Native Anthropic credentials and endpoints cannot reach the claude CLI.
@@ -1167,9 +1087,7 @@ PY
         self.assertNotIn('"$schema"', argv_text)
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
-        batch, cli_args, cli_env, meta = self._run_with_fake_cli(
-            "opencode", "opencode", prepare_snapshot=self._add_symlinked_agent_config
-        )
+        batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
@@ -1216,33 +1134,7 @@ PY
         self.assertNotIn("$schema", message_body["format"]["schema"])
         self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
         self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
-        # opencode strips its own config (opencode.json/.jsonc, tui.json,
-        # .opencode) and AGENTS.md (regular + symlinked, every level), since it
-        # reads AGENTS.md as agent instructions. codex-specific .codex is left
-        # intact; steer.txt (the symlink target) and its dir survive.
-        self.assertEqual(
-            meta["workspace_entries"],
-            {
-                "README.md",
-                "nested/",
-                "src/",
-                "src/reviewed.py",
-                ".codex/",
-                ".codex/config.toml",
-                "CLAUDE.md",
-                ".cursorrules",
-                ".cursorignore",
-                ".cursor/",
-                ".cursor/rules.md",
-                "nested/.cursor/",
-                "nested/.cursor/rules.md",
-                "steer.txt",
-                "symdir/",
-                "symdir/CLAUDE.md",
-                "symdir/.cursorrules",
-                "symdir/.cursorignore",
-            },
-        )
+        self.assertEqual(meta["workspace_entries"], {"README.md", "src/", "src/reviewed.py"})
         self.assertIn("OPENCODE_DISABLE_AUTOUPDATE=1", cli_env)
         self.assertIn("OPENCODE_DISABLE_DEFAULT_PLUGINS=1", cli_env)
         self.assertIn("OPENCODE_DISABLE_LSP_DOWNLOAD=1", cli_env)

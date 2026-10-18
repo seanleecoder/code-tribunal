@@ -33,6 +33,14 @@ versioning.
 - Review and critique prompts and rules now always come from the image's
   `prompts/` and `rules/`, not from directories beside the file that
   `AI_REVIEW_CONFIG` names. The shipped prompt text is unchanged (SPEC-47).
+- Prepare now leaves reviewer agent files out of `repo_snapshot` at every
+  depth: `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.codex/`, `.cursor/`,
+  `.cursorrules`, `.cursorignore`, `.opencode/`, `opencode.json`,
+  `opencode.jsonc`, and `tui.json`. Each reviewer adapter previously removed
+  only the files its own CLI reads, so now no reviewer can read any of them.
+  A symlink with one of these names, such as `CLAUDE.md` pointing at
+  `AGENTS.md`, is left out instead of failing prepare. `repo_snapshot_sha256`
+  changes for repositories that contain these files (N09).
 
 ### Deprecated
 

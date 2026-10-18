@@ -1,12 +1,11 @@
 """The prepared input bundle an adapter run reads.
 
 ``run_adapter`` renders its prompt from a real bundle -- diff, rules, prompts,
-manifest, prior decisions, and a repo snapshot carrying every project-level agent
-configuration file the adapters are supposed to strip. Two suites need exactly
-that shape: the registry-driven reviewer contract in
-``unit/test_reviewers.py`` and the provider-specific adapter suite in
-``unit/test_openrouter_adapters.py``. It lives here so neither owns it, and so a
-new steering file only has to be added in one place to be covered by both.
+manifest, prior decisions, and a repo snapshot as prepare leaves it, with the
+reviewer agent files already dropped. Two suites need exactly that shape: the
+registry-driven reviewer contract in ``unit/test_reviewers.py`` and the
+provider-specific adapter suite in ``unit/test_openrouter_adapters.py``. It
+lives here so neither owns it.
 
 ``run_prepared_adapter`` is shared more widely: every adapter-runner suite that
 writes its own manifest needs prepare's effective-config binding in it.
@@ -61,36 +60,6 @@ def write_adapter_input_bundle(input_dir: Path) -> None:
     (repo_snapshot / "src").mkdir()
     (repo_snapshot / "src" / "reviewed.py").write_text("print('review me')\n", encoding="utf-8")
     (repo_snapshot / "README.md").write_text("# Reviewed project\n", encoding="utf-8")
-    (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
-    (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
-    (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
-    (repo_snapshot / ".cursorrules").write_text("cursor project rules\n", encoding="utf-8")
-    (repo_snapshot / ".cursorignore").write_text("cursor ignore\n", encoding="utf-8")
-    (repo_snapshot / "CLAUDE.md").write_text("claude project rules\n", encoding="utf-8")
-    (repo_snapshot / ".opencode").mkdir()
-    (repo_snapshot / ".opencode" / "plugin.js").write_text(
-        "module.exports = {}\n", encoding="utf-8"
-    )
-    (repo_snapshot / ".cursor").mkdir()
-    (repo_snapshot / ".cursor" / "rules.md").write_text("cursor rules\n", encoding="utf-8")
-    (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
-    (repo_snapshot / ".codex").mkdir()
-    (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
-    (repo_snapshot / "nested").mkdir()
-    (repo_snapshot / "nested" / "AGENTS.md").write_text(
-        "nested agent instructions\n",
-        encoding="utf-8",
-    )
-    (repo_snapshot / "nested" / ".opencode").mkdir()
-    (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
-        "nested agent\n",
-        encoding="utf-8",
-    )
-    (repo_snapshot / "nested" / ".cursor").mkdir()
-    (repo_snapshot / "nested" / ".cursor" / "rules.md").write_text(
-        "nested cursor rules\n",
-        encoding="utf-8",
-    )
     write_canonical_json(
         input_dir / "manifest.json",
         {

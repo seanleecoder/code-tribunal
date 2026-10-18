@@ -1002,6 +1002,47 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             self.assertFalse((dest / "inputs").exists())
             self.assertTrue((dest / "README.md").is_file())
 
+    def test_reviewer_agent_files_are_dropped_at_every_depth(self) -> None:
+        agent_files = (
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".cursorignore",
+            ".cursorrules",
+            "opencode.json",
+            "opencode.jsonc",
+            "tui.json",
+        )
+        agent_dirs = (".claude", ".codex", ".cursor", ".opencode")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            for parent in (source, source / "src" / "pkg"):
+                for name in agent_files:
+                    (parent / name).write_text("steer the reviewer\n", encoding="utf-8")
+                for name in agent_dirs:
+                    (parent / name).mkdir()
+                    (parent / name / "config").write_text("steer\n", encoding="utf-8")
+            copy_repo_snapshot(source, dest)
+
+            copied = sorted(
+                path.relative_to(dest).as_posix() for path in dest.rglob("*") if path.is_file()
+            )
+            self.assertEqual(copied, ["README.md", "src/pkg/mod.py"])
+
+    def test_symlinked_agent_file_is_dropped_instead_of_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "repo"
+            dest = Path(tmpdir) / "repo_snapshot"
+            self._write_nested_repo(source)
+            (source / "AGENTS.md").write_text("instructions\n", encoding="utf-8")
+            os.symlink("AGENTS.md", source / "CLAUDE.md")
+            copy_repo_snapshot(source, dest)
+
+            self.assertFalse((dest / "AGENTS.md").exists())
+            self.assertFalse(os.path.lexists(dest / "CLAUDE.md"))
+            self.assertTrue((dest / "README.md").is_file())
+
     def test_mode_bits_strip_setuid(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"

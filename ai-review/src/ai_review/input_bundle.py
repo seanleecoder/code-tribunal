@@ -52,8 +52,33 @@ class _BoundRevision:
     revalidate: Callable[[], None] = lambda: None
 
 
-# Always skipped at every depth (VCS / local harness metadata).
-_SNAPSHOT_IGNORE_ALWAYS = frozenset({".git", ".ai-review-local"})
+# Project files a reviewer CLI would read from its working tree as instructions
+# or configuration. Every reviewer loses all of them, not just its own CLI's.
+_REVIEWER_AGENT_FILE_NAMES = frozenset(
+    {
+        # Read by more than one reviewer CLI.
+        "AGENTS.md",
+        "CLAUDE.md",
+        # Claude
+        ".claude",
+        # Codex
+        ".codex",
+        # Cursor
+        ".cursor",
+        ".cursorignore",
+        ".cursorrules",
+        # OpenCode
+        ".opencode",
+        "opencode.json",
+        "opencode.jsonc",
+        "tui.json",
+    }
+)
+# Skipped at every depth, whatever their type: VCS and local harness metadata,
+# and the agent files, which the CLIs resolve hierarchically. A skipped entry is
+# never opened, so a symlinked CLAUDE.md is dropped rather than rejecting the
+# snapshot.
+_SNAPSHOT_IGNORE_ALWAYS = frozenset({".git", ".ai-review-local"}) | _REVIEWER_AGENT_FILE_NAMES
 _COPY_BUFFER_SIZE = 1024 * 1024
 _MAX_SNAPSHOT_DEPTH = 512
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -268,13 +293,14 @@ def copy_repo_snapshot(
 ) -> Path:
     """Copy a repository tree into ``dest`` without following any symlinks.
 
-    Fail closed on every symlink and on FIFO/socket/device nodes. ``.git`` and
-    ``.ai-review-local`` are ignored at every depth; ``ignore_top_level_names``
-    (typically the prepare output directory basename) applies only at the
-    repository root. The destination is built in a temporary sibling directory
-    and published only on success so a rejected tree never leaves a usable
-    ``repo_snapshot`` artifact. Directory depth is capped at
-    ``_MAX_SNAPSHOT_DEPTH``; published snapshot directories use mode ``0o755``.
+    Fail closed on every symlink and on FIFO/socket/device nodes. Names in
+    ``_SNAPSHOT_IGNORE_ALWAYS`` (VCS metadata and reviewer agent files) are
+    ignored at every depth; ``ignore_top_level_names`` (typically the prepare
+    output directory basename) applies only at the repository root. The
+    destination is built in a temporary sibling directory and published only
+    on success so a rejected tree never leaves a usable ``repo_snapshot``
+    artifact. Directory depth is capped at ``_MAX_SNAPSHOT_DEPTH``; published
+    snapshot directories use mode ``0o755``.
     """
     _require_dir_fd_containment()
     source_root = Path(source).resolve(strict=True)

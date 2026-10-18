@@ -83,31 +83,20 @@ resolve_output_schema() {
   fi
 }
 
-# Copy the pinned MR snapshot into $1 and strip project-level agent
-# configuration named by the remaining arguments.
-#
-# The reviewed files must sit at the working-tree root or paths from the diff
-# (src/foo.py) will not resolve. Stripping is by name at every level, not just
-# the root, because these files are resolved hierarchically; symlinks match too,
-# or a symlinked AGENTS.md pointing outside the snapshot would survive and still
-# be followed. Directories are removed with -prune.
-#   prepare_review_root <root> <name>...
-prepare_review_root() {
+# Copy the pinned MR snapshot into $1. The reviewed files must sit at the
+# working-tree root or paths from the diff (src/foo.py) will not resolve. The
+# copy keeps CLI writes out of the shared input bundle, and keeps the input
+# directory off the path a CLI walks upward to find project config. Prepare
+# already dropped the agent files every CLI reads (_SNAPSHOT_IGNORE_ALWAYS in
+# input_bundle.py).
+#   copy_review_snapshot <root>
+copy_review_snapshot() {
   review_root="$1"
-  shift
   snapshot="$AI_REVIEW_INPUT_DIR/repo_snapshot"
   if [ ! -d "$snapshot" ]; then
     echo "AI review repo_snapshot is required for the $AI_REVIEW_REVIEWER reviewer" >&2
     exit 2
   fi
   cp -R "$snapshot"/. "$review_root"/
-  for name in "$@"; do
-    # A trailing slash marks a directory to remove recursively (".claude/").
-    if [ "${name%/}" != "$name" ]; then
-      find "$review_root" -name "${name%/}" -prune -exec rm -rf {} +
-    else
-      find "$review_root" -name "$name" \( -type f -o -type l \) -delete
-    fi
-  done
-  unset review_root snapshot name
+  unset review_root snapshot
 }
