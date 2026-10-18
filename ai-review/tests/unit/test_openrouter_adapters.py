@@ -12,7 +12,6 @@ import unittest
 from pathlib import Path
 
 import yaml
-
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.reviewers import REVIEWERS
