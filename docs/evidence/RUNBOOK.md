@@ -28,13 +28,14 @@ step's observations and the failing step's error.
   the summary's `change_url` and take the run from that pull request or merge
   request (on GitLab, the downstream child pipeline). Never re-dispatch `panel` to
   diagnose; it spends a real two-platform panel that a release cannot cite.
-- **`lifecycle` or `hostile`:** both spend no tokens, so re-dispatch only that
-  campaign, or run its script locally, and read the new summary. Drive a step by
-  hand with the [manual lifecycle chain](#manual-lifecycle-chain) or the
+- **`lifecycle` or `hostile`:** read the failing step's error in the summary.
+  Re-dispatch the campaign, which spends no tokens, only to confirm a concrete fix,
+  as [CONTRIBUTING](../../CONTRIBUTING.md#candidate-canary) requires. Drive a step
+  by hand with the [manual lifecycle chain](#manual-lifecycle-chain) or the
   [hostile-MR checklist](#gitlab-hostile-mr-checklist) only to probe it
   interactively.
 
-A run with only some campaigns selected is diagnostic only. The run a release cites
+A run without both `panel` and `lifecycle` is diagnostic only. The run a release cites
 must be a fresh, complete one that includes `panel` and `lifecycle`
 (`check_release.py` rejects anything less), plus `hostile` when the
 [release checklist](../development/release-process.md#release-pull-request-checklist)
@@ -142,8 +143,8 @@ released image, is refreshed in place. Use a
 ### Effort routes and the three-seat default smoke
 
 A green canary `panel` proves every seat succeeded in review and critique, and
-consensus rejects any batch whose model or configuration digest differs from the
-prepared configuration, so a silently substituted model cannot pass. The canary
+consensus rejects configuration drift between stages. It does not prove which model
+the provider served: a batch's `model` is copied from the configuration. The canary
 clears effort overrides but not model overrides, so compare the models in its
 summary artifact with the [shipped defaults](../configuration.md#shipped-defaults).
 When they match, the panel is the default-route evidence. When a release changes a
@@ -157,12 +158,14 @@ manifest's `effective_config`. For that run:
 - Select the roster only in that run's temporary workflow or template; keep the
   demos' resting roster at four seats.
 - Leave model and effort overrides missing or blank so the shipped defaults apply,
-  except for the route under test. For a model that
-  requires absent effort, see
+  except for the route under test. For a model that requires absent effort, see
   [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
 - Keep `AI_REVIEW_LOCAL_MOCK=0` and every `AI_REVIEW_REQUIRE_REAL_*=1`.
 - Require successful review and critique on every seat, schema-valid structured
   output, `panel_status: full`, and a posted finding.
+- Confirm from the CLI's output or the provider's metadata (for example, the
+  OpenRouter activity log) that the requested model was served. A silently
+  substituted model does not pass.
 
 Reuse a passing run on the same runtime and image pair rather than repeating it.
 
@@ -204,9 +207,9 @@ at every step:
 
 ### GitLab hostile-MR checklist
 
-The canary's `hostile` campaign automates probes 1–3 on the demo. Run them by hand
-before a production rollout on your own GitLab deployment, or for a fork-based
-variant. The probe fails closed in prepare.
+The canary's `hostile` campaign automates these probes on the demo, except the
+exact-value leak scan in probe 3. Run them by hand before a production rollout on
+your own GitLab deployment, or for a fork-based variant.
 
 1. Open a merge request from an **unprotected** source branch or fork, and confirm
    through the branches API that its effective `protected` flag is false, including

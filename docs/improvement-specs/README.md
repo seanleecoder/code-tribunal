@@ -115,10 +115,10 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted, and
-   Renovate and zizmor have replaced most of the pin checker (N01), and the
-   release tooling is migrated (S01 cutover), and the evidence docs are pruned
-   (ADR-0004 migration step 4).
+2. Done: [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted;
+   Renovate and zizmor have replaced most of the pin checker (N01); the release
+   tooling is migrated (S01 cutover) and the evidence docs pruned (ADR-0004
+   migration step 4).
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
 4. The hash-only body (N12).

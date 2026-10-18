@@ -129,8 +129,8 @@ for stronger review quality.
 Each release's Candidate Canary panel runs real review and critique on the release
 images with the shipped efforts, and its summary records each seat's model; see
 [effort routes and the default smoke](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
-When a separate smoke is needed is set by the
-[release checklist](development/release-process.md#release-pull-request-checklist).
+The [release checklist](development/release-process.md#release-pull-request-checklist)
+sets when a separate smoke is needed.
 
 ### Production model/effort recommendations
 
