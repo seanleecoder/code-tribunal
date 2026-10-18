@@ -97,6 +97,10 @@ recommendation's disposition.
 | S14 legacy state decoder (2026-10-18) | Delete in 2.0.3 instead of registering it | No release ever wrote the `checksum=` wrapper; it was added with the current encoder before v0.1.0. Nothing needs migrating. |
 | ADR-0004 (2026-10-18) | Accept as written | The cutover pull request (ADR-0004 migration step 3) is next. |
 | Touched waivable evidence rows (2026-10-18) | Waive regression-covered rows when the diff stays off the row's code paths | Amends the [triage rule](../development/release-process.md#scoping-the-live-campaign). 2.0.3 waives the SPEC-34 revision-race row this way. |
+| N01 sequencing (2026-10-18) | Its own pull request before the cutover | Supply-chain pins do not depend on the release authority, and the cutover is already large. ADR-0004 migration step 3 is amended. |
+| N01 Lychee (2026-10-18) | Keep the checksum-verified installer | `lychee-action` installs an unverified release asset in the quality job. `lychee.pin` becomes the only digest authority. ADR-0004 decision 9 is amended. |
+| N01 `.pin` files (2026-10-18) | No Renovate regex managers | Renovate cannot recompute the checksums; ripgrep follows `opencode-ai`, and Cursor has no datasource. The manual refresh steps and the `opencode_version` equality check stay. |
+| N01 Renovate hosting (2026-10-18) | The hosted Mend app | Only `renovate.json` is committed: no secret and no extra workflow. The maintainer installs the app. |
 
 ## Recommended order
 
@@ -110,9 +114,9 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted. Migrate
-   the release tooling (S01), replace the pin checker with Renovate and zizmor
-   (N01), and prune the evidence docs.
+2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted. First
+   replace most of the pin checker with Renovate and zizmor (N01), in its own pull
+   request. Then migrate the release tooling (S01) and prune the evidence docs.
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
 4. The hash-only body (N12).
