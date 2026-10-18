@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import STATE_NOTE_SPEC_RE, state_note_candidates
+from ai_review.memory import STATE_NOTE_RE, state_note_candidates
 from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.github import (
     STATE_MARKER,
@@ -272,7 +272,7 @@ class FakeGitHubClient:
 
     @staticmethod
     def _with_state_marker(body: str) -> str:
-        if STATE_NOTE_SPEC_RE.search(body) is None:
+        if STATE_NOTE_RE.search(body) is None:
             return body
         return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
 

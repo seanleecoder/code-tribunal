@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ai_review.http_retry import send_with_retries
-from ai_review.memory import STATE_NOTE_SPEC_RE
+from ai_review.memory import STATE_NOTE_RE
 from ai_review.types import Anchor
 
 from .base import Position, ReviewPlatformError, ReviewStateNote, Thread
@@ -624,7 +624,7 @@ class GitHubReviewPlatform:
 
     @staticmethod
     def _with_state_marker(body: str) -> str:
-        if STATE_NOTE_SPEC_RE.search(body) is None:
+        if STATE_NOTE_RE.search(body) is None:
             return body
         return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
 
@@ -636,7 +636,7 @@ class GitHubReviewPlatform:
         return (
             isinstance(body, str)
             and STATE_MARKER in body
-            and STATE_NOTE_SPEC_RE.search(body) is not None
+            and STATE_NOTE_RE.search(body) is not None
             and user.get("login") == bot_login
         )
 

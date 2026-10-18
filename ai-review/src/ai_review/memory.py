@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -19,11 +20,10 @@ MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "title_anchor",
     "symbol_title",
 )
-STATE_NOTE_SPEC_RE = re.compile(
+STATE_NOTE_RE = re.compile(
     r"<!--\s*ai-review-state:v1\s+"
     r"(?P<payload>[A-Za-z0-9_-]+)\s+"
-    r"state_hash=(?P<state_hash>[a-f0-9]{64})\s*-->",
-    re.DOTALL,
+    r"state_hash=(?P<state_hash>[a-f0-9]{64})\s*-->"
 )
 
 
@@ -180,31 +180,25 @@ def encode_state_note(state: Mapping[str, Any]) -> str:
     )
 
 
-def _decode_state_payload(payload: str) -> dict[str, Any]:
-    import json
-
-    state = json.loads(payload)
-    if not isinstance(state, dict):
-        raise ValueError("state note payload root is not an object")
-    if not validate_state_hash(state):
-        raise ValueError("state hash mismatch")
-    return state
-
-
 def decode_state_note_body(body: str, *, checksum_required: bool = True) -> dict[str, Any]:
-    spec_match = STATE_NOTE_SPEC_RE.search(body)
-    if spec_match is None:
+    match = STATE_NOTE_RE.search(body)
+    if match is None:
         raise ValueError("state note marker not found")
-    encoded = spec_match.group("payload")
+    encoded = match.group("payload")
     padded = encoded + ("=" * (-len(encoded) % 4))
     try:
         payload = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
     except Exception as exc:
         raise ValueError("state note payload is not valid base64url json") from exc
     wrapper_hash = sha256_hex(payload)
-    if checksum_required and wrapper_hash != spec_match.group("state_hash"):
+    if checksum_required and wrapper_hash != match.group("state_hash"):
         raise ValueError("state note state_hash mismatch")
-    return _decode_state_payload(payload)
+    state = json.loads(payload)
+    if not isinstance(state, dict):
+        raise ValueError("state note payload root is not an object")
+    if not validate_state_hash(state):
+        raise ValueError("state hash mismatch")
+    return state
 
 
 def decode_state_note(note: dict[str, Any], *, checksum_required: bool = True) -> dict[str, Any]:
@@ -230,7 +224,7 @@ def state_note_candidates(
         if not (
             isinstance(note, dict)
             and isinstance(note.get("body"), str)
-            and STATE_NOTE_SPEC_RE.search(note["body"]) is not None
+            and STATE_NOTE_RE.search(note["body"]) is not None
         ):
             continue
         if expected_author_id is not None and note_author_id(note) != expected_author_id:

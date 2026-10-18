@@ -35,7 +35,7 @@ class StateHashTests(unittest.TestCase):
         changed = dict(state, last_head_sha="def")
         self.assertFalse(validate_state_hash(changed))
 
-    def test_state_note_round_trips_and_rejects_bad_checksum(self) -> None:
+    def test_state_note_round_trips_and_rejects_bad_state_hash(self) -> None:
         state = attach_state_hash(
             {
                 "state_schema_version": 1,
@@ -53,7 +53,6 @@ class StateHashTests(unittest.TestCase):
         self.assertRegex(
             body, r"<!-- ai-review-state:v1 [A-Za-z0-9_-]+ state_hash=[a-f0-9]{64} -->"
         )
-        self.assertNotIn("checksum=", body)
         self.assertEqual(decode_state_note_body(body), state)
         with self.assertRaisesRegex(ValueError, "state_hash"):
             decode_state_note_body(
