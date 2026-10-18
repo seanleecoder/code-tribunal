@@ -22,7 +22,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_current_tree_passes(self) -> None:
         self.assertEqual(check_supply_chain_pins.main(), 0)
 
-    def test_shipped_lychee_pin_and_checker_path_are_one_authority(self) -> None:
+    def test_lychee_pin_and_checker_path_are_one_authority(self) -> None:
         pin = check_supply_chain_pins.LYCHEE_PIN.read_text(encoding="utf-8")
         checker = check_supply_chain_pins.MARKDOWN_LINK_CHECKER.read_text(encoding="utf-8")
         self.assertEqual(check_supply_chain_pins._lychee_pin_issues(pin, checker), [])
@@ -253,7 +253,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_ripgrep_pin_happy_path_passes(self) -> None:
         self.assertEqual(self._ripgrep_pin_issues(self._RIPGREP_PIN_OK), [])
 
-    def test_shipped_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
+    def test_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
         """The two pins are one decision: the pinned rg is the one this opencode fetches.
 
         Checks the real files rather than a fixture, so a bump of either pin alone
@@ -614,11 +614,6 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             check_supply_chain_pins._workflow_structure_issues(text),
             ["line 2 contains a YAML key inside an inline comment"],
         )
-
-    # Byte-exact installed/canonical parity — including the CRLF-vs-LF case that a
-    # text comparison cannot see — is asserted against the surviving implementation
-    # in test_release_tools.WorkflowSyncTests, which covers detection *and* repair
-    # in both check and write modes. This script carries no copy of that comparison.
 
     def test_script_imports_only_the_standard_library(self) -> None:
         """The script must stay stdlib-only.

@@ -8,6 +8,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
+_BASE_DOCKERFILE = _AI_REVIEW_ROOT / "images" / "base.Dockerfile"
 
 
 class RuntimeDistributionContractTests(unittest.TestCase):
@@ -77,41 +78,34 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertNotIn("setuptools", config.get("tool", {}))
 
     def test_container_copies_only_the_internal_package_from_src(self) -> None:
-        dockerfile = (
-            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
-        ).read_text(encoding="utf-8")
+        dockerfile = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
         self.assertIn(
             "COPY ai-review/src/ai_review /opt/ai-review/src/ai_review", dockerfile
         )
         self.assertNotIn("COPY ai-review/src /opt/ai-review/src", dockerfile)
 
-    def test_container_ships_only_the_repository_files_it_runs(self) -> None:
-        """Repository tooling, templates and READMEs stay out of the image (N20).
+    def test_container_copies_only_the_runtime_tree(self) -> None:
+        """Every COPY source is allowlisted, so repository tooling stays out (N20).
 
-        The two OpenCode preflight drivers run inside the reviewer image; their
-        shell wrappers, the supply-chain pin checker and the CI templates run from
-        the checkout. Of `images/`, only `ripgrep.pin` is read inside the image.
+        Build-only inputs such as the pin files are bind-mounted into the RUN that
+        reads them, and the preflight drivers are mounted by their wrappers.
         """
-        dockerfile = (
-            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
-        ).read_text(encoding="utf-8")
+        dockerfile = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
-        copied_scripts = re.findall(r"(?m)^COPY\s+(scripts/\S*)\s", dockerfile)
         self.assertEqual(
-            copied_scripts,
+            re.findall(r"(?m)^COPY\s+(\S+)\s", dockerfile),
             [
-                "scripts/smoke_opencode_search_tools.py",
-                "scripts/smoke_opencode_structured_output.py",
+                "ai-review/adapters",
+                "ai-review/config",
+                "ai-review/prompts",
+                "ai-review/rules",
+                "ai-review/schemas",
+                "ai-review/src/ai_review",
+                "ai-review/tests/fixtures",
+                "ai-review/src/ai_review_smoke",
             ],
         )
-        copied_images = re.findall(r"(?m)^COPY\s+(ai-review/images\S*)\s", dockerfile)
-        self.assertEqual(
-            copied_images,
-            ["ai-review/images/python-constraints.txt", "ai-review/images/ripgrep.pin"],
-        )
-        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+ai-review/ci\b")
-        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+(?:ai-review/)?README\.md\s")
 
     def test_container_ships_fixtures_and_only_the_packaged_smoke_suite(self) -> None:
         """The product test suite never ships; exactly one test-shaped thing does.
@@ -132,9 +126,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         and no `test_*.py` module from the checkout suite. A revert to copying the
         whole tree still fails here.
         """
-        dockerfile = (
-            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
-        ).read_text(encoding="utf-8")
+        dockerfile = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
         self.assertIn(
             "COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures", dockerfile

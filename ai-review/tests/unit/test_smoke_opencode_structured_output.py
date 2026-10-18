@@ -20,7 +20,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "smoke_opencode_structured_output.py"
 WRAPPER = REPO_ROOT / "scripts" / "smoke_opencode_structured_output.sh"
-BASE_DOCKERFILE = REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
 PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 
 spec = importlib.util.spec_from_file_location("smoke_opencode_structured_output", SCRIPT)
@@ -135,18 +134,13 @@ class ProbeContractTests(unittest.TestCase):
         self.assertIn('"PYTHON": str(shim)', text)
         self.assertNotIn('"permission": {"*": "deny"', text)
 
-    def test_wrapper_denies_egress_and_runs_the_image_copy(self) -> None:
+    def test_wrapper_denies_egress_and_mounts_the_checkout_driver(self) -> None:
         text = WRAPPER.read_text(encoding="utf-8")
         self.assertIn("--network none", text)
-        self.assertIn("python3 /opt/scripts/smoke_opencode_structured_output.py", text)
-
-    def test_image_ships_the_probe(self) -> None:
-        text = BASE_DOCKERFILE.read_text(encoding="utf-8")
         self.assertIn(
-            "COPY scripts/smoke_opencode_structured_output.py "
-            "/opt/scripts/smoke_opencode_structured_output.py",
-            text,
+            "dst=/probe/smoke_opencode_structured_output.py,readonly", text
         )
+        self.assertIn("python3 /probe/smoke_opencode_structured_output.py", text)
 
     @unittest.skipUnless(
         PUBLISH_WORKFLOW.exists(),

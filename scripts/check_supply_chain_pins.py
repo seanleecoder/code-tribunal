@@ -516,13 +516,12 @@ def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
-    workflow = _read(PUBLISH_WORKFLOW)
     # The installed copy under .github/workflows/ is deliberately absent from
     # every scan here. It is a byte duplicate of the canonical template, which
     # `make workflow-parity` proves and repairs; identical bytes carry identical
     # action pins and containers, so scanning both only asks the same question
     # twice.
-    shipped_workflows = {
+    workflows = {
         path: _read(path)
         for path in (
             CI_WORKFLOW,
@@ -532,12 +531,13 @@ def main() -> int:
             PUBLISH_WORKFLOW,
         )
     }
+    workflow = workflows[PUBLISH_WORKFLOW]
     lychee_pin = _read(LYCHEE_PIN)
     markdown_link_checker = _read(MARKDOWN_LINK_CHECKER)
     for issue in _lychee_pin_issues(lychee_pin, markdown_link_checker):
         error(issue)
         failures += 1
-    canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
+    canonical_review_workflow = workflows[GITHUB_REVIEW_WORKFLOW]
     for issue in _github_review_container_issues(canonical_review_workflow):
         error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
         failures += 1
@@ -643,7 +643,7 @@ def main() -> int:
         if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
             error(f"{action} full-SHA pin not found")
             failures += 1
-    for path, text in shipped_workflows.items():
+    for path, text in workflows.items():
         display_path = _display(path)
         for issue in _workflow_structure_issues(text):
             error(f"{display_path}: {issue}")

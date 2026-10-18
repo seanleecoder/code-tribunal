@@ -12,17 +12,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ai-review/images/python-constraints.txt /opt/ai-review/images/python-constraints.txt
-
-RUN python -m pip install --no-cache-dir --constraint /opt/ai-review/images/python-constraints.txt --upgrade pip \
+# The constraints are needed only by this install, so they are mounted, not shipped.
+RUN --mount=type=bind,source=ai-review/images/python-constraints.txt,target=/tmp/python-constraints.txt \
+    python -m pip install --no-cache-dir --constraint /tmp/python-constraints.txt --upgrade pip \
     && python -m pip install --no-cache-dir \
-      --constraint /opt/ai-review/images/python-constraints.txt \
+      --constraint /tmp/python-constraints.txt \
       jsonschema PyYAML requests
 
 COPY ai-review/adapters /opt/ai-review/adapters
 COPY ai-review/config /opt/ai-review/config
-# The reviewer image's final-stage ripgrep guard sources this pin.
-COPY ai-review/images/ripgrep.pin /opt/ai-review/images/ripgrep.pin
 COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
@@ -35,10 +33,6 @@ COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
 # shipped layer, so changing one does change the image digest and is part of the
 # release binding.
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
-# The OpenCode preflight drivers run inside the reviewer image; their host-side
-# .sh wrappers stay in the checkout.
-COPY scripts/smoke_opencode_search_tools.py /opt/scripts/smoke_opencode_search_tools.py
-COPY scripts/smoke_opencode_structured_output.py /opt/scripts/smoke_opencode_structured_output.py
 
 # The curated packaged-runtime smoke suite, and the single deliberate exception to
 # "runtime images carry no test code". It is stdlib-only, imports nothing from the
