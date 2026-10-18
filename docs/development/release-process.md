@@ -152,8 +152,8 @@ applied, and the review checks the evidence it cites.
   `ai-review/src/ai_review/platform/runtime.py`). Confirm the cited run includes
   `hostile`, or state why it does not apply.
 - [ ] **Body-format refresh:** when the posted-body format version (`render-body.vN`)
-  changes, one refresh run against a bot thread in the previous format, authored by
-  a released image.
+  changes, one [refresh run](../evidence/RUNBOOK.md#body-format-refresh) against a
+  bot thread in the previous format, authored by a released image.
 - [ ] **Effort routes:** when effort profiles change, the effort-route check from
   the [evidence runbook](../evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
 - [ ] **Three-seat default smoke:** when the default roster or a default model

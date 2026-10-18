@@ -33,16 +33,9 @@ and the canonical-template contract tests.
 Residual risk: deployment protection settings are external state and must be
 proved per deployment. The Candidate Canary's `hostile` campaign proves one scoped
 topology: a merge request from an **unprotected** ref in the hardened mirrored
-child. It runs whenever a release changes the trust boundary, and that release's
-body records the run. It asserts four things:
-
-- GitLab withholds every protected credential: the hostile job sees each one as
-  absent.
-- Prepare fails closed with an empty input bundle, and every later stage is
-  skipped.
-- The forged publication artifacts go unconsumed.
-- `scripts/pipeline_trust.py` rejects the hostile composition and accepts the
-  demo's own.
+child. Its assertions are listed under
+[Candidate Canary](../CONTRIBUTING.md#candidate-canary), and the body of each
+release that ran it records the run.
 
 It does not scan every job trace and artifact for exact credential values. So
 “credential isolated” means that scope plus the tested subprocess
@@ -158,8 +151,8 @@ state loss do fail the `post` job.
 
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
-integrity, and posting unit/integration tests. Deployment evidence is indexed under
-[docs/evidence](evidence/README.md), and unexercised paths are its
+integrity, and posting unit/integration tests. Each release body records the
+Candidate Canary run that proved it live, and unexercised paths are the
 [carried coverage gaps](evidence/RUNBOOK.md#carried-coverage-gaps).
 
 ## Reporting

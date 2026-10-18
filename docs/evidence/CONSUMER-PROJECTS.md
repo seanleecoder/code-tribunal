@@ -7,9 +7,6 @@ for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
 older-format threads that the body-refresh check depends on.
 
-Branch names and history below call a real panel *Chain A* and a mock lifecycle
-chain *Chain B*.
-
 | Platform | Project | Role |
 |---|---|---|
 | GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, repository variables |
@@ -212,5 +209,5 @@ refresh surface.
    is what makes a *publication* failure withhold the merge; it says nothing
    about findings.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
-7. If you run checks by hand, run any real panel before a mock chain; delete the mock variables afterwards and confirm
-   they are gone.
+7. After any manual mock run, follow the
+   [mock cleanup](RUNBOOK.md#the-deterministic-mock-reviewer).

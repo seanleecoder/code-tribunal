@@ -32,7 +32,7 @@ cannot stand in for.
 | Real review and critique on every seat, both platforms | canary `panel` |
 | Posting and state lifecycle on the real platform APIs | canary `lifecycle` (mock reviewers); `test_post.py`, `integration/test_publish_e2e.py`, `integration/test_revision_lifecycle_e2e.py` |
 | Protected-credential withholding and composition audit on GitLab | canary `hostile`; `test_verify_pipeline_trust.py`, fork-secret withholding in `test_input_bundle.py` |
-| Snapshot symlink containment (SPEC-31) | `test_input_bundle.py`; at most one variant live |
+| Snapshot symlink containment (SPEC-31) | `test_input_bundle.py` |
 | Artifact and configuration integrity (SPEC-33) | `test_consensus_integrity.py` |
 | GitHub revision races and the HTTP 406 path (SPEC-34) | `test_input_bundle.py`, `test_github_platform.py`; the windows are too narrow to reproduce live, except the stale-head no-op the canary drives |
 | Below-quorum FYI and the inline-unmappable summary fallback | `integration/test_publish_e2e.py`, `test_post.py` |

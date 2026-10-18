@@ -157,7 +157,8 @@ dropping effort settings, and a single cross-platform canary.
 - Keep the regression gates green: the golden consensus fixtures, the publish
   and revision-lifecycle end-to-end fixtures, and the import-boundary test that
   keeps the planning modules free of platform clients.
-- Keep the [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps)
-  current with each release.
+- Each release updates the carried coverage gaps through the release checklist's
+  [Known limitations](../development/release-process.md#release-pull-request-checklist)
+  item.
 - For release work, follow the [release process](../development/release-process.md)
   and the [evidence runbook](../evidence/RUNBOOK.md).

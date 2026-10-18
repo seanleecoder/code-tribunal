@@ -7,8 +7,7 @@ campaigns and extra checks a release needs is the
 [release pull-request checklist](../development/release-process.md#release-pull-request-checklist).
 This page holds the operator mechanics around that: the live checks the canary does
 not automate, how to diagnose a failed campaign, and the coverage gaps each release
-carries forward. No evidence records are written; the release body records the
-canary verdicts.
+carries forward.
 
 Spend real tokens only on what genuinely requires a live model or a live platform;
 see [live versus regression coverage](README.md#live-versus-regression-coverage).
@@ -20,34 +19,45 @@ and after any campaign.
 
 Start from the failed job's log and the campaign's summary artifact
 (`candidate-canary-<platform>-summary`, `candidate-canary-<platform>-lifecycle-summary`
-or `candidate-canary-gitlab-hostile-summary`); they usually name the failing step.
-Replay by hand only that step, using the [manual lifecycle chain](#manual-lifecycle-chain)
-or the [hostile-MR checklist](#gitlab-hostile-mr-checklist). A run with only the
-failed campaigns selected is diagnostic only; `lifecycle` and `hostile` spend no
-tokens. The run a release cites must be a fresh, complete one that includes `panel`
-and `lifecycle` (`check_release.py` rejects anything less), plus `hostile` when the
+or `candidate-canary-gitlab-hostile-summary`). The summaries record each passed
+step's observations and the failing step's error.
+
+- **`panel`:** open the summary's `external_run_url`, the demo run that holds the
+  failing seat's job log and artifacts. Never re-dispatch `panel` to diagnose; it
+  spends a real two-platform panel that a release cannot cite.
+- **`lifecycle` or `hostile`:** both spend no tokens, so re-dispatch only that
+  campaign, or run its script locally, and read the new summary. Drive a step by
+  hand with the [manual lifecycle chain](#manual-lifecycle-chain) or the
+  [hostile-MR checklist](#gitlab-hostile-mr-checklist) only to probe it
+  interactively.
+
+A run with only some campaigns selected is diagnostic only. The run a release cites
+must be a fresh, complete one that includes `panel` and `lifecycle`
+(`check_release.py` rejects anything less), plus `hostile` when the
 [release checklist](../development/release-process.md#release-pull-request-checklist)
 requires it.
 
-For a `verify-candidate` failure, reproduce
+For a `verify-candidate` failure, start from the specific error
 [`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py)
-locally. It checks both digests and OCI revision labels, then verifies each
+logged. It checks both digests and OCI revision labels, then verifies each
 provenance attestation against `refs/heads/main`, source digest `R`, and the
-publication workflow's signer identity. From a checkout with `origin/main` fetched,
-set `R`, `BASE_IMAGE` and `REVIEWER_IMAGE` to the full source commit and the two
-digest-pinned references:
+publication workflow's signer identity. Input errors, such as format, tag, or a
+source not reachable from `main`, reproduce without pulling anything: from a
+checkout with `origin/main` fetched, run
 
 ```bash
-docker pull "$BASE_IMAGE" && docker pull "$REVIEWER_IMAGE" &&
-  python scripts/validate_candidate_identity.py --runtime-source "$R" \
-    --base-image "$BASE_IMAGE" --reviewer-image "$REVIEWER_IMAGE" --verify-images
+python scripts/validate_candidate_identity.py --runtime-source "$R" \
+  --base-image "$BASE_IMAGE" --reviewer-image "$REVIEWER_IMAGE" \
+  --campaigns panel,lifecycle
 ```
 
-To confirm anonymous resolution without stored credentials, point `DOCKER_CONFIG`
-at a fresh directory containing only `{}` and run
-`docker manifest inspect --verbose <ref>`. An empty `DOCKER_CONFIG` also hides CLI
-plugins, so read the revision labels with the normal configuration:
-`docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
+Read revision labels remotely with
+`docker buildx imagetools inspect --format '{{json .Image}}' <ref>`. To confirm
+anonymous resolution, point `DOCKER_CONFIG` at a fresh directory containing only
+`{}` and run `docker manifest inspect --verbose <ref>`; an empty `DOCKER_CONFIG`
+also hides CLI plugins, which is why labels are read with the normal configuration.
+Add `--verify-images`, after pulling both references by digest, only to reproduce
+the local digest and attestation checks.
 
 Image tags (`<series>-<R>`) are mutable pointers; always pull and pin by digest.
 
@@ -94,13 +104,16 @@ afterwards, and run `make demo-preflight`, which fails while any is still set.
 - **Do not force-update a source branch to its base.** The pull request drops to zero
   commits, GitHub closes it, and later pushes fire no `pull_request` event. Open a
   fresh change request instead.
-- **Audit with the committed scanner**, not an ad-hoc grep:
 
-  ```bash
-  python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
-  # operator-only; compares against configured secret values without exposing them in argv:
-  python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
-  ```
+## Leak audit
+
+Audit traces and artifacts with the committed scanner, not an ad-hoc grep:
+
+```bash
+python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
+# operator-only; compares against configured secret values without exposing them in argv:
+python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
+```
 
 ## Checks the canary does not automate
 
@@ -125,18 +138,23 @@ released image, is refreshed in place. Use a
 
 ### Effort routes and the three-seat default smoke
 
-A green canary `panel` already proves every seat succeeded in review and critique,
-and its summary artifact records each seat's model. For route evidence, also check
-the prepare manifest's `effective_config` for each OpenRouter seat's effort, and that
-the manifest and every review and critique status file share one configuration
-digest. A silently substituted model does not pass.
+A green canary `panel` proves every seat succeeded in review and critique, and
+consensus rejects any batch whose model or configuration digest differs from the
+prepared configuration, so a silently substituted model cannot pass. The canary
+clears effort overrides but not model overrides, so compare the models in its
+summary artifact with the [shipped defaults](../configuration.md#shipped-defaults).
+When they match, the panel is the default-route evidence. When a release changes a
+default model, update the demos' model variables before dispatching the canary so
+that they match.
 
-To run a route panel or a three-seat smoke on the exact default roster:
+Run a separate route panel or three-seat smoke only when the canary cannot cover the
+route, such as a non-default effort; read each seat's effort from the prepare
+manifest's `effective_config`. For that run:
 
 - Select the roster only in that run's temporary workflow or template; keep the
   demos' resting roster at four seats.
-- Leave model and effort overrides missing or blank so the
-  [shipped defaults](../configuration.md#shipped-defaults) apply. For a model that
+- Leave model and effort overrides missing or blank so the shipped defaults apply,
+  except for the route under test. For a model that
   requires absent effort, see
   [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
 - Keep `AI_REVIEW_LOCAL_MOCK=0` and every `AI_REVIEW_REQUIRE_REAL_*=1`.
@@ -185,7 +203,7 @@ at every step:
 
 The canary's `hostile` campaign automates probes 1–3 on the demo. Run them by hand
 before a production rollout on your own GitLab deployment, or for a fork-based
-variant. The probe fails closed in prepare and spends no tokens.
+variant. The probe fails closed in prepare.
 
 1. Open a merge request from an **unprotected** source branch or fork, and confirm
    through the branches API that its effective `protected` flag is false, including
@@ -201,7 +219,7 @@ variant. The probe fails closed in prepare and spends no tokens.
 3. Attempt template or job replacement, trusted image and configuration overrides,
    and forged `out/consensus/*` or `out/post/*` artifacts. Confirm the trusted
    composition is retained or the pipeline fails closed, and run the
-   [leak scanner](#re-driving-runs-and-platform-quirks) with `--exact-value-file`
+   [leak scanner](#leak-audit) with `--exact-value-file`
    over every trace and artifact.
 
 ## Carried coverage gaps

@@ -126,10 +126,11 @@ for stronger review quality.
 | OpenCode | `deepseek/deepseek-v4.1-flash-1017` | `low` | yes |
 | Cursor | `composer-2.5` | named-model default | no |
 
-Each release's Candidate Canary panel runs these defaults through real review and
-critique on the release images, and the release body records the verdict. A change
-to the default roster or a default model also needs the
-[default-model smoke](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
+Each release's Candidate Canary panel runs real review and critique on the release
+images with the shipped efforts, and its summary records each seat's model; see
+[effort routes and the default smoke](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
+When a separate smoke is needed is set by the
+[release checklist](development/release-process.md#release-pull-request-checklist).
 
 ### Production model/effort recommendations
 
@@ -166,13 +167,12 @@ reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
 and compatibility. `auto` remains a supported operator override, but should not
 be used for reproducible CI or evidence.
 
-Recommendations do not establish release validation. MiMo Pro / unset and
-`grok-4.7-medium` passed a route canary on 2026-10-04 on older CLI pins (Pro's
-review job took 12m47s), and the `xhigh` and `-fast` Cursor variants were never
-canaried; the records are at
-[`v2.0.3`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence).
-Before claiming any of them validated on the current pins, run a real review and
-critique with no silent fallback: a
+Recommendations do not establish release validation: MiMo Pro and the Grok 4.7
+variants have no live evidence on the current pins (earlier route canaries are at
+[`v2.0.3`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence)).
+MiMo Pro's review job took nearly 13 minutes in that canary, so check reviewer timeouts.
+Before claiming one validated, run a real review and critique with no silent
+fallback: a
 [route panel](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke)
 for MiMo, and the
 [Cursor model-specific check](evidence/RUNBOOK.md#cursor-model-specific-check) for
