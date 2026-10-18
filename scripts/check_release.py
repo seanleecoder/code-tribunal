@@ -54,6 +54,8 @@ CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 INLINE_DESTINATION = re.compile(r"(\]\([ \t]*<?)([^\s()<>]+)")
 REFERENCE_DESTINATION = re.compile(r"^( {0,3}\[[^\]\r\n]+\]:[ \t]*<?)([^\s<>]+)")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# A code span closes on a backtick run of the same length; an unclosed run is literal.
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 IDENTITY_ARTIFACT = "candidate-canary-identity"
 REQUIRED_CAMPAIGNS = ("panel", "lifecycle")
 # Campaign -> (job family, {platform: summary artifact}), as candidate-canary.yml runs them.
@@ -328,6 +330,9 @@ def absolute_links(notes: str, tag: str) -> str:
 
     A release description resolves relative links against the release page, not
     the repository tree, so `docs/x.md` would break once copied out of CHANGELOG.md.
+    Code spans and fenced blocks stay literal. Write code in the CHANGELOG fenced:
+    an indented code block cannot be told from a nested list's continuation lines
+    without parsing list structure, so indented lines are treated as prose.
     """
     base = f"https://github.com/{REPOSITORY}/blob/{tag}/"
 
@@ -351,7 +356,12 @@ def absolute_links(notes: str, tag: str) -> str:
                     and len(opening.group(1)) >= len(fence):
                 fence = None
         else:
-            line = REFERENCE_DESTINATION.sub(absolute, INLINE_DESTINATION.sub(absolute, line))
+            line = REFERENCE_DESTINATION.sub(absolute, line)
+            parts, last = [], 0
+            for span in CODE_SPAN.finditer(line):
+                parts += [INLINE_DESTINATION.sub(absolute, line[last:span.start()]), span.group()]
+                last = span.end()
+            line = "".join(parts) + INLINE_DESTINATION.sub(absolute, line[last:])
         lines.append(line)
     return "\n".join(lines)
 
