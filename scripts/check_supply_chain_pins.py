@@ -87,13 +87,13 @@ def _parse_dockerfile(text: str) -> tuple[dict[str, str], list[tuple[str, str]],
     global_args: dict[str, str] = {}
     froms: list[tuple[str, str]] = []
     unparsed: list[str] = []
-    # BuildKit reads parser directives only from the leading `# key=value` lines.
+    # A non-default escape token changes how every line continues. BuildKit honors
+    # it only in the directive preamble, but its preamble rules are not modelled here,
+    # so any comment that reads as one is reported, even past the preamble.
     for line in _dockerfile_lines(text):
-        directive = re.fullmatch(r"#\s*([A-Za-z]+)\s*=\s*(\S*)\s*", line)
-        if directive is None:
-            break
-        if directive.group(1).lower() == "escape" and directive.group(2) != "\\":
-            unparsed.append(line)
+        escape = re.fullmatch(r"#\s*escape\s*=\s*(.*?)\s*", line.strip(), re.IGNORECASE)
+        if escape is not None and escape.group(1) != "\\":
+            unparsed.append(line.strip())
     for instruction in _instructions(text):
         if any(character.isspace() and character not in " \t" for character in instruction):
             unparsed.append(instruction.strip())

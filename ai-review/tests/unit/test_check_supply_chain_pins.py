@@ -116,15 +116,18 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         )
         # A genuine continuation makes the text a RUN argument, which Docker never builds.
         self.assertEqual(pins._dockerfile_issues("x", pinned + "RUN echo \\\nFROM alpine\n"), [])
-        self.assertEqual(
-            pins._dockerfile_issues("x", "# syntax=docker/dockerfile:1\n# escape=`\n" + pinned),
-            ["x: cannot parse '# escape=`'"],
-        )
-        # After the directive preamble an escape line is an ordinary comment.
-        for preamble in ("# note\n", "\n", pinned):
+        # A non-default escape token is reported wherever it appears. BuildKit honors
+        # it after an indented `# syntax=` line; a comment past the preamble is a
+        # deliberate false positive rather than a modelled preamble rule.
+        bypass = pinned + "RUN echo \\\nFROM alpine:latest\n"
+        for escape in ("# escape=`", "  # syntax=docker/dockerfile:1\n# ESCAPE = `", "\t#escape=`"):
+            with self.subTest(escape=escape):
+                issues = pins._dockerfile_issues("x", escape + "\n" + bypass)
+                self.assertEqual(issues, [f"x: cannot parse {escape.split(chr(10))[-1].strip()!r}"])
+        for preamble in ("# note\n", pinned):
             with self.subTest(preamble=preamble):
-                text = preamble + "# escape=`\n" + pinned
-                self.assertEqual(pins._dockerfile_issues("x", text), [])
+                self.assertTrue(pins._dockerfile_issues("x", preamble + "# escape=`\n" + pinned))
+        self.assertEqual(pins._dockerfile_issues("x", "# escape=\\\n" + pinned), [])
 
     def test_shipped_dockerfiles_pin_every_stage(self) -> None:
         reviewer = _read(pins.REVIEWER_DOCKERFILE)
