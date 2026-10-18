@@ -1,6 +1,7 @@
 # ADR-0003 — Product invariants and complexity envelope
 
-- **Status:** Accepted
+- **Status:** Accepted; release authority amended by
+  [ADR-0004](0004-simplified-release-process.md)
 - **Date:** 2026-08-22
 - **Decision:** Product boundaries and review requirements
 
@@ -29,8 +30,8 @@ The accepted product dimensions are:
   Code Tribunal verifies its own invocation and credential isolation;
 - one canonical GitHub workflow template and one mechanically synchronized
   installed copy;
-- `release/release-inputs.json` and its source-bound evidence records as release
-  authority.
+- signed release tags whose canonical templates pin the released image digests as
+  release authority ([ADR-0004](0004-simplified-release-process.md)).
 
 A new accepted ADR is required before adding a fifth bundled reviewer, a third
 model stage or recursive critique, a third platform, a second state-backend
@@ -59,7 +60,9 @@ migration, and deletion.
 | Current open work | [`docs/improvement-specs/README.md`](../improvement-specs/README.md) |
 | Public compatibility surface | [architecture guide](../development/architecture.md#compatibility-boundary) |
 | Temporary compatibility paths | [compatibility register](../development/temporary-compatibility.md) |
-| Released identity and evidence | [`release/release-inputs.json`](../../release/release-inputs.json) and its cited [evidence records](../evidence/) |
+| Released identity | The canonical [templates](../../ai-review/ci/) at the signed release tag ([ADR-0004](0004-simplified-release-process.md)) |
+| Release assurance | The Candidate Canary run cited in the release body, verified at publication |
+| Release notes | The `CHANGELOG.md` section for the version |
 
 ## Consequences
 

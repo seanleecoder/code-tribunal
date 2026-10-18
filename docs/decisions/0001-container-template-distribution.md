@@ -26,11 +26,12 @@ distribution and have no public API or typing compatibility guarantee.
 
 `pyproject.toml` is retained only for pytest, Ruff, and mypy configuration.
 Runtime and contributor dependencies are installed explicitly from the
-container constraints and exactly pinned `requirements-dev.txt`, respectively;
-the supply-chain checker audits both inputs. The public
-image release line in `.github/workflows/publish-ai-review-images.yml` is the
-only version namespace until SPEC-37 establishes the final `1.0.0` release
-manifest and tag.
+container constraints and exactly pinned `requirements-dev.txt`, respectively.
+Renovate keeps both current, and the in-repo supply-chain checker rejects mutable
+inputs in them; zizmor audits the workflow pins
+([ADR-0004](0004-simplified-release-process.md) decision 9). The public image tag
+series is `IMAGE_VERSION` in `.github/workflows/publish-ai-review-images.yml`; a
+release is a signed tag whose templates pin those images by digest (ADR-0004).
 
 ## Consequences
 

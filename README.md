@@ -50,10 +50,10 @@ internal container implementation, not a supported Python package or API.
   config can substitute the reviewer images. Containment relies on protected
   credentials being withheld from untrusted refs and on running
   `scripts/pipeline_trust.py` against your consumer config.
-- Release identity and evidence scope come from the current
-  [release inputs](release/release-inputs.json) under the
-  [release process](docs/development/release-process.md). Read those authorities
-  before making a maturity or security claim.
+- A release is a signed tag whose templates pin both images by digest; its
+  release body records the Candidate Canary run that tested those digests. See the
+  [release process](docs/development/release-process.md) before making a maturity
+  or security claim.
 
 ## Five-minute start
 

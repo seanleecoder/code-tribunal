@@ -131,6 +131,20 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
         (input_index, inputs), (verify_index, verify) = validators
         self.assertNotIn("--verify-images", inputs["run"])
         self.assertIn("--verify-images", verify["run"])
+        for step in (inputs, verify):
+            self.assertIn('--campaigns "$CAMPAIGNS"', step["run"])
+            self.assertEqual(step["env"]["CAMPAIGNS"], "${{ inputs.campaigns }}")
+        # The release check finds the run by its trailer and binds it through this file.
+        self.assertIn('--candidate-out "$RUNNER_TEMP/identity/candidate.json"', verify["run"])
+        upload = steps[verify_index + 1]
+        self.assertTrue(upload["uses"].startswith("actions/upload-artifact@"))
+        self.assertEqual(upload["with"]["name"], "candidate-canary-identity")
+        self.assertEqual(upload["with"]["path"], "${{ runner.temp }}/identity/candidate.json")
+        self.assertEqual(upload["with"]["if-no-files-found"], "error")
+        self.assertEqual(
+            workflow["run-name"],
+            "Candidate Canary ${{ inputs.runtime_source }} [${{ inputs.campaigns }}]",
+        )
         self.assertIn('--runtime-source "$RUNTIME_SOURCE"', verify["run"])
         self.assertIn('--base-image "$BASE_IMAGE"', verify["run"])
         self.assertIn('--reviewer-image "$REVIEWER_IMAGE"', verify["run"])
@@ -283,11 +297,15 @@ class CandidateIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.identity = load_repository_script("validate_candidate_identity", IDENTITY_VALIDATOR)
         self.source = "a" * 40
+        series = load_repository_script(
+            "release_common", ROOT / "scripts" / "release_common.py"
+        ).image_tag_series()
         self.base = (
-            f"ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-{self.source}@sha256:{'b' * 64}"
+            f"ghcr.io/seanleecoder/code-tribunal/ai-review-base:{series}-{self.source}"
+            f"@sha256:{'b' * 64}"
         )
         self.reviewer = (
-            "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.0-"
+            f"ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:{series}-"
             f"{self.source}@sha256:{'c' * 64}"
         )
 
@@ -302,6 +320,7 @@ class CandidateIdentityTests(unittest.TestCase):
             "--runtime-source", self.source,
             "--base-image", self.base,
             "--reviewer-image", self.reviewer,
+            "--campaigns", "panel,lifecycle",
         ]
 
     def _verify_outputs(
@@ -360,6 +379,46 @@ class CandidateIdentityTests(unittest.TestCase):
                 for image in (self.base, self.reviewer)
             ],
         )
+
+    def test_candidate_file_is_written_only_after_both_images_verify(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "identity" / "candidate.json"
+            with (
+                mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+                mock.patch.object(
+                    self.identity.subprocess, "run", side_effect=self._verify_outputs("reviewer")
+                ),
+                self.assertRaises(self.identity.CandidateIdentityError),
+            ):
+                self.identity.cli(
+                    [*self._cli_args(), "--verify-images", "--candidate-out", str(out)]
+                )
+            self.assertFalse(out.exists())
+            with (
+                mock.patch.object(self.identity, "git_is_ancestor", return_value=True),
+                mock.patch.object(
+                    self.identity.subprocess, "run", side_effect=self._verify_outputs()
+                ),
+            ):
+                self.identity.cli(
+                    [*self._cli_args(), "--verify-images", "--candidate-out", str(out)]
+                )
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8")), {
+                "schema_version": "candidate_canary_identity.v1",
+                "runtime_source": self.source,
+                "base_image": self.base,
+                "reviewer_image": self.reviewer,
+                "campaigns": ["panel", "lifecycle"],
+            })
+
+    def test_campaign_selection_rejects_unknown_empty_and_repeated_campaigns(self) -> None:
+        self.assertEqual(self.identity.campaign_selection("hostile"), ["hostile"])
+        for value in ("", "panel,", "panel,unknown", "panel,panel"):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(self.identity.CandidateIdentityError),
+            ):
+                self.identity.campaign_selection(value)
 
     def test_input_only_cli_does_not_verify_unpulled_images(self) -> None:
         with (

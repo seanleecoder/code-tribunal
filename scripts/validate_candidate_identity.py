@@ -12,15 +12,17 @@ from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
     IMAGE_NAME_RE,
+    IMAGE_WORKFLOW,
     REPOSITORY,
+    canonical_json_bytes,
     git_is_ancestor,
     image_ref,
 )
 
 SOURCE_REF = "refs/heads/main"
-SIGNER_IDENTITY = (
-    f"https://github.com/{REPOSITORY}/.github/workflows/publish-ai-review-images.yml@{SOURCE_REF}"
-)
+SIGNER_IDENTITY = f"https://github.com/{REPOSITORY}/{IMAGE_WORKFLOW}@{SOURCE_REF}"
+CAMPAIGNS = ("panel", "lifecycle", "hostile")
+CANDIDATE_SCHEMA = "candidate_canary_identity.v1"
 EXPECTED_IMAGE_NAMES = {
     role: f"ghcr.io/{REPOSITORY}/ai-review-{role}" for role in ("base", "reviewer")
 }
@@ -67,6 +69,15 @@ def validate_inputs(
         "base": _coordinates(base_image, role="base", runtime_source=runtime_source),
         "reviewer": _coordinates(reviewer_image, role="reviewer", runtime_source=runtime_source),
     }
+
+
+def campaign_selection(value: str) -> list[str]:
+    selected = value.split(",")
+    if any(campaign not in CAMPAIGNS for campaign in selected):
+        raise CandidateIdentityError(f"campaigns must be a comma-separated subset of {CAMPAIGNS}")
+    if len(set(selected)) != len(selected):
+        raise CandidateIdentityError("campaigns must not repeat")
+    return selected
 
 
 def verify_pulled_image(*, role: str, image: str, runtime_source: str) -> None:
@@ -126,8 +137,14 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-image", required=True)
     parser.add_argument("--reviewer-image", required=True)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--campaigns", required=True)
     parser.add_argument("--verify-images", action="store_true")
+    # The identity the release check reads back; written only once images verify.
+    parser.add_argument("--candidate-out", type=Path)
     args = parser.parse_args(argv)
+    if args.candidate_out is not None and not args.verify_images:
+        parser.error("--candidate-out requires --verify-images")
+    campaigns = campaign_selection(args.campaigns)
     validate_inputs(args.runtime_source, args.base_image, args.reviewer_image)
     if args.github_output is not None:
         with args.github_output.open("a", encoding="utf-8") as output:
@@ -135,6 +152,15 @@ def cli(argv: list[str] | None = None) -> int:
     if args.verify_images:
         for role, image in (("base", args.base_image), ("reviewer", args.reviewer_image)):
             verify_pulled_image(role=role, image=image, runtime_source=args.runtime_source)
+    if args.candidate_out is not None:
+        args.candidate_out.parent.mkdir(parents=True, exist_ok=True)
+        args.candidate_out.write_bytes(canonical_json_bytes({
+            "schema_version": CANDIDATE_SCHEMA,
+            "runtime_source": args.runtime_source,
+            "base_image": args.base_image,
+            "reviewer_image": args.reviewer_image,
+            "campaigns": campaigns,
+        }))
     return 0
 
 

@@ -148,7 +148,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_image_pins_agree_across_platforms_and_with_the_trusted_sha(self) -> None:
         gitlab = _read(pins.GITLAB_REVIEW_TEMPLATE)
         github = _read(pins.GITHUB_REVIEW_WORKFLOW)
-        self.assertEqual(pins._image_pin_issues(gitlab, github), [])
+        self.assertEqual(pins.image_pin_issues(gitlab, github), [])
         trusted = gitlab.split('AI_REVIEW_TRUSTED_IMAGE_SHA: "', 1)[1][:40]
         base = gitlab.split('AI_REVIEW_BASE_IMAGE: "', 1)[1].split('"', 1)[0]
         base_line = f'  AI_REVIEW_BASE_IMAGE: "{base}"\n'
@@ -168,7 +168,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         }
         for label, (mutated_gitlab, mutated_github) in cases.items():
             with self.subTest(label):
-                self.assertTrue(pins._image_pin_issues(mutated_gitlab, mutated_github))
+                self.assertTrue(pins.image_pin_issues(mutated_gitlab, mutated_github))
 
     def test_requirements_need_exact_pins_and_may_carry_markers(self) -> None:
         text = '-c constraints.txt\n# tools\nruff==1.0\nzizmor==1.0; sys_platform != "android"\n'

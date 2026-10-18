@@ -130,6 +130,12 @@ Do not rerun a green campaign for extra evidence. A failed campaign may be rerun
 only after its diagnostics produce a concrete fix. This canary is a candidate
 promotion gate, not an ordinary pull-request gate.
 
+The `verify-candidate` job also uploads `candidate-canary-identity`, the tested
+runtime source, image references and campaigns. A release's signed tag cites one
+run, and publication accepts only a first attempt, so retry by dispatching a fresh
+run rather than re-running failed jobs (see the
+[release process](docs/development/release-process.md)).
+
 ## Compatibility boundary
 
 The supported public surface, and the private seams that are deliberately not

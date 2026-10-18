@@ -1,5 +1,10 @@
 # Live-evidence runbook
 
+> **Retired process.** From 2.1.0 a release is a signed tag verified against a cited
+> Candidate Canary run; see the [release process](../development/release-process.md).
+> Release inputs, evidence records, and waivers below describe releases up to 2.0.3.
+> This page is being cut down under ADR-0004 migration step 4.
+
 Operator runbook for the release-gating evidence-matrix rows. It sequences the
 manual live runs and points each to its record file. This complements — does not
 replace — the executable tests (`make quality`) and the
@@ -11,10 +16,8 @@ candidate block below with the new runtime source, images, and run IDs, then wor
 through the steps. Sections that record what a past release actually observed are
 marked as such, so a future operator can tell the procedure apart from the results.
 
-**Not every row needs a live re-run every release.** Scope the campaign with the
-[change-impact triage table](../development/release-process.md#scoping-the-live-campaign)
-before booking operator time: its rule says which rows may ship under a registered
-evidence waiver instead.
+**Which live checks a release needs** is the
+[release pull-request checklist](../development/release-process.md#release-pull-request-checklist).
 
 For the accepted release-version grammar and derived notes path, see the
 [release version contract](../development/release-process.md#release-version-contract).
@@ -136,12 +139,8 @@ identity, OCI labels, and provenance, then runs one four-seat (Claude, Codex,
 OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
 result blocks repinning; rerun only after a concrete fix.
 
-The canary retains only redacted summary artifacts. Generate the records from a
-green run with `make evidence-records RUN=<run id>`. It writes
-`record-candidate-canary.md` (image identity plus the real panel on **both**
-platforms), `record-github-current-image.md`, `record-gitlab-current-image.md`,
-and `record-gitlab-hostile-mr.md`, each with the `Release-*` binding and a leak
-scan. Add context only under each record's **Operator notes**. A four-seat canary
+The canary retains only redacted summary artifacts. From 2.1.0 no evidence records
+are generated: the release body records the run's verdicts. A four-seat canary
 whose three OpenRouter models and efforts match the shipped defaults supplies
 their route evidence for Chain A. A separate three-seat smoke establishes the
 exact default roster, or supplies route evidence when the canary uses different

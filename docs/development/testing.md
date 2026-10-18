@@ -10,21 +10,21 @@ Tests are organized by the boundary they protect:
   (`test_revision_lifecycle_e2e.py`).
 - `security/` covers hostile model text and state authenticity.
 
-Repository CI runs `make quality`. Live platform checks are recorded separately
-because local fakes cannot prove protected-variable behavior, platform token
-scope, required-check configuration, or real container registry pulls. See the
-[evidence runbook](../evidence/README.md).
+Repository CI runs `make quality`. Live platform checks run in the Candidate
+Canary before each release, because local fakes cannot prove protected-variable
+behavior, platform token scope, required-check configuration, or real container
+registry pulls. See the [release process](release-process.md).
 
 When behavior changes, update the smallest relevant test and any schema-backed
 golden file. Run `make update-golden` only for an intentional reducer contract
 change and review the generated diff.
 
 `make test` invokes pytest directly with coverage. `make docs-check` uses the
-pinned native Lychee binary to check local Markdown links and anchors, including
-remapped draft-release links. Historical release notes retain their separate
-link handling and tagged-note byte checks. GitLab installation examples are
-validated by the pipeline-trust tests; active release notes must exist under
-release-input validation. IDs in the temporary-compatibility register are checked
+pinned native Lychee binary to check local Markdown links and anchors. The
+historical `release/<version>.md` notes are frozen and not link-checked. GitLab
+installation examples are validated by the pipeline-trust tests. Release tooling
+is covered by `test_check_release.py`, which builds throwaway repositories and a
+fixture signing key. IDs in the temporary-compatibility register are checked
 against their code markers by `test_temporary_compatibility.py`.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names

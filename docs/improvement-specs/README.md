@@ -49,7 +49,7 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S02, S10, S17, N01, N09, N13, N16, N19 (outside the evidence docs), N20.
-- **Partial:** S11 (the noise half, through SPEC-67), S12 (the test-only
+- **Partial:** S01 (the ADR-0004 cutover, on 2026-10-18), S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
@@ -91,16 +91,17 @@ recommendation's disposition.
 | SPEC-66 record (2026-10-16) | Grade and job rows only | No stored action, reasons, notes or critique coverage. The renderer derives the action line. |
 | SPEC-45 (2026-10-16) | Retire; keep only `Found by` | Folded into SPEC-67. No `render-body.v5` bump and no `critique_observations` in `consensus.v3`. |
 | SPEC-47 bundle copies (2026-10-16) | Read assets from the image; delete the unread copies now | 2.0.3 drops `inputs/prompts/`, `inputs/rules/`, `inputs/config.review.yaml`, `config_sha256` and `rules_sha256`. |
-| Hostile canary (2026-10-16) | Only when the trust boundary changes | Recorded in ADR-0004 decision 2. A unit test covers prepare failing closed without credentials. |
+| Hostile canary (2026-10-16) | Only when the trust boundary changes | Recorded in ADR-0004 decision 2. A unit test covers prepare failing closed without credentials (added in the cutover). |
 | State overflow (2026-10-16) | Fix the causes in 2.0.3 through N13; close the SPEC-52 draft (#113) | Stop appending `run_history` and bound alias growth. The draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | S13 revisit (2026-10-16) | Note an option, no change | When S13 is revisited, consider "auto-resolve only on a full-grade run" as a replacement for the resolution quorum, not an addition. |
 | S14 legacy state decoder (2026-10-18) | Delete in 2.0.3 instead of registering it | No release ever wrote the `checksum=` wrapper; it was added with the current encoder before v0.1.0. Nothing needs migrating. |
-| ADR-0004 (2026-10-18) | Accept as written | The cutover pull request (ADR-0004 migration step 3) is next. |
-| Touched waivable evidence rows (2026-10-18) | Waive regression-covered rows when the diff stays off the row's code paths | Amends the [triage rule](../development/release-process.md#scoping-the-live-campaign). 2.0.3 waives the SPEC-34 revision-race row this way. |
+| ADR-0004 (2026-10-18) | Accept as written | The cutover pull request (ADR-0004 migration step 3) followed the same day. |
+| Touched waivable evidence rows (2026-10-18) | Waive regression-covered rows when the diff stays off the row's code paths | Amended the triage rule of the old process. 2.0.3 waives the SPEC-34 revision-race row this way; from 2.1.0 there are no waivers. |
 | N01 sequencing (2026-10-18) | Its own pull request before the cutover | Supply-chain pins do not depend on the release authority, and the cutover is already large. ADR-0004 migration step 3 is amended. |
 | N01 Lychee (2026-10-18) | Keep the checksum-verified installer | `lychee-action` installs an unverified release asset in the quality job. `lychee.pin` becomes the only digest authority. ADR-0004 decision 9 is amended. |
 | N01 `.pin` files (2026-10-18) | No Renovate regex managers | Renovate cannot recompute the checksums; ripgrep follows `opencode-ai`, and Cursor has no datasource. The manual refresh steps and the `opencode_version` equality check stay. |
 | N01 Renovate hosting (2026-10-18) | The hosted Mend app | Only `renovate.json` is committed: no secret and no extra workflow. The maintainer installs the app. |
+| Canary citation (2026-10-18) | A `Canary-run: <run id>` trailer in the signed tag | Publication verifies exactly the cited run against P's pins, so retries are deterministic and the signature covers the choice. It takes the place of `Release-manifest-sha256`. |
 
 ## Recommended order
 
@@ -115,8 +116,9 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 **Step 2 — 2.1.0, the first release on the new process.**
 
 2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted, and
-   Renovate and zizmor have replaced most of the pin checker (N01). Next, migrate
-   the release tooling (S01) and prune the evidence docs.
+   Renovate and zizmor have replaced most of the pin checker (N01), and the
+   release tooling is migrated (S01 cutover). Next, prune the evidence docs
+   (ADR-0004 migration step 4).
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
 4. The hash-only body (N12).

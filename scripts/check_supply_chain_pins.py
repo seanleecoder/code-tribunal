@@ -34,7 +34,8 @@ RIPGREP_PIN = IMAGES / "ripgrep.pin"
 
 DIGEST = r"@sha256:[0-9a-f]{64}"
 IMAGE_PIN_KEYS = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
-# A published image tag is <series>-<source sha>; the exact series is a release check.
+# A published image tag is <series>-<source sha>; the canary's identity check binds
+# the exact name and series, and a release cites that canary run.
 RELEASE_IMAGE = re.compile(rf"ghcr\.io/\S+:[0-9]+\.[0-9]+-([0-9a-f]{{40}}){DIGEST}")
 # The version takes only PEP 440 characters, so a marker, range or second operator
 # glued on without spaces (`==1.0;python_version<"3.14"`, `==1.0,<2`) is not exact.
@@ -168,8 +169,8 @@ def _github_container_pins(workflow: str) -> tuple[dict[str, set[str]], list[str
     return pins, issues
 
 
-def _image_pin_issues(gitlab: str, github: str) -> list[str]:
-    """One base and one reviewer pin, equal on both platforms, built from the trusted SHA."""
+def gitlab_image_pins(gitlab: str) -> tuple[dict[str, str], list[str]]:
+    """The GitLab template's image pins, keyed by IMAGE_PIN_KEYS, and its parse issues."""
     values = {
         key: re.findall(
             rf"^\s*{key}\s*:\s*(['\"]?)([^'\"#\s<>]+)\1\s*(?:#.*)?$", gitlab, re.M
@@ -181,7 +182,12 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
         for key, found in values.items()
         if len(found) != 1
     ]
-    pins = {key: found[0][1] for key, found in values.items() if len(found) == 1}
+    return {key: found[0][1] for key, found in values.items() if len(found) == 1}, issues
+
+
+def image_pin_issues(gitlab: str, github: str) -> list[str]:
+    """One base and one reviewer pin, equal on both platforms, built from the trusted SHA."""
+    pins, issues = gitlab_image_pins(gitlab)
     github_pins, github_issues = _github_container_pins(github)
     issues.extend(github_issues)
     for key in CONTAINER_IMAGES:
@@ -289,7 +295,7 @@ def issues() -> list[str]:
         *_dockerfile_issues("base.Dockerfile", base),
         *_dockerfile_issues("reviewer.Dockerfile", reviewer),
         *_base_image_issues(base, reviewer),
-        *_image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
+        *image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
         *_exact_requirement_issues("python-constraints.txt", constraints),
         # Dev tools may be platform-conditional; nothing here reaches the images.
         *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS), markers=True),

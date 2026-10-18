@@ -14,6 +14,16 @@ versioning.
   Actions workflows. The in-repo pin checker keeps only the checks neither tool
   makes, and now requires every Dockerfile `FROM` to be digest-pinned. Nothing
   changes for consumers.
+- Release process ([ADR-0004](docs/decisions/0004-simplified-release-process.md)):
+  a release is the SSH-signed tag whose canonical templates pin both images by
+  digest, published only after a cited Candidate Canary run on those digests is
+  verified. The release body is the version's CHANGELOG section followed by its
+  identity: runtime source, release commit, both image references, the canary
+  verdicts, and the `gh attestation verify` command. Releases no longer attach a
+  release manifest or checksum asset, `release/<version>.md` notes and
+  `release/release-inputs.json` are no longer published, and tags carry a
+  `Canary-run:` trailer instead of `Release-manifest-sha256`. Releases up to 2.0.3
+  are unchanged.
 
 ## [2.0.3] - 2026-10-18
 
