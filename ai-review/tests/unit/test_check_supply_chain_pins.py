@@ -172,13 +172,29 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_requirements_need_exact_pins_and_may_carry_markers(self) -> None:
         text = '-c constraints.txt\n# tools\nruff==1.0\nzizmor==1.0; sys_platform != "android"\n'
-        self.assertEqual(pins._exact_requirement_issues("r", text), [])
+        self.assertEqual(pins._exact_requirement_issues("r", text, markers=True), [])
         for loose in ("ruff>=1.0", "ruff", "ruff~=1.0"):
             with self.subTest(loose=loose):
                 self.assertEqual(
-                    pins._exact_requirement_issues("r", text.replace("ruff==1.0", loose)),
+                    pins._exact_requirement_issues(
+                        "r", text.replace("ruff==1.0", loose), markers=True
+                    ),
                     [f"r must use exact == pins only, got {loose!r}"],
                 )
+
+    def test_constraints_reject_environment_markers(self) -> None:
+        # pip skips a constraint whose marker does not match the image's Python, so
+        # a conditional constraint pins nothing and must not count as one.
+        conditional = 'pip==26.0\nrequests==2.34.2; python_version < "3.14"\n'
+        base = "RUN python -m pip install --constraint /tmp/c.txt pip requests\n"
+        self.assertEqual(
+            pins._exact_requirement_issues("c", conditional),
+            ["c must use exact == pins only, got 'requests==2.34.2; python_version < \"3.14\"'"],
+        )
+        self.assertEqual(
+            pins._pip_install_issues(base, conditional),
+            ["base.Dockerfile installs unconstrained requests"],
+        )
 
     def test_pip_installs_pass_the_constraints_and_name_only_pinned_packages(self) -> None:
         constraints = "pip==26.0\nPyYAML==6.0\nrequests==2.0\n"

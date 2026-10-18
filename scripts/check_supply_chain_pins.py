@@ -193,18 +193,23 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
     return issues
 
 
-def _requirements(text: str) -> Iterator[str]:
-    """Requirement lines without comments, `-c` includes or environment markers."""
+def _requirements(text: str, *, markers: bool = False) -> Iterator[str]:
+    """Requirement lines without comments or `-c` includes.
+
+    Environment markers are stripped only when `markers` allows them. Otherwise a
+    marked line is yielded whole and fails the exact-pin match: pip skips a
+    constraint whose marker does not apply, so it pins nothing in the image.
+    """
     for line in text.splitlines():
-        requirement = line.split(";", 1)[0].strip()
+        requirement = (line.split(";", 1)[0] if markers else line).strip()
         if requirement and not requirement.startswith(("#", "-c ")):
             yield requirement
 
 
-def _exact_requirement_issues(name: str, text: str) -> list[str]:
+def _exact_requirement_issues(name: str, text: str, *, markers: bool = False) -> list[str]:
     return [
         f"{name} must use exact == pins only, got {requirement!r}"
-        for requirement in _requirements(text)
+        for requirement in _requirements(text, markers=markers)
         if not EXACT_REQUIREMENT.fullmatch(requirement)
     ]
 
@@ -286,7 +291,8 @@ def issues() -> list[str]:
         *_base_image_issues(base, reviewer),
         *_image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
         *_exact_requirement_issues("python-constraints.txt", constraints),
-        *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS)),
+        # Dev tools may be platform-conditional; nothing here reaches the images.
+        *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS), markers=True),
         *_pip_install_issues(base, constraints),
         *_npm_issues(reviewer, package),
         *_pin_file_issues("cursor-agent.pin", _read(CURSOR_AGENT_PIN), opencode_version),
