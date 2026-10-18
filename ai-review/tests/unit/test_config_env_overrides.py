@@ -91,14 +91,13 @@ class ApplyEnvOverridesTests(unittest.TestCase):
                 for name, reviewer in config["reviewers"].items()
             },
             {
-                "claude": (True, "anthropic/claude-haiku-4.5", "medium"),
+                "claude": (True, "anthropic/claude-haiku-5.5", "low"),
                 "codex": (True, "openai/gpt-6-luna", "low"),
-                "opencode": (True, "xiaomi/mimo-v2.6-flash", None),
+                "opencode": (True, "deepseek/deepseek-v4.1-flash-1017", "low"),
                 "cursor": (False, "composer-2.5", None),
             },
         )
         self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 2)
-        self.assertNotIn("effort", config["reviewers"]["opencode"])
         self.assertNotIn("effort", config["reviewers"]["cursor"])
 
     def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
@@ -402,11 +401,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
             self.assertRaisesRegex(ConfigError, "posting.mode"),
         ):
             load_config(_REPO_CONFIG)
-
-    def test_repo_config_default_effort_loads(self) -> None:
-        with mock.patch.dict("os.environ", {}, clear=False):
-            config = load_config(_REPO_CONFIG)
-        self.assertEqual(config["reviewers"]["claude"]["effort"], "medium")
 
     def test_repo_config_keeps_severity_downgrade_opt_in(self) -> None:
         config = load_config(_REPO_CONFIG)

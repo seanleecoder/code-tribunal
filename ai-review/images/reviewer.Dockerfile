@@ -176,13 +176,13 @@ RUN --mount=type=tmpfs,target=/root --mount=type=tmpfs,target=/tmp set -eu; \
     # code. This validates flag/schema acceptance and stream shape only; whether
     # structured_output is actually emitted is observable per run via the
     # runner's "ai-review: ..." job-log line.
-    (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
+    (echo probe | claude -p --safe-mode --model claude-haiku-5.5 \
       --no-session-persistence --output-format stream-json --verbose \
       --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/raw_finding_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
       --add-dir /workspace --tools "Read,Grep,Glob" \
       --effort medium || true) \
       | grep -q '"type":"result"'; \
-    (echo probe | claude -p --safe-mode --model claude-haiku-4.5 \
+    (echo probe | claude -p --safe-mode --model claude-haiku-5.5 \
       --no-session-persistence --output-format stream-json --verbose \
       --json-schema "$(python3 -c 'import json; s = json.load(open("/opt/ai-review/schemas/critique_batch.schema.json", encoding="utf-8")); s.pop("$schema", None); print(json.dumps(s))')" \
       --tools "" \

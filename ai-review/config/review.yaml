@@ -19,8 +19,8 @@ schema_version: review_config.v3 # Schema version for config compatibility valid
 reviewers:
   claude:
     enabled: true
-    model: anthropic/claude-haiku-4.5 # OpenRouter provider-qualified model identifier (override: AI_REVIEW_CLAUDE_MODEL)
-    effort: medium # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — stage-specific timeout fields stay the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
+    model: anthropic/claude-haiku-5.5 # OpenRouter provider-qualified model identifier (override: AI_REVIEW_CLAUDE_MODEL)
+    effort: low # Reasoning/exploration effort for the claude CLI (low|medium|high|xhigh|max). Voluntary stopping, not a turn cap — stage-specific timeout fields stay the hang-catch. Override: AI_REVIEW_CLAUDE_EFFORT
     timeout_seconds: 1800
     critique_timeout_seconds: 900
     # No turn cap: Claude runs its agentic loop to completion, bounded by
@@ -39,10 +39,11 @@ reviewers:
     max_findings: 50 # Cap on raw findings emitted before consensus filtering
   opencode:
     enabled: true
-    model: xiaomi/mimo-v2.6-flash # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
+    model: deepseek/deepseek-v4.1-flash-1017 # Model identifier passed to CLI adapter (override: AI_REVIEW_OPENCODE_MODEL)
+    effort: low
     # Optional effort/reasoning depth: low|medium|high|xhigh|max reaches
-    # OpenCode unchanged as reasoningEffort. Leave effort unset for the provider
-    # default. MiMo Flash and Pro also require unset effort. Override:
+    # OpenCode unchanged as reasoningEffort. Remove effort for the provider
+    # default. MiMo Flash and Pro require unset effort. Override:
     # AI_REVIEW_OPENCODE_EFFORT (unset clears YAML; missing/blank inherit it).
     timeout_seconds: 1800
     critique_timeout_seconds: 900
