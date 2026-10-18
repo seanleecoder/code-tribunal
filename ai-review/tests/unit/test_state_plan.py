@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ai_review.anchors import title_fingerprint
+from ai_review.memory import find_matching_record
 from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -395,6 +396,53 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(aliases["symbols"], ["current", *[f"symbol{i}" for i in range(7)]])
         self.assertEqual(aliases["title_fingerprints"], [title_fingerprint("Title")])
         self.assertEqual(aliases["candidate_issue_signatures"], [])
+
+    def test_alias_families_never_trim_this_runs_keys(self) -> None:
+        # Consensus sorts a group's keys by hash, so a cut could drop the
+        # representative's context and source ID; the next run reporting only
+        # that finding, shifted by an unrelated edit, would then look new.
+        contexts = [f"{index:064x}" for index in range(1, 10)]
+        sources = [f"{index + 100:064x}" for index in range(1, 10)]
+        persisted = _record("a" * 64)
+        persisted["aliases"] = {**persisted["aliases"], "context_hashes": ["e" * 64]}
+        group = _group("a" * 64)
+        group["source_finding_ids"] = sources
+        group["representative_anchor"] = {
+            **group["representative_anchor"],
+            "context_hash": contexts[-1],
+        }
+        group["match_keys"] = {
+            "path_keys": ["src/foo.py"],
+            "category": "correctness",
+            "context_hashes": contexts,
+            "title_fingerprints": [],
+            "symbols": [],
+        }
+
+        plan = _plan(persisted=[persisted], inline=[group])
+
+        record = self._record_of(plan, "a" * 64)
+        assert record is not None
+        self.assertEqual(record["aliases"]["context_hashes"], contexts)
+        self.assertEqual(record["aliases"]["source_finding_ids"], sources)
+        shifted = _group("d" * 64)
+        shifted["title"] = "Reworded"
+        shifted["source_finding_ids"] = ["9" * 64]
+        shifted["representative_anchor"] = {
+            **group["representative_anchor"],
+            "start": {"old_line": None, "new_line": 7, "line_code": None},
+            "end": {"old_line": None, "new_line": 7, "line_code": None},
+        }
+        shifted["match_keys"] = {
+            "path_keys": ["src/foo.py"],
+            "category": "correctness",
+            "context_hashes": [contexts[-1]],
+            "title_fingerprints": ["8" * 64],
+            "symbols": [],
+        }
+        self.assertEqual(
+            find_matching_record(cast(Any, shifted), plan.planned_state).status, "matched"
+        )
 
     def test_alias_families_stay_bounded_across_many_runs(self) -> None:
         records: list[dict[str, Any]] = []

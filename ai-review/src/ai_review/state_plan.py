@@ -52,15 +52,16 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
     return os.environ.get("CI_PIPELINE_ID") or str(manifest.get("run_id") or "")
 
 
-# Each alias family keeps this run's keys first, then the newest older ones.
-# Matching only needs recent keys, and unbounded families overflowed state.
+# Each alias family keeps every key from this run, then the newest older ones
+# up to the bound. Trimming this run's keys could drop the one the next run
+# reports; unbounded older keys overflowed state.
 MAX_ALIASES_PER_FAMILY = 8
 
 
 def _recent_aliases(current: Any, previous: Any) -> list[str]:
-    return ordered_unique([*ordered_unique(current), *ordered_unique(previous)])[
-        :MAX_ALIASES_PER_FAMILY
-    ]
+    current_values = ordered_unique(current)
+    older = [value for value in ordered_unique(previous) if value not in current_values]
+    return current_values + older[: max(0, MAX_ALIASES_PER_FAMILY - len(current_values))]
 
 
 def _record_for_group(
