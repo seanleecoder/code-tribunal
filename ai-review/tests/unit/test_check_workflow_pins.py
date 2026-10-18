@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import json
 import subprocess
@@ -9,12 +8,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_workflow_pins.py"
+from tests.support.repository_script import load_repository_script
 
-spec = importlib.util.spec_from_file_location("check_workflow_pins", SCRIPT)
-assert spec is not None and spec.loader is not None
-check_workflow_pins = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(check_workflow_pins)
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_workflow_pins.py"
+check_workflow_pins = load_repository_script("check_workflow_pins", SCRIPT)
 
 
 def _finding(ident: str, feature: str) -> dict[str, object]:
@@ -43,10 +40,11 @@ class WorkflowPinCheckTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("--persona=pedantic", command)
         self.assertIn("--no-ignores", command)
+        self.assertIn("--no-exit-codes", command)
         return status, stderr.getvalue()
 
     def test_only_the_pinning_audits_gate(self) -> None:
-        status, stderr = self._run(14, [_finding("template-injection", "run: ${{ x }}")])
+        status, stderr = self._run(0, [_finding("template-injection", "run: ${{ x }}")])
         self.assertEqual((status, stderr), (0, ""))
 
     def test_reports_each_pinning_finding_with_its_location(self) -> None:
@@ -55,7 +53,7 @@ class WorkflowPinCheckTests(unittest.TestCase):
             _finding("unpinned-images", "container: python:3.14"),
             _finding("ref-version-mismatch", "uses: a/b@" + "0" * 40 + " # v1"),
         ]
-        status, stderr = self._run(14, findings)
+        status, stderr = self._run(0, findings)
         self.assertEqual(status, 1)
         self.assertEqual(
             stderr.splitlines()[:2],

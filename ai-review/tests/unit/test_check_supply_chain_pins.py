@@ -1,25 +1,19 @@
 from __future__ import annotations
 
 import ast
-import importlib.util
 import json
 import re
 import sys
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_supply_chain_pins.py"
+from tests.support.repository_script import load_repository_script
 
-spec = importlib.util.spec_from_file_location("check_supply_chain_pins", SCRIPT)
-assert spec is not None and spec.loader is not None
-pins = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(pins)
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_supply_chain_pins.py"
+pins = load_repository_script("check_supply_chain_pins", SCRIPT)
+_read = pins._read
 
 DIGEST = "@sha256:" + "a" * 64
-
-
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
 
 
 class SupplyChainPinCheckTests(unittest.TestCase):
@@ -120,10 +114,16 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         # it after an indented `# syntax=` line; a comment past the preamble is a
         # deliberate false positive rather than a modelled preamble rule.
         bypass = pinned + "RUN echo \\\nFROM alpine:latest\n"
-        for escape in ("# escape=`", "  # syntax=docker/dockerfile:1\n# ESCAPE = `", "\t#escape=`"):
-            with self.subTest(escape=escape):
-                issues = pins._dockerfile_issues("x", escape + "\n" + bypass)
-                self.assertEqual(issues, [f"x: cannot parse {escape.split(chr(10))[-1].strip()!r}"])
+        for preamble, reported in (
+            ("# escape=`", "# escape=`"),
+            ("  # syntax=docker/dockerfile:1\n# ESCAPE = `", "# ESCAPE = `"),
+            ("\t#escape=`", "#escape=`"),
+        ):
+            with self.subTest(preamble=preamble):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", preamble + "\n" + bypass),
+                    [f"x: cannot parse {reported!r}"],
+                )
         for preamble in ("# note\n", pinned):
             with self.subTest(preamble=preamble):
                 self.assertTrue(pins._dockerfile_issues("x", preamble + "# escape=`\n" + pinned))
@@ -131,9 +131,8 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_shipped_dockerfiles_pin_every_stage(self) -> None:
         reviewer = _read(pins.REVIEWER_DOCKERFILE)
-        # The debian stages were pinned but unchecked before the generic FROM rule.
-        self.assertEqual(reviewer.count("FROM debian:trixie-slim@sha256:"), 2)
         mutated = reviewer.replace("FROM debian:trixie-slim@sha256:", "FROM debian:trixie-slim#", 1)
+        self.assertNotEqual(mutated, reviewer)
         self.assertTrue(pins._dockerfile_issues("reviewer.Dockerfile", mutated))
 
     def test_reviewer_base_default_must_match_the_base_image(self) -> None:

@@ -22,8 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 # Relative to ROOT, where zizmor runs, so findings report repository paths.
 INPUTS = (".github/workflows", "ai-review/ci/review.github-actions.yml")
 AUDITS = frozenset({"unpinned-uses", "unpinned-images", "ref-version-mismatch"})
-# zizmor exits 0 without findings and 10-14 by highest finding severity.
-COMPLETED = {0, *range(10, 15)}
 
 
 def main() -> int:
@@ -36,6 +34,8 @@ def main() -> int:
             zizmor,
             "--persona=pedantic",
             "--no-ignores",
+            # Exit nonzero only when zizmor itself fails; findings are read from JSON.
+            "--no-exit-codes",
             "--format=json",
             "--config=.github/zizmor.yml",
             *INPUTS,
@@ -45,7 +45,7 @@ def main() -> int:
         text=True,
         check=False,
     )
-    if completed.returncode not in COMPLETED:
+    if completed.returncode:
         print(completed.stderr.strip(), file=sys.stderr)
         return 1
     findings = [finding for finding in json.loads(completed.stdout) if finding["ident"] in AUDITS]

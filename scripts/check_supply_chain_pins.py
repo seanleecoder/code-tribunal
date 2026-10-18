@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,12 @@ IMAGE_PIN_KEYS = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW
 # A published image tag is <series>-<source sha>; the exact series is a release check.
 RELEASE_IMAGE = re.compile(rf"ghcr\.io/\S+:[0-9]+\.[0-9]+-([0-9a-f]{{40}}){DIGEST}")
 EXACT_REQUIREMENT = re.compile(r"[A-Za-z0-9_.-]+==\S+")
+# The GitHub job containers per image: base runs prepare, consensus and post;
+# reviewer runs review and critique.
+CONTAINER_IMAGES = {
+    "AI_REVIEW_BASE_IMAGE": ("/ai-review-base:", 3),
+    "AI_REVIEW_REVIEWER_IMAGE": ("/ai-review-reviewer:", 2),
+}
 PIN_KEYS = {
     "cursor-agent.pin": ("version", "url", "sha256"),
     "ripgrep.pin": ("version", "opencode_version", "url", "sha256", "binary_sha256"),
@@ -145,20 +152,17 @@ def _base_image_issues(base: str, reviewer: str) -> list[str]:
 
 def _github_container_pins(workflow: str) -> tuple[dict[str, set[str]], list[str]]:
     containers = re.findall(r"^\s+container:\s+(\S+)\s*$", workflow, re.M)
-    pins = {
-        "AI_REVIEW_BASE_IMAGE": {image for image in containers if "/ai-review-base:" in image},
-        "AI_REVIEW_REVIEWER_IMAGE": {
-            image for image in containers if "/ai-review-reviewer:" in image
-        },
-    }
+    pins: dict[str, set[str]] = {}
     issues: list[str] = []
-    # base: prepare, consensus, post. reviewer: review, critique.
-    base_jobs = sum("/ai-review-base:" in image for image in containers)
-    if len(containers) != 5 or base_jobs != 3:
-        issues.append("GitHub review workflow must run three base and two reviewer containers")
-    for key, images in pins.items():
-        if len(images) != 1:
-            issues.append(f"GitHub review containers use {len(images)} distinct {key} values")
+    for key, (marker, jobs) in CONTAINER_IMAGES.items():
+        images = [image for image in containers if marker in image]
+        pins[key] = set(images)
+        if len(images) != jobs:
+            issues.append(f"GitHub review workflow must run {jobs} {key} containers")
+        if len(pins[key]) != 1:
+            issues.append(f"GitHub review containers use {len(pins[key])} distinct {key} values")
+    if len(containers) != sum(jobs for _, jobs in CONTAINER_IMAGES.values()):
+        issues.append("GitHub review workflow runs a container that is neither review image")
     return pins, issues
 
 
@@ -178,7 +182,7 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
     pins = {key: found[0][1] for key, found in values.items() if len(found) == 1}
     github_pins, github_issues = _github_container_pins(github)
     issues.extend(github_issues)
-    for key in ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE"):
+    for key in CONTAINER_IMAGES:
         match = RELEASE_IMAGE.fullmatch(pins.get(key, ""))
         if match is None:
             issues.append(f"GitLab {key} must be a digest-pinned <series>-<sha> image tag")
@@ -189,14 +193,20 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
     return issues
 
 
-def _exact_requirement_issues(name: str, text: str) -> list[str]:
-    issues: list[str] = []
+def _requirements(text: str) -> Iterator[str]:
+    """Requirement lines without comments, `-c` includes or environment markers."""
     for line in text.splitlines():
         requirement = line.split(";", 1)[0].strip()
-        skipped = not requirement or requirement.startswith(("#", "-c "))
-        if not skipped and not EXACT_REQUIREMENT.fullmatch(requirement):
-            issues.append(f"{name} must use exact == pins only, got {requirement!r}")
-    return issues
+        if requirement and not requirement.startswith(("#", "-c ")):
+            yield requirement
+
+
+def _exact_requirement_issues(name: str, text: str) -> list[str]:
+    return [
+        f"{name} must use exact == pins only, got {requirement!r}"
+        for requirement in _requirements(text)
+        if not EXACT_REQUIREMENT.fullmatch(requirement)
+    ]
 
 
 def _package_name(name: str) -> str:
@@ -206,13 +216,12 @@ def _package_name(name: str) -> str:
 def _pip_install_issues(base: str, constraints: str) -> list[str]:
     """Every pip install passes the constraints, and every package it names is pinned there."""
     pinned = {
-        _package_name(line.split("==", 1)[0])
-        for line in constraints.splitlines()
-        if EXACT_REQUIREMENT.fullmatch(line.strip())
+        _package_name(requirement.split("==", 1)[0])
+        for requirement in _requirements(constraints)
+        if EXACT_REQUIREMENT.fullmatch(requirement)
     }
     issues: list[str] = []
-    lines = base.replace("\\\n", " ").splitlines()
-    commands = (part for line in lines for part in line.split("&&"))
+    commands = (part for instruction in _instructions(base) for part in instruction.split("&&"))
     for command in commands:
         words = command.split()
         if "pip" not in words or "install" not in words:

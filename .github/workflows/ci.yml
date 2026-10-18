@@ -38,6 +38,8 @@ jobs:
             --cache-dir "$RUNNER_TEMP/lychee-cache" \
             --bin-dir "$RUNNER_TEMP/lychee-bin"
           echo "$RUNNER_TEMP/lychee-bin" >> "$GITHUB_PATH"
+      # Its own step, so the token reaches zizmor only; `make quality` repeats
+      # the cheap offline pass without it.
       - name: Audit workflow pins online
         env:
           GH_TOKEN: ${{ github.token }}
