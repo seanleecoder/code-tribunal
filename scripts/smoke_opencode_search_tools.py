@@ -53,7 +53,7 @@ from typing import Any
 FIXED_PATH = "/usr/local/bin:/usr/bin:/bin"
 SMOKE_DIR = Path("/smoke")
 INSTALL_ROOT = Path("/opt/ai-review")
-# The wrapper mounts the checkout's ripgrep.pin here; the image does not ship it.
+# Not part of the image: the wrapper mounts this driver and ripgrep.pin here.
 PROBE_ROOT = Path("/probe")
 
 # The adapter forwards exactly these to opencode; the resolution probe must run

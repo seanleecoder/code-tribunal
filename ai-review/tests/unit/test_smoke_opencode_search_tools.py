@@ -98,9 +98,12 @@ class ProbeContractTests(unittest.TestCase):
 
     def test_wrapper_mounts_the_pin_and_driver_the_probe_reads(self) -> None:
         """Neither file ships in the image (N20), so the wrapper must mount both."""
-        mounts = re.findall(r"dst=([^,\"]+)", WRAPPER.read_text(encoding="utf-8"))
+        text = WRAPPER.read_text(encoding="utf-8")
+        mounts = re.findall(r"dst=([^,\"]+)", text)
+        driver = str(smoke.PROBE_ROOT / SCRIPT.name)
         self.assertIn(str(smoke.ripgrep_pin_path()), mounts)
-        self.assertIn(f"/probe/{SCRIPT.name}", mounts)
+        self.assertIn(driver, mounts)
+        self.assertIn(f"python3 {driver}", text)
 
 
 if __name__ == "__main__":

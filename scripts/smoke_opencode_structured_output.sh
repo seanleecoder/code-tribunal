@@ -7,7 +7,8 @@ if [ "$#" -ne 1 ]; then
 fi
 image="$1"
 
-driver="$(cd "$(dirname "$0")" && pwd)/smoke_opencode_structured_output.py"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+driver="$repo_root/scripts/smoke_opencode_structured_output.py"
 smoke_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$smoke_dir" 2>/dev/null || true

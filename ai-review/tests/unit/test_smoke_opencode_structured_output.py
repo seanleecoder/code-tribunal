@@ -136,7 +136,8 @@ class ProbeContractTests(unittest.TestCase):
 
     def test_wrapper_denies_egress_and_mounts_the_checkout_driver(self) -> None:
         text = WRAPPER.read_text(encoding="utf-8")
-        self.assertIn("--network none", text)
+        # Anchored to the option line: the wrapper's comments also say it.
+        self.assertRegex(text, r"(?m)^  --network none \\$")
         self.assertIn(
             "dst=/probe/smoke_opencode_structured_output.py,readonly", text
         )
