@@ -87,12 +87,6 @@ def _display(path: Path) -> Path:
     return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
 
 
-def _read_optional(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    return _read(path)
-
-
 def _python_base_image(text: str) -> str | None:
     match = re.search(rf"^FROM ({PYTHON_BASE_IMAGE_PATTERN})$", text, re.M)
     return match.group(1) if match else None
@@ -178,8 +172,8 @@ def _workflow_structure_issues(text: str) -> list[str]:
     return issues
 
 
-def _lychee_pin_issues(pin_text: str, checker_text: str | None) -> list[str]:
-    """Validate the shipped pin and, in a checkout, its one script authority."""
+def _lychee_pin_issues(pin_text: str, checker_text: str) -> list[str]:
+    """Validate the pin and its one script authority."""
     issues: list[str] = []
     release_root = (
         "https://github.com/lycheeverse/lychee/releases/download/"
@@ -203,25 +197,24 @@ def _lychee_pin_issues(pin_text: str, checker_text: str | None) -> list[str]:
         issues.append(
             "lychee.pin must contain the reviewed version and platform archive URLs/SHA-256s"
         )
-    if checker_text is not None:
-        tree = ast.parse(checker_text)
-        pin_path_is_exact = any(
-            isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "PIN_PATH" for target in node.targets
-            )
-            and isinstance(node.value, ast.BinOp)
-            and isinstance(node.value.op, ast.Div)
-            and isinstance(node.value.left, ast.Name)
-            and node.value.left.id == "ROOT"
-            and isinstance(node.value.right, ast.Constant)
-            and node.value.right.value == "ai-review/images/lychee.pin"
-            for node in ast.walk(tree)
+    tree = ast.parse(checker_text)
+    pin_path_is_exact = any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "PIN_PATH" for target in node.targets
         )
-        if not pin_path_is_exact:
-            issues.append(
-                "check_markdown_links.py PIN_PATH must resolve ai-review/images/lychee.pin"
-            )
+        and isinstance(node.value, ast.BinOp)
+        and isinstance(node.value.op, ast.Div)
+        and isinstance(node.value.left, ast.Name)
+        and node.value.left.id == "ROOT"
+        and isinstance(node.value.right, ast.Constant)
+        and node.value.right.value == "ai-review/images/lychee.pin"
+        for node in ast.walk(tree)
+    )
+    if not pin_path_is_exact:
+        issues.append(
+            "check_markdown_links.py PIN_PATH must resolve ai-review/images/lychee.pin"
+        )
     return issues
 
 
@@ -523,36 +516,34 @@ def main() -> int:
     failures = 0
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
-    workflow = _read_optional(PUBLISH_WORKFLOW)
-    # The runtime image copies the reusable review workflow but intentionally
-    # omits repository-only .github workflows. Check every shipped workflow
-    # that exists in the current distribution without making the image test
-    # depend on files that are not part of that distribution.
-    #
     # The installed copy under .github/workflows/ is deliberately absent from
     # every scan here. It is a byte duplicate of the canonical template, which
     # `make workflow-parity` proves and repairs; identical bytes carry identical
-    # action pins and containers, so scanning both only asked the same question
-    # twice. It was also the weaker gate: this script runs INSIDE the base image
-    # from /opt/scripts, where .github/ does not exist, so its parity check
-    # silently passed on the one platform that ran it.
-    shipped_workflows = {}
-    for path in (CI_WORKFLOW, CANDIDATE_CANARY_WORKFLOW, RELEASE_WORKFLOW, GITHUB_REVIEW_WORKFLOW):
-        workflow_text = _read_optional(path)
-        if workflow_text is not None:
-            shipped_workflows[path] = workflow_text
+    # action pins and containers, so scanning both only asks the same question
+    # twice.
+    workflows = {
+        path: _read(path)
+        for path in (
+            CI_WORKFLOW,
+            CANDIDATE_CANARY_WORKFLOW,
+            RELEASE_WORKFLOW,
+            GITHUB_REVIEW_WORKFLOW,
+            PUBLISH_WORKFLOW,
+        )
+    }
+    workflow = workflows[PUBLISH_WORKFLOW]
     lychee_pin = _read(LYCHEE_PIN)
-    markdown_link_checker = _read_optional(MARKDOWN_LINK_CHECKER)
+    markdown_link_checker = _read(MARKDOWN_LINK_CHECKER)
     for issue in _lychee_pin_issues(lychee_pin, markdown_link_checker):
         error(issue)
         failures += 1
-    canonical_review_workflow = _read(GITHUB_REVIEW_WORKFLOW)
+    canonical_review_workflow = workflows[GITHUB_REVIEW_WORKFLOW]
     for issue in _github_review_container_issues(canonical_review_workflow):
         error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
         failures += 1
     gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
     constraints = _read(PYTHON_CONSTRAINTS)
-    dev_requirements = _read_optional(DEV_REQUIREMENTS)
+    dev_requirements = _read(DEV_REQUIREMENTS)
     cursor_pin = _read(CURSOR_AGENT_PIN)
     ripgrep_pin = _read(RIPGREP_PIN)
     package = json.loads(_read(PACKAGE_JSON))
@@ -598,13 +589,12 @@ def main() -> int:
     if not (PYTHON_DIRECT_PACKAGES | {"pip"}).issubset(constrained):
         error("python-constraints.txt must pin pip and every package base.Dockerfile installs")
         failures += 1
-    if dev_requirements is not None:
-        for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):
-            error(issue)
-            failures += 1
-        for issue in _overlapping_python_pin_issues(constraints, dev_requirements):
-            error(issue)
-            failures += 1
+    for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):
+        error(issue)
+        failures += 1
+    for issue in _overlapping_python_pin_issues(constraints, dev_requirements):
+        error(issue)
+        failures += 1
     if "npm install -g" in reviewer:
         error("reviewer.Dockerfile must use npm ci against the committed lockfile")
         failures += 1
@@ -646,16 +636,14 @@ def main() -> int:
         "actions/download-artifact",
         "actions/attest",
     )
-    if workflow is not None:
-        for action in pinned_actions:
-            if re.search(rf"uses:\s*{re.escape(action)}@v\d+", workflow):
-                error(f"{action} must be pinned to a full commit SHA, not a mutable major tag")
-                failures += 1
-            if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
-                error(f"{action} full-SHA pin not found")
-                failures += 1
-        shipped_workflows[PUBLISH_WORKFLOW] = workflow
-    for path, text in shipped_workflows.items():
+    for action in pinned_actions:
+        if re.search(rf"uses:\s*{re.escape(action)}@v\d+", workflow):
+            error(f"{action} must be pinned to a full commit SHA, not a mutable major tag")
+            failures += 1
+        if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
+            error(f"{action} full-SHA pin not found")
+            failures += 1
+    for path, text in workflows.items():
         display_path = _display(path)
         for issue in _workflow_structure_issues(text):
             error(f"{display_path}: {issue}")
@@ -666,8 +654,8 @@ def main() -> int:
     # The installed copy is covered transitively: it is a byte duplicate of the
     # canonical template, enforced by `make workflow-parity`, so a reviewer CLI
     # version variable cannot appear only there.
-    combined_ci = "\n".join([workflow or "", canonical_review_workflow, gitlab_review])
-    has_repo_cli_vars = workflow is not None and "vars.AI_REVIEW_" in workflow
+    combined_ci = "\n".join([workflow, canonical_review_workflow, gitlab_review])
+    has_repo_cli_vars = "vars.AI_REVIEW_" in workflow
     has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
     if has_repo_cli_vars or has_ci_cli_vars:
         error("reviewer CLI versions must come from package-lock.json, not CI/repository variables")

@@ -7,6 +7,9 @@ if [ "$#" -ne 1 ]; then
 fi
 image="$1"
 
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+driver="$repo_root/scripts/smoke_opencode_search_tools.py"
+pin="$repo_root/ai-review/images/ripgrep.pin"
 smoke_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$smoke_dir" 2>/dev/null || true
@@ -17,9 +20,10 @@ trap cleanup EXIT
 # opencode serve is not required to create its own state directory.
 mkdir -p "$smoke_dir/home"
 
-# The reviewer image ships the driver at /opt/scripts (base.Dockerfile). Running
-# it inside the image keeps the probe on the pinned binaries and PYTHONPATH
-# instead of the host's. --read-only is avoided because opencode serve writes
+# The driver and ripgrep.pin are mounted from this checkout and run inside the
+# image, so the probe uses the image's pinned binaries and PYTHONPATH instead of
+# the host's while neither file ships. The pin is the same file the reviewer build
+# checked rg against. --read-only is avoided because opencode serve writes
 # state under its isolated HOME on the mounted /smoke.
 #
 # --network none is load-bearing, not hygiene: the defect this probe guards is
@@ -30,7 +34,9 @@ mkdir -p "$smoke_dir/home"
 timeout 300 docker run --rm \
   --network none \
   --mount "type=bind,src=$smoke_dir,dst=/smoke" \
+  --mount "type=bind,src=$driver,dst=/probe/smoke_opencode_search_tools.py,readonly" \
+  --mount "type=bind,src=$pin,dst=/probe/ripgrep.pin,readonly" \
   --env HOME=/smoke/home \
   --env PATH=/usr/local/bin:/usr/bin:/bin \
   "$image" \
-  python3 /opt/scripts/smoke_opencode_search_tools.py
+  python3 /probe/smoke_opencode_search_tools.py

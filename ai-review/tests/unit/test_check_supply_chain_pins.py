@@ -22,7 +22,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_current_tree_passes(self) -> None:
         self.assertEqual(check_supply_chain_pins.main(), 0)
 
-    def test_shipped_lychee_pin_and_checker_path_are_one_authority(self) -> None:
+    def test_lychee_pin_and_checker_path_are_one_authority(self) -> None:
         pin = check_supply_chain_pins.LYCHEE_PIN.read_text(encoding="utf-8")
         checker = check_supply_chain_pins.MARKDOWN_LINK_CHECKER.read_text(encoding="utf-8")
         self.assertEqual(check_supply_chain_pins._lychee_pin_issues(pin, checker), [])
@@ -163,8 +163,6 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                 check_supply_chain_pins.PYTHON_CONSTRAINTS = original
 
     def test_current_dev_requirements_are_exactly_pinned(self) -> None:
-        if not check_supply_chain_pins.DEV_REQUIREMENTS.exists():
-            self.skipTest("contributor requirements are intentionally absent from runtime images")
         requirements = check_supply_chain_pins.DEV_REQUIREMENTS.read_text(encoding="utf-8")
 
         self.assertEqual(
@@ -255,7 +253,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_ripgrep_pin_happy_path_passes(self) -> None:
         self.assertEqual(self._ripgrep_pin_issues(self._RIPGREP_PIN_OK), [])
 
-    def test_shipped_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
+    def test_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
         """The two pins are one decision: the pinned rg is the one this opencode fetches.
 
         Checks the real files rather than a fixture, so a bump of either pin alone
@@ -617,43 +615,13 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ["line 2 contains a YAML key inside an inline comment"],
         )
 
-    # Byte-exact installed/canonical parity — including the CRLF-vs-LF case that a
-    # text comparison cannot see — is asserted against the surviving implementation
-    # in test_release_tools.WorkflowSyncTests, which covers detection *and* repair
-    # in both check and write modes. This script no longer carries its own copy of
-    # that comparison: it runs inside the base image, where .github/ does not
-    # exist, so the check it duplicated silently passed exactly where it ran.
-
-    def test_allows_repository_only_ci_workflow_to_be_absent_from_runtime_image(self) -> None:
-        original = check_supply_chain_pins.CI_WORKFLOW
-        with tempfile.TemporaryDirectory() as tmp:
-            check_supply_chain_pins.CI_WORKFLOW = Path(tmp) / "missing-ci.yml"
-            try:
-                self.assertEqual(check_supply_chain_pins.main(), 0)
-            finally:
-                check_supply_chain_pins.CI_WORKFLOW = original
-
     def test_script_imports_only_the_standard_library(self) -> None:
-        """The script ships inside the base image and must stay stdlib-only.
+        """The script must stay stdlib-only.
 
-        ai-review/images/base.Dockerfile copies it to /opt/scripts, where the only
-        third-party packages present are the ones the pipeline itself needs, so a
-        repository-only import would make the shipped copy unrunnable. Asserted from
-        the checkout because that is where the constraint can be caught before an
-        image is built.
-
-        scripts/release_common.py is the canonical implementation of the workflow
-        parity comparison for repository-only callers, but it is not shipped and
-        must not be: it resolves ROOT from its own path, reads
-        release/release-inputs.json, and shells out to git for index entries,
-        and the image contains neither release/ nor .git for those to operate on.
-        Shipping release tooling into a published runtime image would also
-        enlarge its attested surface for no runtime purpose. Note that git itself
-        IS installed in the base image, so a missing binary is not the reason.
-
+        The image-publishing workflow runs it on the runner's system Python before
+        any dependency is installed, so a third-party import would break that gate.
         Asserted as an AST scan rather than a name list so a future import is
-        caught by shape, and here rather than by inspection because nothing else
-        in the script reveals the constraint.
+        caught by shape.
         """
 
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
@@ -664,7 +632,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
                     # A relative import cannot resolve: the script is executed as
-                    # a standalone file from /opt/scripts, not as a package.
+                    # a standalone file, not as a package.
                     roots.add(f".{node.module or ''}")
                 elif node.module:
                     roots.add(node.module.split(".")[0])
@@ -674,7 +642,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             non_stdlib,
             [],
             "check_supply_chain_pins.py must import only the standard library; "
-            "it runs inside the base image, where these modules do not exist",
+            "the publishing workflow runs it before installing dependencies",
         )
 
 

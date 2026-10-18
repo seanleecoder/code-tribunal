@@ -58,7 +58,7 @@ otherwise build on top of it. Line counts are estimates covering source and test
 | N17 | `input_bundle`: GitHub revision through the platform client, a two-point head recheck, no JS fork step, no unread digests | −200 | 2.1.x | No longer paired with SPEC-66's failed-panel publication, which was dropped on 2026-10-16. SPEC-47 deleted `config_sha256` and `rules_sha256` in 2.0.3. |
 | N18 | Merge the five canary scripts into two platform modules behind one CLI | −950 | After 2.1.0 | Not in the same release as the process change. |
 | N19 | Docs pruning: the 0.4/1.x migration sections, the 1.0.0 known issue, impossible caveats, and one copy of each duplicated topic | −350 | 2.0.3; evidence docs with S01 | |
-| N20 | Image hygiene: stop copying unused scripts, CI files and READMEs into the base image | small | Next image rebuild (2.0.3) | |
+| N20 | Image hygiene: stop copying unused scripts, CI files and READMEs into the base image | small | **Done** in 2.0.3 | Nothing from `scripts/`, `images/` or `ci/` ships: build-only pins are bind-mounted into the RUN that reads them, and the OpenCode preflight wrappers mount their drivers. The pin checker no longer tolerates missing repository files, since it only runs from a checkout. |
 
 **Rejected or deferred product calls:**
 

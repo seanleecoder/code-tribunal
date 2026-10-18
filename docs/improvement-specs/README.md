@@ -48,7 +48,7 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17, N09, N13, N16.
+- **Done:** S02, S10, S17, N09, N13, N16, N20.
 - **Partial:** S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
@@ -107,9 +107,7 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. Small cleanups:
-   - prune the docs (N19);
-   - image hygiene (N20).
+1. Prune the docs (N19).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 

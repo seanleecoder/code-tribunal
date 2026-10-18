@@ -12,17 +12,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ai-review/images/python-constraints.txt /opt/ai-review/images/python-constraints.txt
-
-RUN python -m pip install --no-cache-dir --constraint /opt/ai-review/images/python-constraints.txt --upgrade pip \
+# The constraints are needed only by this install, so they are mounted, not shipped.
+RUN --mount=type=bind,source=ai-review/images/python-constraints.txt,target=/tmp/python-constraints.txt \
+    python -m pip install --no-cache-dir --constraint /tmp/python-constraints.txt --upgrade pip \
     && python -m pip install --no-cache-dir \
-      --constraint /opt/ai-review/images/python-constraints.txt \
+      --constraint /tmp/python-constraints.txt \
       jsonschema PyYAML requests
 
 COPY ai-review/adapters /opt/ai-review/adapters
-COPY ai-review/ci /opt/ai-review/ci
 COPY ai-review/config /opt/ai-review/config
-COPY ai-review/images /opt/ai-review/images
 COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
@@ -35,13 +33,6 @@ COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
 # shipped layer, so changing one does change the image digest and is part of the
 # release binding.
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
-COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
-COPY scripts/smoke_opencode_search_tools.py /opt/scripts/smoke_opencode_search_tools.py
-COPY scripts/smoke_opencode_search_tools.sh /opt/scripts/smoke_opencode_search_tools.sh
-COPY scripts/smoke_opencode_structured_output.py /opt/scripts/smoke_opencode_structured_output.py
-COPY scripts/smoke_opencode_structured_output.sh /opt/scripts/smoke_opencode_structured_output.sh
-COPY README.md /opt/README.md
-COPY ai-review/README.md /opt/ai-review/README.md
 
 # The curated packaged-runtime smoke suite, and the single deliberate exception to
 # "runtime images carry no test code". It is stdlib-only, imports nothing from the

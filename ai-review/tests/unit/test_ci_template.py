@@ -722,12 +722,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         )
         self.assertIn("AI_REVIEW_PACKAGED_RUNTIME=1", text)
 
-    def test_base_image_copies_readmes_to_documented_runtime_paths(self) -> None:
-        text = _BASE_DOCKERFILE.read_text(encoding="utf-8")
-
-        self.assertIn("COPY README.md /opt/README.md", text)
-        self.assertIn("COPY ai-review/README.md /opt/ai-review/README.md", text)
-
     def test_reviewer_dockerfile_relinks_npm_bins_in_final_stage(self) -> None:
         text = _REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
 

@@ -140,10 +140,10 @@ RUN set -eu; \
 # not merely present somewhere in the image. The binary digest is re-checked here
 # rather than only in the builder stage, because what matters is the identity of
 # the file that ended up on PATH after the COPY, not what was downloaded.
-RUN set -eu; \
+RUN --mount=type=bind,source=ai-review/images/ripgrep.pin,target=/tmp/ripgrep.pin set -eu; \
     resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg')"; \
     test "$resolved" = "/usr/local/bin/rg"; \
-    . /opt/ai-review/images/ripgrep.pin; \
+    . /tmp/ripgrep.pin; \
     echo "$binary_sha256  /usr/local/bin/rg" | sha256sum -c -; \
     rg --version | grep -F -- "ripgrep $version"
 
