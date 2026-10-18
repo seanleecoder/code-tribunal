@@ -1,122 +1,48 @@
 # Live-evidence runbook
 
-> **Retired process.** From 2.1.0 a release is a signed tag verified against a cited
-> Candidate Canary run; see the [release process](../development/release-process.md).
-> Release inputs, evidence records, and waivers below describe releases up to 2.0.3.
-> This page is being cut down under ADR-0004 migration step 4.
-
-Operator runbook for the release-gating evidence-matrix rows. It sequences the
-manual live runs and points each to its record file. This complements — does not
-replace — the executable tests (`make quality`) and the
-[evidence index](README.md).
-
-**This is the durable procedure, not a one-release artifact.** It was executed in
-full for 1.0.0 and is the sequence to follow for every subsequent release: fill the
-candidate block below with the new runtime source, images, and run IDs, then work
-through the steps. Sections that record what a past release actually observed are
-marked as such, so a future operator can tell the procedure apart from the results.
-
-**Which live checks a release needs** is the
+The [Candidate Canary](../../CONTRIBUTING.md#candidate-canary) is the release
+assurance: it verifies image identity and provenance, then runs the real panel, the
+mock lifecycle and, when the trust boundary changes, the hostile-MR probe. Which
+campaigns and extra checks a release needs is the
 [release pull-request checklist](../development/release-process.md#release-pull-request-checklist).
+This page holds the operator mechanics around that: the live checks the canary does
+not automate, how to diagnose a failed campaign by hand, and the coverage gaps each
+release carries forward.
 
-For the accepted release-version grammar and derived notes path, see the
-[release version contract](../development/release-process.md#release-version-contract).
+No evidence records are written. The release body records the canary verdicts.
+Records for releases up to 2.0.3 remain at their tags, for example
+[`v2.0.3:docs/evidence/`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence).
 
-Its guiding principle is **spend real tokens only on what genuinely requires a
-live model or a live platform.** Most matrix logic is already proven by the
-regression suite inside `make quality`; those rows are confirmed here at most as
-optional wiring checks, not as release gates. See the
-[evidence index](README.md) for the per-row classification and the regression
-tests that cover each row.
+Spend real tokens only on what genuinely requires a live model or a live platform.
+Most logic is proven by the regression suite inside `make quality`; see the
+[evidence index](README.md#live-versus-regression-coverage).
 
-## Release candidate under test
+## Consumer projects and prerequisites
 
-**Fill this block for the release you are running, then work through the steps.**
-Every release-gating probe below must run against the pair named here; a record
-bound to an older `R` or digest pair never certifies a later runtime source, however
-similar the code. The authoritative coordinates for the release under preparation
-live in `release/release-inputs.json` and `release/<release_version>.md` — this block
-restates them for the operator.
+Reuse the long-lived demo consumers; do not rebuild them.
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md) records their current configuration,
+branch conventions, the threads that must be preserved, and the per-release setup
+checklist. Run `make demo-preflight` before and after any campaign. Its branch
+names and history call a real panel *Chain A* and a mock lifecycle chain *Chain B*.
 
-```text
-Runtime source R:  <40-char sha>
-Quality gate:      CI `make quality` run <id>
-Publish run:       <id>
-Base image:        ghcr.io/<org>/code-tribunal/ai-review-base@sha256:<digest>
-Reviewer image:    ghcr.io/<org>/code-tribunal/ai-review-reviewer@sha256:<digest>
-```
+- **GitLab:** every lifecycle merge request needs a **protected** source branch. The
+  protected `GITLAB_TOKEN` injects only on protected refs, so from an unprotected
+  branch prepare and posting fail outright. Only the hostile probe uses an
+  unprotected branch, because the withholding is what it measures.
+- **GitHub:** no required status check. Code Tribunal is informational; a leftover
+  required `gate` entry leaves every pull request unmergeable. Copy the workflow from
+  the new `R` instead of hand-editing pins, because an older copy can carry env keys
+  a newer `R` rejects.
 
-> **Historical: the activated 1.0.0 pair.** Retained because several 1.0.0
-> result notes below reference it. It is **not** the
-> current candidate: `release/release-inputs.json` names the release under
-> preparation (`status: draft`, runtime source and digests unset until the
-> candidate pair is published).
+## Diagnosing a `verify-candidate` failure
 
-> The prior `b674d1e` and `15d424f` candidates are historical provenance only —
-> `b674d1e` was invalidated by a GitHub human-command authorization defect and
-> `15d424f` predates the mock/gate code. Their partial evidence binds no release.
-
-- Runtime source `R`: `88bc9412b283d4a44328ab3ffd9f9708b0290f8e` (`main` HEAD at 1.0.0)
-- Quality gate: CI `make quality` run **30125523924** — success (the SPEC-31
-  symlink and SPEC-34 revision/406 regression tests are inside this run and are
-  the authoritative coverage for those rows).
-- Publish run: **30125524008** — success
-  (<https://github.com/seanleecoder/code-tribunal/actions/runs/30125524008>)
-- Images (GHCR, tag `1.0-88bc9412b283d4a44328ab3ffd9f9708b0290f8e`):
-  - base `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:f2a433ac1094d45943a2973c334ff0d711d6aca73980cd44cfefe3aa0b403896`
-  - reviewer `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:2fd84c43fc4529182bf077c809ba40bc6e628b5e77d6f1a2a0ffd24e902591fe`
-- For **v1.0.0**, the three canonical templates and
-  `release/release-inputs.json` were repinned to this pair, so a consumer copied
-  from `R` (plus the repin commit) ran exactly these images.
-- **All release-gating rows passed against this pair for `v1.0.0`** and are
-  recorded with binding `Release-runtime-source` / digest fields; the non-gating
-  SPEC-34 revision-failures row was released under a registered waiver, and
-  `release/release-inputs.json` was `status: active` for that release. See the
-  [evidence matrix](README.md) for the per-row result. For the *next* release,
-  replace this identity block and repeat the release-gating probes against the new
-  pair — a record bound to `88bc941` does not certify a later runtime source.
-
-> Image tags (`<series>-<R>`, for example `2.0-<R>`) are mutable registry
-> pointers; **always pull and pin by the `sha256:` digest** in consumer templates
-> and when verifying an image.
-
-> **Satisfied by the pair above — kept as the procedure for any future rebuild.**
-> The `AI_REVIEW_MOCK_SCENARIO` reviewer support and the posting/state code live
-> in `ai-review/src`, which is copied into the **base** image
-> (`ai-review/images/base.Dockerfile`); the reviewer image is built `FROM` the base
-> and inherits it, and the base runs the `prepare`/`consensus`/`post` jobs
-> while the reviewer runs `review`/`critique`. So building only a reviewer image
-> atop an older base contains no source change. Whenever the pair is rebuilt: rebuild
-> the **base** from a commit that includes the code under test, build the
-> **reviewer** `FROM` that exact base, then update **both** digests,
-> `runtime_source`, the canonical templates, and `release/release-inputs.json` (see
-> the image-pin rotation procedure in [operations](../operations.md)), and re-run
-> the Candidate Canary (Step 0b) against the new digests. Republishing is an
-> operator/CI action. Because the posting/mock code ships inside the product image,
-> **both** chains must run against the digests named above, so the evidence matches
-> the exact images that ship.
-
-## Step 0 — Image identity (owned by the canary)
-
-The Candidate Canary's `verify-candidate` job (Step 0b) runs
-[`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py),
-which checks both digests and OCI revision labels, then verifies each provenance
-attestation against source ref `refs/heads/main`, source digest `R`, and the
-exact publication-workflow signer identity (`SIGNER_IDENTITY` in that script).
-Any failure prevents the campaign from starting.
-[`record-candidate-canary.md`](record-candidate-canary.md) records the result.
-
-Retire the separate manual provenance check only once this enforcement is on
-protected `main`. Older orchestration requires running the check below by hand,
-with their results and the exact `Release-*` bindings recorded alongside the
-canary results. The 2.0.0 provenance evidence remains in the historical manual
-[record](record-image-publication-verification.md); its canary did not enforce
-these source and signer constraints.
-
-With the hardened canary, run the same check locally to diagnose a
-`verify-candidate` failure. From a checkout with `origin/main` fetched, set `R`,
-`BASE_IMAGE`, and `REVIEWER_IMAGE` to the candidate's full source commit and two
-digest-pinned image references:
+The canary's `verify-candidate` job runs
+[`validate_candidate_identity.py`](../../scripts/validate_candidate_identity.py). It
+checks both digests and OCI revision labels, then verifies each provenance
+attestation against `refs/heads/main`, source digest `R`, and the publication
+workflow's signer identity. To reproduce it locally, from a checkout with
+`origin/main` fetched, set `R`, `BASE_IMAGE` and `REVIEWER_IMAGE` to the full source
+commit and the two digest-pinned references:
 
 ```bash
 docker pull "$BASE_IMAGE" && docker pull "$REVIEWER_IMAGE" &&
@@ -124,583 +50,215 @@ docker pull "$BASE_IMAGE" && docker pull "$REVIEWER_IMAGE" &&
     --base-image "$BASE_IMAGE" --reviewer-image "$REVIEWER_IMAGE" --verify-images
 ```
 
-To confirm anonymous resolution without touching stored credentials, point
-`DOCKER_CONFIG` at a fresh directory containing only `{}` and use
-`docker manifest inspect --verbose <ref>` — note that an empty `DOCKER_CONFIG`
-also hides CLI plugins, so read the revision labels with the normal config via
+To confirm anonymous resolution without stored credentials, point `DOCKER_CONFIG`
+at a fresh directory containing only `{}` and run
+`docker manifest inspect --verbose <ref>`. An empty `DOCKER_CONFIG` also hides CLI
+plugins, so read the revision labels with the normal configuration:
 `docker buildx imagetools inspect --format '{{json .Image}}' <ref>`.
 
-## Step 0b — Candidate Canary (before any consumer repin)
+Image tags (`<series>-<R>`) are mutable pointers; always pull and pin by digest.
 
-Dispatch the protected `Candidate Canary` workflow from `main` with `R` and the
-two digest-pinned subjects, as described in
-[`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary). It re-verifies image
-identity, OCI labels, and provenance, then runs one four-seat (Claude, Codex,
-OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
-result blocks repinning; rerun only after a concrete fix.
+## The deterministic mock reviewer
 
-The canary retains only redacted summary artifacts. From 2.1.0 no evidence records
-are generated: the release body records the run's verdicts. A four-seat canary
-whose three OpenRouter models and efforts match the shipped defaults supplies
-their route evidence for Chain A. A separate three-seat smoke establishes the
-exact default roster, or supplies route evidence when the canary uses different
-models or efforts. Reuse a passing smoke on the same runtime and image pair.
-
-Keep the persisted demo roster at four seats and run `make demo-preflight` before
-and after the campaign. Scope any three-seat roster to its temporary workflow or
-template; do not change the resting roster to make that smoke pass.
-
-When the posted-body format changed, confirm before the repin that a bot thread
-in the **previous** format survives on the demo (see the preserved threads in
-[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md#threads-that-must-not-be-deleted));
-without one there is nothing older to refresh. This remains a manual check:
-
-1. Capture the old root note, author, creation time, finding identity, and footer.
-   Use a preserved released-image fixture; keep its content, anchor, and reviewer
-   identities unchanged.
-2. Temporarily adopt the current trusted topology and candidate image pins on
-   that fixture branch. Enable mocks only through the explicit safe mock setup
-   below, using the scenario that authored the old body. On GitLab, update the
-   existing branch through the commits API without `start_branch`; the canary's
-   new-branch helper is intended for newly created branches.
-3. Reopen the change and drive one pipeline. Require successful `post`, exactly
-   one updated discussion, zero created discussions, no warnings, and the same
-   root note, author, creation time, and finding identity. Confirm the new footer.
-4. Close the change before restoring its original CI configuration; remove mock
-   variables and temporary template branches. Keep the refreshed note and
-   preserved fixture branch. Run `make demo-preflight` and record the exact
-   candidate bindings and scoped audit. The [GitLab refresh record](record-gitlab-body-refresh.md)
-   demonstrates this procedure.
-
-## What only you (the operator) can do
-
-These runs cannot be executed from CI or a dev container — they need real
-scratch consumer projects, runners, protected credentials, and (for the one
-model smoke) an OpenRouter key.
-
-**The consumer projects already exist — reuse them, do not rebuild them.**
-[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md) documents both
-`seanleecoder/code-tribunal-demo` projects: what is already configured, the
-`evidence/` branch conventions, the threads that must be preserved for the posted-body
-refresh check, and the per-release setup checklist. The summary below is the
-requirement; that file is the current state.
-
-Prerequisites:
-
-- **GitLab:** the scratch consumer project (`seanleecoder/code-tribunal-demo`,
-  project id `84667714`) + a protected template project holding
-  `ai-review/ci/` at the templates repinned to `R` (for the 1.0.0 runs this is
-  `seanleecoder/code-tribunal-ci-template` at
-  `97e05fddf9f5466ccee385344a7aaeac500e4aa2`; the consumer's `.gitlab-ci.yml` must
-  reference that same SHA for **both** includes);
-  a runner; protected+masked `OPENROUTER_API_KEY`
-  and `GITLAB_TOKEN` (`api` scope); **Pipelines must succeed** enabled; and a
-  **protected scratch source branch** for the lifecycle MRs (the protected
-  `GITLAB_TOKEN` injects only on protected refs — an unprotected branch withholds
-  it and posting fails). Setup:
-  [`docs/getting-started/gitlab.md`](../getting-started/gitlab.md).
-- **GitHub:** the scratch consumer repo (`seanleecoder/code-tribunal-demo`) with
-  the workflow copied from `R` and
-  repinned to the pair above (copying an older template can carry env keys that `R`
-  rejects — the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides are one such case);
-  `OPENROUTER_API_KEY` secret. **No required status check.** The `gate` job was
-  removed: Code Tribunal is informational and requires no check, so a consumer
-  ruleset must not name one. If the scratch consumer still carries a required
-  `gate` entry from an earlier release, delete it before repinning — a required
-  check that never reports leaves every PR unmergeable. A ruleset requiring
-  `post` instead is optional and reports publication, not findings; if you enable
-  it, note that a required-check ruleset also blocks direct pushes to the default
-  branch, so adopting the workflow has to go through a PR — run that PR in mock
-  mode so it costs nothing. Setup:
-  [`docs/getting-started/github.md`](../getting-started/github.md).
-
-## Cost model: where the tokens go
-
-A full panel is 6–8 real reviewer LLM calls (3–4 reviewers × review + critique).
-Only the **review** and **critique** stages call a model; prepare, consensus,
-and post are deterministic. The historically expensive procedures ran a
-fresh full panel for *every* lifecycle step, and weak-model nondeterminism forced
-repeated re-runs. This runbook removes almost all of that spend:
-
-1. **One real four-seat canary per platform** (Step 0b) proves adapter wiring and
-   the default model routes when their resolved models and efforts match. Reuse
-   it as Chain A route evidence. A separate three-seat smoke proves the exact
-   default roster or covers mismatched routes; reuse a passing smoke on the same
-   runtime and image pair. Everything else uses the deterministic mock reviewer.
-2. **Deterministic mock for the whole lifecycle chain** (Chain B) — zero
-   tokens, no flakiness, and it still drives the *real* platform
-   posting/resolve/reopen APIs, which is what those steps exist to prove.
-   The two chains use separate change requests and separate finding identities.
-3. **Single reviewer, critique off, cheapest model, minimal diff** for a live
-   probe that does not require a complete panel or review-and-critique coverage.
-4. **No dual-digest re-runs of token-bearing rows** — validate the real panel once,
-   against the single final rebuilt pair, rather than repeating it across candidate
-   digests. (The mock code ships in the base image, so both images are rebuilt
-   from one commit and validated together — see the precondition above.)
-
-### The deterministic mock reviewer
-
-`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true` makes each seat
-emit a canned, schema-valid finding batch
-instead of calling a model (an adapter still falls back to a real CLI if any
-`AI_REVIEW_REQUIRE_REAL_*` flag is set, so set every one to `0` for Chain B — see
-the enabling section below). `AI_REVIEW_MOCK_SCENARIO` selects the finding set,
-anchored to the `records[0]`/`data[0]` indexing marker when the diff contains one
-(via `_find_indexing_candidate`), otherwise the first added line. **Give the
-Chain B diff a stable indexing marker** (the shipped
-`ai-review/tests/fixtures/diffs/simple.diff` has a `records[0]` one) so finding
-identity (`context_hash` → `source_finding_id`) is stable across the same-diff
-lifecycle steps — create, rerun, body change, resolve, reopen. The
-first-added-line fallback is not stable — inserting a line above shifts which
-line is "first added", changing the anchor and opening a new discussion.
-
-> **On GitHub, the Chain B fixture must ADD a file — deliberately.** At
-> `R = 88bc941` (the 1.0.0 runtime) this was impossible: GitHub's prepared
-> `mr.diff` renders an added file with `--- /dev/null`; `parse_unified_diff` kept
-> that verbatim, and `context_hash_from_unified_diff` normalized the parsed path
-> while scanning, raising `absolute paths are not allowed: /dev/null`. Finalization
-> caught that and **dropped the finding**, so every seat reported
-> `raw_finding_count=1, accepted_finding_count=0, usable_for_resolution=false`,
-> consensus exited 3, and nothing was published. Observed live in GitHub run
-> `30172413739`. It affected **real reviewers too**, not just the mock: the raise
-> happened while scanning the diff, before the anchor's own paths were compared,
-> and it triggered on an added or deleted file, or on a file appearing *after* one
-> in the diff. Every 1.0.0 fixture was therefore modify-only.
->
-> **The anchor fix landed after `v1.0.0` and ships in 1.0.1.** So the GitHub Chain B
-> fixture must now **add** a file, and step 1 of the chain asserts
-> `accepted_finding_count == raw_finding_count` with a posted inline discussion.
-> That assertion is the release's headline claim — do not substitute a modify-only
-> fixture, because no live run has ever exercised this path green.
->
-> **Platform asymmetry still holds and still drives fixture choice.** GitLab's
-> prepared diff emits `--- a/<path>` for added files rather than the sentinel, so it
-> never hit the defect and its fixture proves something different. Choose fixtures
-> per platform deliberately rather than assuming symmetry.
-
-> **Unrelated line movement is regression-covered, not a token-free mock live
-> step.** Keeping finding identity across a line movement is cross-revision remap
-> behavior: a real push advances the head SHA and regenerates the served unified
-> diff (with the platform's own limited context), which the mock cannot faithfully
-> reproduce — and identity depends on the `context_hash` ±6 new-side window, which
-> a hand-shaped fixture would only approximate. The **internal** remap contract —
-> finding identity is preserved and the persisted state anchor follows the marker,
-> so the run updates the one existing discussion instead of opening a duplicate — is
-> proven by
-> `integration/test_revision_lifecycle_e2e.py::test_line_movement_across_revisions_remaps_to_same_discussion`
-> (two independently prepared revisions, each with its own head SHA, diff digest, and
-> run_id) plus the `test_anchors.py` remap and `test_post.py` run-to-run upsert unit
-> tests. What that test does **not** prove is *platform-visible* re-anchoring:
-> updating an existing GitHub/GitLab comment rewrites its body, not its original diff
-> position, and `post.py` marks visible placement as requiring separate live
-> validation. So the visible re-anchoring of a moved comment stays a documented,
-> **live-optional** confirmation (not release-gating); the internal remap is
-> regression-covered.
-
-The scenarios:
+`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true` makes each seat emit
+a canned, schema-valid batch instead of calling a model. An adapter still falls
+back to its real CLI while any `AI_REVIEW_REQUIRE_REAL_*` flag is set, so set every
+one to `0`. `AI_REVIEW_MOCK_SCENARIO` selects the finding set:
 
 | Scenario | Emitted finding | Drives |
 |---|---|---|
-| `blocking` | one blocker/correctness finding | inline create at two independent supporters. Severity is an impact label: `post` exits `0` and nothing blocks the merge |
-| `blocking_alt` | same identity as `blocking` (same title, category, anchor), different body | the changed-body in-place update: the existing discussion is updated, `body_hash` changes, no new discussion is created |
-| `advisory` | one minor/maintainability finding | a lower-severity inline surface finding at two independent supporters; identical publication outcome to `blocking`, which is the point |
-| `none` | no findings | absence-based resolution / withdrawal of a previously posted finding (NOT an unchanged rerun) |
-| `default` | historical `records[0]` heuristic | local `make consensus-local` demo |
+| `blocking` | one blocker/correctness finding | inline create at two independent supporters; `post` exits `0` and nothing blocks the merge |
+| `blocking_alt` | same identity as `blocking`, different body | the changed-body in-place update: same discussion, new `body_hash`, nothing created |
+| `advisory` | one minor/maintainability finding | the same publication outcome as `blocking`, which is the point |
+| `none` | no findings | absence-based resolution of a previously posted finding (not an unchanged rerun) |
+| `default` | historical `records[0]` heuristic | the local `make consensus-local` demo |
 
-The batch is finalized by the normal adapter pipeline, so anchors are re-resolved
-against the real diff exactly like a real reviewer's output.
+The mock anchors to the `records[0]`/`data[0]` marker when the diff contains one,
+otherwise to the first added line. Give a fixture a stable marker (the shipped
+`ai-review/tests/fixtures/diffs/simple.diff` has one): the first-added-line fallback
+moves when a line is inserted above it, which changes the finding identity. The mock
+emits identical findings on every seat, so it cannot reach the below-quorum FYI path
+or the inline-unmappable summary fallback; both are regression-covered.
 
-> The below-quorum **FYI/summary-comment** path and the **inline-unmappable
-> summary fallback** are not reachable through these uniform mock scenarios (the
-> mock emits identical findings across seats, which always group to quorum, and
-> config validation rejects a `votes_required`/enabled-seat mismatch). Both are
-> **regression-covered** (`integration/test_publish_e2e.py` FYI cases and
-> `test_post.py` summary-fallback cases); do not attempt a single-seat FYI live
-> run.
+These are adapter controls, outside the prepare-stamped configuration digest, so set
+them on the review and critique jobs (project-wide is simplest). A
+configuration-affecting override (`AI_REVIEW_CRITIQUE_ENABLED`,
+`AI_REVIEW_REVIEWERS`, `AI_REVIEW_<SEAT>_MODEL/EFFORT`) must be identical on every
+job, or the first later job that sees a different configuration fails closed. Never
+edit a production template.
 
-**Enabling the mock in the scratch consumer (Chain B only).** The shipped templates
-hardcode `AI_REVIEW_LOCAL_MOCK: "0"` and `AI_REVIEW_REQUIRE_REAL_*: "1"`. To run
-Chain B you must set `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-set every `AI_REVIEW_REQUIRE_REAL_*=0`,
-and set `AI_REVIEW_MOCK_SCENARIO`; the mechanism differs by platform. These are
-**adapter controls** that only affect review/critique behavior — they are *not*
-part of the prepare-stamped effective-config digest — so set them consistently on
-the **review and critique** jobs (project-wide is simplest). If you also change a
-config-affecting override for Chain B (`AI_REVIEW_CRITIQUE_ENABLED`,
-`AI_REVIEW_REVIEWERS`, `AI_REVIEW_<R>_MODEL/EFFORT`), that *does* feed the effective-config digest,
-so scope it identically across **all** jobs or the first later job that sees a
-different config fails closed (SPEC-33, SPEC-47). Never edit a production template.
+- **GitLab:** set the toggles as **project** CI/CD variables. They apply to
+  push-triggered `merge_request_event` pipelines and reach a child pipeline with
+  forwarding disabled. Manual "Run pipeline" variables are dropped by any
+  push-triggered pipeline, which then runs real. Flip `AI_REVIEW_MOCK_SCENARIO` by
+  editing the variable in place; it applies to every open merge request in the
+  project.
+- **GitHub:** step `env` cannot be overridden by repository variables, so the demo
+  workflow maps them with safe defaults (`AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
+  `AI_REVIEW_ALLOW_LOCAL_MOCK: … || 'false'`, each `AI_REVIEW_REQUIRE_REAL_*: … || '1'`,
+  and `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`). Set repository
+  variables to drive the mock. Do not commit a per-scenario workflow change: a new
+  commit changes the diff and the mock's anchor.
 
-> **Sticky-variable warning — do not let the mock leak into Chain A.** Chain A is
-> the *real* smoke and must run with the mock off and require-real on. Persisted
-> settings (GitLab project variables, GitHub repository variables) survive between
-> runs, so a mock left enabled would silently turn a later Chain A into a mock run.
-> Run **Chain A first** (before setting any mock variable), or use a **separate
-> scratch project/repo** for Chain B, or delete the mock variables before any Chain
-> A run. The GitHub mapping below defaults to safe values when the variables are
-> unset.
-
-- **GitLab — protected source branch + project variables.**
-  Any GitLab lifecycle run (Chain A or B) must open its MR from a **protected
-  scratch source branch**: the required `GITLAB_TOKEN` is masked+protected and
-  powers prepare/discussions/state/commands, and protected CI/CD variables inject
-  **only on protected refs**. On an unprotected feature branch the protected
-  `GITLAB_TOKEN` (and any variable you marked Protected) is withheld, so prepare
-  and posting fail outright — credentials are unavailable. (Mock toggles set as
-  *unprotected* project variables would still inject on any branch, but the run
-  fails anyway without the token, so the protected branch is required regardless.)
-  With the branch protected, set the mock
-  toggles (`AI_REVIEW_LOCAL_MOCK=1`,
-  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-  `AI_REVIEW_REQUIRE_REAL_OPENROUTER/CLAUDE/OPENCODE/CURSOR=0`,
-  `AI_REVIEW_MOCK_SCENARIO=<scenario>`) as **project CI/CD variables** for **both**
-  topologies. Project variables apply to *every* pipeline in the project —
-  including the `merge_request_event` pipelines a `git push` triggers (opening the
-  MR, and any commit pushed for a lifecycle step) — so the mock stays active across
-  the whole chain no matter how a pipeline is triggered; they also reach the child
-  in hardened-child mode, where forwarding is disabled
-  (`inherit.variables: false`, `forward.pipeline_variables: false`) and manual
-  parent variables would not. Project variables are sticky, so heed the warning
-  above (Chain A first, or a separate scratch project, or delete them afterward).
-  Flip `AI_REVIEW_MOCK_SCENARIO` between Chain B steps by editing the project
-  variable in place and re-triggering the pipeline — no workflow commit is needed
-  — and remember that value applies project-wide, so any other open MR in the
-  scratch project sees the current scenario until you clear it.
-  - *Manual "Run pipeline" variables are not sufficient for the full lifecycle.*
-    They apply only to that single web/api run and are **dropped by any
-    push-triggered pipeline**, so any pipeline triggered by a push (the MR's own
-    commits, or a re-trigger by push) would silently run real.
-    A manual web run also only triggers the DAG when you additionally supply
-    `CI_MERGE_REQUEST_IID=<target MR IID>` and select the MR source branch (the
-    jobs gate on `web/api && $CI_MERGE_REQUEST_IID`). Use them only for the
-    non-push steps if at all; prefer project variables.
-- **GitHub** step `env` cannot be overridden by repository variables. Make a
-  **one-time** edit to the scratch consumer's copied workflow that maps the
-  review/critique step env to variables with **safe defaults** — keep the
-  require-real flags, do not delete them:
-  `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
-  `AI_REVIEW_ALLOW_LOCAL_MOCK: ${{ vars.AI_REVIEW_ALLOW_LOCAL_MOCK || 'false' }}`,
-  `AI_REVIEW_REQUIRE_REAL_OPENROUTER: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENROUTER || '1' }}`
-  (and the same `|| '1'` mapping for `_CLAUDE`/`_OPENCODE`/`_CURSOR`), and
-  `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`. With the variables
-  unset, Chain A runs safely (mock off, require-real on); for Chain B set the repo
-  variables `AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
-  `AI_REVIEW_REQUIRE_REAL_*=0`, and flip
-  `AI_REVIEW_MOCK_SCENARIO` between steps. Do **not** commit a per-scenario workflow
-  change — a new commit on the reviewed branch changes the diff and the mock's
-  selected anchor. (`workflow_dispatch` inputs mapped the same way are equivalent.)
+> **Do not let the mock leak into a real run.** Project and repository variables are
+> sticky. Run any real panel first, or delete the mock variables before it and
+> confirm they are gone. With them absent the defaults restore
+> `AI_REVIEW_REQUIRE_REAL_*=1`, so a run that still reaches the mock adapter fails
+> closed instead of producing fake "real" results.
 
 ## Operator mechanics
 
-Read this before driving a chain. Each item cost real time to discover during the
-1.0.0 runs and applies to every release.
+- **Re-drive a step without a new change request.** On GitHub, `gh run rerun <run-id>`
+  re-runs the same commit as a new attempt and picks up changed repository
+  variables; fetch one attempt's jobs with
+  `gh api repos/<repo>/actions/runs/<id>/attempts/<n>/jobs`. On GitLab,
+  `POST /projects/:id/merge_requests/:iid/pipelines` creates a fresh pipeline on the
+  same head. Do not use GitLab pipeline *retry*: it re-runs only failed jobs, so it
+  does not re-drive prepare through post.
+- **Added-file diffs differ by platform.** GitHub renders an added file as
+  `--- /dev/null`; GitLab renders `--- a/<path>`. Choose fixtures per platform.
+- **Do not force-update a source branch to its base.** The pull request drops to zero
+  commits, GitHub closes it, and later pushes fire no `pull_request` event. Open a
+  fresh change request instead.
+- **Audit with the committed scanner**, not an ad-hoc grep:
 
-**Re-drive a step without a new change request.** This is the biggest efficiency win.
+  ```bash
+  python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
+  # operator-only; compares against configured secret values without exposing them in argv:
+  python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
+  ```
 
-- **GitHub:** `gh run rerun <run-id>` re-runs the *same* commit as a new attempt, and
-  a repository-variable change is picked up because variables are read at job start.
-  One pull request therefore covers the whole lifecycle — 1.0.0 used attempts 1–7 of
-  run `30173073036`, changing only `AI_REVIEW_MOCK_SCENARIO` between them. Fetch a
-  specific attempt's artifacts/jobs with
-  `gh api repos/<repo>/actions/runs/<id>/attempts/<n>/jobs`.
-- **GitLab:** `POST /projects/:id/merge_requests/:iid/pipelines` creates a fresh MR
-  pipeline on the same head. Do **not** use pipeline *retry* — it only re-runs failed
-  jobs, so it does not re-drive prepare→post.
+## Checks the canary does not automate
 
-**Added-file diffs differ by platform.** GitHub renders an added file as
-`--- /dev/null`; GitLab renders `--- a/<path>`. A fixture that behaves one way on one
-platform can behave differently on the other. Choose fixtures per platform
-deliberately rather than assuming symmetry.
+### Body-format refresh
 
-**Do not force-update a source branch to its base.** Doing so leaves the pull request
-with zero commits, GitHub auto-closes it, and subsequent pushes then fire no
-`pull_request` event — so no pipeline starts and the chain appears to hang. Open a
-fresh change request instead of rewinding one.
+When the posted-body format (`render-body.vN`) changes, confirm before the repin
+that a bot thread in the **previous** format, authored by a released image, is
+refreshed in place. Use a
+[preserved thread](CONSUMER-PROJECTS.md#threads-that-must-not-be-deleted).
 
-**Deleting the mock variables is a safety mechanism, not tidiness.** With them absent,
-the workflow defaults restore `AI_REVIEW_REQUIRE_REAL_*=1`, so a run that somehow
-still reached the mock adapter **fails closed** instead of quietly producing fake
-"real" evidence. Delete them before any Chain A run and confirm they are gone.
+1. Capture the old root note, author, creation time, finding identity and footer.
+   Keep the fixture's content, anchor and reviewer identities unchanged.
+2. Temporarily adopt the current trusted topology and candidate pins on that fixture
+   branch, and enable the mock with the scenario that authored the old body. On
+   GitLab, update the existing branch through the commits API without
+   `start_branch`.
+3. Reopen the change and drive one pipeline. Require a successful `post`, exactly one
+   updated discussion, none created, no warnings, and the same root note, author,
+   creation time and finding identity, with the new footer.
+4. Close the change before restoring its CI configuration, remove the mock variables
+   and temporary template branches, and keep the refreshed note and fixture branch.
+   Run `make demo-preflight`.
 
-**Audit with the committed scanner, not an ad-hoc grep:**
+### Effort routes and the three-seat default smoke
 
-```bash
-python scripts/scan_evidence_leaks.py <artifact-dirs…> <trace-dirs…>
-# operator-only, compares against configured secret values without exposing them in argv:
-python scripts/scan_evidence_leaks.py <dirs…> --exact-value-file /path/to/secrets
-```
+A canary panel supplies route evidence for the three OpenRouter seats when their
+resolved models and efforts equal the shipped defaults, including when those come
+from operator overrides; the fourth seat does not invalidate them. Check the prepare
+manifest's `effective_config` for each seat's model and effort, that the manifest
+and every review and critique status file share one configuration digest, and that
+each seat succeeded in both stages. A silently substituted model does not pass.
 
-### Carried coverage gaps
+When an effort profile changes, or the canary's routes differ from the defaults,
+run one panel on the routes in question. When the default roster or a default model
+changes, run one smoke on the exact three-seat roster:
 
-The inherited list of paths no live run has exercised. **Updating this table is a
-step in the release sequence:** each release removes what it closed and adds what it
-discovered, so the next release starts here instead of rediscovering it.
+- Select the roster only in that smoke's temporary workflow or template; keep the
+  demos' resting roster at four seats.
+- Leave model and effort overrides missing or blank so the
+  [shipped defaults](../configuration.md#shipped-defaults) apply. For a model that
+  requires absent effort, see
+  [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
+- Keep `AI_REVIEW_LOCAL_MOCK=0` and every `AI_REVIEW_REQUIRE_REAL_*=1`.
+- Require successful review and critique on every seat, schema-valid structured
+  output, `panel_status: full`, and a posted finding.
+
+Reuse a passing smoke on the same runtime and image pair rather than repeating it.
+
+### Cursor model-specific check
+
+Optional, and not an enablement gate: Cursor is a supported opt-in seat. Run it when
+a deployment needs evidence for one specific Cursor model, or before adding Cursor
+to the default roster.
+
+1. Resolve the exact selector with `cursor-agent --list-models` on the pinned CLI,
+   and set it through `AI_REVIEW_CURSOR_MODEL`. `auto` is supported for ordinary
+   operation but proves nothing about a particular model. Cursor has no separate
+   effort variable; reasoning depth is part of the selector, such as
+   `grok-4.7-xhigh`.
+2. Run a real review and critique against the candidate pair and confirm the
+   selector reached the CLI with no silent fallback.
+3. Note that this proves the route, not the deny policy; see
+   [carried gaps](#carried-coverage-gaps).
+
+### Manual lifecycle chain
+
+The canary's `lifecycle` campaign automates this on both platforms. Run it by hand
+only to diagnose a failed campaign. Use one change request and one mock finding
+identity, and capture run, job and platform object IDs at every step:
+
+1. create (`blocking`): one inline discussion at the mapped line;
+2. rerun unchanged: same discussion, `updated_discussions=0`, `skipped_unchanged>=1`;
+3. change body (`blocking_alt`): the same discussion updated in place,
+   `updated_discussions=1`, a new `body_hash`, nothing created;
+4. resolve with `/ai-review wontfix` (or `/ai-review resolve`, or the platform's
+   resolve API), then rerun `blocking`: `resolved_discussions>=1`, and the
+   disposition persists on a further unchanged rerun;
+5. reopen through the platform API or `/ai-review reopen`, then rerun `blocking`:
+   the same discussion is active again;
+6. (GitHub) push a new head mid-run: `post` reports `status: stale_head`, writes
+   nothing, and exits 0;
+7. with `blocking` posted, `post_result.status` is `success`, the job is green, and
+   the change request is mergeable as far as Code Tribunal is concerned.
+
+A real panel's finding has a model-authored identity, so never continue it with the
+mock; that opens a new discussion instead of updating one.
+
+### GitLab hostile-MR checklist
+
+The canary's `hostile` campaign automates probes 1–3 on the demo. Run them by hand
+before a production rollout on your own GitLab deployment, for a fork-based variant,
+or to diagnose a failed campaign. The probe fails closed in prepare and spends no
+tokens.
+
+1. Open a merge request from an **unprotected** source branch or fork, and confirm
+   through the branches API that its effective `protected` flag is false, including
+   wildcard rules. Protected `OPENROUTER_API_KEY` and `GITLAB_TOKEN` must be
+   withheld, prepare must fail closed with every later stage skipped, and no input
+   file may be uploaded. Accept an empty archive or one with only empty directories
+   under `inputs/`; any file, symlink, unexpected path or corrupt archive fails the
+   probe.
+2. From a trusted checkout, audit the composition:
+   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
+   Child mode must use exactly two same-project, same-SHA includes with inheritance
+   and both forwarding flags disabled.
+3. Attempt template or job replacement, trusted image and configuration overrides,
+   and forged `out/consensus/*` or `out/post/*` artifacts. Confirm the trusted
+   composition is retained or the pipeline fails closed, and scan every trace and
+   artifact for credential values.
+
+The symlink classes and forged-artifact integrity are regression-covered; confirm at
+most one symlink variant live, reusing the `evidence/p0-symlink-*` branches.
+
+## Carried coverage gaps
+
+Paths no live run has exercised. **Updating this table is part of every release:**
+remove what the release closed and add what it discovered, and copy any gap that
+limits a release claim into its CHANGELOG section.
 
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
-| Confidence-related finding loss | the `0.0` default is covered by unit tests only, and there are no posted loss counters | needs a mock scenario whose seat omits `confidence`; posted counters come with SPEC-66 |
-| Below-quorum FYI / summary comment | the mock emits identical findings on every seat, so quorum is always reached | needs a per-seat mock scenario (single-seat emission); see SPEC-66 |
-| Inline-unmappable summary fallback | the mock always anchors successfully | needs a mock scenario emitting a deliberately unmappable anchor |
-| Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry, and SSH push was unavailable | **reuse the existing `evidence/p0-symlink-*` branches**, which already carry the fixtures — no push required |
-| GitLab fork-based MR | the hostile probe used an unprotected in-project branch | open the probe from a fork |
+| Trusted-image enforcement | a consumer `.gitlab-ci.yml` can substitute the pinned images through its own `variables:` and forwarding; no stage verifies the running image | none in-pipeline; containment is credential withholding plus the out-of-band trust auditor. Never claim trusted-image enforcement (see the [security model](../SECURITY_MODEL.md)) |
+| Credential isolation beyond the recorded scope | proven only for an unprotected-ref merge request in the hardened child topology; egress is unenforced at the container boundary | claim "credential isolated" only in that scoped sense |
+| GitLab fork-based merge request | the hostile probe uses an unprotected in-project branch | open the probe from a fork |
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
-| Cursor deny policy | an ordinary Candidate Canary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
-| Noise-demoted FYI entry (SPEC-67) | the mock critique stage emits no critiques, so a noise majority occurs live only by chance in a real panel | needs a mock critique scenario that votes noise; unit and golden consensus tests cover it meanwhile |
-| Non-default effort routes | only the shipped default routes have live evidence against the current pair | scope a separate route campaign if a release changes or claims non-default efforts |
-| OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
-
-## The runs
-
-Two tiers. Copy each record, fill Identity/Preconditions, execute, then complete
-Actual result / Audit / Verdict.
-
-| # | Run | Record | Tier | Real tokens |
-|---|---|---|---|---|
-| 0b | Candidate Canary real panel (both platforms) | `record-candidate-canary.md` | release-gating | one 4-seat panel per platform |
-| 1 | Current-image lifecycle (GitHub) | [lifecycle record](record-github-current-image.md); historical [default-model record](record-github-default-model-smoke.md) | release-gating | Chain B: none; three-seat smoke if exact roster or mismatched routes need coverage |
-| 2 | Current-image lifecycle (GitLab) | [record-gitlab-current-image.md](record-gitlab-current-image.md) | release-gating | Chain B: none; three-seat smoke if exact roster or mismatched routes need coverage |
-| 3 | GitLab hostile-MR credential/enforcement boundary | [record-gitlab-hostile-mr.md](record-gitlab-hostile-mr.md) | release-gating | none (fails closed before review) |
-| 4 | Structural fail-closed confirmations (symlink / revision-race / 406 / artifact forgery) | records above + SPEC-34 | regression-covered (optional live) | none |
-| 5 | Cursor real-run adapter and critique (historical) | [Cursor supplemental record](record-cursor-real-runs.md) | experimental / non-release | two historical real runs; Cursor-specific route |
-| 6 | Cursor model-specific evidence | a new supplemental record | optional; not a gate | final-image real run |
-
-Runs 0b/1/2/3 are the genuinely live-only proofs. Run 4 is confirmation only: its
-logic is proven by `make quality` (see the [evidence index](README.md)), so a
-live pass is optional and **not** a release gate. Run 5 is historical supporting
-evidence; Run 6 is optional and gates nothing.
-The ask-mode/blocking contract is a product decision to record when it is made.
-
-### Runs 1 & 2 — current-image lifecycle (two independent chains per platform)
-
-Run two independent chains per platform. They must **not** share a finding
-identity: the real panel emits a model-authored finding whose identity you do not
-control, so continuing it with the mock would open a new discussion rather than
-update the same one. Capture run/job IDs and platform object IDs at every step.
-
-**Chain A — real default-model smoke.** The Candidate Canary record (Step 0b)
-satisfies its route-evidence requirement when the three OpenRouter seats' resolved
-models and efforts match the shipped defaults, including when those values come
-from operator overrides. Its fourth seat does not invalidate those routes. Use
-a separate three-seat smoke to establish the exact default roster or when models
-or efforts differ; reuse a passing smoke on the same runtime and image pair.
-On that smoke's own change request, leave model and effort overrides missing or
-blank and select the three-seat roster only in its temporary workflow/template.
-Keep all three OpenRouter seats enabled, Cursor disabled, `AI_REVIEW_LOCAL_MOCK=0`, and
-`AI_REVIEW_REQUIRE_REAL_*=1`. Run one panel with the
-[shipped defaults](../configuration.md#shipped-defaults).
-
-The 2026-10-04 candidate-config smoke passed in
-[GitHub run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
-on current CLI pins; the separate Composer review/critique also passed. See the
-[current-CLI record](record-current-cli-model-smoke-2026-10-04.md).
-Record whether a run exercises a candidate config over an existing image pair
-or the final shipped config and images; historical Gemini evidence does not
-validate MiMo. The [model-refresh record](record-model-refresh-2026-10-04.md)
-scopes Flash; the separate [Pro/Grok record](record-mimo-pro-grok-2026-10-04.md)
-scopes that supplemental canary.
-
-For MiMo, require absent resolved effort; see
-[effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
-Use the existing OpenCode → OpenRouter route with
-`OPENROUTER_API_KEY`. Require successful review and critique for each enabled
-seat, schema-valid structured output, artifacts usable by consensus,
-`panel_status: full`, and a posted finding. Check the resolved config, CLI/model
-selection, and available provider metadata for agreement; a silently substituted
-model does not pass. Record the config digest, run/job IDs, model/effort values,
-and immutable runtime/image coordinates without secrets or model content.
-
-The MiMo Flash fixture must exercise read, glob, grep, multiple sequential tool
-calls, structured output, and critique. Record failed validation as a blocker
-and stop repinning until the failure is addressed and a fresh run passes.
-A Flash pass does not validate MiMo Pro; record a Pro canary separately if run.
-
-**Reuse matching route evidence and a passing roster smoke — do not repeat a
-passing campaign on the same runtime and image pair.**
-Record the OpenRouter-billed token/cost (see
-[operations cost controls](../operations.md)). This chain ends here. Historical
-records retain the models and efforts actually used in those runs.
-
-> **Chain B is automated on both platforms.** The Candidate Canary's `lifecycle`
-> campaign (see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary))
-> drives steps 1–5 and 8 below on each platform, plus step 7 on GitHub. It runs on
-> temporary branches and uploads a redacted step summary per platform. Run the
-> manual procedure only when diagnosing a failed campaign.
-
-**Chain B — deterministic mock lifecycle (zero tokens).** On a second change
-request, enable the mock via the platform-specific mock enablement above (GitLab
-project variables / GitHub workflow-variable mapping). Every step drives the real
-platform posting/state/resolve/reopen APIs on **one mock finding identity**;
-model quality is irrelevant, so no tokens are spent:
-
-1. create (`blocking`) → one inline discussion at the mapped line;
-2. rerun unchanged (`blocking`, same commit) → same discussion, `post_result`
-   `updated_discussions=0` and `skipped_unchanged>=1`, **no duplicate**;
-3. change body (`blocking_alt`) → **same discussion updated in place**,
-   `updated_discussions=1`, recorded `body_hash` changes, no new discussion
-   (identity is preserved because body is excluded from finding identity);
-4. resolve → drive resolution with a `/ai-review wontfix` disposition command
-   (this is one resolution mechanism — a `/ai-review resolve` command or the native
-   platform resolve API are equivalent alternatives), then rerun `blocking`; expect
-   `resolved_discussions>=1`, the thread marked resolved, and the state note to
-   persist the disposition on a further unchanged `blocking` rerun (same discussion
-   id, `skipped_unchanged>=1`);
-5. reopen → clear the disposition via the platform's native resolve/reopen API (or
-   a `/ai-review reopen` command), then rerun `blocking`; expect the same
-   discussion active again with identity preserved (no new discussion created);
-6. unrelated line movement — **internal remap regression-covered; visible
-   placement optional live** (see the note above): the cross-revision remap that
-   keeps finding identity and moves the persisted state anchor (so the one existing
-   discussion is updated, not duplicated) is proven by the two-revision e2e and the
-   `test_anchors.py`/`test_post.py` remap tests. The *platform-visible* re-anchoring of the
-   moved comment is not reproduced by the mock and remains a live-optional
-   confirmation, not release-gating; skip it as a token-free step and confirm live
-   only if convenient;
-7. (GitHub) exercise the stale-head no-op (push a new head mid-run) → `post`
-   detects the superseded revision, does not act, reports `status: stale_head`,
-   and **exits 0** (disposition commands are already covered by steps 4–5);
-8. confirm a `blocker` does **not** block: with `blocking` at two supporters and
-   the thread posted, `post_result.status` is `success`, the job is green, and
-   the change request is mergeable as far as Code Tribunal is concerned. This
-   step replaces the former blocking-gate probe. There is no longer any step
-   that verifies a required check blocks — if you find one in an older copy of
-   this runbook, it is not executable.
-
-The `advisory` scenario may be run as an extra state to confirm severity changes
-nothing about publication; the FYI/summary-comment and inline-unmappable fallback
-paths are regression-covered and are not part of this live chain.
-
-### Run 3 — GitLab hostile-MR credential & enforcement boundary
-
-> **Automated.** The Candidate Canary's `hostile` campaign (see
-> [`CONTRIBUTING.md`](../../CONTRIBUTING.md#candidate-canary)) runs probes 1–3
-> below and the auditor check against the candidate template, and uploads a
-> redacted summary. The manual procedure remains for diagnosis and for a
-> fork-based variant.
-
-This run fails closed in `prepare` and never reaches a reviewer, so it spends no
-tokens. Exercise the genuinely live-only probes:
-
-1. Open an MR from an **unprotected** source branch/fork. Confirm the source
-   branch's effective `protected` flag is false through the repository branches
-   API, including protection inherited from wildcard rules. Protected
-   `OPENROUTER_API_KEY`/`GITLAB_TOKEN` are withheld; prepare fails closed, every
-   later stage is skipped, and no input files are uploaded. Accept an empty
-   artifact archive or one containing only empty directories under `inputs/`.
-   If no archive exists, require job metadata to advertise no archive and the
-   trace to report both `inputs/: no matching files` and `No files to upload`.
-   Any file (including a zero-byte file), symlink, unexpected path, corrupt
-   archive, or unavailable advertised archive fails the probe; an upload log
-   alone does not establish that a bundle is empty.
-2. From a trusted checkout, audit composition with
-   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
-3. Attempt the override/forgery probes that touch a credential-bearing boundary
-   (template/job replacement, trusted image/config override, forged
-   `out/consensus/*` or `out/post/*`).
-   Confirm the trusted composition is retained or the pipeline fails closed, and
-   audit every trace/artifact for credential *values*.
-
-The SPEC-31 symlink variants and the SPEC-33 forged-artifact integrity binding
-are regression-covered (`ai-review/tests/unit/test_input_bundle.py` and
-`test_consensus_integrity.py`); confirm at most one representative symlink variant live and rely
-on the regression suite for the rest.
-
-### Run 4 — structural fail-closed confirmations (optional, not release-gating)
-
-The revision-race boundaries (checkout-vs-selected, before-diff, and
-manifest-finalization), the oversized-diff HTTP 406 rejection, and the symlink
-classes are **fully covered** by `make quality` (`test_input_bundle.py`,
-`test_github_platform.py`). Two of these were never reproducible live because the
-race windows are milliseconds wide. Treat any live attempt as optional wiring
-confirmation and record it as such; do not block the release on reproducing a
-timing race that the regression tests already prove fail-closed.
-
-### Run 5 — Cursor experimental reviewer evidence (non-release)
-
-The [Cursor supplemental record](record-cursor-real-runs.md) captures the
-real-project GitLab pipeline and the GitHub dogfood run. Confirm in the review
-and critique artifacts that `adapter_status: success`, accepted findings equal
-raw findings, `usable_for_resolution: true`, and the panel lists Cursor as a
-successful reviewer. These checks establish real-route wiring and artifact
-validity only.
-
-These runs recorded `model: auto`, so they say nothing about any particular
-model, and an ordinary review success is not evidence about the deny policy
-either.
-
-### Run 6 — Cursor model-specific evidence (optional)
-
-**Not an enablement gate.** SPEC-21 is closed and Cursor is a supported peer seat,
-so nothing here is required before a consumer enables it. This is the procedure for
-evidence bound to one *specific* Cursor model and reviewer image — which is why it
-pins an exact slug where ordinary operation may use `auto`.
-
-Nothing verifies that a newly pinned `cursor-agent` honours the `Shell(*)` and
-write denies at runtime — the repository proves only that the policy is passed to
-every invocation (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)).
-Run this when a deployment needs model-specific evidence, or when a release intends
-to ship Cursor on the default roster and wants a gating row of its own. The Run 5 records cannot serve: they used an older
-reviewer image and reported `model: auto`.
-
-1. Freeze `R`, build and attest the final base/reviewer pair, validate
-   `cursor-agent.pin`, and record immutable digests/provenance.
-2. Resolve the exact model with `cursor-agent --list-models`, set the controlled
-   `AI_REVIEW_CURSOR_MODEL`/YAML value, and record the exact slug without secrets
-   or model content. Keep `composer-2.5` for smoke/compatibility and Budget;
-   Value / Balance recommends `grok-4.7-medium`. Before claiming Grok 4.7 validated,
-   confirm that exact selector in the pinned CLI and complete a real review and
-   critique with no silent fallback. For Grok / `xhigh`, use only the exact
-   variant selector reported by that CLI, such as `grok-4.7-xhigh`; Cursor has no separate Code Tribunal
-   effort variable. `auto` is supported for ordinary operation but does not
-   establish reproducible model-specific evidence.
-3. Record the ask-mode decision. If prompt-bundle-only is accepted, state that
-   explicitly; otherwise change the invocation and repeat the read/permission
-   validation.
-4. Run the fresh real-key fixture review/critique under the chosen contract and
-   record exact model, counts, config digest, runtime/image coordinates,
-   provenance, job IDs, and consensus/post outcomes without secrets or model
-   text.
-5. Add the sanitized supplemental record only after all required paths are scoped
-   `Status: passed` against the same `R` and final image pair. Repin the
-   configuration and publisher workflow to the same exact model slug. Do not add
-   this record to release inputs. Cursor may remain off the default roster as an
-   accepted opt-in seat; completing this gate is required only before adding
-   Cursor to a roster.
-
-## After the release-gating runs pass
-
-> **Completed for 1.0.0** on 2026-07-25 against `R = 88bc941` (release commit
-> `3ad443e`, tag `v1.0.0`). The steps below are the reusable sequence for every
-> later release; the parenthetical notes record how 1.0.0 satisfied each.
-
-1. Mark each release-gating record `Status: passed` with a scoped verdict, and
-   record the per-run token/cost for the one real panel per platform. (1.0.0: all
-   six cited records stamped with `Release-runtime-source` and both digests; the
-   non-gating SPEC-34 row carries a registered `Release-evidence-waived` reason
-   instead. Token/cost is **not** in any artifact — read it from the OpenRouter
-   dashboard or leave it unasserted, as 1.0.0 did.)
-2. Fill the **Live campaign** table in `release/<version>.md` with the scoped
-   results and record links; it is the only per-release copy. The
-   [evidence index](README.md) is not edited per release.
-3. **Retarget the release inputs to the pair under test (release-blocking).**
-   Update `runtime_source`, both image digests, the canonical template pins, the
-   recorded publication and CI run IDs, and the evidence references together, then
-   re-run `make quality`. This is an
-   operator/CI action because it needs the published digests. (1.0.0: publication
-   run `30125524008`, CI run `30125523924`, base `sha256:f2a433ac…`, reviewer
-   `sha256:2fd84c43…`. Remember the **three** GitLab pin variables and **both**
-   byte-identical GitHub workflow copies, plus the consumer/template projects used
-   for evidence — a stale template pin means the evidence exercised the wrong
-   images.)
-4. Audit for credential leakage across every retained artifact and trace with
-   `python scripts/scan_evidence_leaks.py <dirs…>` and record its exact scope and
-   limitations in the records. (1.0.0: 438 files / 5.7 MB, zero hits; the
-   exact-value scan was left as an operator sign-off item.)
-5. Proceed with the remaining finalization: re-run supply-chain + docs pin checks,
-   update the changelog/version record, generate and validate the external
-   manifest, then tag. **The tag target is constrained** — do not squash-merge the
-   release commit, and either tag `P` exactly or rebuild the manifest against the
-   merge commit; see the tagging section of the release notes.
-
-Do not describe a release as "stable" or "credential isolated" until every
-release-gating row is a scoped pass against the exact rebuilt RC source and image
-digests.
+| Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a hostile permission-denial prompt against the pinned CLI; required before Cursor joins the default roster |
+| Confidence-related finding loss | the `0.0` default is unit-tested only, and no posted loss counters exist | a mock scenario whose seat omits `confidence`; posted counters come with SPEC-66 |
+| Below-quorum FYI / summary comment | the mock emits identical findings on every seat | a per-seat mock scenario |
+| Inline-unmappable summary fallback | the mock always anchors | a mock scenario with a deliberately unmappable anchor |
+| Noise-demoted FYI entry (SPEC-67) | the mock critique stage emits no critiques | a mock critique scenario that votes noise; unit and golden tests cover it meanwhile |
+| Platform-visible re-anchoring of a moved comment | updating a comment rewrites its body, not its diff position; the internal remap is regression-covered | an optional live push that moves the anchored line |
+| Long bodies subject to truncation | no refresh has exercised a truncated body | a fixture with an oversized finding body |
+| Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry | reuse the existing `evidence/p0-symlink-*` branches |
+| Non-default effort routes | only the shipped defaults have live evidence on the current pair | a route panel when a release changes or claims non-default efforts |
+| OpenRouter token and cost | no artifact carries usage; usage capture was dropped from SPEC-66 | read the per-key OpenRouter dashboard |

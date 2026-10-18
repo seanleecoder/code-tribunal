@@ -155,7 +155,7 @@ applied, and the review checks the evidence it cites.
   changes, one refresh run against a bot thread in the previous format, authored by
   a released image.
 - [ ] **Effort routes:** when effort profiles change, the effort-route check from
-  the [evidence runbook](../evidence/RUNBOOK.md).
+  the [evidence runbook](../evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
 - [ ] **Three-seat default smoke:** when the default roster or a default model
   changes, one smoke run on the exact default roster, unless the canary panel's
   model and effort routes already match it.

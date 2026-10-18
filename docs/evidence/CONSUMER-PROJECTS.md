@@ -106,7 +106,7 @@ The posted-body refresh check needs a bot-authored thread created by an **older*
 image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR #6
 (created `2026-07-25 20:13:42`, `issue_id` shared with the GitLab note below). The
 1.0.1 image refreshed it to `render-body.v3` on 2026-07-30
-([record](record-render-body-v3-refresh.md)), so it is the subject for the 2.0
+([record](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-render-body-v3-refresh.md)), so it is the subject for the 2.0
 `render-body.v4` refresh: after the repin, merge `main` into
 `evidence/chain-b-88bc941`, confirm the branch diff is still only the fixture, and
 re-review with `AI_REVIEW_MOCK_SCENARIO=blocking_alt`. Closing the PR is fine;
@@ -210,5 +210,6 @@ refresh surface.
    is what makes a *publication* failure withhold the merge; it says nothing
    about findings.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
-7. Run Chain A first, then Chain B; delete the mock variables afterwards and confirm
+7. If you run checks by hand, run any real panel (Chain A) before a mock chain
+   (Chain B); delete the mock variables afterwards and confirm
    they are gone.

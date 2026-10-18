@@ -32,8 +32,8 @@ and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
 proved per deployment. The Candidate Canary records hostile-MR evidence, most
-recently for 2.0.2 (see the
-[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). It covers one scoped
+recently for 2.0.3 (see the
+[hostile-MR record](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-gitlab-hostile-mr.md)). It covers one scoped
 topology: a merge request from an **unprotected** ref in the hardened mirrored
 child. The record shows four things:
 
@@ -158,8 +158,9 @@ state loss do fail the `post` job.
 
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
-integrity, and posting unit/integration tests. Deployment evidence and unexercised
-paths are indexed under [docs/evidence](evidence/README.md).
+integrity, and posting unit/integration tests. Deployment evidence is indexed under
+[docs/evidence](evidence/README.md), and unexercised paths are its
+[carried coverage gaps](evidence/RUNBOOK.md#carried-coverage-gaps).
 
 Evidence must record source and image digests, expected/actual outcomes, and a
 secret audit without storing credential values or sensitive model content.

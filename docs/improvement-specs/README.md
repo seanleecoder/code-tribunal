@@ -48,8 +48,8 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17, N01, N09, N13, N16, N19 (outside the evidence docs), N20.
-- **Partial:** S01 (the ADR-0004 cutover, on 2026-10-18), S11 (the noise half, through SPEC-67), S12 (the test-only
+- **Done:** S02, S10, S17, N01, N09, N13, N16, N19, N20.
+- **Partial:** S01 (the ADR-0004 cutover and evidence-doc pruning, on 2026-10-18), S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
@@ -117,7 +117,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted, and
    Renovate and zizmor have replaced most of the pin checker (N01), and the
-   release tooling is migrated (S01 cutover). Next, prune the evidence docs
+   release tooling is migrated (S01 cutover), and the evidence docs are pruned
    (ADR-0004 migration step 4).
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
@@ -158,7 +158,7 @@ dropping effort settings, and a single cross-platform canary.
   and revision-lifecycle end-to-end fixtures, and the import-boundary test that
   keeps the planning modules free of platform clients.
 - Close open evidence gaps before each release. They are tracked in the
-  [evidence index](../evidence/README.md#known-gaps-and-missing-evidence). The
+  [evidence index](../evidence/RUNBOOK.md#carried-coverage-gaps). The
   2.0.2 records bind to the released pair for runtime `3db908f`.
 - For release work, follow the [release process](../development/release-process.md)
   and the [evidence runbook](../evidence/RUNBOOK.md).

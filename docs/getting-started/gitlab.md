@@ -135,7 +135,7 @@ means no finding reached two independent supporters, so every one of them is
 FYI.
 
 Before a production rollout, execute the hostile-MR checklist in the
-[evidence runbook](../evidence/RUNBOOK.md#run-3--gitlab-hostile-mr-credential--enforcement-boundary). Repository-only tests do not
+[evidence runbook](../evidence/RUNBOOK.md#gitlab-hostile-mr-checklist). Repository-only tests do not
 prove protected-variable behavior in a particular GitLab deployment.
 
 ## Update or roll back

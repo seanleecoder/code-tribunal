@@ -130,9 +130,9 @@ The Claude and OpenCode defaults have not yet passed a real-provider run; the
 2.0.3 Candidate Canary is the first. GPT-6 Luna passed real review and critique in
 [GitHub smoke run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
 on 2026-10-04, and Composer 2.5 in
-[the separate four-seat run](evidence/record-current-cli-model-smoke-2026-10-04.md).
+[the separate four-seat run](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-current-cli-model-smoke-2026-10-04.md).
 Release validation still requires the final published images. Follow the
-[default-model smoke procedure](evidence/RUNBOOK.md#runs-1--2--current-image-lifecycle-two-independent-chains-per-platform).
+[default-model smoke procedure](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
 
 ### Production model/effort recommendations
 
@@ -175,13 +175,13 @@ review and critique with no silent fallback. MiMo Pro / unset and
 `grok-4.7-medium` passed that candidate route canary on 2026-10-04; Pro's review
 job took 12m47s. These canaries predate the subsequent CLI dependency upgrade;
 they do not validate Pro/Grok on newer pins. The current-pin default/Composer
-smokes are [recorded separately](evidence/record-current-cli-model-smoke-2026-10-04.md)
+smokes are [recorded separately](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-current-cli-model-smoke-2026-10-04.md)
 and prove availability for the recorded account, not every customer plan.
 The `xhigh` and `-fast` Cursor variants were
 not canaried. See the
-[model-refresh evidence](evidence/record-model-refresh-2026-10-04.md), the separate
-[Pro/Grok evidence](evidence/record-mimo-pro-grok-2026-10-04.md), and the
-[model-specific evidence procedure](evidence/RUNBOOK.md#run-6--cursor-model-specific-evidence-optional).
+[model-refresh evidence](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-model-refresh-2026-10-04.md), the separate
+[Pro/Grok evidence](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-mimo-pro-grok-2026-10-04.md), and the
+[model-specific evidence procedure](evidence/RUNBOOK.md#cursor-model-specific-check).
 
 ### Panel
 
