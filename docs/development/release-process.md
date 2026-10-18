@@ -192,6 +192,11 @@ expensive rows feel routine. The rule:
 > (`git diff v<previous>..R`) touches any module in its impact set. Otherwise it may
 > ship under an evidence waiver whose registered reason names the unchanged modules
 > and the regression tests that cover the row.
+>
+> A [regression-covered](../evidence/README.md#10-historical-evidence-matrix)
+> row may also be waived when its modules changed but the diff stays off the row's
+> code paths. The registered reason then names each changed function or region,
+> says why it is off the row's paths, and names the covering tests.
 
 Waivers are explicit, not silent, and need two deliberate changes: the waived
 record carries the marker `Release-evidence-waived: registered`, and
