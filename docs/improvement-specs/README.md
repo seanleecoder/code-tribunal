@@ -104,12 +104,8 @@ Ranked by return on effort. Each pull request primarily changes one boundary.
 The rule throughout: do a cleanup in the release whose roadmap work touches the
 same code, and before any feature that would otherwise build on top of it.
 
-**Step 1 — 2.0.3, compatible fixes and quick wins.** Release with the existing
-process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
-unexpected artifacts.
-
-1. Release 2.0.3; N19 was the last planned item. The campaign is scoped in
-   [`release/2.0.3.md`](../../release/2.0.3.md).
+**Step 1 — 2.0.3, compatible fixes and quick wins.** Done: released on 2026-10-18;
+see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
