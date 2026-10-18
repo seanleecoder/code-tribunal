@@ -35,7 +35,7 @@ class StateHashTests(unittest.TestCase):
         changed = dict(state, last_head_sha="def")
         self.assertFalse(validate_state_hash(changed))
 
-    def test_state_note_round_trips_and_rejects_bad_checksum(self) -> None:
+    def test_state_note_round_trips_and_rejects_bad_state_hash(self) -> None:
         state = attach_state_hash(
             {
                 "state_schema_version": 1,
@@ -53,39 +53,11 @@ class StateHashTests(unittest.TestCase):
         self.assertRegex(
             body, r"<!-- ai-review-state:v1 [A-Za-z0-9_-]+ state_hash=[a-f0-9]{64} -->"
         )
-        self.assertNotIn("checksum=", body)
         self.assertEqual(decode_state_note_body(body), state)
         with self.assertRaisesRegex(ValueError, "state_hash"):
             decode_state_note_body(
                 re.sub(r"state_hash=[a-f0-9]{64}", "state_hash=" + "0" * 64, body)
             )
-
-    def test_state_note_decodes_temporary_checksum_wrapper(self) -> None:
-        state = attach_state_hash(
-            {
-                "state_schema_version": 1,
-                "project_id": "1",
-                "merge_request_iid": "2",
-                "last_head_sha": "abc",
-                "state_note_id": None,
-                "written_by_pipeline_id": "p1",
-                "updated_at": "2026-06-29T00:00:00Z",
-                "records": [],
-            }
-        )
-        payload = canonical_json_text(state)
-        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-        body = "\n".join(
-            [
-                "AI review state. Do not edit.",
-                f"<!-- ai-review-state:v1 checksum={sha256_hex(payload)} -->",
-                encoded,
-                "<!-- /ai-review-state:v1 -->",
-            ]
-        )
-        self.assertEqual(decode_state_note_body(body), state)
-        with self.assertRaisesRegex(ValueError, "checksum"):
-            decode_state_note_body(re.sub(r"checksum=[a-f0-9]{64}", "checksum=" + "0" * 64, body))
 
     def test_state_note_rejects_bad_internal_state_hash(self) -> None:
         state = attach_state_hash(
@@ -127,9 +99,7 @@ class StateHashTests(unittest.TestCase):
                 {"id": 2, "body": encode_state_note(new)},
                 {
                     "id": 3,
-                    "body": "<!-- ai-review-state:v1 checksum="
-                    + "0" * 64
-                    + " -->bad<!-- /ai-review-state:v1 -->",
+                    "body": "<!-- ai-review-state:v1 bad state_hash=" + "0" * 64 + " -->",
                 },
             ]
         )
