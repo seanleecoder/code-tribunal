@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-10-18
+
 ### Changed
 
 - The default Claude seat is now `anthropic/claude-haiku-5.5` with effort `low`,

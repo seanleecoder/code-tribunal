@@ -13,8 +13,8 @@ to the release tag. This index does not restate it. The cited records and any
 waivers, with their reasons, are listed in `release/release-inputs.json` at that
 release's tag.
 
-- Latest: [2.0.2](../../release/2.0.2.md)
-- Earlier: [2.0.1](../../release/2.0.1.md), [2.0.0](../../release/2.0.0.md),
+- Latest: [2.0.3](../../release/2.0.3.md)
+- Earlier: [2.0.2](../../release/2.0.2.md), [2.0.1](../../release/2.0.1.md), [2.0.0](../../release/2.0.0.md),
   [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
   [1.0.0](../../release/1.0.0.md)
 
@@ -49,16 +49,28 @@ classified by whether a live run proves something the regression suite cannot:
   and is **not** a release gate. This is deliberate — two of these race windows
   were never reproducible live.
 
+### 2.0.3 (released 2026-10-18)
+
+Against runtime `10f2f8deef3ee63c952df76d5f627ed6aa2e7ea9` and its final published
+image pair, [Candidate Canary 39124481046](record-candidate-canary.md) passed image
+identity/provenance, real four-seat review and critique on both platforms,
+[GitHub](record-github-current-image.md) and [GitLab](record-gitlab-current-image.md)
+lifecycles, [hostile-MR containment](record-gitlab-hostile-mr.md), and cleanup. Its
+GitHub panel supplies the [effort-route record](record-model-effort-routes.md) for
+the Claude, Codex, and OpenCode `low` defaults; no separate three-seat smoke ran.
+GitHub preparation revision-race evidence is the sole registered waiver, under the
+code-path rule.
+
 ### 2.0.2 (released 2026-10-04)
 
 Against runtime `3db908f06d141d23de99e7578ae5b5482ebaa498` and its final published
-image pair, [Candidate Canary 37234182540](record-candidate-canary.md) passed image
-identity/provenance, real four-seat review and critique on both platforms,
-[GitHub](record-github-current-image.md) and [GitLab](record-gitlab-current-image.md)
-lifecycles, [hostile-MR containment](record-gitlab-hostile-mr.md), and cleanup.
+image pair, Candidate Canary 37234182540 passed image identity/provenance, real
+four-seat review and critique on both platforms, both lifecycles, hostile-MR
+containment, and cleanup; the records were rewritten for 2.0.3 and are at the
+`v2.0.2` tag.
 The separate [GitHub three-seat smoke](record-github-default-model-smoke.md) passed
 on the shipped defaults and restored v1/v2 artifact contract; its
-[effort-route record](record-model-effort-routes.md) binds Claude `medium`, Codex
+effort-route record binds Claude `medium`, Codex
 `low`, and absent MiMo effort to the same source and pair. GitHub preparation
 revision-race evidence is the sole registered waiver for 2.0.2. SPEC-41 remains
 open; the compatible contract still requires confidence and has no posted loss
