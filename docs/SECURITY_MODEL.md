@@ -76,11 +76,13 @@ credentials. A protected external CI configuration file or an
 `inject_policy` policy does not, because project jobs still run beside the
 injected ones.
 
-Pipeline variables are a second route to the image pins. The template runs on
-`web` and `api` pipelines whose caller supplies `CI_MERGE_REQUEST_IID`, and a
-pipeline variable overrides the template's image variables. A user allowed to run
-pipelines on a protected branch can therefore substitute the image without
-editing any CI file, so restricting pipeline variables is part of the boundary.
+Pipeline variables are a second route to the image pins. A pipeline variable
+overrides the template's image variables. The template runs only in
+merge-request pipelines, but GitLab ranks pipeline variables above predefined
+variables, so a manual or API run that supplies the merge-request variables
+itself may still match those rules; this is unverified. A user allowed to run
+pipelines on a protected branch could then substitute the image without editing
+any CI file, so restricting pipeline variables is part of the boundary.
 The deprecated child's `forward.pipeline_variables: false` blocked this route.
 
 [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition)

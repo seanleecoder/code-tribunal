@@ -47,6 +47,12 @@ versioning.
 
 ### Removed
 
+- The GitLab template no longer runs on manual (`web`) or `api` pipelines that
+  supply `CI_MERGE_REQUEST_IID` as a pipeline variable. Those runs depended on
+  the same pipeline variables that can override the image pins. Re-run a review
+  from the merge request, which creates a merge-request pipeline. Restricting
+  pipeline variables remains required (#191).
+
 - Prepare no longer writes `inputs/prompts/`, `inputs/rules/`, or
   `inputs/config.review.yaml`, and the manifest no longer carries
   `config_sha256` or `rules_sha256`. No stage read them: every stage loads its

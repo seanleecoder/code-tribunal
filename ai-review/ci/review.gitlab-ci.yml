@@ -42,8 +42,6 @@ variables:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
-    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
 
 prepare_ai_review:
   stage: ai_review
@@ -63,8 +61,6 @@ prepare_ai_review:
       when: manual
       allow_failure: true
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
-    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
   script:
@@ -136,8 +132,6 @@ prepare_ai_review:
       when: never
     - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
-    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
   needs:
     - job: prepare_ai_review
       artifacts: true

@@ -371,10 +371,8 @@ different config fails closed (SPEC-33, SPEC-47). Never edit a production templa
     They apply only to that single web/api run and are **dropped by any
     push-triggered pipeline**, so any pipeline triggered by a push (the MR's own
     commits, or a re-trigger by push) would silently run real.
-    A manual web run also only triggers the DAG when you additionally supply
-    `CI_MERGE_REQUEST_IID=<target MR IID>` and select the MR source branch (the
-    jobs gate on `web/api && $CI_MERGE_REQUEST_IID`). Use them only for the
-    non-push steps if at all; prefer project variables.
+    Manual web and API runs no longer start the review at all: the jobs run only
+    in merge-request pipelines. Use project variables.
 - **GitHub** step `env` cannot be overridden by repository variables. Make a
   **one-time** edit to the scratch consumer's copied workflow that maps the
   review/critique step env to variables with **safe defaults** — keep the

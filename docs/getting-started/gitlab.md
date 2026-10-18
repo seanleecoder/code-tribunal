@@ -42,9 +42,10 @@ explains why. Configure both controls:
 2. **Restrict pipeline variables.** In **Settings → CI/CD → Variables**, set the
    minimum role to use pipeline variables to **No one allowed**, or to a role you
    trust as much as the template project's maintainers. Treat pipeline schedules
-   and trigger tokens that set variables the same way. The template's `web` and
-   `api` rules run on a caller-supplied `CI_MERGE_REQUEST_IID`, and a pipeline
-   variable overrides its image pins.
+   and trigger tokens that set variables the same way. A pipeline variable
+   overrides the template's image pins, and GitLab ranks pipeline variables above
+   its predefined ones, so the template's merge-request rules alone cannot be
+   relied on to keep a manual or API run out.
 
 Without these controls, the composition is protected only by code review of
 every change to the CI file, and an unprotected-branch merge request is

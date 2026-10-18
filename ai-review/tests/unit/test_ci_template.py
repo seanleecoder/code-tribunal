@@ -390,19 +390,15 @@ class GitLabCiTemplateTests(unittest.TestCase):
             text,
         )
 
-    def test_web_and_api_rules_require_merge_request_iid(self) -> None:
+    def test_review_runs_only_on_merge_request_and_parent_pipelines(self) -> None:
+        # web/api runs reach the review only through caller-supplied pipeline
+        # variables, the same channel that can override the image pins (#191).
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
         for block_name in (".ai_review_rules", "prepare_ai_review", ".critique_template"):
             match = re.search(rf"(?ms)^{re.escape(block_name)}:\n(.*?)(?=^\S)", text)
             self.assertIsNotNone(match, f"{block_name} block not found")
-            block = match.group(1)
-            for source in ("web", "api"):
-                self.assertIn(
-                    f'$CI_PIPELINE_SOURCE == "{source}" && $CI_MERGE_REQUEST_IID',
-                    block,
-                    f"{block_name} must not create branch-only {source} jobs",
-                )
-                self.assertEqual(block.count(f'$CI_PIPELINE_SOURCE == "{source}"'), 1)
+            sources = set(re.findall(r'\$CI_PIPELINE_SOURCE == "([a-z_]+)"', match.group(1)))
+            self.assertEqual(sources, {"merge_request_event", "parent_pipeline"}, block_name)
 
     def test_template_only_declares_artifacts_that_commands_write(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
@@ -423,7 +419,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         # overrides the array, it does not merge), so the source gate was
         # silently dropped and critique ran on EVERY pipeline source. On a
         # push/tag/schedule pipeline its non-optional `needs: prepare_ai_review`
-        # (a job gated to MR/web/api) does not exist, failing pipeline creation.
+        # (a job gated to MR pipelines) does not exist, failing pipeline creation.
         #
         # Compare against prepare_ai_review DIRECTLY, not .ai_review_rules:
         # prepare carries its own inline rules: block, so it is the real target
