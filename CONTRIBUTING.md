@@ -6,9 +6,9 @@ Use the canonical [development setup](docs/development/setup.md) and run:
 make quality
 ```
 
-That command is the same blocking documentation, lint, test, type, supply-chain,
-and compile gate used by CI. The internal Python source is loaded directly from
-the checkout for development; it is not an installable supported distribution.
+That command is the same blocking gate used by CI; the setup guide lists what it
+runs. The internal Python source is loaded directly from the checkout for
+development; it is not an installable supported distribution.
 
 Coding agents working in this repository should start from
 [`AGENTS.md`](AGENTS.md).

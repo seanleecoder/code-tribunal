@@ -40,7 +40,6 @@ make consensus-local
 make validate-local
 ```
 
-`make quality` is the sole canonical contributor gate. It runs documentation,
-lint, pytest with coverage, whole-package typing, supply-chain checks,
-release-input validation, and workflow parity. `make test` invokes pytest directly;
-`make docs-check` runs the pinned Lychee wrapper.
+`make quality` is the sole canonical contributor gate; the
+[development setup](../development/setup.md) describes what it and the focused
+targets run.

@@ -44,7 +44,9 @@ The seats named are enabled and every other configured seat is disabled. A seat
 that sits out is not a failure: its adapter writes a `skipped` finding batch and
 status without starting its CLI, and consensus accepts those artifacts. This
 matters on GitLab, where the job graph is static and every seat's job is created
-regardless of the roster.
+regardless of the roster: a seat that is not on the panel still gets its
+`AI review` and `AI critique` matrix instances, which complete quickly with
+skipped artifacts and cast no vote.
 
 Rules, all enforced at config load with a loud `ConfigError`:
 
@@ -63,26 +65,21 @@ Rules, all enforced at config load with a loud `ConfigError`:
 - Each selected seat needs the credential fixed for it by the trusted image:
   `OPENROUTER_API_KEY` for Claude, Codex, and OpenCode, or `CURSOR_API_KEY` for
   Cursor. If it is absent, that seat fails and the panel degrades. The canonical
-  workflow supplies `CURSOR_API_KEY` only to the Cursor matrix entry and only
-  when Cursor is on the roster.
+  GitHub workflow supplies `CURSOR_API_KEY` only to the Cursor matrix entry and
+  only when Cursor is on the roster; GitLab
+  [differs](#credentials).
+
+Cursor is off in the shipped roster because its backend is a second egress
+destination, not because it ranks below the other seats: prompts, diffs, and any
+snapshot content it reads reach Cursor rather than OpenRouter (the
+[egress exception](../ai-review/images/SUPPLY_CHAIN.md#cursor-cli-egress-exception)).
+Enable it only if you deliberately accept that path; `AI_REVIEW_CURSOR_MODEL`
+selects its model.
 
 Roster changes are part of the effective-config digest, so a roster visible to
 only some pipeline jobs fails the cross-stage consistency check instead of
 producing a differently-sized panel per stage. Set it at repository/project or
 group scope.
-
-**Minimum runtime.** Every stage executes `/opt/ai-review` from the pinned base
-and reviewer images, not from your checkout, so `AI_REVIEW_REVIEWERS` is honored
-only by an image that ships roster support. An older pin ignores the variable
-and keeps the panel from its packaged `review.yaml`, so repin both images before
-relying on a roster change.
-
-Every configuration must leave at least **three** reviewer seats enabled, on
-every path: the shipped YAML and `AI_REVIEW_REVIEWERS`. A finding
-surfaces only when two reviewer identities support it independently, so a
-one-seat panel could never surface anything and a two-seat panel could not after
-losing a seat. Two-seat deployments were valid before `review_config.v3` and are
-now rejected.
 
 The resolution threshold is authored against the configured reviewer count and
 takes effect clamped to the enabled count, so changing the roster never requires
@@ -96,16 +93,9 @@ review and 895 seconds for critique. The CI templates independently allow 40
 minutes for review jobs and 20 minutes for critique jobs. These timeout values
 are trusted image configuration; there is no timeout environment-variable
 override. Both resolved stage values are included in the effective-config
-summary and digest, so all pipeline stages must use the same policy.
-
-A configuration that omits `critique_timeout_seconds` resolves critique to a flat
-900 seconds; the value does not depend on `timeout_seconds`. Earlier releases
-reinterpreted `timeout_seconds` as the critique budget and capped it at 900, so a
-reviewer with `timeout_seconds: 300` silently got 300 seconds for critique and one
-with `1800` silently got 900 — one field meaning two things. The resolved value,
-not the raw input, is recorded in the effective-config summary and digest.
-Explicit stage-specific values are used as configured; keep them at or below 900
-seconds while using the shipped 20-minute critique CI ceiling.
+summary and digest, so all pipeline stages must use the same policy. Explicit
+`critique_timeout_seconds` values are used as configured; keep them at or below
+900 seconds while using the shipped 20-minute critique CI ceiling.
 
 OpenCode review and critique use a loopback-only `opencode serve` session client.
 The client sends the fixed internal session title `code-tribunal-ai-review` and
@@ -195,14 +185,6 @@ not canaried. See the
 [Pro/Grok evidence](evidence/record-mimo-pro-grok-2026-10-04.md), and the
 [model-specific evidence procedure](evidence/RUNBOOK.md#run-6--cursor-model-specific-evidence-optional).
 
-GitLab expands the shared `AI review` and `AI critique` matrix jobs into one job
-instance per trusted reviewer, whatever the roster says. A seat that is not on
-the panel still gets its instances; they complete quickly with skipped artifacts
-and cast no vote. Cursor is off in the shipped default roster because its backend
-is a second egress destination, not because it ranks below the other seats. An
-older included template may not contain the complete four-seat matrix, so repin
-the protected template before relying on a roster change.
-
 ### Panel
 
 | Key | Type/default | Meaning |
@@ -214,12 +196,10 @@ unique reviewer identities support it independently across direct review and
 critique; severity, including `blocker`, is an impact label that changes no
 decision. There is no `severity_policy` object and no quorum setting.
 
-Grouping carries no text-similarity setting. An opt-in Jaccard comparison over
-titles and bodies shipped disabled and outside the 1.0 compatibility guarantee;
-it has been removed. Findings are grouped on identity that survives rewording —
-path, category, side, context hash, fingerprints, and symbol — so two reviewers
-describing one bug in different words group when they anchor to the same code,
-not when they happen to choose similar phrasing.
+Grouping carries no text-similarity setting. Findings are grouped on identity
+that survives rewording — path, category, side, context hash, fingerprints, and
+symbol — so two reviewers describing one bug in different words group when they
+anchor to the same code, not when they happen to choose similar phrasing.
 
 ### Critique
 
@@ -228,8 +208,6 @@ not when they happen to choose similar phrasing.
 | `critique.enabled` | boolean, `true` | Run blind peer assessment. |
 | `critique.blind_reviewer_identity` | boolean, `true` | Replace reviewer identities with stable anonymous labels. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
-
-`critique.max_rounds` is not an active compatibility alias and is rejected.
 
 ### Posting and state
 
@@ -312,7 +290,7 @@ artifacts.
 
 | Variable | Default/source | Scope and validation |
 |---|---|---|
-| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | The only environment-level panel selector. A comma-separated roster enables exactly those seats and disables the rest. Three or four seats; unknown or duplicated names are rejected. Requires an image that ships roster support; see [Choosing the panel](#choosing-the-panel). |
+| `AI_REVIEW_REVIEWERS` | unset (YAML `enabled` values) | The only environment-level panel selector. A comma-separated roster enables exactly those seats and disables the rest. Three or four seats; unknown or duplicated names are rejected. See [Choosing the panel](#choosing-the-panel). |
 | `AI_REVIEW_CLAUDE_MODEL` | YAML model | Non-empty string; model identifier characters are adapter-validated. |
 | `AI_REVIEW_CODEX_MODEL` | YAML model | Same. |
 | `AI_REVIEW_OPENCODE_MODEL` | YAML model | Same. |
@@ -403,8 +381,6 @@ rejected. Native Anthropic routing is not supported.
 | `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
-| `GITLAB_READ_TOKEN` | Retired split-token path, no longer read; configure one protected `GITLAB_TOKEN`. |
-| `GITLAB_WRITE_TOKEN` | Retired split-token path, no longer read; configure one protected `GITLAB_TOKEN`. |
 
 ### Template and internal runtime variables
 
@@ -500,10 +476,3 @@ Delete `severity_policy`, `merge_gate`, `state.backend`, `panel.grouping`,
 [rejected variables](#platform-and-provider-runtime). The complete procedure,
 including removing the required gate check, is in
 [operations](operations.md#upgrade-from-10x-to-20).
-
-## 0.4.x migration summary
-
-Remove inert/retired keys, rename record-count retention keys, remove
-`critique.max_rounds`, use one `GITLAB_TOKEN`, and regenerate all stage artifacts
-after changing configuration. The complete procedure is in
-[operations](operations.md#upgrade-from-04x-to-10).

@@ -68,6 +68,10 @@ versioning.
   them. The pin files are mounted only into the build steps that read them,
   and the OpenCode preflight wrappers mount their drivers from the checkout
   (N20).
+- The operator docs no longer describe upgrading from 0.4.x or the 1.0.0
+  added-file defect fixed in 1.0.1. An installation still on 0.4.x should
+  follow the 2.0.2 documentation. The 1.x to 2.0 upgrade guide is unchanged
+  (N19).
 
 ### Fixed
 

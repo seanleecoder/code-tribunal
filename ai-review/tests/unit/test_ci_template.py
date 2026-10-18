@@ -28,7 +28,6 @@ _OPENCODE_SEARCH_SMOKE_SH = (
     Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.sh"
 )
 _ROOT_README = Path(__file__).resolve().parents[3] / "README.md"
-_CONFIG_DOC = _ROOT_README.parent / "docs" / "configuration.md"
 _AI_REVIEW_README = Path(__file__).resolve().parents[2] / "README.md"
 _PACKAGED_RUNTIME_ENV = "AI_REVIEW_PACKAGED_RUNTIME"
 
@@ -363,22 +362,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         prepare = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
         self.assertIsNotNone(prepare)
         self.assertIn("needs: []", prepare.group(1))
-
-    @unittest.skipUnless(
-        _CONFIG_DOC.exists(),
-        "repository-only configuration reference is absent from the runtime image",
-    )
-    def test_configuration_reference_explains_gitlab_matrix_job_graph(self) -> None:
-        text = _CONFIG_DOC.read_text(encoding="utf-8")
-        text = " ".join(text.split())
-
-        self.assertIn("shared `AI review` and `AI critique` matrix jobs", text)
-        self.assertIn("older included template", text)
-        # Cursor's instances exist regardless of the roster; the reference must
-        # explain that a seat sitting out is a cheap no-op.
-        self.assertIn("whatever the roster says", text)
-        self.assertIn("complete quickly with skipped artifacts", text)
-        self.assertIn("second egress destination, not because it ranks below", text)
 
     def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
