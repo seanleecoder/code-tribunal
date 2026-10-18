@@ -185,16 +185,22 @@ class SupplyChainPinCheckTests(unittest.TestCase):
     def test_constraints_reject_environment_markers(self) -> None:
         # pip skips a constraint whose marker does not match the image's Python, so
         # a conditional constraint pins nothing and must not count as one.
-        conditional = 'pip==26.0\nrequests==2.34.2; python_version < "3.14"\n'
         base = "RUN python -m pip install --constraint /tmp/c.txt pip requests\n"
-        self.assertEqual(
-            pins._exact_requirement_issues("c", conditional),
-            ["c must use exact == pins only, got 'requests==2.34.2; python_version < \"3.14\"'"],
-        )
-        self.assertEqual(
-            pins._pip_install_issues(base, conditional),
-            ["base.Dockerfile installs unconstrained requests"],
-        )
+        for constraint in (
+            'requests==2.34.2; python_version < "3.14"',
+            'requests==2.34.2;python_version<"3.14"',
+            "requests==2.34.2,<3",
+        ):
+            with self.subTest(constraint=constraint):
+                conditional = f"pip==26.0\n{constraint}\n"
+                self.assertEqual(
+                    pins._exact_requirement_issues("c", conditional),
+                    [f"c must use exact == pins only, got {constraint!r}"],
+                )
+                self.assertEqual(
+                    pins._pip_install_issues(base, conditional),
+                    ["base.Dockerfile installs unconstrained requests"],
+                )
 
     def test_pip_installs_pass_the_constraints_and_name_only_pinned_packages(self) -> None:
         constraints = "pip==26.0\nPyYAML==6.0\nrequests==2.0\n"

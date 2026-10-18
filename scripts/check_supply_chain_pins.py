@@ -36,7 +36,9 @@ DIGEST = r"@sha256:[0-9a-f]{64}"
 IMAGE_PIN_KEYS = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
 # A published image tag is <series>-<source sha>; the exact series is a release check.
 RELEASE_IMAGE = re.compile(rf"ghcr\.io/\S+:[0-9]+\.[0-9]+-([0-9a-f]{{40}}){DIGEST}")
-EXACT_REQUIREMENT = re.compile(r"[A-Za-z0-9_.-]+==\S+")
+# The version takes only PEP 440 characters, so a marker, range or second operator
+# glued on without spaces (`==1.0;python_version<"3.14"`, `==1.0,<2`) is not exact.
+EXACT_REQUIREMENT = re.compile(r"[A-Za-z0-9_.-]+==[A-Za-z0-9.!+_-]+")
 # The GitHub job containers per image: base runs prepare, consensus and post;
 # reviewer runs review and critique.
 CONTAINER_IMAGES = {
