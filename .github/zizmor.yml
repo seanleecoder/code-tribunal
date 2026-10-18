@@ -1,0 +1,20 @@
+# zizmor configuration for scripts/check_workflow_pins.py, which gates only the
+# unpinned-uses, unpinned-images and ref-version-mismatch audits.
+rules:
+  unpinned-uses:
+    config:
+      # Every action, first-party included, is pinned by full commit SHA.
+      policies:
+        "*": hash-pin
+  # Only the pinning audits gate, so skip the ones that would spend GitHub API
+  # calls in CI on findings the gate discards.
+  artipacked:
+    disable: true
+  impostor-commit:
+    disable: true
+  known-vulnerable-actions:
+    disable: true
+  ref-confusion:
+    disable: true
+  stale-action-refs:
+    disable: true

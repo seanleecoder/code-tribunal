@@ -3,9 +3,8 @@
 # platforms install the same reviewed version without compiling source through
 # an unverified cargo dependency path.
 #
-# scripts/check_supply_chain_pins.py independently carries these reviewed
-# filenames and digests. A version or platform update must change both
-# authorities in the same reviewed commit.
+# This file is the only authority for these digests. Renovate does not update
+# it, because it cannot recompute them (ADR-0004 decision 9, amended).
 version=0.24.2
 linux_x86_64_url=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-musl.tar.gz
 linux_x86_64_sha256=73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5

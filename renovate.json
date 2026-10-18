@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "github-actions": {
+    "managerFilePatterns": ["/^ai-review/ci/review\\.github-actions\\.yml$/"]
+  },
+  "pip_requirements": {
+    "managerFilePatterns": ["/^ai-review/images/python-constraints\\.txt$/"]
+  },
+  "packageRules": [
+    {
+      "description": "Release identity: re-pinned by hand in the release commit (ADR-0004 decision 4).",
+      "matchPackageNames": ["ghcr.io/seanleecoder/code-tribunal/**"],
+      "enabled": false
+    },
+    {
+      "description": "Keep the reviewer CLIs exact; reviewer.Dockerfile installs them with npm ci.",
+      "matchManagers": ["npm"],
+      "rangeStrategy": "pin"
+    },
+    {
+      "description": "ripgrep.pin names the opencode-ai version it belongs to; make supply-chain fails until it is refreshed.",
+      "matchPackageNames": ["opencode-ai"],
+      "prBodyNotes": [
+        "Refresh `ai-review/images/ripgrep.pin` for this opencode-ai version before merging: see step 6 of `ai-review/images/SUPPLY_CHAIN.md`."
+      ]
+    }
+  ]
+}

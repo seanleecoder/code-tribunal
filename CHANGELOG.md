@@ -7,6 +7,14 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Contributor tooling: Renovate keeps the npm, Python, image-digest and action
+  pins current, and `make quality` runs zizmor's pinning audits over the GitHub
+  Actions workflows. The in-repo pin checker keeps only the checks neither tool
+  makes, and now requires every Dockerfile `FROM` to be digest-pinned. Nothing
+  changes for consumers.
+
 ## [2.0.3] - 2026-10-18
 
 ### Changed

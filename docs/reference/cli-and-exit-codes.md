@@ -15,7 +15,8 @@ importable Python functions are not a public API.
 | `python scripts/pipeline_trust.py PATH --mode MODE --template-project PROJECT --template-sha SHA` | Audit a GitLab consumer composition (`MODE` is `direct` or `child`); repository-only, not shipped in the images | 0 | 1 for trust violations, 2 for malformed input/arguments |
 | `python -m ai_review.mock_reviewer REVIEWER STAGE` | Emit deterministic local/preflight review or critique JSON | 0 | argparse uses 2; fixture/artifact errors propagate nonzero |
 | `python scripts/check_markdown_links.py` | Check offline Markdown links, anchors, and draft-release links with pinned Lychee | 0 | 1 for link or tool failures |
-| `scripts/check_supply_chain_pins.py` | Audit shipped dependency and image pins | 0 | 1 when any pin contract fails |
+| `scripts/check_supply_chain_pins.py` | Audit the Dockerfile digests, template image pins, constraint usage and `.pin` files | 0 | 1 when any pin contract fails |
+| `python scripts/check_workflow_pins.py` | Run zizmor's pinning audits over the GitHub Actions workflows | 0 | 1 for a pinning finding, a zizmor failure, or zizmor missing from `PATH` |
 
 `post` is the terminal product stage and its exit status is the pipeline's whole
 report on the review. It reports **publication**, not findings: a finding of any

@@ -10,12 +10,12 @@ SCOPE ?= base
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
-.PHONY: quality test packaged-smoke lint typecheck supply-chain \
+.PHONY: quality test packaged-smoke lint typecheck supply-chain workflow-pins \
 	release-inputs docs-check sync-workflows workflow-parity demo-preflight evidence-records \
 	release-repin release-finalize release-manifest release-open-next \
 	update-golden review-local consensus-local validate-local
 
-quality: docs-check lint test typecheck supply-chain release-inputs workflow-parity
+quality: docs-check lint test typecheck supply-chain workflow-pins release-inputs workflow-parity
 
 # The single gate on canonical-template -> installed-copy parity;
 # `make sync-workflows` repairs the drift it reports.
@@ -45,6 +45,11 @@ typecheck:
 
 supply-chain:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_supply_chain_pins.py
+
+# zizmor's pinning audits. Offline without GH_TOKEN; CI also runs it with a token so
+# ref-version-mismatch can resolve action tags.
+workflow-pins:
+	$(PYTHON) scripts/check_workflow_pins.py
 
 release-inputs:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_release_inputs.py

@@ -1,649 +1,276 @@
 from __future__ import annotations
 
 import ast
-import contextlib
-import importlib.util
-import io
 import json
+import re
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_supply_chain_pins.py"
+from tests.support.repository_script import load_repository_script
 
-spec = importlib.util.spec_from_file_location("check_supply_chain_pins", SCRIPT)
-assert spec is not None and spec.loader is not None
-check_supply_chain_pins = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(check_supply_chain_pins)
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_supply_chain_pins.py"
+pins = load_repository_script("check_supply_chain_pins", SCRIPT)
+_read = pins._read
+
+DIGEST = "@sha256:" + "a" * 64
 
 
 class SupplyChainPinCheckTests(unittest.TestCase):
     def test_current_tree_passes(self) -> None:
-        self.assertEqual(check_supply_chain_pins.main(), 0)
+        self.assertEqual(pins.issues(), [])
 
-    def test_lychee_pin_and_checker_path_are_one_authority(self) -> None:
-        pin = check_supply_chain_pins.LYCHEE_PIN.read_text(encoding="utf-8")
-        checker = check_supply_chain_pins.MARKDOWN_LINK_CHECKER.read_text(encoding="utf-8")
-        self.assertEqual(check_supply_chain_pins._lychee_pin_issues(pin, checker), [])
-        mutations = [
-            ("version=0.24.2", "version=0.24.1"),
-            *(
-                (sha256, "0" * 64)
-                for _archive, sha256 in check_supply_chain_pins.LYCHEE_ARCHIVES.values()
-            ),
-            *(
-                (archive, f"unexpected-{archive}")
-                for archive, _sha256 in check_supply_chain_pins.LYCHEE_ARCHIVES.values()
-            ),
-            (
-                'PIN_PATH = ROOT / "ai-review/images/lychee.pin"',
-                'PIN_PATH = ROOT / "other/lychee.pin"',
-            ),
-        ]
-        for old, replacement in mutations:
-            with self.subTest(old=old):
-                mutated_pin = pin.replace(old, replacement, 1) if old in pin else pin
-                mutated_checker = (
-                    checker.replace(old, replacement, 1) if old in checker else checker
+    def test_every_from_needs_a_digest_directly_or_through_its_arg_default(self) -> None:
+        pinned = (
+            f"ARG BASE=python:3.14-slim{DIGEST}\n"
+            f"FROM debian:trixie-slim{DIGEST} AS builder\n"
+            "FROM builder AS second\n"
+            "FROM ${BASE}\n"
+        )
+        self.assertEqual(pins._dockerfile_issues("x", pinned), [])
+        for mutated in (
+            pinned.replace(f"debian:trixie-slim{DIGEST}", "debian:trixie-slim"),
+            pinned.replace(f"ARG BASE=python:3.14-slim{DIGEST}", "ARG BASE=python:3.14-slim"),
+            pinned.replace("FROM ${BASE}", "FROM $UNDECLARED"),
+            pinned.replace("FROM builder AS second", "FROM later AS second"),
+        ):
+            with self.subTest(mutated=mutated):
+                self.assertEqual(len(pins._dockerfile_issues("x", mutated)), 1)
+
+    def test_dockerfile_formatting_cannot_hide_a_mutable_from(self) -> None:
+        mutable = "node:26-trixie-slim"
+        for text in (
+            f"FROM {mutable} AS reviewer-clis \n",
+            f"  FROM {mutable}\n",
+            f"FROM\t{mutable}\n",
+            f"FROM \\\n  {mutable}\n",
+            f"from {mutable} as x\n",
+            f"FROM --platform=linux/amd64 {mutable} AS x\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", text),
+                    [f"x: FROM {mutable} is not pinned by sha256 digest"],
                 )
-                self.assertTrue(
-                    check_supply_chain_pins._lychee_pin_issues(mutated_pin, mutated_checker)
-                )
-
-    def test_detects_reviewer_base_digest_drift(self) -> None:
-        original = check_supply_chain_pins.REVIEWER_DOCKERFILE
-        base_pin = check_supply_chain_pins._python_base_image(
-            check_supply_chain_pins.BASE_DOCKERFILE.read_text(encoding="utf-8")
-        )
-        assert base_pin is not None
-        replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
-        with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "reviewer.Dockerfile"
-            mutated.write_text(
-                original.read_text(encoding="utf-8").replace(base_pin, replacement, 1),
-                encoding="utf-8",
-            )
-            check_supply_chain_pins.REVIEWER_DOCKERFILE = mutated
-            try:
-                self.assertEqual(check_supply_chain_pins.main(), 1)
-            finally:
-                check_supply_chain_pins.REVIEWER_DOCKERFILE = original
-
-    def test_detects_cross_platform_image_pin_drift(self) -> None:
-        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        workflow = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
-        replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
-        mutated = workflow.replace(base_pin, replacement, 1)
-
-        self.assertIn(
-            "GitHub containers contain 2 distinct values for AI_REVIEW_BASE_IMAGE; expected one",
-            check_supply_chain_pins._cross_platform_image_pin_issues(template, mutated),
-        )
-
-    def test_rejects_unconstrained_pip_bootstrap(self) -> None:
-        base = check_supply_chain_pins.BASE_DOCKERFILE.read_text(encoding="utf-8")
-        dockerfile = (
-            "RUN python -m pip install --no-cache-dir --upgrade pip \\\n"
-            "    && python -m pip install --no-cache-dir \\\n"
-            "      --constraint /opt/c.txt \\\n"
-            "      requests\n"
-        )
-
-        self.assertEqual(check_supply_chain_pins._unconstrained_pip_installs(base), [])
         self.assertEqual(
-            check_supply_chain_pins._unconstrained_pip_installs(dockerfile),
-            ["RUN python -m pip install --no-cache-dir --upgrade pip"],
+            pins._dockerfile_issues("x", f"FROM {mutable}{DIGEST} AS x extra\n"),
+            [f"x: cannot parse 'FROM {mutable}{DIGEST} AS x extra'"],
         )
 
-    def test_cross_platform_pin_check_rejects_missing_github_containers(self) -> None:
-        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn(
-            "GitHub containers contain 0 distinct values for AI_REVIEW_BASE_IMAGE; expected one",
-            check_supply_chain_pins._cross_platform_image_pin_issues(
-                template, "jobs:\n  prepare:\n    container:\n      image: example.invalid/base\n"
-            ),
-        )
-
-    def test_cross_platform_pin_check_rejects_complete_github_rotation(self) -> None:
-        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        workflow = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
-        replacement = base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1")
-
-        self.assertIn(
-            "GitHub containers must match GitLab AI_REVIEW_BASE_IMAGE",
-            check_supply_chain_pins._cross_platform_image_pin_issues(
-                template, workflow.replace(base_pin, replacement)
-            ),
-        )
-
-    def test_gitlab_image_pin_diagnostics_distinguish_missing_and_duplicate(self) -> None:
-        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
-        concrete_line = f'  AI_REVIEW_BASE_IMAGE: "{base_pin}"'
-
-        missing = template.replace(concrete_line, "", 1)
-        duplicate = template + f'\nAI_REVIEW_BASE_IMAGE: "{base_pin}"\n'
-
-        self.assertIn(
-            "GitLab review template is missing a concrete AI_REVIEW_BASE_IMAGE value",
-            check_supply_chain_pins._gitlab_image_pin_issues(missing),
-        )
-        self.assertIn(
-            "GitLab review template contains 2 concrete AI_REVIEW_BASE_IMAGE values; expected one",
-            check_supply_chain_pins._gitlab_image_pin_issues(duplicate),
-        )
-
-    def test_gitlab_image_pin_parser_accepts_equivalent_yaml_formatting(self) -> None:
-        template = check_supply_chain_pins.GITLAB_REVIEW_TEMPLATE.read_text(encoding="utf-8")
-        base_pin = check_supply_chain_pins._concrete_image_pins(template)["AI_REVIEW_BASE_IMAGE"]
-        reformatted = template.replace(
-            f'AI_REVIEW_BASE_IMAGE: "{base_pin}"',
-            f"AI_REVIEW_BASE_IMAGE : {base_pin}  # current base image",
-            1,
-        )
-
-        self.assertEqual(
-            check_supply_chain_pins._gitlab_image_pin_issues(reformatted),
-            [],
-        )
-
-    def test_detects_non_exact_python_constraint(self) -> None:
-        original = check_supply_chain_pins.PYTHON_CONSTRAINTS
-        with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "python-constraints.txt"
-            mutated.write_text("jsonschema>=4.25\n", encoding="utf-8")
-            check_supply_chain_pins.PYTHON_CONSTRAINTS = mutated
-            try:
-                self.assertEqual(check_supply_chain_pins.main(), 1)
-            finally:
-                check_supply_chain_pins.PYTHON_CONSTRAINTS = original
-
-    def test_current_dev_requirements_are_exactly_pinned(self) -> None:
-        requirements = check_supply_chain_pins.DEV_REQUIREMENTS.read_text(encoding="utf-8")
-
-        self.assertEqual(
-            check_supply_chain_pins._exact_requirement_issues(requirements, "requirements-dev.txt"),
-            [],
+    def test_only_global_args_resolve_a_from(self) -> None:
+        # Docker resolves FROM against the ARGs declared before the first FROM; a
+        # later pinned redeclaration does not change the image it builds from.
+        text = (
+            "ARG NODE_BUILDER=node:26-trixie-slim\n"
+            "FROM ${NODE_BUILDER} AS reviewer-clis\n"
+            f"ARG NODE_BUILDER=node:26{DIGEST}\n"
+            "FROM ${NODE_BUILDER}\n"
         )
         self.assertEqual(
-            check_supply_chain_pins._overlapping_python_pin_issues(
-                check_supply_chain_pins.PYTHON_CONSTRAINTS.read_text(encoding="utf-8"),
-                requirements,
-            ),
-            [],
+            pins._dockerfile_issues("x", text),
+            ["x: FROM ${NODE_BUILDER} is not pinned by sha256 digest"] * 2,
         )
 
-    def test_detects_floating_dev_tool_requirement(self) -> None:
+    def test_global_args_accept_only_plain_words(self) -> None:
+        # A bare redeclaration keeps the earlier default (BuildKit's buildMetaArgs).
+        redeclared = f"ARG BASE=python{DIGEST}\nARG BASE\nFROM $BASE\n"
+        self.assertEqual(pins._dockerfile_issues("x", redeclared), [])
+        reviewer = redeclared.replace("BASE", "AI_REVIEW_BASE_IMAGE")
+        self.assertEqual(pins._base_image_issues(f"FROM python{DIGEST}\n", reviewer), [])
+        # Each of these could make the checker resolve a different BASE than BuildKit,
+        # so it reports the ARG instead of guessing; FROM $BASE then stays unresolved.
+        for arg in (
+            f'ARG NOTE="unused BASE=alpine{DIGEST}"',
+            f'ARG "BASE"=alpine{DIGEST}',
+            f"ARG BASE=alpine\\ {DIGEST}",
+            f'ARG BASE="alpine{DIGEST}',
+            f"ARG BASE=alpine:latest\u00a0NOTE=alpine{DIGEST}",
+            f"ARG BASE=alpine:latest\vNOTE=alpine{DIGEST}",
+        ):
+            with self.subTest(arg=arg):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", f"ARG BASE=alpine:latest\n{arg}\nFROM $BASE\n"),
+                    [
+                        f"x: cannot parse {arg!r}",
+                        "x: FROM $BASE is not pinned by sha256 digest",
+                    ],
+                )
+
+    def test_continuations_follow_buildkit(self) -> None:
+        pinned = f"FROM node:26{DIGEST}\n"
+        # An escaped final backslash ends the RUN, so the next FROM is an instruction.
         self.assertEqual(
-            check_supply_chain_pins._exact_requirement_issues(
-                "-c ai-review/images/python-constraints.txt\npytest>=9\n",
-                "requirements-dev.txt",
-            ),
-            ["requirements-dev.txt must use exact == pins only, got 'pytest>=9'"],
+            pins._dockerfile_issues("x", pinned + "RUN echo \\\\\nFROM alpine:latest\n"),
+            ["x: FROM alpine:latest is not pinned by sha256 digest"],
         )
-
-    def test_detects_dev_runtime_pin_drift(self) -> None:
+        # A comment line inside a continuation is dropped without ending it.
         self.assertEqual(
-            check_supply_chain_pins._overlapping_python_pin_issues(
-                "PyYAML==6.0.3\nrequests==2.32.5\n",
-                "pyyaml==6.0.2\npytest==9.1.1\n",
-            ),
-            [
-                "requirements-dev.txt pin pyyaml==6.0.2 must match "
-                "python-constraints.txt pin PyYAML==6.0.3"
-            ],
+            pins._dockerfile_issues("x", pinned + "RUN a \\\n  # note\n  b\nFROM alpine:latest\n"),
+            ["x: FROM alpine:latest is not pinned by sha256 digest"],
         )
+        # A genuine continuation makes the text a RUN argument, which Docker never builds.
+        self.assertEqual(pins._dockerfile_issues("x", pinned + "RUN echo \\\nFROM alpine\n"), [])
+        # A non-default escape token is reported wherever it appears. BuildKit honors
+        # it after an indented `# syntax=` line; a comment past the preamble is a
+        # deliberate false positive rather than a modelled preamble rule.
+        bypass = pinned + "RUN echo \\\nFROM alpine:latest\n"
+        for preamble, reported in (
+            ("# escape=`", "# escape=`"),
+            ("  # syntax=docker/dockerfile:1\n# ESCAPE = `", "# ESCAPE = `"),
+            ("\t#escape=`", "#escape=`"),
+        ):
+            with self.subTest(preamble=preamble):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", preamble + "\n" + bypass),
+                    [f"x: cannot parse {reported!r}"],
+                )
+        for preamble in ("# note\n", pinned):
+            with self.subTest(preamble=preamble):
+                self.assertTrue(pins._dockerfile_issues("x", preamble + "# escape=`\n" + pinned))
+        self.assertEqual(pins._dockerfile_issues("x", "# escape=\\\n" + pinned), [])
 
-    def test_detects_malformed_cursor_agent_pin(self) -> None:
-        self.assertIn(
-            "cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest",
-            check_supply_chain_pins._cursor_agent_pin_issues(
-                "version=2026.03.20-44cb435\n"
-                "url=https://downloads.cursor.com/lab/2026.03.20-44cb435/linux/x64/agent-cli-package.tar.gz\n"
-                "sha256=not-a-sha\n"
-            ),
-        )
+    def test_shipped_dockerfiles_pin_every_stage(self) -> None:
+        reviewer = _read(pins.REVIEWER_DOCKERFILE)
+        mutated = reviewer.replace("FROM debian:trixie-slim@sha256:", "FROM debian:trixie-slim#", 1)
+        self.assertNotEqual(mutated, reviewer)
+        self.assertTrue(pins._dockerfile_issues("reviewer.Dockerfile", mutated))
 
-    def test_detects_zero_cursor_agent_pin_placeholder(self) -> None:
-        self.assertIn(
-            "cursor-agent.pin sha256 must not be the all-zero placeholder",
-            check_supply_chain_pins._cursor_agent_pin_issues(
-                "version=2026.03.20-44cb435\n"
-                "url=https://downloads.cursor.com/lab/2026.03.20-44cb435/linux/x64/agent-cli-package.tar.gz\n"
-                "sha256=" + "0" * 64 + "\n"
-            ),
-        )
-
-    _RIPGREP_TARBALL_SHA = "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599"
-    _RIPGREP_BINARY_SHA = "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2"
-    _RIPGREP_OPENCODE_VERSION = "1.18.12"
-
-    _RIPGREP_PIN_OK = (
-        "version=15.1.0\n"
-        "opencode_version=1.18.12\n"
-        "url=https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/"
-        "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz\n"
-        f"sha256={_RIPGREP_TARBALL_SHA}\n"
-        f"binary_sha256={_RIPGREP_BINARY_SHA}\n"
-    )
-
-    _RIPGREP_STAGE_OK = (
-        "FROM debian:bookworm-slim AS ripgrep-bin\n"
-        "WORKDIR /opt/ripgrep-src\n"
-        "COPY ai-review/images/ripgrep.pin ./ripgrep.pin\n"
-        "RUN set -eu; \\\n"
-        "    . ./ripgrep.pin; \\\n"
-        '    if [ "$sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
-        '    if [ "$binary_sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n'
-        '    curl -fL "$url" -o ripgrep.tar.gz; \\\n'
-        '    echo "$sha256  ripgrep.tar.gz" | sha256sum -c -; \\\n'
-        '    echo "$binary_sha256  /opt/ripgrep/rg" | sha256sum -c -;\n'
-        "FROM ${AI_REVIEW_BASE_IMAGE}\n"
-    )
-
-    def _ripgrep_pin_issues(self, text: str, opencode_version: str | None = None) -> list[str]:
-        return check_supply_chain_pins._ripgrep_pin_issues(
-            text, opencode_version or self._RIPGREP_OPENCODE_VERSION
-        )
-
-    def test_ripgrep_pin_happy_path_passes(self) -> None:
-        self.assertEqual(self._ripgrep_pin_issues(self._RIPGREP_PIN_OK), [])
-
-    def test_ripgrep_pin_matches_the_pinned_opencode(self) -> None:
-        """The two pins are one decision: the pinned rg is the one this opencode fetches.
-
-        Checks the real files rather than a fixture, so a bump of either pin alone
-        fails here instead of at review time on a mismatched search binary.
-        """
-        package = json.loads(check_supply_chain_pins.PACKAGE_JSON.read_text(encoding="utf-8"))
+    def test_reviewer_base_default_must_match_the_base_image(self) -> None:
+        base = _read(pins.BASE_DOCKERFILE)
+        reviewer = _read(pins.REVIEWER_DOCKERFILE)
+        self.assertEqual(pins._base_image_issues(base, reviewer), [])
+        drifted = re.sub(r"(?m)^(FROM \S+@sha256:)[0-9a-f]{64}$", r"\g<1>" + "b" * 64, base)
         self.assertEqual(
-            self._ripgrep_pin_issues(
-                check_supply_chain_pins.RIPGREP_PIN.read_text(encoding="utf-8"),
-                str(package["dependencies"]["opencode-ai"]),
+            pins._base_image_issues(drifted, reviewer),
+            ["reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile"],
+        )
+
+    def test_image_pins_agree_across_platforms_and_with_the_trusted_sha(self) -> None:
+        gitlab = _read(pins.GITLAB_REVIEW_TEMPLATE)
+        github = _read(pins.GITHUB_REVIEW_WORKFLOW)
+        self.assertEqual(pins._image_pin_issues(gitlab, github), [])
+        trusted = gitlab.split('AI_REVIEW_TRUSTED_IMAGE_SHA: "', 1)[1][:40]
+        base = gitlab.split('AI_REVIEW_BASE_IMAGE: "', 1)[1].split('"', 1)[0]
+        base_line = f'  AI_REVIEW_BASE_IMAGE: "{base}"\n'
+        cases = {
+            "one GitHub container drifts": (gitlab, github.replace(base, base[:-1] + "0", 1)),
+            "GitLab rotates alone": (gitlab.replace(base, base[:-1] + "0"), github),
+            "trusted SHA differs": (gitlab.replace(f'"{trusted}"', '"' + "0" * 40 + '"'), github),
+            "GitLab pin duplicated": (
+                gitlab.replace(base_line, base_line * 2),
+                github,
             ),
-            [],
-        )
-
-    def test_detects_ripgrep_pin_opencode_version_drift(self) -> None:
-        issues = self._ripgrep_pin_issues(self._RIPGREP_PIN_OK, "1.19.0")
-        self.assertTrue(
-            any("opencode_version 1.18.12 does not match" in issue for issue in issues),
-            issues,
-        )
-
-    def test_detects_malformed_ripgrep_pin(self) -> None:
-        issues = self._ripgrep_pin_issues(
-            "version=latest\n"
-            "opencode_version=1.18.12\n"
-            "url=https://example.invalid/ripgrep-15.1.0.tar.gz\n"
-            "sha256=not-a-sha\n"
-            "binary_sha256=also-not-a-sha\n"
-        )
-        self.assertIn("ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest", issues)
-        self.assertIn("ripgrep.pin version must be an exact ripgrep version", issues)
-        self.assertIn("ripgrep.pin url must contain the pinned version", issues)
-        self.assertIn("ripgrep.pin url must use the upstream ripgrep release download host", issues)
-        self.assertIn("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest", issues)
-
-    def test_detects_zero_ripgrep_pin_placeholder(self) -> None:
-        self.assertIn(
-            "ripgrep.pin sha256 must not be the all-zero placeholder",
-            self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(
-                    f"sha256={self._RIPGREP_TARBALL_SHA}",
-                    "sha256=" + "0" * 64,
-                )
+            "tag without digest": (gitlab.replace(base, base.split("@", 1)[0]), github),
+            "GitHub job loses its container": (
+                gitlab,
+                github.replace(f"    container: {base}\n", "", 1),
             ),
-        )
-
-    def test_detects_zero_ripgrep_binary_placeholder(self) -> None:
-        self.assertIn(
-            "ripgrep.pin binary_sha256 must not be the all-zero placeholder",
-            self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(
-                    f"binary_sha256={self._RIPGREP_BINARY_SHA}",
-                    "binary_sha256=" + "0" * 64,
-                )
-            ),
-        )
-
-    def test_detects_ripgrep_binary_digest_copied_from_the_tarball(self) -> None:
-        """A copy of the tarball digest asserts nothing about the file on PATH."""
-        self.assertIn(
-            "ripgrep.pin binary_sha256 must be the extracted rg digest, not the tarball",
-            self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(
-                    f"binary_sha256={self._RIPGREP_BINARY_SHA}",
-                    f"binary_sha256={self._RIPGREP_TARBALL_SHA}",
-                )
-            ),
-        )
-
-    def test_detects_missing_ripgrep_pin_key(self) -> None:
-        self.assertIn(
-            "ripgrep.pin missing sha256",
-            self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(f"sha256={self._RIPGREP_TARBALL_SHA}\n", "")
-            ),
-        )
-
-    def test_detects_missing_ripgrep_binary_digest(self) -> None:
-        self.assertIn(
-            "ripgrep.pin missing binary_sha256",
-            self._ripgrep_pin_issues(
-                self._RIPGREP_PIN_OK.replace(f"binary_sha256={self._RIPGREP_BINARY_SHA}\n", "")
-            ),
-        )
-
-    def test_detects_ripgrep_pin_off_host_arch(self) -> None:
-        self.assertIn(
-            "ripgrep.pin url must reference the x86_64-unknown-linux-musl asset",
-            self._ripgrep_pin_issues(self._RIPGREP_PIN_OK.replace("x86_64", "aarch64")),
-        )
-
-    def test_ripgrep_stage_happy_path_passes(self) -> None:
-        self.assertEqual(
-            check_supply_chain_pins._ripgrep_stage_issues(self._RIPGREP_STAGE_OK),
-            [],
-        )
-
-    def test_ripgrep_stage_requires_verify_stage(self) -> None:
-        issues = check_supply_chain_pins._ripgrep_stage_issues("FROM ${AI_REVIEW_BASE_IMAGE}\n")
-        self.assertIn(
-            "reviewer.Dockerfile must build the pinned ripgrep in a ripgrep-bin stage",
-            issues,
-        )
-
-    def test_ripgrep_stage_requires_checksum(self) -> None:
-        self.assertIn(
-            "reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum",
-            check_supply_chain_pins._ripgrep_stage_issues(
-                self._RIPGREP_STAGE_OK.replace(
-                    'echo "$sha256  ripgrep.tar.gz" | sha256sum -c -; \\\n', ""
-                )
-            ),
-        )
-
-    def test_ripgrep_stage_requires_binary_checksum(self) -> None:
-        self.assertIn(
-            "reviewer.Dockerfile ripgrep-bin stage must verify the extracted binary digest",
-            check_supply_chain_pins._ripgrep_stage_issues(
-                self._RIPGREP_STAGE_OK.replace(
-                    '    echo "$binary_sha256  /opt/ripgrep/rg" | sha256sum -c -;\n', ""
-                )
-            ),
-        )
-
-    def test_ripgrep_stage_requires_the_pinned_url_download(self) -> None:
-        """Hashing some other fetched file would satisfy the checksum steps alone."""
-        self.assertIn(
-            "reviewer.Dockerfile ripgrep-bin stage must download the pinned url",
-            check_supply_chain_pins._ripgrep_stage_issues(
-                self._RIPGREP_STAGE_OK.replace(
-                    'curl -fL "$url" -o ripgrep.tar.gz',
-                    "curl -fL https://example.invalid/rg.tar.gz -o ripgrep.tar.gz",
-                )
-            ),
-        )
-
-    def test_ripgrep_stage_requires_both_placeholder_rejections(self) -> None:
-        self.assertIn(
-            "reviewer.Dockerfile ripgrep-bin stage must reject both all-zero pin placeholders",
-            check_supply_chain_pins._ripgrep_stage_issues(
-                self._RIPGREP_STAGE_OK.replace(
-                    '    if [ "$binary_sha256" = "' + "0" * 64 + '" ]; then exit 1; fi; \\\n',
-                    "",
-                )
-            ),
-        )
-
-    def test_runtime_guard_requires_the_binary_digest_assertion(self) -> None:
-        broken = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
-        self.assertIn(
-            "reviewer.Dockerfile must assert the pinned binary digest of /usr/local/bin/rg",
-            check_supply_chain_pins._ripgrep_runtime_guard_issues(
-                broken.replace(
-                    '    echo "$binary_sha256  /usr/local/bin/rg" | sha256sum -c -; \\\n', ""
-                )
-            ),
-        )
-
-    def test_ripgrep_stage_requires_pin_read(self) -> None:
-        self.assertIn(
-            "reviewer.Dockerfile ripgrep-bin stage must read ripgrep.pin",
-            check_supply_chain_pins._ripgrep_stage_issues(
-                self._RIPGREP_STAGE_OK.replace(
-                    "COPY ai-review/images/ripgrep.pin ./ripgrep.pin",
-                    "COPY ai-review/images/other.pin ./other.pin",
-                ).replace(". ./ripgrep.pin;", ". ./other.pin;")
-            ),
-        )
-
-    def test_detects_placeholder_ripgrep_pin_via_checker(self) -> None:
-        original = check_supply_chain_pins.RIPGREP_PIN
-        with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "ripgrep.pin"
-            mutated.write_text(
-                self._RIPGREP_PIN_OK.replace(
-                    f"sha256={self._RIPGREP_TARBALL_SHA}",
-                    "sha256=" + "0" * 64,
-                ),
-                encoding="utf-8",
-            )
-            check_supply_chain_pins.RIPGREP_PIN = mutated
-            try:
-                self.assertEqual(check_supply_chain_pins.main(), 1)
-            finally:
-                check_supply_chain_pins.RIPGREP_PIN = original
-
-    def test_runtime_guard_resolves_rg_through_sh_c(self) -> None:
-        text = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
-        self.assertEqual(
-            check_supply_chain_pins._ripgrep_runtime_guard_issues(text),
-            [],
-        )
-
-    def test_runtime_guard_rejects_direct_command_builtin(self) -> None:
-        broken = check_supply_chain_pins.REVIEWER_DOCKERFILE.read_text(encoding="utf-8")
-        self.assertIn(
-            "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c",
-            check_supply_chain_pins._ripgrep_runtime_guard_issues(
-                broken.replace(
-                    "env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'",
-                    "env -i PATH=/usr/local/bin:/usr/bin:/bin command -v rg",
-                )
-            ),
-        )
-
-    def test_detects_stale_reviewer_cli_version_variables(self) -> None:
-        """Reviewer CLI versions must come from package-lock.json, not CI variables.
-
-        Scanning the canonical template is sufficient: the installed copy under
-        .github/workflows/ is a byte duplicate of it, enforced by
-        `make workflow-parity`, so a version variable cannot appear only there.
-        A separate case asserting that the installed copy was scanned too has been
-        removed along with the duplicate parity check it depended on.
-
-        Asserts on the specific message rather than on `main()`'s exit code, so the
-        case cannot pass on some unrelated failure.
-        """
-        original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW
-        expected = "reviewer CLI versions must come from package-lock.json"
-        with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "review.github-actions.yml"
-            mutated.write_text(
-                original.read_text(encoding="utf-8") + "\n  AI_REVIEW_CLAUDE_VERSION: 1.2.3\n",
-                encoding="utf-8",
-            )
-            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
-            stderr = io.StringIO()
-            try:
-                with contextlib.redirect_stderr(stderr):
-                    self.assertEqual(check_supply_chain_pins.main(), 1)
-            finally:
-                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
-            self.assertIn(expected, stderr.getvalue())
-
-            # Guard the guard: without the injected variable the CLI-version message
-            # must be absent, so a green result cannot come from an unrelated failure.
-            clean = Path(tmp) / "clean.yml"
-            clean.write_text(original.read_text(encoding="utf-8"), encoding="utf-8")
-            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = clean
-            stderr = io.StringIO()
-            try:
-                with contextlib.redirect_stderr(stderr):
-                    check_supply_chain_pins.main()
-            finally:
-                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
-            self.assertNotIn(expected, stderr.getvalue())
-
-    def test_detects_mutable_action_in_shipped_review_workflow(self) -> None:
-        original = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW
-        with tempfile.TemporaryDirectory() as tmp:
-            mutated = Path(tmp) / "review.github-actions.yml"
-            mutated.write_text("steps:\n  - uses: actions/checkout@v4\n", encoding="utf-8")
-            check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = mutated
-            try:
-                self.assertEqual(check_supply_chain_pins.main(), 1)
-            finally:
-                check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW = original
-
-    def test_detects_one_stale_github_job_container_pin(self) -> None:
-        text = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
-        base_pin = next(
-            line.strip().removeprefix("container: ")
-            for line in text.splitlines()
-            if "container: ghcr.io/" in line and "/ai-review-base:" in line
-        )
-        mutated = text.replace(base_pin, base_pin[:-1] + ("0" if base_pin[-1] != "0" else "1"), 1)
-
-        self.assertIn(
-            "GitHub review base job containers must use one identical image pin",
-            check_supply_chain_pins._github_review_container_issues(mutated),
-        )
-
-    def test_github_review_workflow_rejects_dead_image_variables(self) -> None:
-        text = check_supply_chain_pins.GITHUB_REVIEW_WORKFLOW.read_text(encoding="utf-8")
-        mutated = text.replace(
-            "env:\n",
-            "env:\n  AI_REVIEW_BASE_IMAGE: ghcr.io/example/base@sha256:" + "0" * 64 + "\n",
-            1,
-        )
-
-        self.assertIn(
-            "GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables",
-            check_supply_chain_pins._github_review_container_issues(mutated),
-        )
-
-    def test_detects_mislabeled_action_pin(self) -> None:
-        checkout_pins = [
-            (sha, version)
-            for (action, sha), version in check_supply_chain_pins.APPROVED_ACTION_PINS.items()
-            if action == "actions/checkout"
-        ]
-        self.assertEqual(len(checkout_pins), 1)
-        sha, version = checkout_pins[0]
-        wrong_version = "v0.0.0"
-        text = f"steps:\n  - uses: actions/checkout@{sha} # {wrong_version}\n"
-
-        self.assertEqual(
-            check_supply_chain_pins._workflow_action_issues(text),
-            [
-                f"line 2: actions/checkout@{sha} is {version}, "
-                f"but its version label is {wrong_version}"
-            ],
-        )
-
-    def test_rejects_superseded_node20_action_pins(self) -> None:
-        stale_pins = {
-            ("actions/checkout", "08eba0b27e820071cde6df949e0beb9ba4906955"): "v4.3.0",
-            ("actions/setup-python", "a26af69be951a213d495a4c3e4e4022e16d87065"): "v5.6.0",
-            ("actions/github-script", "60a0d83039c74a4aee543508d2ffcb1c3799cdea"): "v7.0.1",
-            ("actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"): "v4.6.2",
-            ("actions/download-artifact", "d3f86a106a0bac45b974a628896c90dbdf5c8093"): "v4.3.0",
         }
+        for label, (mutated_gitlab, mutated_github) in cases.items():
+            with self.subTest(label):
+                self.assertTrue(pins._image_pin_issues(mutated_gitlab, mutated_github))
 
-        for (action, sha), version in stale_pins.items():
-            with self.subTest(action=action):
-                self.assertNotIn(
-                    (action, sha),
-                    check_supply_chain_pins.APPROVED_ACTION_PINS,
+    def test_requirements_need_exact_pins_and_may_carry_markers(self) -> None:
+        text = '-c constraints.txt\n# tools\nruff==1.0\nzizmor==1.0; sys_platform != "android"\n'
+        self.assertEqual(pins._exact_requirement_issues("r", text, markers=True), [])
+        for loose in ("ruff>=1.0", "ruff", "ruff~=1.0"):
+            with self.subTest(loose=loose):
+                self.assertEqual(
+                    pins._exact_requirement_issues(
+                        "r", text.replace("ruff==1.0", loose), markers=True
+                    ),
+                    [f"r must use exact == pins only, got {loose!r}"],
+                )
+
+    def test_constraints_accept_only_bare_exact_pins(self) -> None:
+        # pip skips a constraint whose marker does not match the image's Python, and a
+        # glued range loosens it, so neither pins the package in the image.
+        base = "RUN python -m pip install --constraint /tmp/c.txt pip requests\n"
+        for constraint in (
+            'requests==2.34.2; python_version < "3.14"',
+            'requests==2.34.2;python_version<"3.14"',
+            "requests==2.34.2,<3",
+        ):
+            with self.subTest(constraint=constraint):
+                conditional = f"pip==26.0\n{constraint}\n"
+                self.assertEqual(
+                    pins._exact_requirement_issues("c", conditional),
+                    [f"c must use exact == pins only, got {constraint!r}"],
                 )
                 self.assertEqual(
-                    check_supply_chain_pins._workflow_action_issues(
-                        f"steps:\n  - uses: {action}@{sha} # {version}\n"
-                    ),
-                    [f"line 2: {action}@{sha} has unregistered version label {version}"],
+                    pins._pip_install_issues(base, conditional),
+                    ["base.Dockerfile installs unconstrained requests"],
                 )
 
-    def test_detects_mutable_third_party_action(self) -> None:
+    def test_pip_installs_pass_the_constraints_and_name_only_pinned_packages(self) -> None:
+        constraints = "pip==26.0\nPyYAML==6.0\nrequests==2.0\n"
+        base = (
+            "RUN python -m pip install --constraint /tmp/c.txt --upgrade pip \\\n"
+            "    && python -m pip install --no-cache-dir \\\n"
+            "      --constraint /tmp/c.txt pyyaml requests\n"
+            "RUN apt-get install -y git\n"
+        )
+        self.assertEqual(pins._pip_install_issues(base, constraints), [])
         self.assertEqual(
-            check_supply_chain_pins._workflow_action_issues(
-                "steps:\n  - uses: third-party/example@v1\n"
-            ),
-            ["line 2: third-party/example must use a full commit SHA"],
+            pins._pip_install_issues(base.replace("requests", "requests jsonschema"), constraints),
+            ["base.Dockerfile installs unconstrained jsonschema"],
         )
+        unconstrained = base.replace("--constraint /tmp/c.txt --upgrade", "--upgrade")
+        self.assertEqual(len(pins._pip_install_issues(unconstrained, constraints)), 1)
 
-    def test_allows_local_and_docker_actions(self) -> None:
-        text = "steps:\n  - uses: ./local-action\n  - uses: docker://alpine:3.22\n"
+    def test_reviewer_clis_install_from_the_lockfile_at_exact_versions(self) -> None:
+        reviewer = _read(pins.REVIEWER_DOCKERFILE)
+        package = json.loads(_read(pins.PACKAGE_JSON))
+        self.assertEqual(pins._npm_issues(reviewer, package), [])
+        self.assertTrue(pins._npm_issues(reviewer.replace("npm ci", "npm install -g"), package))
+        package["dependencies"]["opencode-ai"] = "^1.0.0"
+        self.assertTrue(pins._npm_issues(reviewer, package))
 
-        self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
+    def test_pin_files_reject_placeholders_and_missing_fields(self) -> None:
+        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["opencode-ai"]
+        for name, path in (
+            ("cursor-agent.pin", pins.CURSOR_AGENT_PIN),
+            ("ripgrep.pin", pins.RIPGREP_PIN),
+        ):
+            text = _read(path)
+            self.assertEqual(pins._pin_file_issues(name, text, opencode), [])
+            values = dict(
+                line.split("=", 1) for line in text.splitlines() if line and line[0] != "#"
+            )
+            mutations = [
+                text.replace(f"sha256={values['sha256']}", "sha256=" + "0" * 64),
+                text.replace(f"sha256={values['sha256']}", "sha256=" + values["sha256"].upper()),
+                text.replace(f"url={values['url']}", "url=https://example.invalid/latest.tar.gz"),
+                text.replace(f"version={values['version']}\n", ""),
+            ]
+            for mutated in mutations:
+                with self.subTest(name=name, mutated=mutated[-200:]):
+                    self.assertTrue(pins._pin_file_issues(name, mutated, opencode))
 
-    def test_accepts_registered_preceding_version_label(self) -> None:
-        ((sha, version),) = [
-            (sha, version)
-            for (action, sha), version in check_supply_chain_pins.APPROVED_ACTION_PINS.items()
-            if action == "actions/checkout"
-        ]
-        text = f"steps:\n  # actions/checkout@{version}\n  - uses: actions/checkout@{sha}\n"
-
-        self.assertEqual(check_supply_chain_pins._workflow_action_issues(text), [])
-
-    def test_detects_workflow_entry_folded_into_inline_comment(self) -> None:
-        text = (
-            "steps:\n"
-            "  - uses: actions/checkout@" + ("a" * 40) + " # v4.3.0"
-            "  - uses: actions/setup-python@" + ("b" * 40) + " # v5.6.0    with:\n"
-        )
-
+    def test_ripgrep_pin_binary_digest_and_opencode_binding(self) -> None:
+        text = _read(pins.RIPGREP_PIN)
+        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["opencode-ai"]
+        tarball = text.split("\nsha256=", 1)[1].split("\n", 1)[0]
+        binary = text.split("\nbinary_sha256=", 1)[1].split("\n", 1)[0]
         self.assertEqual(
-            check_supply_chain_pins._workflow_structure_issues(text),
-            ["line 2 contains a YAML key inside an inline comment"],
+            pins._pin_file_issues("ripgrep.pin", text.replace(binary, tarball), opencode),
+            ["ripgrep.pin binary_sha256 must be the extracted rg, not the tarball"],
         )
+        # A Renovate opencode-ai bump must fail until ripgrep.pin is re-observed.
+        issues = pins._pin_file_issues("ripgrep.pin", text, "99.0.0")
+        self.assertEqual(len(issues), 1)
+        self.assertIn("opencode_version must equal package.json opencode-ai 99.0.0", issues[0])
 
     def test_script_imports_only_the_standard_library(self) -> None:
-        """The script must stay stdlib-only.
-
-        The image-publishing workflow runs it on the runner's system Python before
-        any dependency is installed, so a third-party import would break that gate.
-        Asserted as an AST scan rather than a name list so a future import is
-        caught by shape.
-        """
-
+        """The image-publishing workflow runs it before any dependency is installed."""
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
         roots: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 roots.update(alias.name.split(".")[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
-                if node.level:
-                    # A relative import cannot resolve: the script is executed as
-                    # a standalone file, not as a package.
-                    roots.add(f".{node.module or ''}")
-                elif node.module:
-                    roots.add(node.module.split(".")[0])
-
-        non_stdlib = sorted(root for root in roots if root not in sys.stdlib_module_names)
-        self.assertEqual(
-            non_stdlib,
-            [],
-            "check_supply_chain_pins.py must import only the standard library; "
-            "the publishing workflow runs it before installing dependencies",
-        )
+                roots.add(f".{node.module or ''}" if node.level else str(node.module).split(".")[0])
+        self.assertEqual(sorted(root for root in roots if root not in sys.stdlib_module_names), [])
 
 
 if __name__ == "__main__":

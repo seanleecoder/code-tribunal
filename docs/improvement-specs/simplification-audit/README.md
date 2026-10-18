@@ -39,7 +39,7 @@ otherwise build on top of it. Line counts are estimates covering source and test
 
 | ID | Item | Lines | Timing | Notes |
 |---|---|---:|---|---|
-| N01 | Replace the custom pin checker with Renovate (updates) and zizmor (workflow pin lint), keeping about 200 lines of project-specific checks, including every Dockerfile `FROM`/`ARG` digest | −1,050 | 2.1.0, with S01 | Decided 2026-10-14. Named in ADR-0004. zizmor does not read Dockerfiles, so their digest checks stay in-repo. |
+| N01 | Replace the custom pin checker with Renovate (updates) and zizmor (workflow pin lint), keeping about 200 lines of project-specific checks, including every Dockerfile `FROM`/`ARG` digest | −1,050 | 2.1.0, before S01 | Done 2026-10-18, narrowed by the ADR-0004 decision 9 amendment: Lychee keeps its verified installer and the `.pin` files get no regex managers. zizmor does not read Dockerfiles, so their digest checks stay in-repo. |
 | N02 | GitLab: support direct include only; drop hardened child mode | −300 | Deprecated in 2.0.3 (COMPAT-004); delete in the next major | Decided 2026-10-14. Child isolation is not a boundary ([security model](../../SECURITY_MODEL.md)). The deletion includes `_validate_child_mode` in `scripts/pipeline_trust.py` and its child-mode tests. |
 | N03 | GitHub: reusable workflow (`workflow_call`) replaces the copied template and its sync machinery | −400 | Decide in ADR-0004; ship in the next major | Decided 2026-10-14. Check names change, so it is breaking. |
 | N04 | One bot comment per merge request: state moves inside the summary | −200 | SPEC-66 reserves the space; implement with S14 in the next major | Decided 2026-10-14. Needs N13 first. Fixes summary ownership by construction. |

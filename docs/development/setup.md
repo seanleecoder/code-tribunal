@@ -13,7 +13,8 @@ make quality
 
 `make quality` is the same blocking command used by repository CI. It runs the
 Markdown link checks, Ruff, pytest with coverage, whole-package mypy,
-supply-chain validation, release-input checks, and workflow parity.
+supply-chain validation, zizmor's workflow pin audits, release-input checks, and
+workflow parity.
 The Lychee installer selects the reviewed native archive for Linux x86-64 or
 macOS Intel/Apple Silicon and verifies its pinned SHA-256 before placing it on
 the local `PATH`; the gate never compiles or silently skips the tool.
@@ -34,7 +35,11 @@ make packaged-smoke SCOPE=base
 suite are pytest-style functions that `unittest` cannot collect, so there is no
 fallback runner. Install the pinned development dependencies from
 `requirements-dev.txt` before running it. The pinned Lychee binary must also be
-on `PATH`, installed as shown in the first code block. Ruff parses the Python
+on `PATH`, installed as shown in the first code block, and so must `zizmor`.
+`requirements-dev.txt` installs it everywhere except Android, where PyPI has no
+wheel; there, put the `zizmor` binary from its `musllinux` wheel on `PATH`.
+Without `GH_TOKEN`, zizmor runs offline and skips `ref-version-mismatch`, which
+CI runs with a token. Ruff parses the Python
 sources during linting; image builds retain their compilation pass.
 
 `make packaged-smoke` runs the curated packaged-runtime smoke suite that ships in
