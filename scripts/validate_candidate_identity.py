@@ -12,6 +12,7 @@ from release_common import (
     DIGEST_RE,
     FULL_SHA_RE,
     IMAGE_NAME_RE,
+    IMAGE_WORKFLOW,
     REPOSITORY,
     canonical_json_bytes,
     git_is_ancestor,
@@ -19,9 +20,7 @@ from release_common import (
 )
 
 SOURCE_REF = "refs/heads/main"
-SIGNER_IDENTITY = (
-    f"https://github.com/{REPOSITORY}/.github/workflows/publish-ai-review-images.yml@{SOURCE_REF}"
-)
+SIGNER_IDENTITY = f"https://github.com/{REPOSITORY}/{IMAGE_WORKFLOW}@{SOURCE_REF}"
 CAMPAIGNS = ("panel", "lifecycle", "hostile")
 CANDIDATE_SCHEMA = "candidate_canary_identity.v1"
 EXPECTED_IMAGE_NAMES = {
@@ -74,7 +73,7 @@ def validate_inputs(
 
 def campaign_selection(value: str) -> list[str]:
     selected = value.split(",")
-    if not value or any(campaign not in CAMPAIGNS for campaign in selected):
+    if any(campaign not in CAMPAIGNS for campaign in selected):
         raise CandidateIdentityError(f"campaigns must be a comma-separated subset of {CAMPAIGNS}")
     if len(set(selected)) != len(selected):
         raise CandidateIdentityError("campaigns must not repeat")

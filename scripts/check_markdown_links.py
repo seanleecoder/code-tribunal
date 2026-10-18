@@ -149,12 +149,6 @@ def _lychee_path(explicit: Path | None) -> Path:
     return Path(resolved)
 
 
-def _write_inventory(directory: Path, name: str, paths: tuple[str, ...]) -> Path:
-    destination = directory / name
-    destination.write_text("\n".join(paths) + "\n", encoding="utf-8")
-    return destination
-
-
 def check_links(*, lychee: Path | None = None) -> None:
     pin = load_pin()
     executable = _lychee_path(lychee)
@@ -163,8 +157,9 @@ def check_links(*, lychee: Path | None = None) -> None:
         reported = version.stdout.strip() or version.stderr.strip() or "unavailable"
         raise LinkCheckError(f"Lychee version mismatch: expected {pin['version']}, got {reported}")
     with tempfile.TemporaryDirectory(prefix="code-tribunal-links-") as temporary:
-        inventory = _write_inventory(Path(temporary), "link-checked.txt", _inventory())
-        current = _run(
+        inventory = Path(temporary) / "link-checked.txt"
+        inventory.write_text("\n".join(_inventory()) + "\n", encoding="utf-8")
+        result = _run(
             [
                 str(executable),
                 "--offline",
@@ -174,8 +169,8 @@ def check_links(*, lychee: Path | None = None) -> None:
                 str(inventory),
             ]
         )
-        if current.returncode:
-            raise LinkCheckError(current.stderr.strip() or current.stdout.strip())
+        if result.returncode:
+            raise LinkCheckError(result.stderr.strip() or result.stdout.strip())
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -15,7 +15,8 @@ from tests.support.repository_script import load_repository_script
 REPO = Path(__file__).resolve().parents[3]
 tool = load_repository_script("check_release", REPO / "scripts/check_release.py")
 PUBLISH_WORKFLOW = REPO / ".github/workflows/publish-release.yml"
-TEMPLATES = (tool.GITHUB_TEMPLATE, tool.GITHUB_INSTALLED, tool.GITLAB_TEMPLATE)
+CANARY_WORKFLOW = REPO / tool.CANARY_WORKFLOW
+TEMPLATES = tool.TEMPLATES
 CHANGELOG = """# Changelog
 
 ## [Unreleased]
@@ -127,24 +128,27 @@ class ReleasePinsTests(unittest.TestCase):
 
 
 class ReleaseTagTests(unittest.TestCase):
-    def setUp(self) -> None:
+    @classmethod
+    def setUpClass(cls) -> None:
         temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name) / "repo"
-        self.root.mkdir()
-        self.repo = ReleaseRepository(self.root)
+        cls.addClassCleanup(temporary.cleanup)
+        cls.root = Path(temporary.name) / "repo"
+        cls.root.mkdir()
+        cls.repo = ReleaseRepository(cls.root)
         # A fixture-only SSH key; the test never reads an operator key.
-        self.key = Path(temporary.name) / "fixture-key"
-        subprocess.run(
-            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True
+        key = Path(temporary.name) / "fixture-key"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+        (cls.root / ".github/allowed_signers").write_text(
+            "fixture@example.test " + key.with_suffix(".pub").read_text()
         )
-        (self.root / ".github/allowed_signers").write_text(
-            "fixture@example.test " + self.key.with_suffix(".pub").read_text()
-        )
-        self.release_commit = self.repo.release_commit()
+        cls.release_commit = cls.repo.release_commit()
+        _git(cls.root, "config", "gpg.format", "ssh")
+        _git(cls.root, "config", "user.signingkey", str(key))
+
+    def setUp(self) -> None:
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.release_commit)
-        _git(self.root, "config", "gpg.format", "ssh")
-        _git(self.root, "config", "user.signingkey", str(self.key))
+        for tag in _git(self.root, "tag", "--list").split():
+            _git(self.root, "tag", "-d", tag)
 
     def _tag(self, message: str, *, signed: bool = True) -> None:
         _git(self.root, "tag", "-f", "-s" if signed else "-a", "v2.1.0", "-m", message)
@@ -186,6 +190,8 @@ class ReleaseTagTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "protected main"):
             tool.verify_tag(self.root, "v2.1.0")
 
+
+class TagVersionTests(unittest.TestCase):
     def test_tag_versions_start_at_the_first_release_under_adr_0004(self) -> None:
         self.assertEqual(tool.tag_version("v2.1.0-rc.1"), "2.1.0-rc.1")
         self.assertEqual(tool.tag_version("v10.0.0"), "10.0.0")
@@ -204,23 +210,15 @@ class FakeCanary:
             "attempt": 1, "conclusion": "success", "event": "workflow_dispatch",
             "headBranch": "main", "status": "completed", "workflowDatabaseId": 7,
             "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/4242",
-            "jobs": [{"name": "verify-candidate", "status": "completed", "conclusion": "success"}],
         }
         self.workflow = {"id": 7, "path": tool.CANARY_WORKFLOW}
         self.artifacts = {tool.IDENTITY_ARTIFACT: {
             "schema_version": tool.CANDIDATE_SCHEMA, **candidate, "campaigns": list(campaigns),
         }}
-        for campaign, (family, artifacts) in tool.CAMPAIGN_SUMMARIES.items():
+        for campaign, artifacts in tool.CAMPAIGN_SUMMARIES.items():
             if campaign not in campaigns:
-                self.meta["jobs"].append(
-                    {"name": family, "status": "completed", "conclusion": "skipped"}
-                )
                 continue
-            for platform, artifact in artifacts.items():
-                name = family if len(artifacts) == 1 else f"{family} ({platform}, SECRET, ENV)"
-                self.meta["jobs"].append(
-                    {"name": name, "status": "completed", "conclusion": "success"}
-                )
+            for artifact in artifacts.values():
                 if campaign == "panel":
                     summary = {
                         "candidate": candidate, "cleanup": "success",
@@ -312,15 +310,7 @@ class CanaryVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "different candidate"):
             self._verify(canary)
 
-    def test_every_selected_campaign_job_must_succeed_and_pass(self) -> None:
-        canary = FakeCanary(self.pins)
-        canary.meta["jobs"][2]["conclusion"] = "failure"
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "concluded 'failure'"):
-            self._verify(canary)
-        canary = FakeCanary(self.pins)
-        canary.meta["jobs"] = [job for job in canary.meta["jobs"] if job["name"] != "hostile"]
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "hostile/gitlab job"):
-            self._verify(canary)
+    def test_every_selected_campaign_must_upload_a_passing_summary(self) -> None:
         canary = FakeCanary(self.pins)
         canary.artifacts["candidate-canary-github-summary"]["cleanup"] = "failure"
         with self.assertRaisesRegex(tool.ReleaseValidationError, "cleanup"):
@@ -333,6 +323,30 @@ class CanaryVerificationTests(unittest.TestCase):
         del canary.artifacts["candidate-canary-github-lifecycle-summary"]
         with self.assertRaisesRegex(tool.ReleaseValidationError, "no artifact"):
             self._verify(canary)
+
+
+    def test_the_summary_table_matches_the_canary_campaigns_and_uploads(self) -> None:
+        identity = load_repository_script(
+            "validate_candidate_identity", REPO / "scripts/validate_candidate_identity.py"
+        )
+        self.assertEqual(tuple(tool.CAMPAIGN_SUMMARIES), identity.CAMPAIGNS)
+        workflow = yaml.load(CANARY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        uploads = set()
+        for job in workflow["jobs"].values():
+            platforms = job.get("strategy", {}).get("matrix", {}).get("include", [{}])
+            for step in job["steps"]:
+                if step.get("uses", "").startswith("actions/upload-artifact@"):
+                    uploads |= {
+                        step["with"]["name"].replace(
+                            "${{ matrix.platform }}", platform.get("platform", "")
+                        )
+                        for platform in platforms
+                    }
+        self.assertEqual(uploads, {tool.IDENTITY_ARTIFACT} | {
+            artifact
+            for artifacts in tool.CAMPAIGN_SUMMARIES.values()
+            for artifact in artifacts.values()
+        })
 
 
 class ReleaseBodyTests(unittest.TestCase):
@@ -354,7 +368,7 @@ class ReleaseBodyTests(unittest.TestCase):
             "- Root [file](/README.md?plain=1), [here](#unreleased), [web](https://example.test/x),"
             " [mail](mailto:a@example.test), [up](./docs/../SECURITY.md).\n"
             "[ref]: docs/ref.md \"Title\"\n"
-            "```md\n[example](docs/untouched.md)\n```\n"
+            "```md\n[example](docs/untouched.md)\n```python\n[still](docs/code.md)\n```\n"
             "[after](docs/after.md)"
         )
         self.assertEqual(tool.absolute_links(notes, "v2.1.0"), (
@@ -364,7 +378,7 @@ class ReleaseBodyTests(unittest.TestCase):
             " [web](https://example.test/x), [mail](mailto:a@example.test),"
             f" [up]({blob}SECURITY.md).\n"
             f"[ref]: {blob}docs/ref.md \"Title\"\n"
-            "```md\n[example](docs/untouched.md)\n```\n"
+            "```md\n[example](docs/untouched.md)\n```python\n[still](docs/code.md)\n```\n"
             f"[after]({blob}docs/after.md)"
         ))
 

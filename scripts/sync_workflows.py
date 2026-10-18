@@ -15,8 +15,9 @@ path:
 
     python3 scripts/sync_workflows.py [--check]
 
-The comparison itself lives in release_common.sync_workflows. It is byte-exact: GitHub executes the
-installed file verbatim, so a line-ending difference is real drift.
+The comparison itself lives in release_common.sync_workflows. It is byte-exact:
+GitHub executes the installed file verbatim, so a line-ending difference is real
+drift.
 """
 
 from __future__ import annotations

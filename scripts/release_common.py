@@ -11,9 +11,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "seanleecoder/code-tribunal"
 
+
 class ReleaseValidationError(ValueError):
     """Raised when a release or its inputs violate a checked contract."""
-
 
 
 # Canonical template -> installed copy. GitHub only executes workflows that are
@@ -88,8 +88,8 @@ def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
-def image_ref(image: dict[str, Any], runtime_source: str, root: Path = ROOT) -> str:
-    return f"{image['name']}:{image_tag_series(root)}-{runtime_source}@{image['digest']}"
+def image_ref(image: dict[str, Any], runtime_source: str) -> str:
+    return f"{image['name']}:{image_tag_series()}-{runtime_source}@{image['digest']}"
 
 
 def diff_paths(root: Path, *revisions: str) -> list[str]:

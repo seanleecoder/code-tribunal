@@ -139,12 +139,8 @@ identity, OCI labels, and provenance, then runs one four-seat (Claude, Codex,
 OpenCode, Cursor) review-and-critique campaign on each demo consumer. A red
 result blocks repinning; rerun only after a concrete fix.
 
-The canary retains only redacted summary artifacts. Generate the records from a
-green run with `make evidence-records RUN=<run id>`. It writes
-`record-candidate-canary.md` (image identity plus the real panel on **both**
-platforms), `record-github-current-image.md`, `record-gitlab-current-image.md`,
-and `record-gitlab-hostile-mr.md`, each with the `Release-*` binding and a leak
-scan. Add context only under each record's **Operator notes**. A four-seat canary
+The canary retains only redacted summary artifacts. From 2.1.0 no evidence records
+are generated: the release body records the run's verdicts. A four-seat canary
 whose three OpenRouter models and efforts match the shipped defaults supplies
 their route evidence for Chain A. A separate three-seat smoke establishes the
 exact default roster, or supplies route evidence when the canary uses different

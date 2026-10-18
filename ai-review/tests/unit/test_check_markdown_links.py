@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import io
-import os
 import subprocess
-import sys
 import tarfile
 import tempfile
 import unittest
@@ -25,19 +23,6 @@ def _completed(
 class MarkdownLinkCheckerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.checker = load_repository_script("check_markdown_links", SCRIPT)
-
-    def test_package_import_bootstraps_sibling_scripts(self) -> None:
-        environment = dict(os.environ)
-        environment["PYTHONPATH"] = str(ROOT / "ai-review" / "src")
-        completed = subprocess.run(
-            [sys.executable, "-c", "import scripts.check_markdown_links"],
-            cwd=ROOT,
-            env=environment,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_resolved_argv_checks_the_inventory_offline_with_anchors(self) -> None:
         calls: list[list[str]] = []

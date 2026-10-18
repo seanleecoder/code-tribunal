@@ -1,33 +1,24 @@
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPTS = REPO_ROOT / "scripts"
+from tests.support.repository_script import load_repository_script
 
-if not (SCRIPTS / "release_common.py").is_file():
-    raise unittest.SkipTest("repository-only release tooling is absent from the runtime image")
-ORIGINAL_SYS_PATH = sys.path.copy()
-sys.path.insert(0, str(SCRIPTS))
-try:
-    from release_common import (  # noqa: E402
-        IMAGE_WORKFLOW,
-        WORKFLOW_PAIRS,
-        ReleaseValidationError,
-        canonical_json_bytes,
-        compare_release_versions,
-        git_is_ancestor,
-        image_ref,
-        image_tag_series,
-        sync_workflows,
-        validate_release_version,
-    )
-finally:
-    sys.path[:] = ORIGINAL_SYS_PATH
+REPO_ROOT = Path(__file__).resolve().parents[3]
+common = load_repository_script("release_common", REPO_ROOT / "scripts/release_common.py")
+IMAGE_WORKFLOW = common.IMAGE_WORKFLOW
+WORKFLOW_PAIRS = common.WORKFLOW_PAIRS
+ReleaseValidationError = common.ReleaseValidationError
+canonical_json_bytes = common.canonical_json_bytes
+compare_release_versions = common.compare_release_versions
+git_is_ancestor = common.git_is_ancestor
+image_ref = common.image_ref
+image_tag_series = common.image_tag_series
+sync_workflows = common.sync_workflows
+validate_release_version = common.validate_release_version
 
 
 class ReleaseCommonTests(unittest.TestCase):
@@ -37,7 +28,7 @@ class ReleaseCommonTests(unittest.TestCase):
         self.assertIn(f'  IMAGE_VERSION: "{series}"\n', workflow)
         self.assertEqual(
             image_ref({"name": "ghcr.io/o/r/ai-review-base", "digest": "sha256:" + "0" * 64},
-                      "a" * 40, REPO_ROOT),
+                      "a" * 40),
             f"ghcr.io/o/r/ai-review-base:{series}-{'a' * 40}@sha256:{'0' * 64}",
         )
 
@@ -73,7 +64,7 @@ class ReleaseCommonTests(unittest.TestCase):
         )
 
     def test_git_ancestry_distinguishes_descendant_unrelated_and_git_error(self) -> None:
-        with mock.patch("release_common.subprocess.run") as run:
+        with mock.patch.object(common.subprocess, "run") as run:
             run.return_value.returncode = 0
             self.assertTrue(git_is_ancestor("a" * 40, "b" * 40, REPO_ROOT))
             run.return_value.returncode = 1

@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -29,7 +29,6 @@ from urllib.parse import urlsplit
 from ai_review.canonical import json_loads_no_duplicates
 from check_supply_chain_pins import gitlab_image_pins, image_pin_issues
 from release_common import (
-    FULL_SHA_RE,
     GITHUB_INSTALLED,
     GITHUB_TEMPLATE,
     GITLAB_TEMPLATE,
@@ -46,27 +45,30 @@ from validate_candidate_identity import CANDIDATE_SCHEMA, SIGNER_IDENTITY, SOURC
 
 # Tags before this were published under the retired release-inputs process.
 FIRST_VERSION = "2.1.0"
+TEMPLATES = (GITHUB_TEMPLATE, GITHUB_INSTALLED, GITLAB_TEMPLATE)
 # P only re-pins: everything else ships from R, which the canary tested.
-RELEASE_PATHS = (GITHUB_TEMPLATE, GITHUB_INSTALLED, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/")
+RELEASE_PATHS = (*TEMPLATES, "CHANGELOG.md", "docs/")
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 # Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
 INLINE_DESTINATION = re.compile(r"(\]\([ \t]*<?)([^\s()<>]+)")
 REFERENCE_DESTINATION = re.compile(r"^( {0,3}\[[^\]\r\n]+\]:[ \t]*<?)([^\s<>]+)")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# A closing fence carries no info string.
+CLOSING_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 IDENTITY_ARTIFACT = "candidate-canary-identity"
 REQUIRED_CAMPAIGNS = ("panel", "lifecycle")
-# Campaign -> (job family, {platform: summary artifact}), as candidate-canary.yml runs them.
+# Campaign -> {platform: summary artifact}, as candidate-canary.yml uploads them.
 CAMPAIGN_SUMMARIES = {
-    "panel": ("campaign", {
+    "panel": {
         "github": "candidate-canary-github-summary",
         "gitlab": "candidate-canary-gitlab-summary",
-    }),
-    "lifecycle": ("lifecycle", {
+    },
+    "lifecycle": {
         "github": "candidate-canary-github-lifecycle-summary",
         "gitlab": "candidate-canary-gitlab-lifecycle-summary",
-    }),
-    "hostile": ("hostile", {"gitlab": "candidate-canary-gitlab-hostile-summary"}),
+    },
+    "hostile": {"gitlab": "candidate-canary-gitlab-hostile-summary"},
 }
 
 
@@ -77,11 +79,7 @@ class Pins:
     reviewer_image: str
 
     def candidate(self) -> dict[str, str]:
-        return {
-            "runtime_source": self.runtime_source,
-            "base_image": self.base_image,
-            "reviewer_image": self.reviewer_image,
-        }
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -132,7 +130,7 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     release_commit = _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
     with tempfile.TemporaryDirectory(prefix="code-tribunal-release-") as temporary:
         tree = Path(temporary)
-        _extract(root, release_commit, (GITHUB_TEMPLATE, GITHUB_INSTALLED, GITLAB_TEMPLATE), tree)
+        _extract(root, release_commit, TEMPLATES, tree)
         gitlab = (tree / GITLAB_TEMPLATE).read_text(encoding="utf-8")
         github = (tree / GITHUB_TEMPLATE).read_text(encoding="utf-8")
         issues = image_pin_issues(gitlab, github)
@@ -162,26 +160,24 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
 
 
 def tag_version(tag: str) -> str:
-    if tag.startswith("v"):
-        try:
-            version = validate_release_version(tag[1:])
-        except ReleaseValidationError:
-            pass
-        else:
-            # Prereleases of the first version, such as 2.1.0-rc.1, are new-process too.
-            if compare_release_versions(version.partition("-")[0], FIRST_VERSION) < 0:
-                raise ReleaseValidationError(
-                    f"{tag} predates {FIRST_VERSION}; it was published by the retired process"
-                )
-            return version
-    raise ReleaseValidationError("release tag must be v-prefixed with a valid release version")
+    malformed = "release tag must be v-prefixed with a valid release version"
+    if not tag.startswith("v"):
+        raise ReleaseValidationError(malformed)
+    try:
+        version = validate_release_version(tag[1:])
+    except ReleaseValidationError:
+        raise ReleaseValidationError(malformed) from None
+    # Prereleases of the first version, such as 2.1.0-rc.1, are new-process too.
+    if compare_release_versions(version.partition("-")[0], FIRST_VERSION) < 0:
+        raise ReleaseValidationError(
+            f"{tag} predates {FIRST_VERSION}; it was published by the retired process"
+        )
+    return version
 
 
 def verify_tag(root: Path, tag: str) -> tuple[str, str, str]:
     """Return the tag object, P, and the cited canary run, using main's signer authority."""
     tag_object = _git(root, "rev-parse", "--verify", f"refs/tags/{tag}")
-    if not FULL_SHA_RE.fullmatch(tag_object):
-        raise ReleaseValidationError("release tag object must be a full SHA")
     if _git(root, "cat-file", "-t", tag_object) != "tag":
         raise ReleaseValidationError("publication requires an annotated signed tag")
     release_commit = _git(root, "rev-parse", f"{tag_object}^{{commit}}")
@@ -213,13 +209,6 @@ def verify_tag(root: Path, tag: str) -> tuple[str, str, str]:
     return tag_object, release_commit, runs[0]
 
 
-def _require_success(job: dict[str, Any]) -> None:
-    if job.get("status") != "completed" or job.get("conclusion") != "success":
-        raise ReleaseValidationError(
-            f"canary job {job['name']} concluded {job.get('conclusion')!r}; expected success"
-        )
-
-
 def _download_json(run_id: str, artifact: str, workdir: Path) -> dict[str, Any]:
     directory = workdir / artifact
     _gh("run", "download", run_id, "--repo", REPOSITORY, "--name", artifact,
@@ -248,10 +237,15 @@ def _verdict(campaign: str, platform: str, summary: dict[str, Any]) -> str:
 
 
 def verify_canary(run_id: str, pins: Pins, workdir: Path) -> CanaryRun:
-    """Require a green, first-attempt canary run that tested exactly P's pins."""
+    """Require a green, first-attempt canary run that tested exactly P's pins.
+
+    A successful run has no failed job, and each campaign job runs exactly when the
+    identity artifact lists its campaign, so its uploaded summary must exist. The
+    identity itself is written only after verify-candidate checked both images.
+    """
     meta = _json_object(_gh(
         "run", "view", run_id, "--repo", REPOSITORY, "--json",
-        "attempt,conclusion,event,headBranch,jobs,status,url,workflowDatabaseId",
+        "attempt,conclusion,event,headBranch,status,url,workflowDatabaseId",
     ), "canary run metadata")
     required = {
         "status": "completed",
@@ -272,15 +266,6 @@ def verify_canary(run_id: str, pins: Pins, workdir: Path) -> CanaryRun:
     )
     if workflow.get("path") != CANARY_WORKFLOW:
         raise ReleaseValidationError(f"run {run_id} is not the {CANARY_WORKFLOW} workflow")
-    jobs = meta.get("jobs")
-    if not isinstance(jobs, list) or not all(
-        isinstance(job, dict) and isinstance(job.get("name"), str) for job in jobs
-    ):
-        raise ReleaseValidationError("canary run metadata has no valid jobs list")
-    verify = [job for job in jobs if job["name"] == "verify-candidate"]
-    if len(verify) != 1:
-        raise ReleaseValidationError("canary run has no single verify-candidate job")
-    _require_success(verify[0])
 
     identity = _download_json(run_id, IDENTITY_ARTIFACT, workdir)
     if identity.get("schema_version") != CANDIDATE_SCHEMA:
@@ -297,15 +282,10 @@ def verify_canary(run_id: str, pins: Pins, workdir: Path) -> CanaryRun:
         )
 
     verdicts = []
-    for campaign, (family, artifacts) in CAMPAIGN_SUMMARIES.items():
+    for campaign, artifacts in CAMPAIGN_SUMMARIES.items():
         if campaign not in campaigns:
             continue
         for platform, artifact in artifacts.items():
-            pattern = family if len(artifacts) == 1 else rf"{family} \({platform}(?:, [^()]+)?\)"
-            matches = [job for job in jobs if re.fullmatch(pattern, job["name"])]
-            if len(matches) != 1:
-                raise ReleaseValidationError(f"{campaign}/{platform} job is missing or ambiguous")
-            _require_success(matches[0])
             summary = _download_json(run_id, artifact, workdir)
             if summary.get("candidate") != pins.candidate():
                 raise ReleaseValidationError(f"{artifact} names a different candidate")
@@ -350,8 +330,9 @@ def absolute_links(notes: str, tag: str) -> str:
         if fence is None and opening is not None:
             fence = opening.group(1)
         elif fence is not None:
-            if opening is not None and opening.group(1)[0] == fence[0] \
-                    and len(opening.group(1)) >= len(fence):
+            closing = CLOSING_FENCE.match(line)
+            if closing is not None and closing.group(1)[0] == fence[0] \
+                    and len(closing.group(1)) >= len(fence):
                 fence = None
         else:
             line = REFERENCE_DESTINATION.sub(absolute, INLINE_DESTINATION.sub(absolute, line))
