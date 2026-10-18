@@ -368,19 +368,19 @@ class ReleaseBodyTests(unittest.TestCase):
             f"[after]({blob}docs/after.md)"
         ))
 
-    def test_code_spans_stay_literal_and_nested_list_continuations_are_prose(self) -> None:
+    def test_every_link_outside_fences_is_pinned_without_corrupting_its_path(self) -> None:
         blob = "https://github.com/seanleecoder/code-tribunal/blob/v2.1.0/"
         notes = (
-            "Write `[guide](docs/guide.md)` or ``[a](docs/a.md) `x` `` literally;"
-            " [`code` text](docs/b.md) links.\n"
-            "An unclosed ` run [c](docs/c.md) is literal.\n"
-            "- item\n  - nested\n    [d](docs/d.md)"
+            "An escaped \\` before [a](docs/a.md) and `real code`.\n"
+            "`first on one line and\nsecond` and [b](docs/b.md) then `last`.\n"
+            "[c](docs/`c`.md) and `[d](docs/d.md)`\n"
+            "- item\n  - nested\n    [e](docs/e.md)"
         )
         self.assertEqual(tool.absolute_links(notes, "v2.1.0"), (
-            "Write `[guide](docs/guide.md)` or ``[a](docs/a.md) `x` `` literally;"
-            f" [`code` text]({blob}docs/b.md) links.\n"
-            f"An unclosed ` run [c]({blob}docs/c.md) is literal.\n"
-            f"- item\n  - nested\n    [d]({blob}docs/d.md)"
+            f"An escaped \\` before [a]({blob}docs/a.md) and `real code`.\n"
+            f"`first on one line and\nsecond` and [b]({blob}docs/b.md) then `last`.\n"
+            f"[c]({blob}docs/`c`.md) and `[d]({blob}docs/d.md)`\n"
+            f"- item\n  - nested\n    [e]({blob}docs/e.md)"
         ))
 
     def test_the_body_records_identity_verdicts_and_the_attestation_command(self) -> None:
