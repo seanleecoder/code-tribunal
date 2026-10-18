@@ -10,10 +10,12 @@ config's rules, and later rules win.
 from __future__ import annotations
 
 import importlib.util
+import re
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.py"
+WRAPPER = SCRIPT.with_suffix(".sh")
 
 spec = importlib.util.spec_from_file_location("smoke_opencode_search_tools", SCRIPT)
 assert spec is not None and spec.loader is not None
@@ -93,6 +95,12 @@ class ProbeContractTests(unittest.TestCase):
         # Config capture must not rely on shadowing, which the check above forbids.
         self.assertIn('"PYTHON": str(shim)', text)
         self.assertNotIn('"PATH": f"{stub_dir}', text)
+
+    def test_wrapper_mounts_the_pin_and_driver_the_probe_reads(self) -> None:
+        """Neither file ships in the image (N20), so the wrapper must mount both."""
+        mounts = re.findall(r"dst=([^,\"]+)", WRAPPER.read_text(encoding="utf-8"))
+        self.assertIn(str(smoke.ripgrep_pin_path()), mounts)
+        self.assertIn(f"/probe/{SCRIPT.name}", mounts)
 
 
 if __name__ == "__main__":

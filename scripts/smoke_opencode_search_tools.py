@@ -53,6 +53,8 @@ from typing import Any
 FIXED_PATH = "/usr/local/bin:/usr/bin:/bin"
 SMOKE_DIR = Path("/smoke")
 INSTALL_ROOT = Path("/opt/ai-review")
+# The wrapper mounts the checkout's ripgrep.pin here; the image does not ship it.
+PROBE_ROOT = Path("/probe")
 
 # The adapter forwards exactly these to opencode; the resolution probe must run
 # under the same hardening or it is not measuring the reviewer's configuration.
@@ -68,7 +70,7 @@ OPENCODE_HARDENING = (
 
 
 def ripgrep_pin_path() -> Path:
-    return INSTALL_ROOT / "images" / "ripgrep.pin"
+    return PROBE_ROOT / "ripgrep.pin"
 
 
 def adapter_path() -> Path:
