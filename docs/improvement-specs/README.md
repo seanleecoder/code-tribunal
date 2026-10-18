@@ -157,8 +157,7 @@ dropping effort settings, and a single cross-platform canary.
 - Keep the regression gates green: the golden consensus fixtures, the publish
   and revision-lifecycle end-to-end fixtures, and the import-boundary test that
   keeps the planning modules free of platform clients.
-- Close open evidence gaps before each release. They are tracked in the
-  [evidence index](../evidence/RUNBOOK.md#carried-coverage-gaps). The
-  2.0.2 records bind to the released pair for runtime `3db908f`.
+- Keep the [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps)
+  current with each release.
 - For release work, follow the [release process](../development/release-process.md)
   and the [evidence runbook](../evidence/RUNBOOK.md).

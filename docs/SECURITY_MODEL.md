@@ -31,21 +31,21 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. The Candidate Canary records hostile-MR evidence, most
-recently for 2.0.3 (see the
-[hostile-MR record](https://github.com/seanleecoder/code-tribunal/blob/v2.0.3/docs/evidence/record-gitlab-hostile-mr.md)). It covers one scoped
+proved per deployment. The Candidate Canary's `hostile` campaign proves one scoped
 topology: a merge request from an **unprotected** ref in the hardened mirrored
-child. The record shows four things:
+child. It runs whenever a release changes the trust boundary, and that release's
+body records the run. It asserts four things:
 
-- GitLab withheld every protected credential: the hostile job saw each one as
+- GitLab withholds every protected credential: the hostile job sees each one as
   absent.
-- Prepare failed closed with an empty input bundle, and every later stage was
+- Prepare fails closed with an empty input bundle, and every later stage is
   skipped.
-- The forged publication artifacts went unconsumed.
-- The leak scan of the five redacted run summaries found no credential material.
+- The forged publication artifacts go unconsumed.
+- `scripts/pipeline_trust.py` rejects the hostile composition and accepts the
+  demo's own.
 
 It does not scan every job trace and artifact for exact credential values. So
-“credential isolated” means that recorded scope plus the tested subprocess
+“credential isolated” means that scope plus the tested subprocess
 allowlist and template design — not a completed claim about every installation.
 Fork-based merge requests and protected-ref insiders are untested.
 
@@ -161,9 +161,6 @@ snapshot, trust-template, adapter-environment, state-authenticity, artifact
 integrity, and posting unit/integration tests. Deployment evidence is indexed under
 [docs/evidence](evidence/README.md), and unexercised paths are its
 [carried coverage gaps](evidence/RUNBOOK.md#carried-coverage-gaps).
-
-Evidence must record source and image digests, expected/actual outcomes, and a
-secret audit without storing credential values or sensitive model content.
 
 ## Reporting
 

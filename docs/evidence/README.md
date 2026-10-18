@@ -1,9 +1,10 @@
 # Live evidence
 
-Live evidence complements executable tests; it does not replace them. Record only
-sanitized identifiers, digests, expected and actual outcomes, and audit results.
-Never store credentials, CLI session material, private consumer coordinates,
-proprietary source, or sensitive model content.
+Live evidence complements executable tests; it does not replace them. Whatever an
+operator publishes from a live run (a release body, a CHANGELOG limitation, a change
+request, a retained artifact) carries only sanitized identifiers, digests, outcomes
+and audit results. Never publish credentials, CLI session material, private consumer
+coordinates, proprietary source, or sensitive model content.
 
 | Page | Contents |
 |---|---|
@@ -12,17 +13,13 @@ proprietary source, or sensitive model content.
 
 ## Per-release evidence
 
-From 2.1.0, a release's evidence is its signed tag, the image digests its canonical
-templates pin, their provenance attestations, and the cited Candidate Canary run,
-whose verdicts the release body records; see the
-[release process](../development/release-process.md). Known limitations are written
-in that version's CHANGELOG section.
+From 2.1.0, a release is traced by its signed tag and the cited canary run, whose
+verdicts its release body records; see the
+[release process](../development/release-process.md).
 
-Releases up to 2.0.3 used release inputs, generated evidence records and waivers.
-Their notes are under [`release/`](../../release/), and their records stay at each
-tag, for example
-[`v2.0.3:docs/evidence/`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence),
-which also holds the 1.0.0 historical evidence matrix.
+Releases up to 2.0.3 used generated evidence records. Their notes are under
+[`release/`](../../release/), and their records stay at each tag, for example
+[`v2.0.3:docs/evidence/`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence).
 
 ## Live versus regression coverage
 
