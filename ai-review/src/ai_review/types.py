@@ -127,6 +127,43 @@ class ConsensusSummary(TypedDict):
     drop_count: int
 
 
+type RunHealthGrade = Literal["full", "degraded", "rerun_recommended"]
+type JobOutcome = Literal[
+    "success",
+    "unusable",
+    "skipped",
+    "timeout",
+    "model_error",
+    "schema_error",
+    "config_error",
+    "internal_error",
+    "batch_missing",
+    "missing",
+]
+
+
+class RunHealthJob(TypedDict):
+    stage: Literal["review", "critique"]
+    reviewer: ReviewerId
+    outcome: JobOutcome
+    model: str
+    effort: str | None
+    timeout_seconds: int
+    duration_ms: int | None
+    raw_finding_count: int | None
+    accepted_finding_count: int | None
+    dropped_finding_count: int | None
+    cap_omitted_finding_count: int | None
+    critique_count: int | None
+    error_class: str | None
+    error_message: str | None
+
+
+class RunHealth(TypedDict):
+    grade: RunHealthGrade
+    jobs: list[RunHealthJob]
+
+
 class Consensus(TypedDict):
     schema_version: Literal["consensus.v2"]
     run_id: RunId
@@ -140,6 +177,9 @@ class Consensus(TypedDict):
     panel_status: PanelStatus
     groups: list[FindingGroup]
     summary: ConsensusSummary
+    # Optional in consensus.v2 so earlier artifacts still validate; consensus
+    # always writes it and post rejects an artifact without it.
+    run_health: NotRequired[RunHealth]
 
 
 class StateAliases(TypedDict):

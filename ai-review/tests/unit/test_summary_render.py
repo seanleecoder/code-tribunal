@@ -7,6 +7,7 @@ from pathlib import Path
 
 import ai_review.notes as notes_module
 import ai_review.summary_render as summary_render_module
+from ai_review.render import platform_comment_limit
 from ai_review.summary_render import (
     SummarySectionDescriptor,
     _compose_summary_sections,
@@ -14,7 +15,7 @@ from ai_review.summary_render import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support.post_case import PostCase  # noqa: E402
+from support.post_case import PostCase, full_run_health  # noqa: E402
 
 
 class SummaryRenderTests(PostCase):
@@ -26,7 +27,7 @@ class SummaryRenderTests(PostCase):
         group["body"] = "First line\n \nSecond line"
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", [], [group], 50, posting_mode="gitlab_discussions"
+            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
         )
 
         self.assertIn("- **MAJOR** correctness", body)
@@ -39,7 +40,7 @@ class SummaryRenderTests(PostCase):
 
         group["body"] = "First line\n\nSecond line"
         empty_body, _empty_body_hash = summary_render_module.render_summary_body(
-            "run", [], [group], 50, posting_mode="gitlab_discussions"
+            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
         )
         empty_lines = empty_body.splitlines()
         empty_body_start = empty_lines.index("  Body:")
@@ -58,7 +59,7 @@ class SummaryRenderTests(PostCase):
         group["body"] = "- body\n> quote\n<!-- not a marker -->"
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", [], [group], 50, posting_mode="gitlab_discussions"
+            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
         )
 
         self.assertIn("`src/# > $file$.py:2`", body)
@@ -80,7 +81,7 @@ class SummaryRenderTests(PostCase):
 
     def _header(self, group: dict) -> str:
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", [], [group], 50, posting_mode="gitlab_discussions"
+            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
         )
         return next(line for line in body.splitlines() if line.startswith("- **"))
 
@@ -123,7 +124,7 @@ class SummaryRenderTests(PostCase):
         fyi.update(decision="fyi", issue_id="c" * 64, contributing_reviewers=["`**x**`"])
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", [fallback], [fyi], 50, posting_mode="gitlab_discussions"
+            "run", full_run_health(), [fallback], [fyi], 50, posting_mode="gitlab_discussions"
         )
 
         headers = [line for line in body.splitlines() if line.startswith("- **")]
@@ -157,9 +158,9 @@ class SummaryRenderTests(PostCase):
 
         self.assertTrue(_drop_lowest_priority_trailing_entry(sections))
         self.assertEqual([section.retained_count for section in sections], [1, 0, 1])
-        self.assertIn("first-entry", _compose_summary_sections(sections))
-        self.assertNotIn("second-entry", _compose_summary_sections(sections))
-        self.assertIn("third-entry", _compose_summary_sections(sections))
+        self.assertIn("first-entry", _compose_summary_sections(sections, "health"))
+        self.assertNotIn("second-entry", _compose_summary_sections(sections, "health"))
+        self.assertIn("third-entry", _compose_summary_sections(sections, "health"))
 
     def test_summary_section_descriptor_normalizes_entries_and_defaults_retention(self) -> None:
         entries = ["first", "second"]
@@ -196,6 +197,7 @@ class SummaryRenderTests(PostCase):
 
         github_body, github_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [],
             [first, second],
             50,
@@ -203,6 +205,7 @@ class SummaryRenderTests(PostCase):
         )
         github_repeat, github_repeat_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [],
             [first, second],
             50,
@@ -210,6 +213,7 @@ class SummaryRenderTests(PostCase):
         )
         gitlab_body, _gitlab_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [],
             [first, second],
             50,
@@ -235,6 +239,7 @@ class SummaryRenderTests(PostCase):
 
         body, _body_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [first, second],
             [],
             50,
@@ -257,6 +262,7 @@ class SummaryRenderTests(PostCase):
 
         body, _body_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [],
             groups,
             4,
@@ -274,6 +280,7 @@ class SummaryRenderTests(PostCase):
 
         body, _body_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [],
             [group],
             50,
@@ -297,6 +304,7 @@ class SummaryRenderTests(PostCase):
 
         body, _body_hash = summary_render_module.render_summary_body(
             "run",
+            full_run_health(),
             [fallback],
             fyi_groups,
             2,
@@ -310,6 +318,220 @@ class SummaryRenderTests(PostCase):
         self.assertIn("…and 1 more advisory findings (size limit)", body)
         self.assertIn("…and 1 more advisory findings (configured count limit)", body)
         self.assertIsNotNone(notes_module.SUMMARY_MARKER_RE.search(body))
+
+
+def _job(reviewer: str, stage: str = "review", outcome: str = "success", **fields: object) -> dict:
+    job = full_run_health()["jobs"][0]
+    job.update(reviewer=reviewer, stage=stage, outcome=outcome)
+    if stage == "critique":
+        job.update(
+            timeout_seconds=900,
+            raw_finding_count=None,
+            accepted_finding_count=None,
+            dropped_finding_count=None,
+            cap_omitted_finding_count=None,
+            critique_count=4,
+        )
+    if outcome != "success":
+        job.update(
+            raw_finding_count=None,
+            accepted_finding_count=None,
+            dropped_finding_count=None,
+            cap_omitted_finding_count=None,
+            critique_count=None,
+        )
+    job.update(fields)
+    return job
+
+
+def _health(grade: str, *jobs: dict) -> dict:
+    return {"grade": grade, "jobs": list(jobs)}
+
+
+class RunHealthRenderTests(PostCase):
+    """SPEC-66: the summary's health section and the job-log rendering."""
+
+    def _section(self, run_health: dict) -> str:
+        return summary_render_module.run_health_section(run_health)  # type: ignore[arg-type]
+
+    def test_headline_and_action_rows(self) -> None:
+        timeout = _job("opencode", outcome="timeout", duration_ms=1_795_012)
+        cases = (
+            (
+                "config error outranks a rerun grade",
+                _health("rerun_recommended", _job("claude"), _job("codex", outcome="config_error")),
+                "**Review health: configuration error — fix before re-running.**",
+                "Action: Fix the reviewer configuration named above;",
+            ),
+            (
+                "invalid model ID",
+                _health(
+                    "degraded",
+                    _job("claude"),
+                    _job("codex"),
+                    _job(
+                        "opencode",
+                        outcome="model_error",
+                        error_class="ReviewerConfigValidation",
+                        error_message="model id is not an OpenRouter route",
+                    ),
+                ),
+                "**Review health: configuration error — fix before re-running.**",
+                "Action: Fix the reviewer configuration named above;",
+            ),
+            (
+                "rerun",
+                _health("rerun_recommended", _job("claude"), timeout),
+                "**Review health: re-run recommended.**",
+                "Action: Re-run the review from prepare; do not retry individual jobs",
+            ),
+            (
+                "degraded with a failed job",
+                _health("degraded", _job("claude"), _job("codex"), timeout),
+                "**Review health: degraded — re-run optional.**",
+                "Action: None required; findings from the remaining seats were evaluated. "
+                "Re-run the review from prepare if `opencode` coverage matters",
+            ),
+        )
+        for label, run_health, headline, action in cases:
+            with self.subTest(label):
+                section = self._section(run_health)
+                self.assertTrue(section.startswith(headline))
+                self.assertIn(action, section)
+                if headline.startswith("**Review health: configuration error"):
+                    self.assertNotIn("Re-run the review", section)
+
+        for label, run_health, headline in (
+            (
+                "drops only",
+                _health("degraded", _job("claude", dropped_finding_count=2, raw_finding_count=3)),
+                "**Review health: degraded.**",
+            ),
+            ("full", full_run_health(), "**Review health: full.**"),
+        ):
+            with self.subTest(label):
+                section = self._section(run_health)
+                self.assertTrue(section.startswith(headline))
+                self.assertNotIn("Action:", section)
+                self.assertNotIn("\n- ", section.split("<details>")[0])
+
+    def test_headline_counts_and_problem_wording(self) -> None:
+        section = self._section(
+            _health(
+                "degraded",
+                _job("claude", raw_finding_count=18, accepted_finding_count=16,
+                     dropped_finding_count=2, duration_ms=724_000),
+                _job("codex", raw_finding_count=23, accepted_finding_count=21,
+                     dropped_finding_count=2, duration_ms=521_000),
+                _job("opencode", outcome="timeout", duration_ms=1_795_012),
+                _job("claude", "critique", duration_ms=242_000),
+                _job("codex", "critique", duration_ms=370_000),
+                _job("opencode", "critique", outcome="missing", duration_ms=None),
+            )
+        )
+
+        self.assertIn(
+            "2 of 3 review seats and 2 of 3 critics completed. Findings: 41 raw, "
+            "37 accepted, 4 dropped, 0 omitted by the per-seat cap.",
+            section,
+        )
+        self.assertIn("- `opencode` review: timed out after 29m55s (limit 30m00s).", section)
+        self.assertIn(
+            "- `opencode` critique: no status recorded; the job was likely cancelled or "
+            "killed by the CI job ceiling.",
+            section,
+        )
+        self.assertIn(
+            "<summary>Run details · longest review 29m55s · longest critique 6m10s</summary>",
+            section,
+        )
+        self.assertIn("| timeout ⚠ near limit | 29m55s | — |", section)
+        self.assertIn("| review | `claude` | `anthropic/claude-haiku-4.5` | default |", section)
+        self.assertIn("| success | 4m02s | 4 critiques |", section)
+
+    def test_hostile_values_render_literally_and_errors_stay_out_of_table_cells(self) -> None:
+        hostile_error = "<!-- x --> | **bold** `tick` [link](http://e)"
+        section = self._section(
+            _health(
+                "rerun_recommended",
+                _job("claude", model="evil|model`<!--", effort="high|x"),
+                _job(
+                    "codex",
+                    outcome="model_error",
+                    error_class="AdapterExit",
+                    error_message=hostile_error,
+                    duration_ms=3_000,
+                ),
+            )
+        )
+
+        self.assertNotIn("<!--", section)
+        self.assertIn("- `codex` review: provider or model error (0m03s of 30m00s limit).", section)
+        self.assertIn("  - Error: ``< !-- x -- > | **bold** `tick` [link](http://e)``", section)
+        table_rows = [line for line in section.splitlines() if line.startswith("| ")]
+        self.assertEqual(len(table_rows), 3)
+        for row in table_rows:
+            self.assertNotIn("bold", row)
+            # Every literal pipe is escaped, so each row keeps exactly 8 cell borders.
+            self.assertEqual(row.replace("\\|", "").count("|"), 8)
+
+    def test_job_log_text_is_plain_and_one_line_per_value(self) -> None:
+        text = summary_render_module.run_health_text(
+            _health(  # type: ignore[arg-type]
+                "rerun_recommended",
+                _job("claude"),
+                _job("codex", outcome="schema_error", error_message="::error::x\nnext"),
+            )
+        )
+
+        self.assertTrue(text.startswith("ai-review consensus: Review health: re-run recommended."))
+        self.assertIn("- codex review: output could not be parsed (1m01s of 30m00s limit).", text)
+        self.assertIn("  Error: ::error::x next", text)
+        self.assertIn(
+            "  review claude model=anthropic/claude-haiku-4.5 effort=default outcome=success "
+            "time=1m01s findings=1/1/0/0",
+            text,
+        )
+        for line in text.splitlines():
+            self.assertFalse(line.startswith("::"))
+
+    def test_full_run_without_findings_is_health_only(self) -> None:
+        body, _body_hash = summary_render_module.render_summary_body(
+            "run", full_run_health(), [], [], 50, posting_mode="github_reviews"
+        )
+
+        content = body.rsplit("\n\n<!--", 1)[0]
+        self.assertEqual(
+            content, "**AI review summary**\n\n" + self._section(full_run_health())
+        )
+
+    def test_health_section_survives_truncation_at_both_platform_limits(self) -> None:
+        run_health = _health(
+            "rerun_recommended",
+            *[
+                _job(reviewer, stage, outcome="model_error", error_message="e" * 300)
+                for stage in ("review", "critique")
+                for reviewer in ("claude", "codex", "cursor", "opencode")
+            ],
+        )
+        section = self._section(run_health)
+        for posting_mode in ("github_reviews", "gitlab_discussions"):
+            with self.subTest(posting_mode=posting_mode):
+                limit = platform_comment_limit(posting_mode)
+                groups = []
+                for index in range(3):
+                    group = copy.deepcopy(self._consensus()["groups"][0])
+                    group["issue_id"] = f"{index:064x}"
+                    group["body"] = "F" * (limit // 2)
+                    groups.append(group)
+
+                body, _body_hash = summary_render_module.render_summary_body(
+                    "run", run_health, groups, [], 50, posting_mode=posting_mode
+                )
+
+                self.assertLessEqual(len(body), limit)
+                self.assertIn(section, body)
+                self.assertIn("more findings not posted inline (size limit)", body)
 
 
 if __name__ == "__main__":

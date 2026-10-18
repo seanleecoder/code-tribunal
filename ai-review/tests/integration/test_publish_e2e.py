@@ -43,9 +43,11 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(consensus["groups"][0]["final_severity"], "blocker")
         self.assertEqual(post_result["status"], "success")
         self.assertEqual(post_result["created_discussions"], 1)
-        self.assertEqual(post_result["summary_comment"]["action"], "none")
+        # The summary carries only run health: the surfaced finding is a thread.
+        self.assertEqual(post_result["summary_comment"]["action"], "created")
+        self.assertEqual(post_result["summary_comment"]["surface_findings"], 0)
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes), 0)
+        self.assertEqual(len(client.summary_notes), 1)
         # A blocker is an impact label. Publication succeeded, so the job passes.
         self.assertEqual(exit_code, 0)
 
@@ -217,7 +219,8 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(second_post["updated_discussions"], 0)
         self.assertGreaterEqual(second_post["skipped_unchanged"], 1)
         self.assertEqual(client.discussion_count(), 1)
-        self.assertEqual(len(client.summary_notes), 0)
+        self.assertEqual(second_post["summary_comment"]["action"], "unchanged")
+        self.assertEqual(len(client.summary_notes), 1)
         self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(second_post["status"]), 0)
 

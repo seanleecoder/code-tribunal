@@ -248,7 +248,7 @@ jobs:
         if: steps.download-critiques.outcome == 'failure'
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
-        run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
+        run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --status-dir reviewer-artifacts/status --out out/consensus/consensus.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ai-review-consensus

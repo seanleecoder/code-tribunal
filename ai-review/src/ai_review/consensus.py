@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import CanonicalError, stable_json_hash
@@ -13,6 +13,7 @@ from .config import (
     enabled_reviewers,
     load_config,
     require_effective_config_binding,
+    resolve_reviewer_timeout_seconds,
 )
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
@@ -32,7 +33,16 @@ from .schema import (
     validate_instance,
     write_canonical_json,
 )
-from .types import Consensus, FindingGroup, PanelStatus, State
+from .summary_render import run_health_text
+from .types import (
+    Consensus,
+    FindingGroup,
+    JobOutcome,
+    PanelStatus,
+    RunHealthGrade,
+    RunHealthJob,
+    State,
+)
 
 
 def panel_status(successful: list[str], enabled: list[str]) -> str:
@@ -97,6 +107,158 @@ def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
     return batch.get("adapter_status") == "success" and batch.get("usable_for_resolution") is True
 
 
+RUN_HEALTH_ERROR_MESSAGE_LIMIT = 300
+RUN_HEALTH_ERROR_CLASS_LIMIT = 120
+
+
+def _one_line(value: object, limit: int) -> str | None:
+    """Collapse untrusted status text to one bounded line, or ``None`` if empty."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if not text:
+        return None
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def load_status_files(
+    status_dir: Path, *, enabled: list[str], critique_enabled: bool, run_id: str
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Usable ``adapter_status.v1`` files keyed by ``(stage, reviewer)``.
+
+    Status files are untrusted health input: they are written in jobs that also
+    run model CLIs. A file that is unreadable, fails the schema, or names another
+    seat, stage, or run is treated as absent. Nothing here can fail consensus.
+    """
+    stages = ["review", "critique"] if critique_enabled else ["review"]
+    statuses: dict[tuple[str, str], dict[str, Any]] = {}
+    for reviewer in enabled:
+        for stage in stages:
+            stem = reviewer if stage == "review" else f"critique-{reviewer}"
+            try:
+                status = load_json_file(status_dir / f"{stem}.json")
+                validate_instance(status, "adapter_status.schema.json")
+            except (OSError, ValueError, RecursionError, SchemaValidationError, CanonicalError):
+                continue
+            if (
+                status.get("reviewer") == reviewer
+                and status.get("stage") == stage
+                and status.get("run_id") == run_id
+            ):
+                statuses[(stage, reviewer)] = status
+    return statuses
+
+
+def _job_outcome(
+    stage: str, batch: dict[str, Any] | None, status: dict[str, Any] | None
+) -> str:
+    """One job's outcome. Only a usable batch yields ``success``; the batch wins."""
+    if batch is not None:
+        adapter_status = str(batch.get("adapter_status") or "")
+        if stage == "review" and batch_usable_for_panel(batch):
+            return "success"
+        if stage == "critique" and adapter_status == "success":
+            return "success"
+        return "unusable" if adapter_status == "success" else adapter_status
+    if status is None:
+        return "missing"
+    return "batch_missing" if status["status"] == "success" else str(status["status"])
+
+
+def build_run_health_jobs(
+    config: dict[str, Any],
+    finding_batches: list[dict[str, Any]],
+    critique_batches: list[dict[str, Any]] | None,
+    statuses: dict[tuple[str, str], dict[str, Any]],
+) -> list[RunHealthJob]:
+    """Per-job health rows: review before critique, then by reviewer ID."""
+    enabled = sorted(enabled_reviewers(config))
+    stages = ["review", "critique"] if _critique_enabled(config) else ["review"]
+    batches = {
+        "review": {str(batch["reviewer"]): batch for batch in finding_batches},
+        "critique": {str(batch["critic"]): batch for batch in critique_batches or []},
+    }
+    jobs: list[RunHealthJob] = []
+    for stage in stages:
+        for reviewer in enabled:
+            reviewer_cfg = config["reviewers"][reviewer]
+            batch = batches[stage].get(reviewer)
+            status = statuses.get((stage, reviewer))
+            outcome = _job_outcome(stage, batch, status)
+            counts: dict[str, int | None] = dict.fromkeys(
+                ("raw", "accepted", "dropped", "cap_omitted")
+            )
+            if stage == "review" and batch is not None:
+                raw = int(batch["raw_finding_count"])
+                accepted = int(batch["accepted_finding_count"])
+                dropped = int(batch["dropped_finding_count"])
+                counts = {
+                    "raw": raw,
+                    "accepted": accepted,
+                    "dropped": dropped,
+                    "cap_omitted": raw - accepted - dropped,
+                }
+            critique_count = None
+            if stage == "critique" and outcome == "success" and batch is not None:
+                critique_count = len(batch.get("critiques") or [])
+            effort = reviewer_cfg.get("effort")
+            jobs.append(
+                {
+                    "stage": cast(Literal["review", "critique"], stage),
+                    "reviewer": reviewer,
+                    "outcome": cast(JobOutcome, outcome),
+                    "model": str(reviewer_cfg["model"]),
+                    "effort": str(effort) if effort is not None else None,
+                    "timeout_seconds": resolve_reviewer_timeout_seconds(reviewer_cfg, stage),
+                    "duration_ms": int(status["duration_ms"]) if status else None,
+                    "raw_finding_count": counts["raw"],
+                    "accepted_finding_count": counts["accepted"],
+                    "dropped_finding_count": counts["dropped"],
+                    "cap_omitted_finding_count": counts["cap_omitted"],
+                    "critique_count": critique_count,
+                    "error_class": (
+                        _one_line(status.get("error_class"), RUN_HEALTH_ERROR_CLASS_LIMIT)
+                        if status
+                        else None
+                    ),
+                    "error_message": (
+                        _one_line(
+                            status.get("error_message_redacted"), RUN_HEALTH_ERROR_MESSAGE_LIMIT
+                        )
+                        if status
+                        else None
+                    ),
+                }
+            )
+    return jobs
+
+
+def run_health_grade(status: str, jobs: list[RunHealthJob]) -> str:
+    """Observational run grade. Never feeds back into ``panel_status``.
+
+    ``rerun_recommended`` when the panel failed, when no finding could reach
+    two-identity support, or when critique was enabled and no critic succeeded.
+    """
+    succeeded = [job for job in jobs if job["outcome"] == "success"]
+    review_ok = {job["reviewer"] for job in succeeded if job["stage"] == "review"}
+    critique_ok = {job["reviewer"] for job in succeeded if job["stage"] == "critique"}
+    critique_jobs = [job for job in jobs if job["stage"] == "critique"]
+    if (
+        status == "failed"
+        or (review_ok and len(review_ok | critique_ok) < 2)
+        or (critique_jobs and not critique_ok)
+    ):
+        return "rerun_recommended"
+    if any(
+        job["outcome"] != "success"
+        or job["dropped_finding_count"]
+        or job["cap_omitted_finding_count"]
+        for job in jobs
+    ):
+        return "degraded"
+    return "full"
+
+
 def _require_quality_invariants(batch: dict[str, Any], *, reviewer: str) -> None:
     """Reject self-reported quality fields that disagree with batch contents."""
     try:
@@ -143,12 +305,14 @@ def build_consensus(
     config: dict[str, Any],
     state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
+    statuses: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> Consensus:
     """Build consensus from finding/critique batches.
 
     Direct callers that supply untrusted artifacts should run
     ``validate_consensus_inputs`` first; critique application may raise
-    ``ConsensusIntegrityError`` for unknown targets.
+    ``ConsensusIntegrityError`` for unknown targets. ``statuses`` (from
+    ``load_status_files``) feeds only ``run_health``.
     """
     posting_mode = str(config.get("posting", {}).get("mode", "gitlab_discussions"))
     # Fail fast on unsupported modes before performing consensus work.
@@ -265,6 +429,7 @@ def build_consensus(
         )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
+    jobs = build_run_health_jobs(config, finding_batches, critique_batches, statuses or {})
     return {
         "schema_version": "consensus.v2",
         "run_id": manifest["run_id"],
@@ -282,6 +447,10 @@ def build_consensus(
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             # COMPAT-003: required by consensus.v2; majority noise now demotes to fyi.
             "drop_count": 0,
+        },
+        "run_health": {
+            "grade": cast(RunHealthGrade, run_health_grade(status, jobs)),
+            "jobs": jobs,
         },
     }
 
@@ -400,6 +569,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--findings-dir", default="out/findings")
     parser.add_argument("--critiques-dir", default="out/critiques")
+    parser.add_argument("--status-dir", default="out/status")
     parser.add_argument("--state")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
@@ -439,8 +609,19 @@ def cli(argv: list[str] | None = None) -> int:
             critique_batches=critique_inputs,
         )
         critique_batches = [batch for _filename_critic, batch in critique_inputs]
+        statuses = load_status_files(
+            Path(args.status_dir),
+            enabled=sorted(enabled_reviewers(config)),
+            critique_enabled=_critique_enabled(config),
+            run_id=run_id,
+        )
         consensus = build_consensus(
-            manifest, batches, config, state=state, critique_batches=critique_batches
+            manifest,
+            batches,
+            config,
+            state=state,
+            critique_batches=critique_batches,
+            statuses=statuses,
         )
         validate_instance(consensus, "consensus.schema.json")
     except (OSError, json.JSONDecodeError) as exc:
@@ -450,6 +631,9 @@ def cli(argv: list[str] | None = None) -> int:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
 
+    # Every rendered line starts with renderer-owned text, so untrusted status
+    # text cannot begin a line and act as a CI workflow command.
+    print(run_health_text(consensus["run_health"]))
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":
         return 3

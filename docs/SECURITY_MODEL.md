@@ -117,6 +117,16 @@ not match the manifest. These bindings detect misconfiguration and mixed runs;
 they are not tamper protection, because whoever writes an artifact also chooses
 the values it records.
 
+Adapter status files (`out/status/`) are untrusted input to consensus. The
+trusted runner writes them, but in a job that also runs model CLIs with tool
+access. Consensus uses a status file only if it passes its schema, names the
+seat and stage its filename names, and carries the manifest's `run_id`. Anything
+else counts as absent. Status files feed only the observational `run_health`
+record. Finding and critique batches remain the only decision input, so a forged
+status file can mislead only the health section of the summary comment. Every
+model ID, reviewer ID and error message in that section is rendered literally,
+and error text is redacted, then truncated.
+
 Author and hostile-state behavior is covered by
 [`test_state_note_authenticity.py`](../ai-review/tests/security/test_state_note_authenticity.py)
 and platform contract tests.

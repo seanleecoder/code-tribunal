@@ -97,6 +97,35 @@ class SchemaValidationTests(unittest.TestCase):
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
 
+    def test_run_health_is_optional_and_closed_on_consensus_v2(self) -> None:
+        fixture = load_json_file(_GOLDEN_CONSENSUS)
+        validate_instance(fixture, "consensus.schema.json")
+
+        earlier_release = copy.deepcopy(fixture)
+        del earlier_release["run_health"]
+        validate_instance(earlier_release, "consensus.schema.json")
+
+        job = fixture["run_health"]["jobs"][0]
+        invalid = [
+            ("unknown grade", lambda c: c["run_health"].update(grade="advisory")),
+            ("extra record field", lambda c: c["run_health"].update(action="rerun")),
+            ("extra job field", lambda c: c["run_health"]["jobs"][0].update(notes=[])),
+            ("unknown outcome", lambda c: c["run_health"]["jobs"][0].update(outcome="ok")),
+            ("missing job field", lambda c: c["run_health"]["jobs"][0].pop("duration_ms")),
+            ("negative count", lambda c: c["run_health"]["jobs"][0].update(raw_finding_count=-1)),
+            (
+                "error message over 300 characters",
+                lambda c: c["run_health"]["jobs"][0].update(error_message="e" * 301),
+            ),
+            ("more than eight jobs", lambda c: c["run_health"].update(jobs=[job] * 9)),
+        ]
+        for label, mutate in invalid:
+            with self.subTest(label=label):
+                consensus = copy.deepcopy(fixture)
+                mutate(consensus)
+                with self.assertRaises(SchemaValidationError):
+                    validate_instance(consensus, "consensus.schema.json")
+
     def test_advisory_only_panel_status_is_rejected(self) -> None:
         fixture = load_json_file(_GOLDEN_CONSENSUS)
         fixture["panel_status"] = "advisory_only"

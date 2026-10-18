@@ -11,9 +11,9 @@ from ai_review.schema import SchemaValidationError, validate_instance
 def _config() -> dict:
     return {
         "reviewers": {
-            "opencode": {"enabled": True},
-            "claude": {"enabled": True},
-            "codex": {"enabled": True},
+            "opencode": {"enabled": True, "model": "model", "timeout_seconds": 600},
+            "claude": {"enabled": True, "model": "model", "timeout_seconds": 600},
+            "codex": {"enabled": True, "model": "model", "timeout_seconds": 600},
         },
         "panel": {"min_successful_reviewers_for_resolution": 2},
     }

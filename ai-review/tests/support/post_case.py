@@ -13,6 +13,31 @@ from ai_review.render import render_body
 from .config_yaml import runtime_config
 
 
+def full_run_health() -> dict[str, Any]:
+    """A ``run_health`` for one successful review seat, as consensus writes it."""
+    return {
+        "grade": "full",
+        "jobs": [
+            {
+                "stage": "review",
+                "reviewer": "claude",
+                "outcome": "success",
+                "model": "anthropic/claude-haiku-4.5",
+                "effort": None,
+                "timeout_seconds": 1800,
+                "duration_ms": 61000,
+                "raw_finding_count": 1,
+                "accepted_finding_count": 1,
+                "dropped_finding_count": 0,
+                "cap_omitted_finding_count": 0,
+                "critique_count": None,
+                "error_class": None,
+                "error_message": None,
+            }
+        ],
+    }
+
+
 class PostCase(unittest.TestCase):
     """Fixture builders shared by the suites split out of test_post.py."""
 
@@ -29,6 +54,7 @@ class PostCase(unittest.TestCase):
             "run_id": "run",
             "successful_reviewers": ["claude"],
             "resolution_eligible_reviewers": ["claude"],
+            "run_health": full_run_health(),
             "groups": [
                 {
                     "issue_id": "a" * 64,

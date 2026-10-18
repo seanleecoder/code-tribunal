@@ -27,9 +27,9 @@ registry; they are not operator configuration.
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
-| `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. |
+| `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. The summary's run details show it as each review job's limit and mark a job that used at least 80% of it. |
 | `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
-| `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. |
+| `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. Findings it cuts are reported as "omitted by the per-seat cap" in the summary's review health and grade the run `degraded`. |
 
 ### Choosing the panel
 

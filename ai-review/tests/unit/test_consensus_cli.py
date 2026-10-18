@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -7,7 +9,7 @@ from pathlib import Path
 
 from ai_review.config import effective_config_binding, effective_config_digest, load_config
 from ai_review.consensus import cli
-from ai_review.schema import load_json_file, write_canonical_json
+from ai_review.schema import adapter_status_artifact, load_json_file, write_canonical_json
 
 from .test_consensus_state_matching import _batch, _finding
 
@@ -182,6 +184,117 @@ class ConsensusCliTests(unittest.TestCase):
             consensus = load_json_file(out_path)
             self.assertEqual(consensus["groups"][0]["agreeing_critics"], ["codex"])
             self.assertEqual(consensus["groups"][0]["critique_summary"]["agree"], 1)
+
+
+def _status(reviewer: str, stage: str, status: str, *, run_id: str = "local-test") -> dict:
+    return adapter_status_artifact(
+        reviewer,
+        stage,
+        status,
+        "2026-06-29T00:00:00Z",
+        "2026-06-29T00:30:00Z",
+        1_795_012,
+        f"findings/{reviewer}.json",
+        error_class="TimeoutExpired" if status == "timeout" else None,
+        run_id=run_id,
+    )
+
+
+class ConsensusStatusDirTests(unittest.TestCase):
+    """SPEC-66: status files feed run_health and nothing else."""
+
+    def _run(self, write_statuses: object) -> tuple[int, dict, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "inputs"
+            input_dir.mkdir()
+            status_dir = root / "status"
+            config_path = _repo_config()
+            config = load_config(config_path)
+            write_canonical_json(input_dir / "manifest.json", _manifest_for_config(config))
+            if callable(write_statuses):
+                status_dir.mkdir()
+                write_statuses(status_dir)
+            out_path = root / "out" / "consensus.json"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = cli(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--inputs",
+                        str(input_dir),
+                        "--findings-dir",
+                        str(root / "missing-findings"),
+                        "--status-dir",
+                        str(status_dir),
+                        "--out",
+                        str(out_path),
+                    ]
+                )
+            return code, load_json_file(out_path), stdout.getvalue()
+
+    def _jobs(self, consensus: dict) -> dict[str, dict]:
+        jobs = consensus["run_health"]["jobs"]
+        return {job["reviewer"]: job for job in jobs if job["stage"] == "review"}
+
+    def test_usable_status_files_add_duration_and_error_class(self) -> None:
+        def write(status_dir: Path) -> None:
+            timeout = _status("opencode", "review", "timeout")
+            write_canonical_json(status_dir / "opencode.json", timeout)
+            (status_dir / "opencode-review-debug.txt").write_text("not json", encoding="utf-8")
+            (status_dir / "opencode-review-raw-stdout.txt").write_text("{}", encoding="utf-8")
+
+        code, consensus, _stdout = self._run(write)
+
+        self.assertEqual(code, 3)
+        job = self._jobs(consensus)["opencode"]
+        self.assertEqual(job["outcome"], "timeout")
+        self.assertEqual(job["duration_ms"], 1_795_012)
+        self.assertEqual(job["error_class"], "TimeoutExpired")
+        self.assertEqual(self._jobs(consensus)["claude"]["outcome"], "missing")
+
+    def test_mismatched_or_corrupt_status_files_are_treated_as_absent(self) -> None:
+        def write(status_dir: Path) -> None:
+            # Filename names claude; content names codex.
+            write_canonical_json(status_dir / "claude.json", _status("codex", "review", "timeout"))
+            write_canonical_json(
+                status_dir / "codex.json", _status("codex", "review", "timeout", run_id="other")
+            )
+            write_canonical_json(
+                status_dir / "opencode.json", _status("opencode", "critique", "timeout")
+            )
+            (status_dir / "critique-claude.json").write_text("[" * 100_000, encoding="utf-8")
+            (status_dir / "critique-codex.json").write_text("{", encoding="utf-8")
+
+        code, consensus, _stdout = self._run(write)
+
+        self.assertEqual(code, 3)
+        for job in consensus["run_health"]["jobs"]:
+            self.assertEqual(job["outcome"], "missing")
+            self.assertIsNone(job["duration_ms"])
+
+    def test_missing_status_directory_still_produces_consensus(self) -> None:
+        code, consensus, _stdout = self._run(None)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
+
+    def test_failed_panel_prints_health_to_the_job_log_before_exit_3(self) -> None:
+        def write(status_dir: Path) -> None:
+            timeout = _status("opencode", "review", "timeout")
+            write_canonical_json(status_dir / "opencode.json", timeout)
+
+        code, consensus, stdout = self._run(write)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(consensus["panel_status"], "failed")
+        self.assertIn("ai-review consensus: Review health: re-run recommended.", stdout)
+        self.assertIn("- opencode review: timed out after 29m55s (limit 30m00s).", stdout)
+        self.assertIn("likely cancelled or killed by the CI job ceiling", stdout)
+        self.assertIn("Action: Re-run the review from prepare", stdout)
+        for line in stdout.splitlines():
+            self.assertFalse(line.startswith("::"))
 
 
 if __name__ == "__main__":

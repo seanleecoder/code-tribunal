@@ -96,6 +96,30 @@ serialization.
 
 ## Observability and artifacts
 
+### Reading the review health
+
+Every published run has a summary comment whose first section is the review
+health. Its headline names the grade:
+
+- **full**: every enabled review and critique job delivered a usable batch, and
+  no finding was dropped or cut by the per-seat cap.
+- **degraded**: some job failed, or some findings were dropped or capped, but
+  findings could still reach two independent supporters. Re-running is
+  optional.
+- **re-run recommended**: the panel failed, no finding could reach two
+  independent supporters, or critique was enabled and no critic succeeded.
+- **configuration error**: a seat failed on its configuration, such as an
+  invalid model ID. Fix the configuration; re-running unchanged fails the same
+  way.
+
+The visible problem list names each job that did not succeed. The collapsed run
+details give every job's model, effort, outcome, duration and finding counts.
+`⚠ near limit` marks a job that used at least 80% of its stage timeout. The
+only re-run the panel advises is a full re-run from prepare; do not retry
+individual jobs or mix artifacts. A failed panel is not published: the
+consensus check turns red and the consensus job log prints the same health
+report.
+
 Start with `out/status/`, then the consensus and post artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
 resolution-eligible reviewers, post status, and `post_result.warnings`. Export

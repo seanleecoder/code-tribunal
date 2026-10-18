@@ -80,6 +80,16 @@ def cli(argv: list[str] | None = None) -> int:
     loaded_consensus = load_json_file(args.consensus)
     validate_instance(loaded_consensus, "consensus.schema.json")
     consensus = cast(Consensus, loaded_consensus)
+    # run_health is optional in consensus.v2 only so earlier artifacts validate.
+    # Producer and consumer ship as one pinned image pair, so its absence means
+    # an artifact from an earlier release: refuse it before any platform call.
+    if "run_health" not in consensus:
+        print(
+            "ai-review post: consensus artifact has no run_health; it was produced by an "
+            "earlier release. Re-run the review from prepare with one image pair.",
+            file=sys.stderr,
+        )
+        return POST_OPERATIONAL_FAILURE_EXIT
     # Both bindings run before the platform client exists, so a mismatch mutates
     # no thread or state and writes no post_result.json, like an invalid config.
     try:

@@ -43,6 +43,7 @@ from .types import (
     Consensus,
     FindingGroup,
     PostResult,
+    RunHealth,
     State,
     StateRecord,
     StateRecordStatus,
@@ -145,6 +146,7 @@ def upsert_summary_comment(
     client: ReviewPlatform,
     manifest: dict[str, Any],
     run_id: str,
+    run_health: RunHealth,
     raw_discussions: list[dict[str, Any]],
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
@@ -155,16 +157,20 @@ def upsert_summary_comment(
     warnings: list[str],
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    """Create or refresh the summary comment on every published run.
+
+    Its health section is always present, so a later run that recovers replaces
+    an earlier degraded body.
+    """
     summary = {
         "action": "none",
         "note_id": None,
         "surface_findings": len(fallback_groups),
         "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
     }
-    if not fallback_groups and not fyi_groups:
-        return summary
     body, body_hash = render_summary_body(
         run_id,
+        run_health,
         fallback_groups,
         fyi_groups,
         max_fyi,
@@ -594,6 +600,7 @@ def finalize_state(
             client,
             manifest,
             consensus["run_id"],
+            consensus["run_health"],
             raw_discussions,
             summary_fallback_groups,
             fyi_groups,

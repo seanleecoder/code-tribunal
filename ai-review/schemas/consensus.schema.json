@@ -59,9 +59,72 @@
         "fyi_count": { "type": "integer", "minimum": 0 },
         "drop_count": { "type": "integer", "minimum": 0 }
       }
+    },
+    "run_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grade", "jobs"],
+      "description": "Observational run health. Optional so earlier consensus.v2 artifacts validate; consensus always writes it and post requires it. It never changes a decision, panel_status, or an exit code.",
+      "properties": {
+        "grade": { "enum": ["full", "degraded", "rerun_recommended"] },
+        "jobs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/health_job" }
+        }
+      }
     }
   },
   "$defs": {
+    "health_job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "reviewer",
+        "outcome",
+        "model",
+        "effort",
+        "timeout_seconds",
+        "duration_ms",
+        "raw_finding_count",
+        "accepted_finding_count",
+        "dropped_finding_count",
+        "cap_omitted_finding_count",
+        "critique_count",
+        "error_class",
+        "error_message"
+      ],
+      "properties": {
+        "stage": { "enum": ["review", "critique"] },
+        "reviewer": { "type": "string", "minLength": 1 },
+        "outcome": {
+          "enum": [
+            "success",
+            "unusable",
+            "skipped",
+            "timeout",
+            "model_error",
+            "schema_error",
+            "config_error",
+            "internal_error",
+            "batch_missing",
+            "missing"
+          ]
+        },
+        "model": { "type": "string" },
+        "effort": { "type": ["string", "null"] },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "raw_finding_count": { "type": ["integer", "null"], "minimum": 0 },
+        "accepted_finding_count": { "type": ["integer", "null"], "minimum": 0 },
+        "dropped_finding_count": { "type": ["integer", "null"], "minimum": 0 },
+        "cap_omitted_finding_count": { "type": ["integer", "null"], "minimum": 0 },
+        "critique_count": { "type": ["integer", "null"], "minimum": 0 },
+        "error_class": { "type": ["string", "null"], "maxLength": 120 },
+        "error_message": { "type": ["string", "null"], "maxLength": 300 }
+      }
+    },
     "sha256": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"

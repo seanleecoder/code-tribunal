@@ -16,9 +16,8 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 
 ## Open specifications
 
-| Spec | Status | Effort | Vehicle | Summary |
-|---|---|---|---|---|
-| [SPEC-66](spec-66-run-health-summary.md) | Proposed; narrowed 2026-10-16 | M (one PR) | 2.1.0 | Per-job model, effort, outcome and duration with a full/degraded/re-run grade, in a summary present on every published run and in the consensus job log. No usage, cost, failed-panel publication or critique coverage. |
+None. SPEC-66 (run health in the summary comment) is implemented for 2.1.0; see
+[`CHANGELOG.md`](../../CHANGELOG.md).
 
 Retired on 2026-10-16:
 
@@ -119,8 +118,8 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
    Renovate and zizmor have replaced most of the pin checker (N01); the release
    tooling is migrated (S01 cutover) and the evidence docs pruned (ADR-0004
    migration step 4).
-3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
-   run with space reserved for state (N04). This makes dropped findings visible.
+3. Done: SPEC-66 — `run_health`, the job-log rendering, and the summary on every
+   published run with space reserved for state (N04).
 4. The hash-only body (N12).
 5. Delete the over-built integrity checks (N15).
 

@@ -821,6 +821,8 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("out/critiques/", text)
         self.assertIn("out/pooled_findings/", text)
         self.assertIn("--critiques-dir out/critiques", text)
+        # SPEC-66: the review and critique jobs' needs deliver out/status/.
+        self.assertIn("--status-dir out/status", text)
 
     def test_codex_critique_uses_critique_schema(self) -> None:
         """The stage selects the schema, and codex passes what the stage selected.
@@ -860,6 +862,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("python -m ai_review.input_bundle prepare", text)
         self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
         self.assertIn("python -m ai_review.consensus", text)
+        # SPEC-66: the review and critique artifacts land status/ there.
+        self.assertIn("--status-dir reviewer-artifacts/status", text)
+        self.assertIn("out/status/critique-${{ matrix.reviewer }}.json", text)
         self.assertIn("python -m ai_review.post", text)
         # Inverted rather than deleted: `post` is the terminal product job and
         # Code Tribunal makes no merge decision, so a reintroduced gate job must
