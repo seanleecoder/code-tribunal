@@ -56,41 +56,12 @@ def write_adapter_input_bundle(input_dir: Path) -> None:
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
     (input_dir / ".opencode").mkdir()
     (input_dir / ".opencode" / "agent.md").write_text("bundle agent\n", encoding="utf-8")
+    # Prepare has already dropped every reviewer agent file from the snapshot.
     repo_snapshot = input_dir / "repo_snapshot"
     repo_snapshot.mkdir()
     (repo_snapshot / "src").mkdir()
     (repo_snapshot / "src" / "reviewed.py").write_text("print('review me')\n", encoding="utf-8")
     (repo_snapshot / "README.md").write_text("# Reviewed project\n", encoding="utf-8")
-    (repo_snapshot / "opencode.json").write_text('{"project":true}\n', encoding="utf-8")
-    (repo_snapshot / "opencode.jsonc").write_text('{"projectJsonc":true}\n', encoding="utf-8")
-    (repo_snapshot / "tui.json").write_text('{"tui":true}\n', encoding="utf-8")
-    (repo_snapshot / ".cursorrules").write_text("cursor project rules\n", encoding="utf-8")
-    (repo_snapshot / ".cursorignore").write_text("cursor ignore\n", encoding="utf-8")
-    (repo_snapshot / "CLAUDE.md").write_text("claude project rules\n", encoding="utf-8")
-    (repo_snapshot / ".opencode").mkdir()
-    (repo_snapshot / ".opencode" / "plugin.js").write_text(
-        "module.exports = {}\n", encoding="utf-8"
-    )
-    (repo_snapshot / ".cursor").mkdir()
-    (repo_snapshot / ".cursor" / "rules.md").write_text("cursor rules\n", encoding="utf-8")
-    (repo_snapshot / "AGENTS.md").write_text("project agent instructions\n", encoding="utf-8")
-    (repo_snapshot / ".codex").mkdir()
-    (repo_snapshot / ".codex" / "config.toml").write_text("[project]\n", encoding="utf-8")
-    (repo_snapshot / "nested").mkdir()
-    (repo_snapshot / "nested" / "AGENTS.md").write_text(
-        "nested agent instructions\n",
-        encoding="utf-8",
-    )
-    (repo_snapshot / "nested" / ".opencode").mkdir()
-    (repo_snapshot / "nested" / ".opencode" / "agent.md").write_text(
-        "nested agent\n",
-        encoding="utf-8",
-    )
-    (repo_snapshot / "nested" / ".cursor").mkdir()
-    (repo_snapshot / "nested" / ".cursor" / "rules.md").write_text(
-        "nested cursor rules\n",
-        encoding="utf-8",
-    )
     write_canonical_json(
         input_dir / "manifest.json",
         {

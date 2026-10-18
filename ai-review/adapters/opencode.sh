@@ -84,12 +84,10 @@ mkdir -p \
   "$OPENCODE_CONFIG_DIRECTORY"
 
 if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
-  # Explore a clean copy of the pinned MR snapshot. Strip project-level config the
-  # MR could use to steer the reviewer: opencode's own config files, its .opencode
-  # dirs, and AGENTS.md (opencode reads AGENTS.md as agent instructions, so it
-  # must be removed too — matching the codex/claude adapters).
-  prepare_review_root "$OPENCODE_REVIEW_ROOT" \
-    opencode.json opencode.jsonc tui.json AGENTS.md .opencode/
+  # Explore a copy of the pinned MR snapshot. Prepare dropped the project-level
+  # config the MR could use to steer the reviewer: opencode's own config files,
+  # its .opencode dirs, and AGENTS.md, which opencode reads as agent instructions.
+  prepare_review_root "$OPENCODE_REVIEW_ROOT"
 else
   # critique reasons only over the pooled findings in the prompt
   # (critique.md: "grounded only in the finding data, rules, and manifest"), so

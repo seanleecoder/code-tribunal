@@ -95,6 +95,14 @@ where those primitives are unavailable. Directory depth is capped. A hostile
 checkout cannot copy a symlink target such as `/proc/self/environ` into the
 uploaded bundle.
 
+Prepare also leaves out the files a reviewer CLI would read from its working tree
+as instructions or project configuration, at every depth: `AGENTS.md`,
+`CLAUDE.md`, `.claude/`, `.codex/`, `.cursor/`, `.cursorrules`, `.cursorignore`,
+`.opencode/`, `opencode.json`, `opencode.jsonc`, and `tui.json`. A merge request
+cannot steer a reviewer through them. The diff still shows changes to these
+files, but no reviewer can read their full contents. Because they are never
+opened, a symlinked `CLAUDE.md` is left out instead of rejecting the snapshot.
+
 The hostile-symlink and no-follow behavior is exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).
 
