@@ -90,15 +90,16 @@ def normalize_state_record(
     anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
     raw_aliases = record.get("aliases")
     aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
-    title_fp = title_fingerprint(str(record.get("title", ""))) if record.get("title") else None
+    # Alias lists keep their stored order (newest first once this release writes
+    # them) so ``state_plan`` can bound them by recency.
     normalized_aliases = {
-        "candidate_issue_signatures": sorted(_as_set(aliases.get("candidate_issue_signatures"))),
-        "source_finding_ids": sorted(_as_set(aliases.get("source_finding_ids"))),
-        "context_hashes": sorted(_as_set(aliases.get("context_hashes"))),
-        "title_fingerprints": sorted(
-            _as_set(aliases.get("title_fingerprints")) | ({title_fp} if title_fp else set())
-        ),
-        "symbols": sorted(_as_set(aliases.get("symbols"))),
+        # COMPAT-005: nothing matches on candidate signatures; the required key
+        # stays empty until the next major state migration removes it.
+        "candidate_issue_signatures": [],
+        "source_finding_ids": ordered_unique(aliases.get("source_finding_ids")),
+        "context_hashes": ordered_unique(aliases.get("context_hashes")),
+        "title_fingerprints": title_aliases(record.get("title"), aliases.get("title_fingerprints")),
+        "symbols": ordered_unique(aliases.get("symbols")),
     }
     head_sha = str((manifest or {}).get("head_sha") or record.get("last_seen_sha") or "")
     created_pipeline = str(record.get("created_by_pipeline_id") or pipeline_id)
@@ -167,8 +168,8 @@ def normalize_state(
             if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
         ],
     }
-    if isinstance(base.get("run_history"), list):
-        normalized["run_history"] = base["run_history"]
+    # COMPAT-005: an older note's ``run_history`` is dropped on the next write;
+    # the CI platform already records every run.
     return cast(State, attach_state_hash(normalized))
 
 
@@ -386,9 +387,19 @@ def state_overflow_reason(
 
 
 def _as_set(value: Any) -> set[str]:
+    return set(ordered_unique(value))
+
+
+def ordered_unique(value: Any) -> list[str]:
     if not isinstance(value, list):
-        return set()
-    return {str(item) for item in value if item is not None and str(item)}
+        return []
+    return list(dict.fromkeys(str(item) for item in value if item is not None and str(item)))
+
+
+def title_aliases(title: Any, values: Any) -> list[str]:
+    """The title's fingerprint first, then the other title fingerprints."""
+    leading = title_fingerprint(str(title)) if title else None
+    return ordered_unique([leading, *ordered_unique(values)])
 
 
 def _run_id_sort_parts(run_id: Any) -> tuple[int, int, str]:
@@ -444,17 +455,9 @@ def _group_category(group: Mapping[str, Any]) -> str:
 
 
 def _record_path_keys(record: Mapping[str, Any]) -> set[str]:
-    values: set[str] = set()
     anchor = record.get("anchor")
-    if isinstance(anchor, dict):
-        values.add(anchor_path_key(anchor))
-    aliases = record.get("aliases")
-    signatures = aliases.get("candidate_issue_signatures") if isinstance(aliases, dict) else []
-    if isinstance(signatures, list):
-        for signature in signatures:
-            if isinstance(signature, dict) and signature.get("path_key"):
-                values.add(str(signature["path_key"]))
-    return {value for value in values if value}
+    path_key = anchor_path_key(anchor) if isinstance(anchor, dict) else ""
+    return {path_key} if path_key else set()
 
 
 def _record_aliases(record: Mapping[str, Any], key: str) -> set[str]:

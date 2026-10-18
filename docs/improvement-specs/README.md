@@ -48,7 +48,7 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17.
+- **Done:** S02, S10, S17, N13.
 - **Partial:** S11 (the noise half, through SPEC-67), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
 - **Decided on 2026-10-13 and 2026-10-14:**
@@ -108,8 +108,6 @@ unexpected artifacts.
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);
    - delete test-only TypedDicts (N16);
-   - stop writing unread state fields and stop unbounded state growth: no
-     `run_history`, bounded alias families (N13);
    - prune the docs (N19);
    - image hygiene (N20).
 

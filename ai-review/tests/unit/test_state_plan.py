@@ -15,7 +15,9 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from ai_review.state_plan import plan_state
+from ai_review.anchors import title_fingerprint
+from ai_review.memory import find_matching_record
+from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -109,12 +111,13 @@ def _plan(
     inline: list[dict[str, Any]] | None = None,
     fyi: list[dict[str, Any]] | None = None,
     commands: dict[str, str] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> Any:
     return plan_state(
         config if config is not None else _config(),
         _manifest(),
         cast(Any, consensus if consensus is not None else _consensus()),
-        _state(persisted or []),
+        state if state is not None else _state(persisted or []),
         cast(Any, inline or []),
         [],
         cast(Any, fyi or []),
@@ -346,14 +349,120 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         # An overflowing plan must not hand callers a record index to mutate.
         self.assertEqual(plan.planned_by_issue, {})
 
-    def test_planned_state_records_the_run_in_history(self) -> None:
-        plan = _plan(inline=[_group("a" * 64)])
+    def test_planned_state_drops_run_history(self) -> None:
+        persisted = _state([])
+        persisted["run_history"] = [{"run_id": "old", "head_sha": "old"}]
+        plan = _plan(state=persisted, inline=[_group("a" * 64)])
 
-        self.assertIn(
-            {"run_id": "run", "head_sha": "head"},
-            plan.planned_state["run_history"],
-        )
+        self.assertNotIn("run_history", plan.planned_state)
         self.assertEqual(plan.planned_state["last_head_sha"], "head")
+
+    def test_alias_families_keep_this_runs_keys_then_the_newest_older_ones(self) -> None:
+        older = [f"{index:064x}" for index in range(1, 11)]
+        persisted = _record(
+            "a" * 64,
+            aliases={
+                "candidate_issue_signatures": ["e" * 64],
+                "source_finding_ids": older,
+                "context_hashes": older,
+                "title_fingerprints": [],
+                "symbols": [f"symbol{index}" for index in range(10)],
+            },
+        )
+        group = _group("a" * 64)
+        group["source_finding_ids"] = ["f" * 64, older[3]]
+        group["match_keys"] = {
+            "context_hashes": ["f" * 64],
+            "title_fingerprints": [],
+            "symbols": ["current"],
+        }
+
+        record = self._record_of(_plan(persisted=[persisted], inline=[group]), "a" * 64)
+
+        assert record is not None
+        aliases = record["aliases"]
+        self.assertEqual(
+            aliases["source_finding_ids"], ["f" * 64, older[3], *older[:3], *older[4:7]]
+        )
+        self.assertEqual(aliases["context_hashes"], ["f" * 64, *older[:7]])
+        self.assertEqual(aliases["symbols"], ["current", *[f"symbol{i}" for i in range(7)]])
+        self.assertEqual(aliases["title_fingerprints"], [title_fingerprint("Title")])
+        self.assertEqual(aliases["candidate_issue_signatures"], [])
+
+    def test_alias_families_never_trim_this_runs_keys(self) -> None:
+        # Consensus sorts a group's keys by hash, so a cut could drop the
+        # representative's context and source ID; the next run reporting only
+        # that finding, shifted by an unrelated edit, would then look new.
+        contexts = [f"{index:064x}" for index in range(1, 10)]
+        sources = [f"{index + 100:064x}" for index in range(1, 10)]
+        persisted = _record("a" * 64)
+        persisted["aliases"] = {**persisted["aliases"], "context_hashes": ["e" * 64]}
+        group = _group("a" * 64)
+        group["source_finding_ids"] = sources
+        group["representative_anchor"] = {
+            **group["representative_anchor"],
+            "context_hash": contexts[-1],
+        }
+        group["match_keys"] = {
+            "path_keys": ["src/foo.py"],
+            "category": "correctness",
+            "context_hashes": contexts,
+            "title_fingerprints": [],
+            "symbols": [],
+        }
+
+        plan = _plan(persisted=[persisted], inline=[group])
+
+        record = self._record_of(plan, "a" * 64)
+        assert record is not None
+        self.assertEqual(record["aliases"]["context_hashes"], contexts)
+        self.assertEqual(record["aliases"]["source_finding_ids"], sources)
+        shifted = _group("d" * 64)
+        shifted["title"] = "Reworded"
+        shifted["source_finding_ids"] = ["9" * 64]
+        shifted["representative_anchor"] = {
+            **group["representative_anchor"],
+            "start": {"old_line": None, "new_line": 7, "line_code": None},
+            "end": {"old_line": None, "new_line": 7, "line_code": None},
+        }
+        shifted["match_keys"] = {
+            "path_keys": ["src/foo.py"],
+            "category": "correctness",
+            "context_hashes": [contexts[-1]],
+            "title_fingerprints": ["8" * 64],
+            "symbols": [],
+        }
+        self.assertEqual(
+            find_matching_record(cast(Any, shifted), plan.planned_state).status, "matched"
+        )
+
+    def test_alias_families_stay_bounded_across_many_runs(self) -> None:
+        records: list[dict[str, Any]] = []
+        for run in range(30):
+            group = _group("a" * 64)
+            group["source_finding_ids"] = [f"{run:064x}"]
+            group["match_keys"] = {
+                "context_hashes": [f"{run + 100:064x}"],
+                "title_fingerprints": [f"{run + 200:064x}"],
+                "symbols": [f"symbol{run}"],
+            }
+            records = _plan(persisted=records, inline=[group]).planned_state["records"]
+
+        aliases = records[0]["aliases"]
+        for family in ("source_finding_ids", "context_hashes", "title_fingerprints", "symbols"):
+            self.assertEqual(len(aliases[family]), MAX_ALIASES_PER_FAMILY, family)
+        self.assertEqual(aliases["source_finding_ids"][0], f"{29:064x}")
+        self.assertEqual(aliases["title_fingerprints"][0], title_fingerprint("Title"))
+
+    def test_unmatched_records_keep_their_stored_aliases(self) -> None:
+        older = [f"{index:064x}" for index in range(1, 11)]
+        persisted = _record("a" * 64, status="wontfix")
+        persisted["aliases"] = {**persisted["aliases"], "source_finding_ids": older}
+
+        record = self._record_of(_plan(persisted=[persisted]), "a" * 64)
+
+        assert record is not None
+        self.assertEqual(record["aliases"]["source_finding_ids"], older)
 
 
 if __name__ == "__main__":
