@@ -48,7 +48,7 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17, N09, N13, N16, N19 (outside the evidence docs), N20.
+- **Done:** S02, S10, S17, N01, N09, N13, N16, N19 (outside the evidence docs), N20.
 - **Partial:** S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
@@ -114,9 +114,9 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted. First
-   replace most of the pin checker with Renovate and zizmor (N01), in its own pull
-   request. Then migrate the release tooling (S01) and prune the evidence docs.
+2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted, and
+   Renovate and zizmor have replaced most of the pin checker (N01). Next, migrate
+   the release tooling (S01) and prune the evidence docs.
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
 4. The hash-only body (N12).

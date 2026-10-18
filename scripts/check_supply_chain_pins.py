@@ -1,670 +1,225 @@
 #!/usr/bin/env python3
-"""Fail on mutable image/workflow dependency inputs."""
+"""Fail on mutable image and package inputs that Renovate and zizmor do not reject.
+
+Renovate keeps these pins current but never rejects a mutable reference, and
+zizmor (scripts/check_workflow_pins.py) audits only GitHub Actions workflows.
+What remains here is project-specific: Dockerfile digests, the image pins shared
+by the GitHub and GitLab templates, the lockfile and constraint usage in the
+Dockerfiles, and the hand-maintained `.pin` files.
+
+Stdlib-only: the image publishing workflow runs this before any dependency install.
+"""
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_DOCKERFILE = ROOT / "ai-review/images/base.Dockerfile"
-REVIEWER_DOCKERFILE = ROOT / "ai-review/images/reviewer.Dockerfile"
-PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-ai-review-images.yml"
-CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
-CANDIDATE_CANARY_WORKFLOW = ROOT / ".github/workflows/candidate-canary.yml"
-RELEASE_WORKFLOW = ROOT / ".github/workflows/publish-release.yml"
+IMAGES = ROOT / "ai-review/images"
+BASE_DOCKERFILE = IMAGES / "base.Dockerfile"
+REVIEWER_DOCKERFILE = IMAGES / "reviewer.Dockerfile"
+# The installed copy under .github/workflows/ is not scanned: `make workflow-parity`
+# proves it is a byte duplicate of this canonical template.
 GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
-PACKAGE_JSON = ROOT / "ai-review/images/package.json"
-PACKAGE_LOCK = ROOT / "ai-review/images/package-lock.json"
-PYTHON_CONSTRAINTS = ROOT / "ai-review/images/python-constraints.txt"
+PACKAGE_JSON = IMAGES / "package.json"
+PYTHON_CONSTRAINTS = IMAGES / "python-constraints.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
-CURSOR_AGENT_PIN = ROOT / "ai-review/images/cursor-agent.pin"
-RIPGREP_PIN = ROOT / "ai-review/images/ripgrep.pin"
-LYCHEE_PIN = ROOT / "ai-review/images/lychee.pin"
-MARKDOWN_LINK_CHECKER = ROOT / "scripts/check_markdown_links.py"
+CURSOR_AGENT_PIN = IMAGES / "cursor-agent.pin"
+RIPGREP_PIN = IMAGES / "ripgrep.pin"
 
-LYCHEE_VERSION = "0.24.2"
-LYCHEE_ARCHIVES = {
-    "linux_x86_64": (
-        "lychee-x86_64-unknown-linux-musl.tar.gz",
-        "73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5",
-    ),
-    "darwin_aarch64": (
-        "lychee-aarch64-apple-darwin.tar.gz",
-        "c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977",
-    ),
-    "darwin_x86_64": (
-        "lychee-x86_64-apple-darwin.tar.gz",
-        "887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978",
-    ),
+DIGEST = r"@sha256:[0-9a-f]{64}"
+IMAGE_PIN_KEYS = ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE", "AI_REVIEW_TRUSTED_IMAGE_SHA")
+# A published image tag is <series>-<source sha>; the exact series is a release check.
+RELEASE_IMAGE = re.compile(rf"ghcr\.io/\S+:[0-9]+\.[0-9]+-([0-9a-f]{{40}}){DIGEST}")
+EXACT_REQUIREMENT = re.compile(r"[A-Za-z0-9_.-]+==\S+")
+PIN_KEYS = {
+    "cursor-agent.pin": ("version", "url", "sha256"),
+    "ripgrep.pin": ("version", "opencode_version", "url", "sha256", "binary_sha256"),
 }
-
-PYTHON_DIRECT_PACKAGES = {"jsonschema", "PyYAML", "requests"}
-
-# The tag names the release line; the digest pins the exact bytes, so patch-level
-# base-image refreshes need no checker edit.
-PYTHON_BASE_IMAGE_PATTERN = r"python:3\.14(?:\.\d+)*-slim-trixie@sha256:[0-9a-f]{64}"
-NODE_BUILDER_IMAGE_PATTERN = r"node:26(?:\.\d+)*-trixie-slim@sha256:[0-9a-f]{64}"
-
-# Version labels are documentation, but incorrect labels conceal dependency
-# upgrades. Keep this registry offline and reviewable so CI can verify every
-# action pin that the repository currently ships without consulting GitHub.
-APPROVED_ACTION_PINS = {
-    ("actions/checkout", "3d3c42e5aac5ba805825da76410c181273ba90b1"): "v7.0.1",
-    ("actions/setup-python", "5fda3b95a4ea91299a34e894583c3862153e4b97"): "v7.0.0",
-    ("actions/github-script", "3a2844b7e9c422d3c10d287c895573f7108da1b3"): "v9.0.0",
-    ("actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"): "v7.0.1",
-    ("actions/download-artifact", "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"): "v8.0.1",
-    ("actions/attest", "1e69f48acb82d1966a394da916b4c1698aa569d6"): "v4.2.2",
-    ("actions/cache", "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"): "v6.1.0",
-}
-
-IMAGE_PIN_KEYS = (
-    "AI_REVIEW_BASE_IMAGE",
-    "AI_REVIEW_REVIEWER_IMAGE",
-    "AI_REVIEW_TRUSTED_IMAGE_SHA",
-)
-
-
-def error(message: str) -> None:
-    print(f"ERROR: {message}", file=sys.stderr)
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _display(path: Path) -> Path:
-    """Repo-relative path for messages, tolerating a path outside the repository.
+def _dockerfile_issues(name: str, text: str) -> list[str]:
+    """Require every FROM to name a digest, directly or through an ARG default."""
+    defaults = dict(re.findall(r"^ARG (\w+)=(\S+)$", text, re.M))
+    stages: set[str] = set()
+    issues: list[str] = []
+    for image, stage in re.findall(
+        r"^FROM (?:--platform=\S+ )?(\S+)(?: AS (\S+))?$", text, re.M | re.I
+    ):
+        variable = re.fullmatch(r"\$\{?(\w+)\}?", image)
+        resolved = defaults.get(variable.group(1), "") if variable else image
+        if resolved not in stages and not re.search(rf"{DIGEST}$", resolved):
+            issues.append(f"{name}: FROM {image} is not pinned by sha256 digest")
+        if stage:
+            stages.add(stage)
+    return issues
 
-    Tests point the module's path constants at temporary files, so an
-    unconditional relative_to() would raise instead of reporting the issue.
-    """
-    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+
+def _base_image_issues(base: str, reviewer: str) -> list[str]:
+    base_from = re.search(r"^FROM (\S+)$", base, re.M)
+    reviewer_default = re.search(r"^ARG AI_REVIEW_BASE_IMAGE=(\S+)$", reviewer, re.M)
+    if base_from is None or reviewer_default is None:
+        return ["base.Dockerfile FROM and reviewer.Dockerfile AI_REVIEW_BASE_IMAGE are required"]
+    if base_from.group(1) != reviewer_default.group(1):
+        return ["reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile"]
+    return []
 
 
-def _python_base_image(text: str) -> str | None:
-    match = re.search(rf"^FROM ({PYTHON_BASE_IMAGE_PATTERN})$", text, re.M)
-    return match.group(1) if match else None
+def _github_container_pins(workflow: str) -> tuple[dict[str, set[str]], list[str]]:
+    containers = re.findall(r"^\s+container:\s+(\S+)\s*$", workflow, re.M)
+    pins = {
+        "AI_REVIEW_BASE_IMAGE": {image for image in containers if "/ai-review-base:" in image},
+        "AI_REVIEW_REVIEWER_IMAGE": {
+            image for image in containers if "/ai-review-reviewer:" in image
+        },
+    }
+    issues: list[str] = []
+    # base: prepare, consensus, post. reviewer: review, critique.
+    base_jobs = sum("/ai-review-base:" in image for image in containers)
+    if len(containers) != 5 or base_jobs != 3:
+        issues.append("GitHub review workflow must run three base and two reviewer containers")
+    for key, images in pins.items():
+        if len(images) != 1:
+            issues.append(f"GitHub review containers use {len(images)} distinct {key} values")
+    return pins, issues
 
 
-def _unconstrained_pip_installs(dockerfile: str) -> list[str]:
-    logical_lines = dockerfile.replace("\\\n", " ").splitlines()
-    commands = (command.strip() for line in logical_lines for command in line.split("&&"))
+def _image_pin_issues(gitlab: str, github: str) -> list[str]:
+    """One base and one reviewer pin, equal on both platforms, built from the trusted SHA."""
+    values = {
+        key: re.findall(
+            rf"^\s*{key}\s*:\s*(['\"]?)([^'\"#\s<>]+)\1\s*(?:#.*)?$", gitlab, re.M
+        )
+        for key in IMAGE_PIN_KEYS
+    }
+    issues = [
+        f"GitLab review template must contain one concrete {key} value, found {len(found)}"
+        for key, found in values.items()
+        if len(found) != 1
+    ]
+    pins = {key: found[0][1] for key, found in values.items() if len(found) == 1}
+    github_pins, github_issues = _github_container_pins(github)
+    issues.extend(github_issues)
+    for key in ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE"):
+        match = RELEASE_IMAGE.fullmatch(pins.get(key, ""))
+        if match is None:
+            issues.append(f"GitLab {key} must be a digest-pinned <series>-<sha> image tag")
+        elif match.group(1) != pins.get("AI_REVIEW_TRUSTED_IMAGE_SHA"):
+            issues.append(f"GitLab {key} source SHA must equal AI_REVIEW_TRUSTED_IMAGE_SHA")
+        if key in pins and github_pins[key] != {pins[key]}:
+            issues.append(f"GitHub review containers must match GitLab {key}")
+    return issues
+
+
+def _exact_requirement_issues(name: str, text: str) -> list[str]:
+    issues: list[str] = []
+    for line in text.splitlines():
+        requirement = line.split(";", 1)[0].strip()
+        skipped = not requirement or requirement.startswith(("#", "-c "))
+        if not skipped and not EXACT_REQUIREMENT.fullmatch(requirement):
+            issues.append(f"{name} must use exact == pins only, got {requirement!r}")
+    return issues
+
+
+def _package_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _pip_install_issues(base: str, constraints: str) -> list[str]:
+    """Every pip install passes the constraints, and every package it names is pinned there."""
+    pinned = {
+        _package_name(line.split("==", 1)[0])
+        for line in constraints.splitlines()
+        if EXACT_REQUIREMENT.fullmatch(line.strip())
+    }
+    issues: list[str] = []
+    lines = base.replace("\\\n", " ").splitlines()
+    commands = (part for line in lines for part in line.split("&&"))
+    for command in commands:
+        words = command.split()
+        if "pip" not in words or "install" not in words:
+            continue
+        if "--constraint" not in words:
+            issues.append(f"base.Dockerfile pip install must pass --constraint: {' '.join(words)}")
+        arguments = words[words.index("install") + 1 :]
+        for index, word in enumerate(arguments):
+            if word.startswith("-") or (index and arguments[index - 1] == "--constraint"):
+                continue
+            if _package_name(word) not in pinned:
+                issues.append(f"base.Dockerfile installs unconstrained {word}")
+    return issues
+
+
+def _npm_issues(reviewer: str, package: dict[str, dict[str, str]]) -> list[str]:
+    issues: list[str] = []
+    if "npm ci" not in reviewer or "npm install" in reviewer:
+        issues.append("reviewer.Dockerfile must install the reviewer CLIs with npm ci")
+    for name, version in package.get("dependencies", {}).items():
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+            issues.append(f"{name} must be pinned to an exact npm version, got {version!r}")
+    return issues
+
+
+def _pin_file_issues(name: str, text: str, opencode_version: str) -> list[str]:
+    """Reject placeholders and missing fields in the files Renovate does not update."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.strip().partition("=")
+        if separator and not key.startswith("#"):
+            values[key] = value
+    issues = [f"{name} missing {key}" for key in PIN_KEYS[name] if not values.get(key)]
+    for key in ("sha256", "binary_sha256"):
+        digest = values.get(key)
+        if digest is not None and (not re.fullmatch(r"[0-9a-f]{64}", digest) or digest == "0" * 64):
+            issues.append(f"{name} {key} must be a real lowercase SHA-256 digest")
+    if values.get("version") and values["version"] not in values.get("url", ""):
+        issues.append(f"{name} url must contain the pinned version")
+    if name == "ripgrep.pin":
+        if values.get("binary_sha256") and values["binary_sha256"] == values.get("sha256"):
+            issues.append("ripgrep.pin binary_sha256 must be the extracted rg, not the tarball")
+        # The pinned ripgrep is the one this opencode would fetch, so an opencode
+        # bump must fail here until ripgrep.pin is re-observed (SUPPLY_CHAIN.md).
+        if values.get("opencode_version") != opencode_version:
+            issues.append(
+                f"ripgrep.pin opencode_version must equal package.json opencode-ai "
+                f"{opencode_version}; refresh ripgrep.pin (SUPPLY_CHAIN.md)"
+            )
+    return issues
+
+
+def issues() -> list[str]:
+    base = _read(BASE_DOCKERFILE)
+    reviewer = _read(REVIEWER_DOCKERFILE)
+    package = json.loads(_read(PACKAGE_JSON))
+    opencode_version = str(package.get("dependencies", {}).get("opencode-ai", ""))
+    constraints = _read(PYTHON_CONSTRAINTS)
     return [
-        " ".join(command.split())
-        for command in commands
-        if "pip install" in command and "--constraint " not in command
+        *_dockerfile_issues("base.Dockerfile", base),
+        *_dockerfile_issues("reviewer.Dockerfile", reviewer),
+        *_base_image_issues(base, reviewer),
+        *_image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
+        *_exact_requirement_issues("python-constraints.txt", constraints),
+        *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS)),
+        *_pip_install_issues(base, constraints),
+        *_npm_issues(reviewer, package),
+        *_pin_file_issues("cursor-agent.pin", _read(CURSOR_AGENT_PIN), opencode_version),
+        *_pin_file_issues("ripgrep.pin", _read(RIPGREP_PIN), opencode_version),
     ]
 
 
-def _constraint_packages(text: str) -> set[str]:
-    packages: set[str] = set()
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+==[^\s]+", line):
-            error(f"python-constraints.txt must use exact == pins only, got {line!r}")
-            continue
-        packages.add(line.split("==", 1)[0])
-    return packages
-
-
-def _exact_requirement_issues(text: str, filename: str) -> list[str]:
-    issues: list[str] = []
-    for line in text.splitlines():
-        requirement = line.strip()
-        if not requirement or requirement.startswith(("#", "-c ")):
-            continue
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+==[^\s]+", requirement):
-            issues.append(f"{filename} must use exact == pins only, got {requirement!r}")
-    return issues
-
-
-def _exact_pins(text: str) -> dict[str, tuple[str, str]]:
-    pins: dict[str, tuple[str, str]] = {}
-    for line in text.splitlines():
-        requirement = line.strip()
-        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s]+)", requirement)
-        if match is None:
-            continue
-        name, version = match.groups()
-        normalized = re.sub(r"[-_.]+", "-", name).lower()
-        pins[normalized] = (name, version)
-    return pins
-
-
-def _overlapping_python_pin_issues(constraints_text: str, requirements_text: str) -> list[str]:
-    constraints = _exact_pins(constraints_text)
-    requirements = _exact_pins(requirements_text)
-    issues: list[str] = []
-    for normalized_name in sorted(constraints.keys() & requirements.keys()):
-        constraint_name, constraint_version = constraints[normalized_name]
-        requirement_name, requirement_version = requirements[normalized_name]
-        if constraint_version != requirement_version:
-            issues.append(
-                f"requirements-dev.txt pin {requirement_name}=={requirement_version} "
-                f"must match python-constraints.txt pin "
-                f"{constraint_name}=={constraint_version}"
-            )
-    return issues
-
-
-def _workflow_structure_issues(text: str) -> list[str]:
-    """Catch YAML entries accidentally folded into an inline comment.
-
-    A YAML parser ignores everything after ``#``. A mechanical pin rewrite can
-    therefore hide a following ``uses``, ``with``, or ``if`` entry without the
-    action-pin regex noticing it.
-    """
-    issues: list[str] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if "#" not in line:
-            continue
-        comment = line.split("#", 1)[1]
-        if re.search(r"(?:-\s+uses:|\bwith:|\bif:)", comment):
-            issues.append(f"line {line_number} contains a YAML key inside an inline comment")
-    return issues
-
-
-def _lychee_pin_issues(pin_text: str, checker_text: str) -> list[str]:
-    """Validate the pin and its one script authority."""
-    issues: list[str] = []
-    release_root = (
-        "https://github.com/lycheeverse/lychee/releases/download/"
-        f"lychee-v{LYCHEE_VERSION}"
-    )
-    expected = {"version": LYCHEE_VERSION}
-    for target, (archive, sha256) in LYCHEE_ARCHIVES.items():
-        expected[f"{target}_url"] = f"{release_root}/{archive}"
-        expected[f"{target}_sha256"] = sha256
-    fields: dict[str, str] = {}
-    for raw_line in pin_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if not separator or key in fields or not value:
-            issues.append(f"lychee.pin has invalid line {line!r}")
-            continue
-        fields[key] = value
-    if fields != expected:
-        issues.append(
-            "lychee.pin must contain the reviewed version and platform archive URLs/SHA-256s"
-        )
-    tree = ast.parse(checker_text)
-    pin_path_is_exact = any(
-        isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "PIN_PATH" for target in node.targets
-        )
-        and isinstance(node.value, ast.BinOp)
-        and isinstance(node.value.op, ast.Div)
-        and isinstance(node.value.left, ast.Name)
-        and node.value.left.id == "ROOT"
-        and isinstance(node.value.right, ast.Constant)
-        and node.value.right.value == "ai-review/images/lychee.pin"
-        for node in ast.walk(tree)
-    )
-    if not pin_path_is_exact:
-        issues.append(
-            "check_markdown_links.py PIN_PATH must resolve ai-review/images/lychee.pin"
-        )
-    return issues
-
-
-def _workflow_action_issues(text: str) -> list[str]:
-    """Validate external action SHAs and any adjacent version labels."""
-    issues: list[str] = []
-    lines = text.splitlines()
-    for line_number, line in enumerate(lines, start=1):
-        yaml = line.split("#", 1)[0]
-        match = re.search(r"\buses:\s*([^\s#]+)", yaml)
-        if match is None:
-            continue
-        reference = match.group(1)
-        if reference.startswith(("./", "../", "docker://")):
-            continue
-        if "@" not in reference:
-            issues.append(f"line {line_number}: external action {reference!r} has no ref")
-            continue
-        action, ref = reference.rsplit("@", 1)
-        if not re.fullmatch(r"[^/\s]+/[^@\s]+", action):
-            continue
-        if not re.fullmatch(r"[0-9a-f]{40}", ref):
-            issues.append(f"line {line_number}: {action} must use a full commit SHA")
-            continue
-
-        version_label = None
-        inline_label = re.search(r"#\s*(v[^\s]+)\s*$", line)
-        if inline_label is not None:
-            version_label = inline_label.group(1)
-        elif line_number > 1:
-            preceding_label = re.fullmatch(
-                rf"\s*#\s*{re.escape(action)}@(v[^\s]+)\s*", lines[line_number - 2]
-            )
-            if preceding_label is not None:
-                version_label = preceding_label.group(1)
-
-        expected_label = APPROVED_ACTION_PINS.get((action, ref))
-        if expected_label is not None and version_label != expected_label:
-            shown_label = version_label or "<missing>"
-            issues.append(
-                f"line {line_number}: {action}@{ref} is {expected_label}, "
-                f"but its version label is {shown_label}"
-            )
-        elif version_label is not None and expected_label is None:
-            issues.append(
-                f"line {line_number}: {action}@{ref} has unregistered version label {version_label}"
-            )
-    return issues
-
-
-def _github_review_container_issues(text: str) -> list[str]:
-    """Require every GitHub review job to use one of two consistent image pins."""
-    issues: list[str] = []
-    if re.search(r"^\s+AI_REVIEW_(?:BASE|REVIEWER)_IMAGE:", text, re.M):
-        issues.append("GitHub review workflow must not declare unused AI_REVIEW_*_IMAGE variables")
-
-    containers = re.findall(r"^\s+container:\s+(\S+)\s*$", text, re.M)
-    classified = {
-        "base": [image for image in containers if "/ai-review-base:" in image],
-        "reviewer": [image for image in containers if "/ai-review-reviewer:" in image],
-    }
-    # base: prepare, consensus, post. reviewer: review, critique.
-    if len(containers) != 5 or len(classified["base"]) != 3 or len(classified["reviewer"]) != 2:
-        issues.append(
-            "GitHub review workflow must contain three base and two reviewer job containers"
-        )
-    if len(set(classified["base"])) > 1:
-        issues.append("GitHub review base job containers must use one identical image pin")
-    if len(set(classified["reviewer"])) > 1:
-        issues.append("GitHub reviewer job containers must use one identical image pin")
-    for image in containers:
-        if not re.fullmatch(
-            r"ghcr\.io/[^\s]+/ai-review-(?:base|reviewer):[^\s@]+@sha256:[0-9a-f]{64}",
-            image,
-        ):
-            issues.append(f"GitHub review job container is not digest-pinned: {image}")
-    return issues
-
-
-def _concrete_image_pin_values(text: str) -> dict[str, list[str]]:
-    pins: dict[str, list[str]] = {}
-    for key in IMAGE_PIN_KEYS:
-        matches = re.finditer(
-            rf"^\s*{re.escape(key)}\s*:\s*(?P<quote>['\"]?)"
-            rf"(?P<value>[^'\"#\s<>]+)(?P=quote)\s*(?:#.*)?$",
-            text,
-            re.M,
-        )
-        pins[key] = [match.group("value") for match in matches]
-    return pins
-
-
-def _concrete_image_pins(text: str) -> dict[str, str]:
-    return {
-        key: values[0]
-        for key, values in _concrete_image_pin_values(text).items()
-        if len(values) == 1
-    }
-
-
-def _gitlab_image_pin_issues(template: str) -> list[str]:
-    template_values = _concrete_image_pin_values(template)
-    issues: list[str] = []
-    for key in IMAGE_PIN_KEYS:
-        template_count = len(template_values[key])
-        if template_count == 0:
-            issues.append(f"GitLab review template is missing a concrete {key} value")
-        elif template_count > 1:
-            issues.append(
-                f"GitLab review template contains {template_count} concrete {key} values; "
-                "expected one"
-            )
-    pins = _concrete_image_pins(template)
-    trusted_sha = pins.get("AI_REVIEW_TRUSTED_IMAGE_SHA")
-    for key in ("AI_REVIEW_BASE_IMAGE", "AI_REVIEW_REVIEWER_IMAGE"):
-        image = pins.get(key, "")
-        # Structural only: the exact tag series is enforced by check_release_inputs
-        # at activation, so a series bump does not break main before the repin.
-        match = re.fullmatch(
-            r"ghcr\.io/[^\s]+:[0-9]+\.[0-9]+-([0-9a-f]{40})@sha256:[0-9a-f]{64}", image
-        )
-        if not match:
-            issues.append(
-                f"GitLab review template {key} must be a digest-pinned <series>-<sha> source tag"
-            )
-        elif trusted_sha and match.group(1) != trusted_sha:
-            issues.append(f"GitLab review template {key} source SHA must match trusted SHA")
-    return issues
-
-
-def _cross_platform_image_pin_issues(gitlab: str, github: str) -> list[str]:
-    pins = _concrete_image_pins(gitlab)
-    containers = re.findall(r"^\s+container:\s+(\S+)\s*$", github, re.M)
-    expected = {
-        "AI_REVIEW_BASE_IMAGE": {item for item in containers if "/ai-review-base:" in item},
-        "AI_REVIEW_REVIEWER_IMAGE": {item for item in containers if "/ai-review-reviewer:" in item},
-    }
-    issues: list[str] = []
-    for key, github_values in expected.items():
-        if len(github_values) != 1:
-            issues.append(
-                f"GitHub containers contain {len(github_values)} distinct values for {key}; "
-                "expected one"
-            )
-        elif pins.get(key) not in github_values:
-            issues.append(f"GitHub containers must match GitLab {key}")
-    return issues
-
-
-def _cursor_agent_pin_issues(text: str) -> list[str]:
-    values: dict[str, str] = {}
-    issues: list[str] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            issues.append(f"cursor-agent.pin line is not key=value: {line!r}")
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value
-    for key in ("version", "url", "sha256"):
-        if not values.get(key):
-            issues.append(f"cursor-agent.pin missing {key}")
-    version = values.get("version", "")
-    url = values.get("url", "")
-    sha256 = values.get("sha256", "")
-    if version and not re.fullmatch(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9A-Za-z]+", version):
-        issues.append("cursor-agent.pin version must be an exact Cursor CLI version")
-    if url and version and version not in url:
-        issues.append("cursor-agent.pin url must contain the pinned version")
-    if url and not url.startswith("https://downloads.cursor.com/"):
-        issues.append("cursor-agent.pin url must use downloads.cursor.com")
-    if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        issues.append("cursor-agent.pin sha256 must be a lowercase SHA-256 hex digest")
-    if sha256 == "0" * 64:
-        issues.append("cursor-agent.pin sha256 must not be the all-zero placeholder")
-    return issues
-
-
-def _ripgrep_stage_issues(reviewer: str) -> list[str]:
-    """Require the ripgrep builder stage itself to verify the artifact.
-
-    Scoped to the stage on purpose: `sha256sum -c -` also appears in the
-    cursor-agent stage, so a repository-wide substring check would keep passing
-    after the ripgrep verification was deleted.
-    """
-    match = re.search(r"^FROM \S+ AS ripgrep-bin$(.*?)(?=^FROM )", reviewer, re.M | re.S)
-    if match is None:
-        return ["reviewer.Dockerfile must build the pinned ripgrep in a ripgrep-bin stage"]
-    stage = match.group(1)
-    issues: list[str] = []
-    if "ripgrep.pin" not in stage:
-        issues.append("reviewer.Dockerfile ripgrep-bin stage must read ripgrep.pin")
-    # Both digests are required by name: the stage now checks two files, so a bare
-    # `sha256sum -c -` substring would keep passing after either one was deleted.
-    if not re.search(r'echo "\$sha256 .*" \| sha256sum -c -', stage):
-        issues.append("reviewer.Dockerfile ripgrep-bin stage must verify the artifact checksum")
-    if not re.search(r'echo "\$binary_sha256 .*" \| sha256sum -c -', stage):
-        issues.append(
-            "reviewer.Dockerfile ripgrep-bin stage must verify the extracted binary digest"
-        )
-    # Without this, the checksummed file need not be the pinned URL's file: a stage
-    # that fetched some other artifact and hashed it would satisfy the checks above.
-    if not re.search(r'curl -fL "\$url"', stage):
-        issues.append("reviewer.Dockerfile ripgrep-bin stage must download the pinned url")
-    if stage.count('"0000000000000000000000000000000000000000000000000000000000000000"') < 2:
-        issues.append(
-            "reviewer.Dockerfile ripgrep-bin stage must reject both all-zero pin placeholders"
-        )
-    return issues
-
-
-def _ripgrep_pin_issues(text: str, opencode_version: str) -> list[str]:
-    """Validate the pinned ripgrep artifact.
-
-    OpenCode downloads ripgrep from GitHub releases at review time and verifies
-    nothing but a non-zero byte length. The image ships this pinned, checksummed
-    copy on PATH so that download never happens; an unpinned or placeholder value
-    here silently restores the unverified fetch.
-
-    `opencode_version` is package.json's opencode-ai version. The pin must name the
-    same one, because the pinned ripgrep is only the right ripgrep for the opencode
-    that would otherwise have fetched it: bumping opencode alone must fail here
-    rather than silently stranding the reviewer on a mismatched search binary.
-    """
-    values: dict[str, str] = {}
-    issues: list[str] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            issues.append(f"ripgrep.pin line is not key=value: {line!r}")
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value
-    for key in ("version", "opencode_version", "url", "sha256", "binary_sha256"):
-        if not values.get(key):
-            issues.append(f"ripgrep.pin missing {key}")
-    version = values.get("version", "")
-    url = values.get("url", "")
-    sha256 = values.get("sha256", "")
-    binary_sha256 = values.get("binary_sha256", "")
-    pinned_opencode = values.get("opencode_version", "")
-    if pinned_opencode and pinned_opencode != opencode_version:
-        issues.append(
-            f"ripgrep.pin opencode_version {pinned_opencode} does not match the "
-            f"opencode-ai {opencode_version} pinned in package.json; re-observe the "
-            "ripgrep version that opencode fetches (SUPPLY_CHAIN.md step 6)"
-        )
-    if version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        issues.append("ripgrep.pin version must be an exact ripgrep version")
-    if url and version and version not in url:
-        issues.append("ripgrep.pin url must contain the pinned version")
-    if url and not url.startswith("https://github.com/BurntSushi/ripgrep/releases/download/"):
-        issues.append("ripgrep.pin url must use the upstream ripgrep release download host")
-    if url and not re.search(r"x86_64-unknown-linux-musl\.tar\.gz$", url):
-        issues.append("ripgrep.pin url must reference the x86_64-unknown-linux-musl asset")
-    if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        issues.append("ripgrep.pin sha256 must be a lowercase SHA-256 hex digest")
-    if sha256 == "0" * 64:
-        issues.append("ripgrep.pin sha256 must not be the all-zero placeholder")
-    if binary_sha256 and not re.fullmatch(r"[0-9a-f]{64}", binary_sha256):
-        issues.append("ripgrep.pin binary_sha256 must be a lowercase SHA-256 hex digest")
-    if binary_sha256 == "0" * 64:
-        issues.append("ripgrep.pin binary_sha256 must not be the all-zero placeholder")
-    # The tarball digest and the extracted binary's digest cannot be equal. Copying
-    # one into the other would pass every check above while asserting nothing about
-    # the file that lands on PATH.
-    if binary_sha256 and binary_sha256 == sha256:
-        issues.append("ripgrep.pin binary_sha256 must be the extracted rg digest, not the tarball")
-    return issues
-
-
-def _ripgrep_runtime_guard_issues(reviewer: str) -> list[str]:
-    """Require the final-stage rg provenance guard to resolve through `sh -c`.
-
-    `command -v` is a shell builtin, so `env -i ... command -v rg` fails with
-    "env: 'command': No such file or directory" and only `sh -c` executes it.
-    The PATH must be the adapter's fixed trusted PATH so the guard proves the
-    exact resolution the adapter will perform at review time.
-    """
-    issues: list[str] = []
-    if not re.search(r"env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", reviewer):
-        issues.append(
-            "reviewer.Dockerfile must resolve rg on the adapter's fixed PATH via env -i ... sh -c"
-        )
-    if not re.search(r'test "\$resolved" = "/usr/local/bin/rg"', reviewer):
-        issues.append("reviewer.Dockerfile must assert rg resolves to /usr/local/bin/rg")
-    if not re.search(r'echo "\$binary_sha256  /usr/local/bin/rg" \| sha256sum -c -', reviewer):
-        issues.append(
-            "reviewer.Dockerfile must assert the pinned binary digest of /usr/local/bin/rg"
-        )
-    return issues
-
-
 def main() -> int:
-    failures = 0
-    base = _read(BASE_DOCKERFILE)
-    reviewer = _read(REVIEWER_DOCKERFILE)
-    # The installed copy under .github/workflows/ is deliberately absent from
-    # every scan here. It is a byte duplicate of the canonical template, which
-    # `make workflow-parity` proves and repairs; identical bytes carry identical
-    # action pins and containers, so scanning both only asks the same question
-    # twice.
-    workflows = {
-        path: _read(path)
-        for path in (
-            CI_WORKFLOW,
-            CANDIDATE_CANARY_WORKFLOW,
-            RELEASE_WORKFLOW,
-            GITHUB_REVIEW_WORKFLOW,
-            PUBLISH_WORKFLOW,
-        )
-    }
-    workflow = workflows[PUBLISH_WORKFLOW]
-    lychee_pin = _read(LYCHEE_PIN)
-    markdown_link_checker = _read(MARKDOWN_LINK_CHECKER)
-    for issue in _lychee_pin_issues(lychee_pin, markdown_link_checker):
-        error(issue)
-        failures += 1
-    canonical_review_workflow = workflows[GITHUB_REVIEW_WORKFLOW]
-    for issue in _github_review_container_issues(canonical_review_workflow):
-        error(f"{_display(GITHUB_REVIEW_WORKFLOW)}: {issue}")
-        failures += 1
-    gitlab_review = _read(GITLAB_REVIEW_TEMPLATE)
-    constraints = _read(PYTHON_CONSTRAINTS)
-    dev_requirements = _read(DEV_REQUIREMENTS)
-    cursor_pin = _read(CURSOR_AGENT_PIN)
-    ripgrep_pin = _read(RIPGREP_PIN)
-    package = json.loads(_read(PACKAGE_JSON))
-    lock = json.loads(_read(PACKAGE_LOCK))
-
-    for issue in _gitlab_image_pin_issues(gitlab_review):
-        error(issue)
-        failures += 1
-    for issue in _cross_platform_image_pin_issues(gitlab_review, canonical_review_workflow):
-        error(issue)
-        failures += 1
-
-    base_image = _python_base_image(base)
-    if base_image is None:
-        error("base.Dockerfile must pin python:3.14-slim-trixie by sha256 digest")
-        failures += 1
-    reviewer_default = re.search(
-        rf"^ARG AI_REVIEW_BASE_IMAGE=({PYTHON_BASE_IMAGE_PATTERN})$",
-        reviewer,
-        re.M,
-    )
-    if reviewer_default is None:
-        error("reviewer.Dockerfile must provide a digest-pinned AI_REVIEW_BASE_IMAGE default")
-        failures += 1
-    elif base_image is not None and reviewer_default.group(1) != base_image:
-        error("reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile")
-        failures += 1
-    node_from_pattern = rf"^FROM {NODE_BUILDER_IMAGE_PATTERN} AS reviewer-clis$"
-    if not re.search(node_from_pattern, reviewer, re.M):
-        error("reviewer.Dockerfile must pin node:26-trixie-slim by sha256 digest")
-        failures += 1
-    if ">=" in base:
-        error("base.Dockerfile must install Python packages through python-constraints.txt")
-        failures += 1
-    for command in _unconstrained_pip_installs(base):
-        error(f"base.Dockerfile pip install must pass --constraint: {command}")
-        failures += 1
-    for package_name in PYTHON_DIRECT_PACKAGES:
-        if not re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(package_name)}(?![A-Za-z0-9_.-])", base):
-            error(f"base.Dockerfile pip install list is missing {package_name}")
-            failures += 1
-    constrained = _constraint_packages(constraints)
-    if not (PYTHON_DIRECT_PACKAGES | {"pip"}).issubset(constrained):
-        error("python-constraints.txt must pin pip and every package base.Dockerfile installs")
-        failures += 1
-    for issue in _exact_requirement_issues(dev_requirements, "requirements-dev.txt"):
-        error(issue)
-        failures += 1
-    for issue in _overlapping_python_pin_issues(constraints, dev_requirements):
-        error(issue)
-        failures += 1
-    if "npm install -g" in reviewer:
-        error("reviewer.Dockerfile must use npm ci against the committed lockfile")
-        failures += 1
-    if (
-        "COPY ai-review/images/cursor-agent.pin" not in reviewer
-        or "cursor-agent --version" not in reviewer
-    ):
-        error("reviewer.Dockerfile must install pinned cursor-agent and smoke-test --version")
-        failures += 1
-    for issue in _cursor_agent_pin_issues(cursor_pin):
-        error(issue)
-        failures += 1
-    pinned_opencode = str(package.get("dependencies", {}).get("opencode-ai", ""))
-    for issue in _ripgrep_pin_issues(ripgrep_pin, pinned_opencode):
-        error(issue)
-        failures += 1
-    if not re.search(r"^COPY --from=ripgrep-bin \S+ /usr/local/bin/rg$", reviewer, re.M):
-        error("reviewer.Dockerfile must copy the pinned ripgrep to /usr/local/bin/rg")
-        failures += 1
-    for issue in _ripgrep_stage_issues(reviewer):
-        error(issue)
-        failures += 1
-    for issue in _ripgrep_runtime_guard_issues(reviewer):
-        error(issue)
-        failures += 1
-    if "npm ci" not in reviewer:
-        error("reviewer.Dockerfile does not invoke npm ci")
-        failures += 1
-    for key, version in package.get("dependencies", {}).items():
-        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
-            error(f"{key} must be pinned to an exact npm version, got {version!r}")
-            failures += 1
-    if package.get("dependencies") != lock.get("packages", {}).get("", {}).get("dependencies"):
-        error("package.json dependencies differ from package-lock.json root dependencies")
-        failures += 1
-    pinned_actions = (
-        "actions/checkout",
-        "actions/upload-artifact",
-        "actions/download-artifact",
-        "actions/attest",
-    )
-    for action in pinned_actions:
-        if re.search(rf"uses:\s*{re.escape(action)}@v\d+", workflow):
-            error(f"{action} must be pinned to a full commit SHA, not a mutable major tag")
-            failures += 1
-        if not re.search(rf"uses:\s*{re.escape(action)}@[0-9a-f]{{40}}", workflow):
-            error(f"{action} full-SHA pin not found")
-            failures += 1
-    for path, text in workflows.items():
-        display_path = _display(path)
-        for issue in _workflow_structure_issues(text):
-            error(f"{display_path}: {issue}")
-            failures += 1
-        for issue in _workflow_action_issues(text):
-            error(f"{display_path}: {issue}")
-            failures += 1
-    # The installed copy is covered transitively: it is a byte duplicate of the
-    # canonical template, enforced by `make workflow-parity`, so a reviewer CLI
-    # version variable cannot appear only there.
-    combined_ci = "\n".join([workflow, canonical_review_workflow, gitlab_review])
-    has_repo_cli_vars = "vars.AI_REVIEW_" in workflow
-    has_ci_cli_vars = re.search(r"AI_REVIEW_(?:CLAUDE|CODEX|OPENCODE)_VERSION", combined_ci)
-    if has_repo_cli_vars or has_ci_cli_vars:
-        error("reviewer CLI versions must come from package-lock.json, not CI/repository variables")
-        failures += 1
-    for obsolete_arg in ("CLAUDE_VERSION", "CODEX_VERSION", "OPENCODE_VERSION"):
-        if f'--build-arg "{obsolete_arg}=' in combined_ci:
-            error(f"obsolete reviewer build arg remains in CI: {obsolete_arg}")
-            failures += 1
-    return 1 if failures else 0
+    found = issues()
+    for issue in found:
+        print(f"ERROR: {issue}", file=sys.stderr)
+    return 1 if found else 0
 
 
 if __name__ == "__main__":
