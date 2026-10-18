@@ -1,31 +1,22 @@
 {
   "images": {
     "base": {
-      "digest": "sha256:e6ca87a2082cd4820b780a14164212a33e3d176812541e9ede68dd1b2169ccdd",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-base"
     },
     "reviewer": {
-      "digest": "sha256:4279949eadccc6333ce6b07263e7ee5097e25eda49e62e9bc72fdb118614f4a6",
+      "digest": null,
       "name": "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer"
     }
   },
-  "release_version": "2.0.3",
-  "runtime_source": "10f2f8deef3ee63c952df76d5f627ed6aa2e7ea9",
+  "release_version": "2.1.0",
+  "runtime_source": null,
   "schema_version": "code_tribunal.release_inputs.v2",
-  "status": "active",
+  "status": "draft",
   "verification": {
-    "ci_run_id": "39124138106",
-    "evidence_record_ids": [
-      "record-candidate-canary.md",
-      "record-github-current-image.md",
-      "record-gitlab-current-image.md",
-      "record-gitlab-hostile-mr.md",
-      "record-model-effort-routes.md",
-      "record-github-revision-failures.md"
-    ],
-    "evidence_waivers": {
-      "record-github-revision-failures.md": "GitHub preparation modules changed off the SPEC-34 paths: input_bundle.py only in the effective-config binding, the dropped inputs/prompts, inputs/rules and config.review.yaml copies, and reviewer agent-file stripping in copy_repo_snapshot; platform/github.py only renames STATE_NOTE_SPEC_RE to STATE_NOTE_RE in its state-marker helpers (S14). The revision binding, checkout-vs-selected and before-diff checks, and the HTTP 406 oversized-diff path are unchanged and remain covered by test_input_bundle.py and test_github_platform.py in the full quality gate; the final-pair GitHub lifecycle exercises the state-marker change live."
-    },
-    "publication_run_id": "39124138105"
+    "ci_run_id": null,
+    "evidence_record_ids": [],
+    "evidence_waivers": {},
+    "publication_run_id": null
   }
 }
