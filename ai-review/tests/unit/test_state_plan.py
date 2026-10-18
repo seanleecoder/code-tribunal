@@ -111,12 +111,13 @@ def _plan(
     inline: list[dict[str, Any]] | None = None,
     fyi: list[dict[str, Any]] | None = None,
     commands: dict[str, str] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> Any:
     return plan_state(
         config if config is not None else _config(),
         _manifest(),
         cast(Any, consensus if consensus is not None else _consensus()),
-        _state(persisted or []),
+        state if state is not None else _state(persisted or []),
         cast(Any, inline or []),
         [],
         cast(Any, fyi or []),
@@ -351,16 +352,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
     def test_planned_state_drops_run_history(self) -> None:
         persisted = _state([])
         persisted["run_history"] = [{"run_id": "old", "head_sha": "old"}]
-        plan = plan_state(
-            _config(),
-            _manifest(),
-            cast(Any, _consensus()),
-            persisted,
-            cast(Any, [_group("a" * 64)]),
-            [],
-            [],
-            {},
-        )
+        plan = _plan(state=persisted, inline=[_group("a" * 64)])
 
         self.assertNotIn("run_history", plan.planned_state)
         self.assertEqual(plan.planned_state["last_head_sha"], "head")

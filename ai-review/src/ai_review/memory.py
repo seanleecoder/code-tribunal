@@ -90,18 +90,15 @@ def normalize_state_record(
     anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
     raw_aliases = record.get("aliases")
     aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
-    title_fp = title_fingerprint(str(record.get("title", ""))) if record.get("title") else None
-    # Alias lists keep their stored order, newest first, so ``state_plan`` can
-    # bound them by recency. The current title's fingerprint leads its family.
+    # Alias lists keep their stored order (newest first once this release writes
+    # them) so ``state_plan`` can bound them by recency.
     normalized_aliases = {
         # COMPAT-005: nothing matches on candidate signatures; the required key
         # stays empty until the next major state migration removes it.
         "candidate_issue_signatures": [],
         "source_finding_ids": ordered_unique(aliases.get("source_finding_ids")),
         "context_hashes": ordered_unique(aliases.get("context_hashes")),
-        "title_fingerprints": ordered_unique(
-            [title_fp, *ordered_unique(aliases.get("title_fingerprints"))]
-        ),
+        "title_fingerprints": title_aliases(record.get("title"), aliases.get("title_fingerprints")),
         "symbols": ordered_unique(aliases.get("symbols")),
     }
     head_sha = str((manifest or {}).get("head_sha") or record.get("last_seen_sha") or "")
@@ -390,15 +387,19 @@ def state_overflow_reason(
 
 
 def _as_set(value: Any) -> set[str]:
-    if not isinstance(value, list):
-        return set()
-    return {str(item) for item in value if item is not None and str(item)}
+    return set(ordered_unique(value))
 
 
 def ordered_unique(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return list(dict.fromkeys(str(item) for item in value if item is not None and str(item)))
+
+
+def title_aliases(title: Any, values: Any) -> list[str]:
+    """The title's fingerprint first, then the other title fingerprints."""
+    leading = title_fingerprint(str(title)) if title else None
+    return ordered_unique([leading, *ordered_unique(values)])
 
 
 def _run_id_sort_parts(run_id: Any) -> tuple[int, int, str]:

@@ -15,6 +15,7 @@ from .memory import (
     normalize_state_record,
     ordered_unique,
     state_overflow_reason,
+    title_aliases,
 )
 from .notes import ExistingReviewDiscussion
 from .schema import now_iso
@@ -60,7 +61,8 @@ MAX_ALIASES_PER_FAMILY = 8
 
 def _recent_aliases(current: Any, previous: Any) -> list[str]:
     current_values = ordered_unique(current)
-    older = [value for value in ordered_unique(previous) if value not in current_values]
+    seen = set(current_values)
+    older = [value for value in ordered_unique(previous) if value not in seen]
     return current_values + older[: max(0, MAX_ALIASES_PER_FAMILY - len(current_values))]
 
 
@@ -86,21 +88,17 @@ def _record_for_group(
     raw_aliases = previous.get("aliases")
     aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
     title = group.get("title", previous.get("title", ""))
-    # normalize_state_record puts the title's fingerprint first; include it here
-    # so the family stays within the bound.
-    current_title_fps = [
-        title_fingerprint(str(title)) if title else None,
-        *ordered_unique(match_keys.get("title_fingerprints")),
-    ]
     merged_aliases = {
-        "candidate_issue_signatures": [],
         "source_finding_ids": _recent_aliases(
             group.get("source_finding_ids"), aliases.get("source_finding_ids")
         ),
         "context_hashes": _recent_aliases(
             match_keys.get("context_hashes"), aliases.get("context_hashes")
         ),
-        "title_fingerprints": _recent_aliases(current_title_fps, aliases.get("title_fingerprints")),
+        "title_fingerprints": _recent_aliases(
+            title_aliases(title, match_keys.get("title_fingerprints")),
+            aliases.get("title_fingerprints"),
+        ),
         "symbols": _recent_aliases(match_keys.get("symbols"), aliases.get("symbols")),
     }
     return normalize_state_record(
