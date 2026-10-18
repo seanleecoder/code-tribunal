@@ -34,16 +34,6 @@ type MatchPrecedence = Literal[
     "title_anchor",
     "symbol_title",
 ]
-type AdapterStatus = Literal[
-    "success",
-    "skipped",
-    "timeout",
-    "model_error",
-    "schema_error",
-    "config_error",
-    "internal_error",
-]
-type AdapterStage = Literal["review", "critique"]
 type CritiqueVerdict = Literal["agree", "dispute", "noise", "duplicate"]
 type PostStatus = Literal[
     "success",
@@ -96,38 +86,6 @@ class CandidateIssueSignature(TypedDict):
     symbol: str | None
 
 
-class RawLineRef(TypedDict):
-    old_line: int | None
-    new_line: int | None
-    line_code: None
-
-
-class RawAnchor(TypedDict):
-    old_path: str
-    new_path: str
-    side: AnchorSide
-    start: RawLineRef
-    end: RawLineRef
-    hunk_header: str
-    context_hash: str
-    symbol: str | None
-
-
-class RawFinding(TypedDict):
-    anchor: RawAnchor
-    severity: Severity
-    category: Category
-    title: str
-    body: str
-    evidence: list[str]
-    suggestion: str | None
-    confidence: float
-
-
-class RawFindingBatch(TypedDict):
-    findings: list[RawFinding]
-
-
 class Finding(TypedDict):
     source_finding_id: str
     run_local_id: str
@@ -143,22 +101,6 @@ class Finding(TypedDict):
     candidate_issue_signature: CandidateIssueSignature
 
 
-class FindingBatch(TypedDict):
-    schema_version: Literal["finding_batch.v1"]
-    run_id: RunId
-    reviewer: ReviewerId
-    adapter_status: AdapterStatus
-    model: str
-    started_at: str
-    completed_at: str
-    raw_finding_count: int
-    accepted_finding_count: int
-    dropped_finding_count: int
-    usable_for_resolution: bool
-    effective_config_sha256: str
-    findings: list[Finding]
-
-
 class Critique(TypedDict):
     target_source_finding_id: str
     critic: ReviewerId
@@ -167,34 +109,6 @@ class Critique(TypedDict):
     rationale: str
     adjusted_severity: Severity | None
     confidence: float
-
-
-class CritiqueBatch(TypedDict):
-    schema_version: Literal["critique_batch.v1"]
-    run_id: RunId
-    critic: ReviewerId
-    adapter_status: AdapterStatus
-    effective_config_sha256: str
-    critiques: list[Critique]
-
-
-class AdapterStatusArtifact(TypedDict):
-    schema_version: Literal["adapter_status.v1"]
-    reviewer: ReviewerId
-    stage: AdapterStage
-    status: AdapterStatus
-    started_at: str
-    completed_at: str
-    duration_ms: int
-    error_class: str | None
-    error_message_redacted: str | None
-    output_file: str
-    run_id: NotRequired[RunId]
-    raw_finding_count: NotRequired[int]
-    accepted_finding_count: NotRequired[int]
-    dropped_finding_count: NotRequired[int]
-    usable_for_resolution: NotRequired[bool]
-    effective_config_sha256: NotRequired[str]
 
 
 class CritiqueSummary(TypedDict):
@@ -311,19 +225,6 @@ class State(TypedDict):
     state_hash: str
     # COMPAT-005: read from older notes only; never written.
     run_history: NotRequired[list[JsonObject]]
-
-
-class StateAliasRecord(TypedDict):
-    issue_id: str
-    category: str
-    status: str
-    aliases: JsonObject
-    anchor: JsonObject
-
-
-class StateAliasesArtifact(TypedDict):
-    schema_version: Literal["state_aliases.v1"]
-    records: list[StateAliasRecord]
 
 
 class PostedDiscussion(TypedDict):
