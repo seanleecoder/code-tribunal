@@ -1,6 +1,6 @@
 # ADR-0004 — Simplified release process and installation direction
 
-- **Status:** Accepted on 2026-10-18
+- **Status:** Accepted on 2026-10-18; decision 9 amended on 2026-10-18
 - **Date:** 2026-10-14
 - **Decision:** Simplification audit S01, with N01 (supply-chain pins) and N03 (GitHub
   installation)
@@ -167,6 +167,25 @@ are not re-described.
 
 ### 9. Supply-chain pins (N01)
 
+> **Amendment (2026-10-18) — decision 9 is narrowed.** Checking the tools against
+> the repository showed two places where they do not do what this decision assumed:
+>
+> - **Lychee keeps its verified installer.** `lycheeverse/lychee-action` v2.9.0
+>   downloads a mutable release asset with `curl` and extracts it without a checksum,
+>   inside the job that then runs every other gate. `check_markdown_links.py install`
+>   and `lychee.pin` stay, with `lychee.pin` as the only digest authority; the pin
+>   checker's duplicate copy goes.
+> - **No Renovate regex managers for the `.pin` files.** Renovate cannot recompute
+>   their SHA-256s. ripgrep must follow the version the pinned `opencode-ai` fetches,
+>   not upstream's latest, and Cursor's download host has no datasource. Both stay on
+>   the manual refresh steps. The `opencode_version` equality check stays, so a
+>   Renovate `opencode-ai` bump fails until `ripgrep.pin` is refreshed.
+>
+> Renovate runs as the hosted Mend app with only `renovate.json` in the repository.
+> zizmor runs offline in `make quality` and online in CI, where
+> `ref-version-mismatch` can resolve tags. N01 ships in its own pull request before
+> the cutover, because it does not depend on the release-authority change.
+
 - **Updates:** Renovate replaces the manual seven-step pin refresh. It covers npm
   lockfiles, Dockerfile digests including `ARG` defaults, action SHAs, pip
   constraints, and regex managers for `.pin` files.
@@ -233,7 +252,8 @@ Each pull request primarily changes one boundary.
    - Delete the retired scripts, their tests, the Makefile targets
      (`release-inputs` leaves `make quality`), `release-inputs.json` and
      `TEMPLATE.md`.
-   - Add Renovate and zizmor and shrink the pin checker.
+   - Add Renovate and zizmor and shrink the pin checker. *(Moved to its own pull
+     request before the cutover; see the decision 9 amendment.)*
    - Rewrite `docs/development/release-process.md`.
    - Update the ADR-0003 row, ADR-0001's consequence, AGENTS.md and README.
 
