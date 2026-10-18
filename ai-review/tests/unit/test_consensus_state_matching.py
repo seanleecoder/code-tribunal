@@ -5,7 +5,12 @@ import unittest
 
 from ai_review.canonical import canonical_json, sha256_hex
 from ai_review.consensus import build_consensus
-from ai_review.schema import SchemaValidationError, validate_instance
+from ai_review.schema import (
+    SchemaValidationError,
+    adapter_status_artifact,
+    empty_finding_batch,
+    validate_instance,
+)
 
 
 def _config() -> dict:
@@ -103,6 +108,42 @@ def _batch(reviewer: str, finding: dict) -> dict:
         "effective_config_sha256": "0" * 64,
         "findings": findings,
     }
+
+
+def _empty_batch(reviewer: str, status: str, **counts: int) -> dict:
+    """A findings-free batch whose usability follows the production quality rule."""
+    return empty_finding_batch(
+        reviewer,
+        status,
+        run_id="run",
+        model="model",
+        started_at="2026-06-29T00:00:00Z",
+        completed_at="2026-06-29T00:00:01Z",
+        effective_config_sha256="0" * 64,
+        **counts,
+    )
+
+
+def _status(
+    reviewer: str,
+    stage: str,
+    status: str,
+    *,
+    run_id: str = "run",
+    duration_ms: int = 60_000,
+    **fields: str,
+) -> dict:
+    return adapter_status_artifact(
+        reviewer,
+        stage,
+        status,
+        "2026-06-29T00:00:00Z",
+        "2026-06-29T00:30:00Z",
+        duration_ms,
+        f"{stage}/{reviewer}.json",
+        run_id=run_id,
+        **fields,  # type: ignore[arg-type]
+    )
 
 
 def _record(

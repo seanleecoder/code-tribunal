@@ -83,6 +83,16 @@ def batch_quality_fields(
     }
 
 
+
+def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
+    """Operational panel seat and resolution eligibility predicate.
+
+    Requires ``adapter_status == "success"`` and ``usable_for_resolution``; callers
+    that load untrusted artifacts must run ``validate_consensus_inputs`` first so
+    the flag is checked against status and finding counts.
+    """
+    return batch.get("adapter_status") == "success" and batch.get("usable_for_resolution") is True
+
 def schema_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "schemas"
 
@@ -257,6 +267,13 @@ def finalize_critique_batch(
     # Dropping items from a validated batch cannot make it invalid.
     finalized["critiques"] = critiques
     return finalized
+
+
+def status_file_stem(stage: str, reviewer: str) -> str:
+    """The ``out/status/`` file stem the runner writes and consensus reads."""
+    if stage == "critique":
+        return f"critique-{reviewer}"
+    return reviewer
 
 
 def adapter_status_artifact(

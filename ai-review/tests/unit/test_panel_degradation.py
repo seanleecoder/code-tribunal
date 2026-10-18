@@ -9,6 +9,7 @@ from unittest import mock
 from ai_review.config import effective_config_binding, effective_config_digest, load_config
 from ai_review.consensus import cli
 from ai_review.schema import (
+    empty_critique_batch,
     empty_finding_batch,
     finalize_finding_batch,
     load_json_file,
@@ -127,14 +128,13 @@ class PanelDegradationTests(unittest.TestCase):
         for critic in critics:
             write_canonical_json(
                 critiques_dir / f"{critic}.json",
-                {
-                    "schema_version": "critique_batch.v1",
-                    "run_id": "local-test",
-                    "critic": critic,
-                    "adapter_status": "success",
-                    "effective_config_sha256": _CONFIG_DIGEST,
-                    "critiques": [],
-                },
+                empty_critique_batch(
+                    critic,
+                    "success",
+                    run_id="local-test",
+                    started_at="2026-06-29T00:00:00Z",
+                    effective_config_sha256=_CONFIG_DIGEST,
+                ),
             )
         out_path = root / "out" / "consensus.json"
         code = cli(

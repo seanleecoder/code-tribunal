@@ -46,6 +46,7 @@ from the package at all.
 | `consensus.py` | `python -m ai_review.consensus`; the deterministic reducer API | no |
 | `grouping.py` | Path/category buckets and complete-link grouping by anchor/fingerprint identity | **never** |
 | `critique.py` | Critique application and group re-decision | **never** |
+| `run_health.py` | Observational run health: status-file loading, job rows, grade, and the job-log rendering; feeds no decision | **never** |
 | `consensus_errors.py` | `ConsensusIntegrityError`, nothing else | **never** |
 | `adapter_runner.py` | `python -m ai_review.adapter_runner`; `run_adapter` | no |
 | `adapter_output.py` | Reviewer output parsing and root normalization | no |

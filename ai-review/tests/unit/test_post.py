@@ -41,7 +41,7 @@ from ai_review.render import render_body, source_hash
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from ai_review.state_plan import plan_state
 
-from .test_consensus_state_matching import _batch, _finding, _manifest
+from .test_consensus_state_matching import _batch, _empty_batch, _finding, _manifest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -302,21 +302,18 @@ class PostTests(PostCase):
         self,
     ) -> None:
         config = self._config()
-        rejected = _batch("opencode", _finding("opencode", "4" * 64, "major"))
-        rejected.update(
-            findings=[],
-            raw_finding_count=3,
-            accepted_finding_count=0,
-            dropped_finding_count=3,
-            usable_for_resolution=False,
-        )
+        rejected = _empty_batch("opencode", "success", raw_finding_count=3, dropped_finding_count=3)
         consensus = build_consensus(
             _manifest(),
             [
                 _batch(reviewer, _finding(reviewer, source_id, "major"))
-                for reviewer, source_id in (("claude", "1" * 64), ("codex", "2" * 64))
+                for reviewer, source_id in (
+                    ("claude", "1" * 64),
+                    ("codex", "2" * 64),
+                    ("cursor", "3" * 64),
+                )
             ]
-            + [_batch("cursor", _finding("cursor", "3" * 64, "major")), rejected],
+            + [rejected],
             config,
         )
         validate_instance(consensus, "consensus.schema.json")

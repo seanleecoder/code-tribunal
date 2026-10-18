@@ -128,6 +128,7 @@ class ConsensusSummary(TypedDict):
 
 
 type RunHealthGrade = Literal["full", "degraded", "rerun_recommended"]
+type JobStage = Literal["review", "critique"]
 type JobOutcome = Literal[
     "success",
     "unusable",
@@ -143,7 +144,7 @@ type JobOutcome = Literal[
 
 
 class RunHealthJob(TypedDict):
-    stage: Literal["review", "critique"]
+    stage: JobStage
     reviewer: ReviewerId
     outcome: JobOutcome
     model: str
@@ -177,8 +178,8 @@ class Consensus(TypedDict):
     panel_status: PanelStatus
     groups: list[FindingGroup]
     summary: ConsensusSummary
-    # Optional in consensus.v2 so earlier artifacts still validate; consensus
-    # always writes it and post rejects an artifact without it.
+    # COMPAT-006: optional in consensus.v2 so earlier artifacts still validate;
+    # consensus always writes it and post rejects an artifact without it.
     run_health: NotRequired[RunHealth]
 
 

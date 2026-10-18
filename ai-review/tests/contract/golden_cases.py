@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ai_review.consensus import build_consensus
-from ai_review.schema import adapter_status_artifact
+from ai_review.schema import adapter_status_artifact, empty_critique_batch, empty_finding_batch
 
 
 def _config() -> dict:
@@ -174,23 +174,23 @@ def degraded_run_health_inputs() -> tuple[list[dict], list[dict], dict]:
             evidence_fingerprint="c" * 64,
         ),
     )
-    opencode = {
-        **_batch("opencode", codex["findings"][0]),
-        "adapter_status": "timeout",
-        "findings": [],
-        "raw_finding_count": 0,
-        "accepted_finding_count": 0,
-        "usable_for_resolution": False,
-    }
+    opencode = empty_finding_batch(
+        "opencode",
+        "timeout",
+        run_id="run",
+        model="model",
+        started_at="2026-06-29T00:00:00Z",
+        completed_at="2026-06-29T00:00:01Z",
+        effective_config_sha256="0" * 64,
+    )
     critiques = [
-        {
-            "schema_version": "critique_batch.v1",
-            "run_id": "run",
-            "critic": critic,
-            "adapter_status": "success",
-            "effective_config_sha256": "0" * 64,
-            "critiques": [],
-        }
+        empty_critique_batch(
+            critic,
+            "success",
+            run_id="run",
+            started_at="2026-06-29T00:00:00Z",
+            effective_config_sha256="0" * 64,
+        )
         for critic in ("claude", "codex")
     ]
     statuses = {
@@ -223,8 +223,11 @@ def degraded_run_health_config() -> dict:
     return config
 
 
-def degraded_run_health_consensus() -> dict:
-    batches, critiques, statuses = degraded_run_health_inputs()
+def degraded_run_health_consensus(
+    inputs: tuple[list[dict], list[dict], dict] | None = None,
+) -> dict:
+    """The degraded golden; ``inputs`` lets a test reorder the same artifacts."""
+    batches, critiques, statuses = inputs or degraded_run_health_inputs()
     return build_consensus(
         _manifest(),
         batches,

@@ -12,20 +12,22 @@ import copy
 import unittest
 from unittest.mock import patch
 
-import ai_review.consensus as consensus_module
+import ai_review.run_health as run_health_module
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
-from ai_review.schema import adapter_status_artifact, validate_instance
+from ai_review.schema import validate_instance
 
 from .test_consensus_state_matching import (
     _batch,
     _config,
     _critique,
     _critique_batch,
+    _empty_batch,
     _finding,
     _manifest,
     _record,
+    _status,
 )
 
 
@@ -618,32 +620,6 @@ class PanelStatusTests(unittest.TestCase):
         self.assertEqual(panel_status(["a", "b", "c"], ["a", "b", "c"]), "full")
 
 
-def _status(reviewer: str, stage: str, status: str, **fields: object) -> dict:
-    return adapter_status_artifact(
-        reviewer,
-        stage,
-        status,
-        "2026-06-29T00:00:00Z",
-        "2026-06-29T00:01:00Z",
-        int(fields.pop("duration_ms", 60_000)),  # type: ignore[call-overload]
-        f"{stage}/{reviewer}.json",
-        run_id="run",
-        **fields,  # type: ignore[arg-type]
-    )
-
-
-def _failed_batch(reviewer: str, status: str) -> dict:
-    batch = _batch(reviewer, _finding(reviewer, _SOURCE_IDS[reviewer], "major"))
-    batch.update(
-        adapter_status=status,
-        findings=[],
-        raw_finding_count=0,
-        accepted_finding_count=0,
-        usable_for_resolution=False,
-    )
-    return batch
-
-
 def _agree_all(critic: str, reviewers: list[str]) -> dict:
     return _critique_batch(
         critic, [_critique(critic, _SOURCE_IDS[reviewer], "agree") for reviewer in reviewers]
@@ -672,6 +648,10 @@ class RunHealthTests(unittest.TestCase):
         validate_instance(consensus, "consensus.schema.json")
         return consensus
 
+    def _all_agree(self) -> list[dict]:
+        """A successful, empty critique batch from every critic."""
+        return [_agree_all(critic, []) for critic in self._REVIEWERS]
+
     def _ok(self, reviewers: list[str]) -> list[dict]:
         return [
             _batch(reviewer, _finding(reviewer, _SOURCE_IDS[reviewer], "major"))
@@ -688,7 +668,7 @@ class RunHealthTests(unittest.TestCase):
     def test_every_enabled_job_is_listed_review_first_then_by_reviewer(self) -> None:
         consensus = self._health(
             self._ok(self._REVIEWERS),
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._all_agree(),
         )
 
         self.assertEqual(
@@ -728,7 +708,7 @@ class RunHealthTests(unittest.TestCase):
 
     def test_one_usable_seat_needs_a_critic_from_another_identity(self) -> None:
         others = ("codex", "cursor", "opencode")
-        failed = [_failed_batch(reviewer, "timeout") for reviewer in others]
+        failed = [_empty_batch(reviewer, "timeout") for reviewer in others]
         own_critic_only = [_agree_all("claude", [])] + [
             _critique_batch(critic, [], status="timeout") for critic in others
         ]
@@ -749,7 +729,7 @@ class RunHealthTests(unittest.TestCase):
         statuses = {("review", "opencode"): _status("opencode", "review", "success")}
         consensus = self._health(
             self._ok(["claude", "codex", "cursor"]),
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._all_agree(),
             statuses=statuses,
         )
 
@@ -767,8 +747,8 @@ class RunHealthTests(unittest.TestCase):
             ),
         }
         consensus = self._health(
-            self._ok(["claude", "cursor", "opencode"]) + [_failed_batch("codex", "schema_error")],
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._ok(["claude", "cursor", "opencode"]) + [_empty_batch("codex", "schema_error")],
+            self._all_agree(),
             statuses=statuses,
         )
 
@@ -799,17 +779,17 @@ class RunHealthTests(unittest.TestCase):
                     )
                 }
                 with patch.object(
-                    consensus_module, "redact_text", wraps=consensus_module.redact_text
+                    run_health_module, "redact_text", wraps=run_health_module.redact_text
                 ) as redact:
                     consensus = self._health(
                         self._ok(["claude", "codex", "cursor"]),
-                        [_agree_all(critic, []) for critic in self._REVIEWERS],
+                        self._all_agree(),
                         statuses=statuses,
                     )
 
                 self.assertLessEqual(
                     max((len(call.args[0]) for call in redact.call_args_list), default=0),
-                    consensus_module._REDACTION_INPUT_LIMIT,
+                    run_health_module.REDACTION_INPUT_LIMIT,
                 )
                 job = self._job(consensus, "review", "opencode")
                 self.assertEqual(job["error_message"], "[omitted: too long to redact]")
@@ -821,7 +801,7 @@ class RunHealthTests(unittest.TestCase):
         }
         consensus = self._health(
             self._ok(["claude", "codex", "cursor"]),
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._all_agree(),
             statuses=within_bound,
         )
         self.assertEqual(
@@ -839,7 +819,7 @@ class RunHealthTests(unittest.TestCase):
         }
         consensus = self._health(
             self._ok(["claude", "codex", "cursor"]),
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._all_agree(),
             statuses=statuses,
         )
 
@@ -851,17 +831,10 @@ class RunHealthTests(unittest.TestCase):
         self.assertIsNone(job["raw_finding_count"])
 
     def test_every_finding_rejected_is_unusable(self) -> None:
-        rejected = _batch("opencode", _finding("opencode", _SOURCE_IDS["opencode"], "major"))
-        rejected.update(
-            findings=[],
-            raw_finding_count=2,
-            accepted_finding_count=0,
-            dropped_finding_count=2,
-            usable_for_resolution=False,
-        )
+        rejected = _empty_batch("opencode", "success", raw_finding_count=2, dropped_finding_count=2)
         consensus = self._health(
             self._ok(["claude", "codex", "cursor"]) + [rejected],
-            [_agree_all(critic, []) for critic in self._REVIEWERS],
+            self._all_agree(),
         )
 
         job = self._job(consensus, "review", "opencode")
@@ -875,7 +848,7 @@ class RunHealthTests(unittest.TestCase):
                 batches = self._ok(self._REVIEWERS)
                 batches[0].update(raw_finding_count=raw, dropped_finding_count=dropped)
                 consensus = self._health(
-                    batches, [_agree_all(critic, []) for critic in self._REVIEWERS]
+                    batches, self._all_agree()
                 )
                 job = self._job(consensus, "review", "claude")
                 self.assertEqual(job["outcome"], "success")
@@ -883,7 +856,7 @@ class RunHealthTests(unittest.TestCase):
                 self.assertEqual(consensus["run_health"]["grade"], "degraded")
 
     def test_status_files_change_only_run_health(self) -> None:
-        batches = self._ok(["claude", "codex"]) + [_failed_batch("cursor", "timeout")]
+        batches = self._ok(["claude", "codex"]) + [_empty_batch("cursor", "timeout")]
         critiques = [_agree_all("claude", ["codex"]), _critique_batch("codex", [], "timeout")]
         statuses = {
             (stage, reviewer): _status(reviewer, stage, "timeout", duration_ms=5)

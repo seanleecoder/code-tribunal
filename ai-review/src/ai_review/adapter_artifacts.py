@@ -21,6 +21,7 @@ from .schema import (
     empty_finding_batch,
     load_json_file,
     now_iso,
+    status_file_stem,
     validate_instance,
     write_canonical_json,
 )
@@ -41,12 +42,6 @@ def _output_file(stage: str, reviewer: str) -> Path:
     if stage == "review":
         return Path("findings") / f"{reviewer}.json"
     return Path("critiques") / f"{reviewer}.json"
-
-
-def _status_stem(stage: str, reviewer: str) -> str:
-    if stage == "critique":
-        return f"critique-{reviewer}"
-    return reviewer
 
 
 def _write_status(
@@ -86,7 +81,8 @@ def _write_status(
         usable_for_resolution=usable_for_resolution,
     )
     validate_instance(artifact, "adapter_status.schema.json")
-    write_canonical_json(output_dir / "status" / f"{_status_stem(stage, reviewer)}.json", artifact)
+    status_path = output_dir / "status" / f"{status_file_stem(stage, reviewer)}.json"
+    write_canonical_json(status_path, artifact)
 
 
 def _write_empty(
@@ -136,7 +132,7 @@ def _write_parse_debug(
         stdout = stdout.decode("utf-8", errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
-    stem = _status_stem(stage, reviewer)
+    stem = status_file_stem(stage, reviewer)
     debug_path = output_dir / "status" / f"{stem}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(

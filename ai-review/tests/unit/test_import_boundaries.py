@@ -20,6 +20,7 @@ PURE_MODULES = (
     "grouping",
     "critique",
     "consensus_errors",
+    "run_health",
 )
 
 FORBIDDEN_IMPORTS = (

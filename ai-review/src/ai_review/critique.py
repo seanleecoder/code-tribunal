@@ -98,6 +98,11 @@ def _valid_duplicate_links(
     return links
 
 
+def critique_batch_succeeded(batch: dict[str, Any]) -> bool:
+    """Whether one critic's batch counts as critique evidence."""
+    return batch.get("adapter_status") == "success" and isinstance(batch.get("critiques"), list)
+
+
 def _successful_critique_batches(
     critique_batches: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -108,11 +113,7 @@ def _successful_critique_batches(
     verdict, and the shipped CI templates run the critique job even when a review
     seat failed. Review-stage and critique-stage health are separate evidence.
     """
-    return [
-        batch
-        for batch in (critique_batches or [])
-        if batch.get("adapter_status") == "success" and isinstance(batch.get("critiques"), list)
-    ]
+    return [batch for batch in (critique_batches or []) if critique_batch_succeeded(batch)]
 
 
 def _effective_verdict(

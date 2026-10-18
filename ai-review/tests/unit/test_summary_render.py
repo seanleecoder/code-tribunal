@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import ai_review.notes as notes_module
+import ai_review.run_health as run_health_module
 import ai_review.summary_render as summary_render_module
 from ai_review.render import platform_comment_limit
 from ai_review.summary_render import (
@@ -415,6 +416,18 @@ class RunHealthRenderTests(PostCase):
                 self.assertNotIn("Action:", section)
                 self.assertNotIn("\n- ", section.split("<details>")[0])
 
+    def test_status_text_on_a_successful_job_is_not_a_configuration_failure(self) -> None:
+        # The batch wins: a rewritten status file cannot turn a usable seat into
+        # a configuration headline, in the comment or the job log.
+        run_health = _health(
+            "full", _job("claude", error_class="ReviewerConfigValidation"), _job("codex")
+        )
+
+        self.assertTrue(self._section(run_health).startswith("**Review health: full.**"))
+        text = run_health_module.run_health_text(run_health)  # type: ignore[arg-type]
+        self.assertIn("Review health: full.", text)
+        self.assertNotIn("Action:", text)
+
     def test_headline_counts_and_problem_wording(self) -> None:
         section = self._section(
             _health(
@@ -476,7 +489,7 @@ class RunHealthRenderTests(PostCase):
             self.assertEqual(row.replace("\\|", "").count("|"), 8)
 
     def test_job_log_text_is_plain_and_one_line_per_value(self) -> None:
-        text = summary_render_module.run_health_text(
+        text = run_health_module.run_health_text(
             _health(  # type: ignore[arg-type]
                 "rerun_recommended",
                 _job("claude"),

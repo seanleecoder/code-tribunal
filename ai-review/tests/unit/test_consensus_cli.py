@@ -10,9 +10,9 @@ from pathlib import Path
 
 from ai_review.config import effective_config_binding, effective_config_digest, load_config
 from ai_review.consensus import cli
-from ai_review.schema import adapter_status_artifact, load_json_file, write_canonical_json
+from ai_review.schema import load_json_file, write_canonical_json
 
-from .test_consensus_state_matching import _batch, _finding
+from .test_consensus_state_matching import _batch, _finding, _status
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import config_tail, panel_filler  # noqa: E402
@@ -187,17 +187,14 @@ class ConsensusCliTests(unittest.TestCase):
             self.assertEqual(consensus["groups"][0]["critique_summary"]["agree"], 1)
 
 
-def _status(reviewer: str, stage: str, status: str, *, run_id: str = "local-test") -> dict:
-    return adapter_status_artifact(
+def _timeout_status(reviewer: str, stage: str, *, run_id: str = "local-test") -> dict:
+    return _status(
         reviewer,
         stage,
-        status,
-        "2026-06-29T00:00:00Z",
-        "2026-06-29T00:30:00Z",
-        1_795_012,
-        f"findings/{reviewer}.json",
-        error_class="TimeoutExpired" if status == "timeout" else None,
+        "timeout",
         run_id=run_id,
+        duration_ms=1_795_012,
+        error_class="TimeoutExpired",
     )
 
 
@@ -241,7 +238,7 @@ class ConsensusStatusDirTests(unittest.TestCase):
 
     def test_usable_status_files_add_duration_and_error_class(self) -> None:
         def write(status_dir: Path) -> None:
-            timeout = _status("opencode", "review", "timeout")
+            timeout = _timeout_status("opencode", "review")
             write_canonical_json(status_dir / "opencode.json", timeout)
             (status_dir / "opencode-review-debug.txt").write_text("not json", encoding="utf-8")
             (status_dir / "opencode-review-raw-stdout.txt").write_text("{}", encoding="utf-8")
@@ -258,17 +255,17 @@ class ConsensusStatusDirTests(unittest.TestCase):
     def test_mismatched_or_corrupt_status_files_are_treated_as_absent(self) -> None:
         def write(status_dir: Path) -> None:
             # Filename names claude; content names codex.
-            write_canonical_json(status_dir / "claude.json", _status("codex", "review", "timeout"))
+            write_canonical_json(status_dir / "claude.json", _timeout_status("codex", "review"))
             write_canonical_json(
-                status_dir / "codex.json", _status("codex", "review", "timeout", run_id="other")
+                status_dir / "codex.json", _timeout_status("codex", "review", run_id="other")
             )
             write_canonical_json(
-                status_dir / "opencode.json", _status("opencode", "critique", "timeout")
+                status_dir / "opencode.json", _timeout_status("opencode", "critique")
             )
             (status_dir / "critique-claude.json").write_text("[" * 100_000, encoding="utf-8")
             (status_dir / "critique-codex.json").write_text("{", encoding="utf-8")
             # Schema-valid, but the lone surrogate cannot be written as UTF-8.
-            surrogate = _status("opencode", "critique", "timeout")
+            surrogate = _timeout_status("opencode", "critique")
             surrogate["error_message_redacted"] = "PLACEHOLDER"
             (status_dir / "critique-opencode.json").write_text(
                 json.dumps(surrogate).replace('"PLACEHOLDER"', '"\\ud800"'), encoding="utf-8"
@@ -289,7 +286,7 @@ class ConsensusStatusDirTests(unittest.TestCase):
 
     def test_failed_panel_prints_health_to_the_job_log_before_exit_3(self) -> None:
         def write(status_dir: Path) -> None:
-            timeout = _status("opencode", "review", "timeout")
+            timeout = _timeout_status("opencode", "review")
             write_canonical_json(status_dir / "opencode.json", timeout)
 
         code, consensus, stdout = self._run(write)
