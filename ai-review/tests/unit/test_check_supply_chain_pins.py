@@ -43,6 +43,42 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             with self.subTest(mutated=mutated):
                 self.assertEqual(len(pins._dockerfile_issues("x", mutated)), 1)
 
+    def test_dockerfile_formatting_cannot_hide_a_mutable_from(self) -> None:
+        mutable = "node:26-trixie-slim"
+        for text in (
+            f"FROM {mutable} AS reviewer-clis \n",
+            f"  FROM {mutable}\n",
+            f"FROM\t{mutable}\n",
+            f"FROM \\\n  {mutable}\n",
+            f"from {mutable} as x\n",
+            f"FROM --platform=linux/amd64 {mutable} AS x\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", text),
+                    [f"x: FROM {mutable} is not pinned by sha256 digest"],
+                )
+        self.assertEqual(
+            pins._dockerfile_issues("x", f"FROM {mutable}{DIGEST} AS x extra\n"),
+            [f"x: cannot parse 'FROM {mutable}{DIGEST} AS x extra'"],
+        )
+
+    def test_only_global_args_resolve_a_from(self) -> None:
+        # Docker resolves FROM against the ARGs declared before the first FROM; a
+        # later pinned redeclaration does not change the image it builds from.
+        text = (
+            "ARG NODE_BUILDER=node:26-trixie-slim\n"
+            "FROM ${NODE_BUILDER} AS reviewer-clis\n"
+            f"ARG NODE_BUILDER=node:26{DIGEST}\n"
+            "FROM ${NODE_BUILDER}\n"
+        )
+        self.assertEqual(
+            pins._dockerfile_issues("x", text),
+            ["x: FROM ${NODE_BUILDER} is not pinned by sha256 digest"] * 2,
+        )
+        quoted = f'ARG BASE="python:3.14{DIGEST}"\nFROM $BASE\n'
+        self.assertEqual(pins._dockerfile_issues("x", quoted), [])
+
     def test_shipped_dockerfiles_pin_every_stage(self) -> None:
         reviewer = _read(pins.REVIEWER_DOCKERFILE)
         # The debian stages were pinned but unchecked before the generic FROM rule.

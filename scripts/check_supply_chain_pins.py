@@ -46,17 +46,43 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _parse_dockerfile(text: str) -> tuple[dict[str, str], list[tuple[str, str]], list[str]]:
+    """Return the global ARG defaults, each FROM's (image, stage), and unparsed FROMs.
+
+    Instructions are split on any whitespace, as Docker does, after dropping comment
+    lines and joining continuations. A FROM sees only the ARGs declared before the
+    first FROM, so stage-local redeclarations never resolve one.
+    """
+    lines = (line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    global_args: dict[str, str] = {}
+    froms: list[tuple[str, str]] = []
+    unparsed: list[str] = []
+    for instruction in re.sub(r"\\[ \t]*\n", " ", "\n".join(lines)).splitlines():
+        keyword, *words = instruction.split() or [""]
+        if keyword.upper() == "ARG" and not froms and not unparsed:
+            for word in words:
+                key, separator, value = word.partition("=")
+                global_args[key] = value.strip("\"'") if separator else ""
+        elif keyword.upper() == "FROM":
+            arguments = [word for word in words if not word.startswith("--")]
+            if len(arguments) == 1:
+                froms.append((arguments[0], ""))
+            elif len(arguments) == 3 and arguments[1].upper() == "AS":
+                froms.append((arguments[0], arguments[2].lower()))
+            else:
+                unparsed.append(instruction.strip())
+    return global_args, froms, unparsed
+
+
 def _dockerfile_issues(name: str, text: str) -> list[str]:
-    """Require every FROM to name a digest, directly or through an ARG default."""
-    defaults = dict(re.findall(r"^ARG (\w+)=(\S+)$", text, re.M))
+    """Require every FROM to name a digest, directly or through a global ARG default."""
+    global_args, froms, unparsed = _parse_dockerfile(text)
+    issues = [f"{name}: cannot parse {instruction!r}" for instruction in unparsed]
     stages: set[str] = set()
-    issues: list[str] = []
-    for image, stage in re.findall(
-        r"^FROM (?:--platform=\S+ )?(\S+)(?: AS (\S+))?$", text, re.M | re.I
-    ):
+    for image, stage in froms:
         variable = re.fullmatch(r"\$\{?(\w+)\}?", image)
-        resolved = defaults.get(variable.group(1), "") if variable else image
-        if resolved not in stages and not re.search(rf"{DIGEST}$", resolved):
+        resolved = global_args.get(variable.group(1), "") if variable else image
+        if resolved.lower() not in stages and not re.search(rf"{DIGEST}$", resolved):
             issues.append(f"{name}: FROM {image} is not pinned by sha256 digest")
         if stage:
             stages.add(stage)
@@ -64,11 +90,11 @@ def _dockerfile_issues(name: str, text: str) -> list[str]:
 
 
 def _base_image_issues(base: str, reviewer: str) -> list[str]:
-    base_from = re.search(r"^FROM (\S+)$", base, re.M)
-    reviewer_default = re.search(r"^ARG AI_REVIEW_BASE_IMAGE=(\S+)$", reviewer, re.M)
-    if base_from is None or reviewer_default is None:
+    base_froms = _parse_dockerfile(base)[1]
+    reviewer_default = _parse_dockerfile(reviewer)[0].get("AI_REVIEW_BASE_IMAGE")
+    if not base_froms or not reviewer_default:
         return ["base.Dockerfile FROM and reviewer.Dockerfile AI_REVIEW_BASE_IMAGE are required"]
-    if base_from.group(1) != reviewer_default.group(1):
+    if base_froms[0][0] != reviewer_default:
         return ["reviewer.Dockerfile AI_REVIEW_BASE_IMAGE default must match base.Dockerfile"]
     return []
 
