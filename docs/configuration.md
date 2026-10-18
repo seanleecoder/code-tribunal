@@ -126,17 +126,12 @@ for stronger review quality.
 | OpenCode | `deepseek/deepseek-v4.1-flash-1017` | `low` | yes |
 | Cursor | `composer-2.5` | named-model default | no |
 
-2.0.3 replaced Claude Haiku 4.5 / `medium` with Claude Haiku 5.5 / `low`, and
-MiMo V2.6 Flash / unset with DeepSeek V4.1 Flash 1017 / `low`. Neither new route
-has passed a real-provider run yet; the 2.0.3 Candidate Canary is the first.
-The previous defaults passed real-provider review and critique in
+The Claude and OpenCode defaults have not yet passed a real-provider run; the
+2.0.3 Candidate Canary is the first. GPT-6 Luna passed real review and critique in
 [GitHub smoke run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
-on 2026-10-04. MiMo Flash completed read, glob, grep, multiple tool calls, and
-structured output through OpenCode → OpenRouter. Consensus was full and posting
-succeeded on current CLI pins. Composer 2.5 also passed real review and critique
-in [the separate four-seat run](evidence/record-current-cli-model-smoke-2026-10-04.md).
-This validates the candidate config on the recorded image pair;
-release validation still requires the final published images. Follow the
+on 2026-10-04, and Composer 2.5 in
+[the separate four-seat run](evidence/record-current-cli-model-smoke-2026-10-04.md).
+Release validation still requires the final published images. Follow the
 [default-model smoke procedure](evidence/RUNBOOK.md#runs-1--2--current-image-lifecycle-two-independent-chains-per-platform).
 
 ### Production model/effort recommendations
@@ -315,10 +310,6 @@ Claude, Codex, and OpenCode, so the adapter omits the provider setting. It is an
 instruction to remove a key before validation, never a provider effort value:
 YAML `effort: unset` is invalid. Cursor rejects `AI_REVIEW_CURSOR_EFFORT`,
 including `unset`; choose its model variant instead.
-
-A MiMo model requires absent effort: alongside `AI_REVIEW_OPENCODE_MODEL`, set
-`AI_REVIEW_OPENCODE_EFFORT=unset`, because a model-only override inherits the
-shipped `low`.
 
 For example, to change Codex's model while using its provider default effort:
 

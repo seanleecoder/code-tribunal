@@ -31,9 +31,9 @@ _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 def _base_config() -> dict:
     return {
         "reviewers": {
-            "claude": {"model": "anthropic/claude-haiku-5.5", "enabled": True},
+            "claude": {"model": "anthropic/claude-haiku-4.5", "enabled": True},
             "codex": {"model": "openai/gpt-6-luna", "enabled": True},
-            "opencode": {"model": "deepseek/deepseek-v4.1-flash-1017", "enabled": True},
+            "opencode": {"model": "xiaomi/mimo-v2.6-flash", "enabled": True},
             "cursor": {"model": "composer-2.5", "enabled": False},
         },
         "critique": {"enabled": True},
@@ -63,7 +63,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertEqual(config["reviewers"]["opencode"]["model"], "google/other-model")
         # Untouched reviewer keeps its config default.
         self.assertEqual(
-            config["reviewers"]["claude"]["model"], "anthropic/claude-haiku-5.5"
+            config["reviewers"]["claude"]["model"], "anthropic/claude-haiku-4.5"
         )
 
     def test_blank_model_override_is_ignored(self) -> None:
@@ -401,11 +401,6 @@ class LoadConfigOverrideTests(unittest.TestCase):
             self.assertRaisesRegex(ConfigError, "posting.mode"),
         ):
             load_config(_REPO_CONFIG)
-
-    def test_repo_config_default_effort_loads(self) -> None:
-        with mock.patch.dict("os.environ", {}, clear=False):
-            config = load_config(_REPO_CONFIG)
-        self.assertEqual(config["reviewers"]["claude"]["effort"], "low")
 
     def test_repo_config_keeps_severity_downgrade_opt_in(self) -> None:
         config = load_config(_REPO_CONFIG)

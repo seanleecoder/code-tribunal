@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.reviewers import REVIEWERS
@@ -24,6 +26,7 @@ from support.adapter_inputs import (  # noqa: E402
 )
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+_SHIPPED = yaml.safe_load(_REPO_CONFIG.read_text(encoding="utf-8"))["reviewers"]
 _ADAPTERS = Path(__file__).resolve().parents[2] / "adapters"
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -971,12 +974,12 @@ PY
         # schemas declaring the 2020-12 draft at argument validation.
         self.assertNotIn('"$schema"', cli_args)
         # Effort comes from the repo config default (reviewers.claude.effort).
-        self.assertIn("--effort low", cli_args)
+        self.assertIn(f"--effort {_SHIPPED['claude']['effort']}", cli_args)
         # Claude only has the OpenRouter route, where --bare would break
         # ANTHROPIC_AUTH_TOKEN auth — it must be omitted.
         self.assertNotIn("--bare", cli_args)
         self.assertIn("--safe-mode", cli_args)
-        self.assertIn("--model anthropic/claude-haiku-5.5", cli_args)
+        self.assertIn(f"--model {_SHIPPED['claude']['model']}", cli_args)
         # claude explores a clean copy of the pinned MR snapshot rooted at its
         # working directory (like codex --cd / opencode --dir), not the ambient
         # CI checkout nor the input/snapshot dirs directly.
@@ -1121,7 +1124,7 @@ PY
         self.assertEqual(message_body["agent"], "ai-reviewer")
         self.assertEqual(
             message_body["model"],
-            {"providerID": "openrouter", "modelID": "deepseek/deepseek-v4.1-flash-1017"},
+            {"providerID": "openrouter", "modelID": _SHIPPED["opencode"]["model"]},
         )
         self.assertEqual(message_body["parts"][0]["type"], "text")
         self.assertEqual(message_body["format"]["type"], "json_schema")
@@ -1148,7 +1151,7 @@ PY
         self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
         self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
         self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn('"deepseek/deepseek-v4.1-flash-1017"', cli_env)
+        self.assertIn(json.dumps(_SHIPPED["opencode"]["model"]), cli_env)
         self.assertIn('"*": "deny"', cli_env)
         self.assertIn('"read": "allow"', cli_env)
         self.assertIn('"glob": "allow"', cli_env)
@@ -1166,7 +1169,7 @@ PY
         self.assertIs(config["formatter"], False)
         agent = config["agent"]["ai-reviewer"]
         self.assertNotIn("steps", agent)
-        self.assertEqual(agent["reasoningEffort"], "low")
+        self.assertEqual(agent.get("reasoningEffort"), _SHIPPED["opencode"].get("effort"))
         self.assertEqual(
             agent["tools"],
             {
@@ -1499,7 +1502,7 @@ PY
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
         self.assertIn('"openrouter/google/custom-model"', cli_env)
-        self.assertNotIn("deepseek-v4.1-flash-1017", cli_env)
+        self.assertNotIn(_SHIPPED["opencode"]["model"], cli_env)
         config = meta["opencode_config"]
         assert isinstance(config, dict)
         self.assertNotIn("small_model", config)

@@ -12,8 +12,7 @@ versioning.
 - The default Claude seat is now `anthropic/claude-haiku-5.5` with effort `low`,
   instead of `anthropic/claude-haiku-4.5` with `medium`. The default OpenCode
   seat is now `deepseek/deepseek-v4.1-flash-1017` with effort `low`, instead of
-  `xiaomi/mimo-v2.6-flash` with no effort. Codex (`openai/gpt-6-luna` / `low`)
-  and Cursor (`composer-2.5`) are unchanged. Deployments that set
+  `xiaomi/mimo-v2.6-flash` with no effort. Deployments that set
   `AI_REVIEW_<REVIEWER>_MODEL` or `AI_REVIEW_<REVIEWER>_EFFORT` keep their
   overrides.
 - A finding that a majority of independent critics call noise is now listed
